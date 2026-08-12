@@ -21,11 +21,8 @@ import {
 import { api, type Alert, type User } from '../lib/api';
 
 /**
- * Membrete del laboratorio. El logotipo es la marca de una escala medida:
- * geometría, no una ilustración.
- */
-/**
- * El membrete del índice. Va sobre el mismo campo que la cabecera de página,
+ * El membrete del índice. El logotipo es la marca de una escala medida:
+ * geometría, no una ilustración. Va sobre el mismo campo que la cabecera de página,
  * de modo que la banda oscura recorre todo el borde superior de la aplicación
  * en lugar de aparecer y desaparecer.
  */
@@ -222,7 +219,7 @@ export function AppShell({
           <button
             aria-label="Cerrar menú"
             onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-[rgb(26_25_22/0.4)]"
+            className="absolute inset-0 bg-[rgb(var(--tinta)/0.4)]"
           />
           <div className="absolute inset-y-0 left-0 w-64 border-r border-regla-fuerte shadow-flotante">
             {sidebar}

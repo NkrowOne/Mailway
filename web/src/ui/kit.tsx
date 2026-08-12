@@ -355,7 +355,7 @@ export function Dialogo({
         if (e.target === ref.current) onClose();
       }}
       className="w-[min(520px,calc(100vw-32px))] border border-regla-fuerte bg-hoja p-0 text-tinta
-        shadow-flotante backdrop:bg-[rgb(26_25_22/0.45)] open:animate-aparecer"
+        shadow-flotante backdrop:bg-[rgb(var(--tinta)/0.45)] open:animate-aparecer"
     >
       <div className="regla-cabecera flex items-center justify-between gap-3 px-5 py-3">
         <h2 className="font-estrecha text-md font-semibold uppercase tracking-[0.06em]">{title}</h2>

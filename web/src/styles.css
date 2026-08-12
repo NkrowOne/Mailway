@@ -32,7 +32,6 @@
   --laboratorio: 10 62 69;          /* el campo */
   --laboratorio-hondo: 7 44 49;     /* pie del campo, degradado de membrete */
   --laboratorio-vivo: 0 176 178;    /* acento VIVO sobre el campo oscuro */
-  --laboratorio-tinta: 12 78 86;    /* petróleo legible sobre hoja blanca */
   --laboratorio-claro: 222 238 238;
 
   /* Veredictos clínicos: el ÚNICO color que califica un dato.
@@ -47,7 +46,6 @@
   /* Filetes: la estructura del informe */
   --regla: rgb(22 21 19 / 0.13);
   --regla-fuerte: rgb(22 21 19 / 0.36);
-  --regla-lab: rgb(10 62 69 / 0.32);
 }
 
 @layer base {

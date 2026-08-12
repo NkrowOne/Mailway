@@ -17,7 +17,6 @@ export default {
         laboratorio: 'rgb(var(--laboratorio) / <alpha-value>)',
         'laboratorio-hondo': 'rgb(var(--laboratorio-hondo) / <alpha-value>)',
         'laboratorio-vivo': 'rgb(var(--laboratorio-vivo) / <alpha-value>)',
-        'laboratorio-tinta': 'rgb(var(--laboratorio-tinta) / <alpha-value>)',
         'laboratorio-claro': 'rgb(var(--laboratorio-claro) / <alpha-value>)',
         // Veredictos: el único color que califica un dato.
         normal: 'rgb(var(--normal) / <alpha-value>)',
@@ -31,7 +30,6 @@ export default {
         DEFAULT: 'var(--regla)',
         regla: 'var(--regla)',
         'regla-fuerte': 'var(--regla-fuerte)',
-        'regla-lab': 'var(--regla-lab)',
       },
       fontFamily: {
         ui: ['"Archivo Variable"', 'system-ui', 'sans-serif'],
@@ -53,7 +51,7 @@ export default {
       },
       boxShadow: {
         // Elevación declarada UNA vez: los diálogos flotan; nada más.
-        flotante: '0 18px 48px -20px rgb(26 25 22 / 0.38)',
+        flotante: '0 18px 48px -20px rgb(var(--tinta) / 0.38)',
       },
       keyframes: {
         aparecer: {
