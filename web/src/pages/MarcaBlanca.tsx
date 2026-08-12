@@ -10,51 +10,45 @@ import {
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
-  Barcode,
-  BotonCopiar,
-  Cargando,
   Dialogo,
-  Encabezado,
-  Estado,
-  Etiqueta,
-  Panel,
-  Sello,
+  Hoja,
+  MarcaFondo,
+  Membrete,
+  Midiendo,
+  Muestra,
   Vacio,
+  type Veredicto,
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { formatDate } from '../lib/format';
 
-const statusMeta: Record<
+const estadoMeta: Record<
   WhitelabelStatus,
-  { tone: 'entregado' | 'transito' | 'devuelto' | 'neutro'; label: string; hint: string }
+  { veredicto: Veredicto; etiqueta: string; pista: string }
 > = {
   pending_dns: {
-    tone: 'transito',
-    label: 'Esperando DNS',
-    hint: 'Crea el registro que aparece abajo en tu proveedor de dominios.',
+    veredicto: 'vigilar',
+    etiqueta: 'Esperando DNS',
+    pista: 'Crea el registro que aparece abajo en tu proveedor de dominios.',
   },
   issuing: {
-    tone: 'transito',
-    label: 'Emitiendo certificado',
-    hint: 'El DNS ya apunta aquí. Let\'s Encrypt suele tardar menos de un minuto.',
+    veredicto: 'vigilar',
+    etiqueta: 'Emitiendo certificado',
+    pista: 'El DNS ya apunta aquí. El certificado suele tardar menos de un minuto.',
   },
-  active: {
-    tone: 'entregado',
-    label: 'En marcha',
-    hint: 'El dominio funciona con HTTPS.',
-  },
-  error: { tone: 'devuelto', label: 'Con error', hint: '' },
+  active: { veredicto: 'normal', etiqueta: 'En marcha', pista: 'El dominio funciona con HTTPS.' },
+  error: { veredicto: 'fuera', etiqueta: 'Con error', pista: '' },
 };
 
 /**
- * Dominios propios del cliente (marca blanca): su webmail en su dominio.
- * Mismo mundo que la aduana del dominio de correo — el registro que hay que
- * crear se imprime en etiqueta y el estado queda sellado.
+ * Dominios propios del cliente: su webmail en su dominio, con certificado
+ * automático. El registro que hay que crear se entrega como una muestra
+ * exacta para copiar; el estado es el veredicto de la última medición.
  */
 export default function MarcaBlanca() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [open, setOpen] = useState(false);
+  const [abierto, setAbierto] = useState(false);
   const [hostname, setHostname] = useState('');
   const [nuevo, setNuevo] = useState<{
     domain: ClientDomain;
@@ -66,7 +60,7 @@ export default function MarcaBlanca() {
     queryFn: () => api.get<{ domains: ClientDomain[] }>('/api/whitelabel/domains'),
   });
 
-  const create = useMutation({
+  const crear = useMutation({
     mutationFn: () =>
       api.post<{ domain: ClientDomain; instructions: DnsInstruction[] }>(
         '/api/whitelabel/domains',
@@ -74,7 +68,7 @@ export default function MarcaBlanca() {
       ),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
-      setOpen(false);
+      setAbierto(false);
       setHostname('');
       setNuevo(data);
     },
@@ -82,50 +76,44 @@ export default function MarcaBlanca() {
       toast('error', err instanceof ApiError ? err.message : 'No se pudo añadir el dominio.'),
   });
 
-  if (domains.isLoading) return <Cargando label="Cargando dominios…" />;
+  if (domains.isLoading) return <Midiendo label="Cargando dominios…" />;
 
-  const list = domains.data?.domains ?? [];
+  const lista = domains.data?.domains ?? [];
 
   return (
     <>
-      <Encabezado
+      <Membrete
         title="Marca blanca"
         meta="Sirve el webmail en el dominio de tu cliente, con su propio certificado."
         actions={
-          <Button variant="accion" onClick={() => setOpen(true)}>
+          <Button variant="tinta" onClick={() => setAbierto(true)}>
             Añadir dominio
           </Button>
         }
       />
 
-      {list.length === 0 ? (
-        <Panel>
-          <Vacio
-            title="Todavía no hay dominios propios"
-            action={
-              <Button variant="accion" onClick={() => setOpen(true)}>
-                Añadir dominio
-              </Button>
-            }
-          >
+      {lista.length === 0 ? (
+        <Hoja>
+          <Vacio title="Todavía no hay dominios propios">
             Por defecto tus clientes entran al webmail por la dirección general del servidor.
-            Añade aquí un dominio suyo —por ejemplo <span className="font-guia">webmail.suempresa.com</span>—
-            y entrarán por una dirección con su propia marca.
+            Añade aquí un dominio suyo —por ejemplo{' '}
+            <span className="valor">webmail.suempresa.com</span>— y entrarán por una dirección
+            con su propia marca.
           </Vacio>
-        </Panel>
+        </Hoja>
       ) : (
-        <div className="flex flex-col gap-3">
-          {list.map((domain) => (
-            <TarjetaDominio key={domain.id} domain={domain} />
+        <div className="flex flex-col gap-4">
+          {lista.map((domain) => (
+            <FichaDominio key={domain.id} domain={domain} />
           ))}
         </div>
       )}
 
-      <Dialogo open={open} onClose={() => setOpen(false)} title="Añadir dominio propio">
+      <Dialogo open={abierto} onClose={() => setAbierto(false)} title="Añadir dominio propio">
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            create.mutate();
+            crear.mutate();
           }}
           className="flex flex-col gap-4"
         >
@@ -139,15 +127,15 @@ export default function MarcaBlanca() {
             autoFocus
             required
           />
-          <p className="text-sm text-tinta-2">
+          <p className="text-base text-tinta-2">
             Después tendrás que crear un registro en tu proveedor de DNS. Te lo damos hecho en el
             paso siguiente.
           </p>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="fantasma" onClick={() => setOpen(false)}>
+            <Button type="button" variant="plano" onClick={() => setAbierto(false)}>
               Cancelar
             </Button>
-            <Button type="submit" variant="accion" busy={create.isPending}>
+            <Button type="submit" variant="tinta" busy={crear.isPending}>
               Añadir
             </Button>
           </div>
@@ -161,16 +149,16 @@ export default function MarcaBlanca() {
       >
         {nuevo && (
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-tinta-2">
+            <p className="text-base text-tinta-2">
               Copia este registro en el panel de tu proveedor de dominios. Cuando esté puesto,
-              pulsa «Comprobar» en la tarjeta del dominio.
+              pulsa «Comprobar» en la ficha del dominio.
             </p>
             {nuevo.instructions
               .filter((i) => i.recommended)
               .map((i) => (
-                <InstruccionDns key={i.type} instruction={i} />
+                <RegistroDns key={i.type} instruccion={i} />
               ))}
-            <Button variant="accion" onClick={() => setNuevo(null)}>
+            <Button variant="tinta" onClick={() => setNuevo(null)}>
               Entendido
             </Button>
           </div>
@@ -180,57 +168,43 @@ export default function MarcaBlanca() {
   );
 }
 
-function InstruccionDns({ instruction }: { instruction: DnsInstruction }) {
+function RegistroDns({ instruccion }: { instruccion: DnsInstruction }) {
   return (
-    <Etiqueta className="p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-rotulo text-sm font-semibold uppercase tracking-wide opacity-70">
-            Registro {instruction.type}
-          </div>
-          <dl className="mt-1.5 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm">
-            <dt className="opacity-60">Nombre</dt>
-            <dd className="font-guia break-all">{instruction.name}</dd>
-            <dt className="opacity-60">Valor</dt>
-            <dd className="font-guia break-all">{instruction.value}</dd>
-          </dl>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <BotonCopiar text={instruction.value} label="Copiar" />
-          {/* El código de barras identifica la etiqueta, pero en móvil roba
-              ancho al dato que hay que copiar: ahí no aporta. */}
-          <Barcode
-            seed={instruction.name}
-            className="hidden text-[rgb(var(--etiqueta-tinta))] sm:flex"
-          />
-        </div>
-      </div>
-      <p className="mt-2 border-t border-[rgb(var(--etiqueta-borde))] pt-2 text-sm opacity-70">
-        {instruction.help}
-      </p>
-    </Etiqueta>
+    <Muestra rotulo={`Registro ${instruccion.type}`} copiar={instruccion.value}>
+      <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-base">
+        <dt className="rotulo self-baseline">Nombre</dt>
+        {/* Desplazamiento horizontal, nunca partir el valor a mitad de palabra:
+            un DNS mal copiado no falla, funciona mal. */}
+        <dd className="valor overflow-x-auto whitespace-nowrap text-tinta">{instruccion.name}</dd>
+        <dt className="rotulo self-baseline">Valor</dt>
+        <dd className="valor overflow-x-auto whitespace-nowrap text-tinta">{instruccion.value}</dd>
+      </dl>
+      <p className="mt-2 text-sm text-tinta-2">{instruccion.help}</p>
+    </Muestra>
   );
 }
 
-function TarjetaDominio({ domain }: { domain: ClientDomain }) {
+function FichaDominio({ domain }: { domain: ClientDomain }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const meta = statusMeta[domain.status];
+  const meta = estadoMeta[domain.status];
 
-  const detail = useQuery({
+  const detalle = useQuery({
     queryKey: ['whitelabel-domain', domain.id],
     queryFn: () =>
       api.get<{ domain: ClientDomain; instructions: DnsInstruction[] }>(
         `/api/whitelabel/domains/${domain.id}`,
       ),
+    // Las instrucciones solo dependen del servidor y del hostname: no cambian
+    // mientras la ficha está abierta.
+    staleTime: 5 * 60_000,
   });
 
-  const verify = useMutation({
+  const comprobar = useMutation({
     mutationFn: () =>
       api.post<{ domain: ClientDomain }>(`/api/whitelabel/domains/${domain.id}/verify`),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
-      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domain', domain.id] });
       if (data.domain.status === 'active') {
         toast('ok', `¡${data.domain.hostname} ya funciona con HTTPS!`);
       } else {
@@ -241,7 +215,7 @@ function TarjetaDominio({ domain }: { domain: ClientDomain }) {
       toast('error', err instanceof ApiError ? err.message : 'No se pudo comprobar.'),
   });
 
-  const remove = useMutation({
+  const borrar = useMutation({
     mutationFn: () => api.delete(`/api/whitelabel/domains/${domain.id}`),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
@@ -251,34 +225,26 @@ function TarjetaDominio({ domain }: { domain: ClientDomain }) {
       toast('error', err instanceof ApiError ? err.message : 'No se pudo eliminar.'),
   });
 
-  const instructions = detail.data?.instructions ?? [];
+  const instrucciones = detalle.data?.instructions ?? [];
 
   return (
-    <Panel>
-      {/* Cabecera propia (no la de Panel) para que en móvil el dominio tenga
-          su propia línea: con title/actions en una fila el nombre se colapsa
-          a cero y la tarjeta deja de identificar de qué dominio habla. */}
-      <div className="mb-3 flex flex-col gap-3 border-b border-suave pb-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <Barcode seed={domain.hostname} className="hidden shrink-0 text-tinta-3 sm:flex" />
-          <span className="truncate font-guia text-md text-tinta">{domain.hostname}</span>
-        </div>
+    <Hoja>
+      {/* El dominio en su propia línea: en móvil es lo que identifica la ficha
+          y no puede quedar comprimido por las acciones. */}
+      <div className="regla-cabecera mb-3 flex flex-col gap-3 pb-3 sm:flex-row sm:items-baseline sm:justify-between">
+        <span className="valor min-w-0 break-words text-md text-tinta">{domain.hostname}</span>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {domain.status === 'active' ? (
-            <Sello tone="entregado">En marcha</Sello>
-          ) : (
-            <Estado tone={meta.tone}>{meta.label}</Estado>
-          )}
+          <MarcaFondo veredicto={meta.veredicto}>{meta.etiqueta}</MarcaFondo>
           {domain.status !== 'active' && (
-            <Button variant="chasis" busy={verify.isPending} onClick={() => verify.mutate()}>
+            <Button variant="perfil" busy={comprobar.isPending} onClick={() => comprobar.mutate()}>
               Comprobar
             </Button>
           )}
           <Button
-            variant="fantasma"
+            variant="plano"
             onClick={() => {
               if (confirm(`¿Eliminar ${domain.hostname}? Dejará de funcionar en unos segundos.`)) {
-                remove.mutate();
+                borrar.mutate();
               }
             }}
           >
@@ -287,16 +253,16 @@ function TarjetaDominio({ domain }: { domain: ClientDomain }) {
         </div>
       </div>
 
-      <p className="text-sm text-tinta-2">{domain.detail || meta.hint}</p>
+      <p className="text-base text-tinta-2">{domain.detail || meta.pista}</p>
 
       {domain.status === 'active' ? (
-        <p className="mt-3 text-sm text-tinta-2">
+        <p className="mt-2 text-base text-tinta-2">
           Tus clientes ya pueden entrar en{' '}
           <a
             href={`https://${domain.hostname}`}
             target="_blank"
             rel="noreferrer"
-            className="font-guia text-accion underline underline-offset-2"
+            className="valor text-laboratorio underline underline-offset-2"
           >
             https://{domain.hostname}
           </a>
@@ -305,14 +271,14 @@ function TarjetaDominio({ domain }: { domain: ClientDomain }) {
           )}
         </p>
       ) : (
-        instructions.length > 0 && (
-          <div className="mt-3 flex flex-col gap-2">
-            {instructions.map((i) => (
-              <InstruccionDns key={i.type} instruction={i} />
+        instrucciones.length > 0 && (
+          <div className="mt-3 flex flex-col gap-3">
+            {instrucciones.map((i) => (
+              <RegistroDns key={i.type} instruccion={i} />
             ))}
           </div>
         )
       )}
-    </Panel>
+    </Hoja>
   );
 }

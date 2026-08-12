@@ -3,9 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Alias as AliasType, type DomainRecord, type Mailbox } from '../lib/api';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Cargando, Dialogo, Encabezado, Panel, Vacio } from '../ui/kit';
+import { Dialogo, Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { plural } from '../lib/format';
 
+/**
+ * Alias: tabla reglada de dos columnas de valores — la dirección que recibe y
+ * los buzones a los que reparte.
+ */
 export default function Alias() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -71,12 +76,19 @@ export default function Alias() {
 
   return (
     <>
-      <Encabezado
+      <Membrete
         title="Alias"
-        meta="Direcciones de reenvío: lo que llega a un alias se reparte a buzones reales."
+        meta={
+          <>
+            <p>Direcciones de reenvío: lo que llega a un alias se reparte a buzones reales.</p>
+            {!aliases.isPending && list.length > 0 && (
+              <p className="rotulo mt-1.5">{plural(list.length, 'alias', 'alias')} en servicio</p>
+            )}
+          </>
+        }
         actions={
           <Button
-            variant="accion"
+            variant="tinta"
             disabled={domainList.length === 0 || mailboxOptions.length === 0}
             onClick={() => {
               setDomainId(domainList[0]?.id ?? '');
@@ -89,38 +101,54 @@ export default function Alias() {
       />
 
       {aliases.isPending ? (
-        <Cargando />
+        <Hoja flush>
+          <Midiendo label="Midiendo alias…" />
+        </Hoja>
       ) : list.length === 0 ? (
-        <Panel>
+        <Hoja flush>
           <Vacio title="Sin alias todavía">
             Un alias como ventas@tudominio.com puede repartir a varios buzones a la vez,
             sin ocupar plaza de buzón. Necesitas al menos un buzón de destino.
           </Vacio>
-        </Panel>
+        </Hoja>
       ) : (
-        <Panel flush>
-          <ul>
-            {list.map((alias) => (
-              <li
-                key={alias.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-suave px-4 py-2.5 last:border-0"
-              >
-                <span className="min-w-0 flex-1 truncate font-guia text-sm text-tinta">{alias.email}</span>
-                <span aria-hidden className="text-accion">
-                  <svg viewBox="0 0 16 12" className="h-2.5 w-3.5">
-                    <path d="M1 1l5 5-5 5M8 1l5 5-5 5" stroke="currentColor" strokeWidth="1.8" fill="none" />
-                  </svg>
-                </span>
-                <span className="min-w-0 flex-[2] truncate text-sm text-tinta-2">
-                  {alias.destinations.join(', ')}
-                </span>
-                <Button variant="peligro" className="h-8 px-2.5 text-sm" onClick={() => setToDelete(alias)}>
+        <Hoja flush>
+          <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 sm:flex">
+            <span className="rotulo min-w-0 grow basis-0">Alias</span>
+            <span className="rotulo min-w-0 grow-[1.4] basis-0">Reparte a</span>
+            <span className="rotulo shrink-0 text-right">Acciones</span>
+          </div>
+
+          {list.map((alias) => (
+            <div
+              key={alias.id}
+              className="regla-fila flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-2.5
+                transition-colors duration-100 last:border-b-0 hover:bg-hoja-2"
+            >
+              {/* La dirección identifica la fila: línea propia en móvil, sin truncar. */}
+              <p className="valor min-w-0 grow basis-full break-all text-base text-tinta sm:basis-0">
+                {alias.email}
+              </p>
+
+              <div className="min-w-0 grow-[1.4] basis-full sm:basis-0">
+                <span className="rotulo sm:hidden">Reparte a</span>
+                <ul>
+                  {alias.destinations.map((destination) => (
+                    <li key={destination} className="valor break-all text-sm text-tinta-2">
+                      {destination}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="flex w-full justify-end sm:w-auto">
+                <Button variant="peligro" className="px-2" onClick={() => setToDelete(alias)}>
                   Eliminar
                 </Button>
-              </li>
-            ))}
-          </ul>
-        </Panel>
+              </div>
+            </div>
+          ))}
+        </Hoja>
       )}
 
       <Dialogo open={open} onClose={() => setOpen(false)} title="Crear alias">
@@ -132,18 +160,25 @@ export default function Alias() {
               </option>
             ))}
           </Select>
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <Input label="Nombre del alias" required mono value={localPart} onChange={(e) => setLocalPart(e.target.value)} placeholder="ventas" />
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[10rem] flex-1">
+              <Input
+                label="Nombre del alias"
+                required
+                mono
+                value={localPart}
+                onChange={(e) => setLocalPart(e.target.value)}
+                placeholder="ventas"
+              />
             </div>
-            <span className="pb-2 font-guia text-sm text-tinta-3">
+            <span className="valor break-all pb-2.5 text-sm text-tinta-3">
               @{domainList.find((d) => d.id === domainId)?.domain || '…'}
             </span>
           </div>
           <div className="flex flex-col gap-2">
             {destinations.map((dest, i) => (
-              <div key={i} className="flex items-end gap-2">
-                <div className="flex-1">
+              <div key={i} className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[10rem] flex-1">
                   <Select
                     label={i === 0 ? 'Reparte a' : `Destino ${i + 1}`}
                     required={i === 0}
@@ -165,8 +200,7 @@ export default function Alias() {
                 {destinations.length > 1 && (
                   <Button
                     type="button"
-                    variant="fantasma"
-                    className="h-9"
+                    variant="plano"
                     aria-label={`Quitar destino ${i + 1}`}
                     onClick={() => setDestinations(destinations.filter((_, j) => j !== i))}
                   >
@@ -176,21 +210,29 @@ export default function Alias() {
               </div>
             ))}
             {destinations.length < 10 && (
-              <Button type="button" variant="fantasma" className="self-start" onClick={() => setDestinations([...destinations, ''])}>
+              <Button
+                type="button"
+                variant="plano"
+                className="self-start px-2"
+                onClick={() => setDestinations([...destinations, ''])}
+              >
                 Añadir otro destino
               </Button>
             )}
           </div>
           {error && (
-            <p role="alert" className="rounded border border-[rgb(var(--devuelto)/0.4)] bg-[rgb(var(--devuelto)/0.08)] px-3 py-2 text-sm text-devuelto">
+            <p
+              role="alert"
+              className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
+            >
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="fantasma" onClick={() => setOpen(false)}>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="plano" onClick={() => setOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" variant="accion" busy={create.isPending}>
+            <Button type="submit" variant="tinta" busy={create.isPending}>
               Crear alias
             </Button>
           </div>
@@ -200,12 +242,14 @@ export default function Alias() {
       <Dialogo open={toDelete !== null} onClose={() => setToDelete(null)} title="Eliminar alias">
         {toDelete && (
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-tinta-2">
-              El alias <strong className="break-all font-guia text-tinta">{toDelete.email}</strong>{' '}
+            <p className="text-base text-tinta-2">
+              El alias <strong className="valor break-all font-medium text-tinta">{toDelete.email}</strong>{' '}
               dejará de repartir correo. Los buzones de destino no se tocan.
             </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="fantasma" onClick={() => setToDelete(null)}>Cancelar</Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="plano" onClick={() => setToDelete(null)}>
+                Cancelar
+              </Button>
               <Button variant="peligro" busy={remove.isPending} onClick={() => remove.mutate(toDelete)}>
                 Eliminar
               </Button>

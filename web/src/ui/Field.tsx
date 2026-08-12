@@ -20,12 +20,12 @@ export function FieldWrap({ label, help, error, children }: FieldWrapProps) {
   const helpId = help || error ? `${id}-help` : undefined;
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-tinta-2">
+      <label htmlFor={id} className="rotulo">
         {label}
       </label>
       {children(id, helpId)}
       {error ? (
-        <p id={helpId} className="text-sm text-devuelto">
+        <p id={helpId} className="text-sm text-fuera">
           {error}
         </p>
       ) : help ? (
@@ -37,10 +37,11 @@ export function FieldWrap({ label, help, error, children }: FieldWrapProps) {
   );
 }
 
+// Casilla de formulario impreso: filete perimetral fino, fondo de hoja.
 const controlBase =
-  'h-9 w-full rounded border border-suave bg-cinta px-3 text-base text-tinta ' +
+  'h-9 w-full border border-regla bg-hoja px-2.5 text-base text-tinta ' +
   'placeholder:text-tinta-3 transition-colors duration-100 ' +
-  'hover:border-fuerte focus:border-fuerte disabled:opacity-40';
+  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] disabled:opacity-35';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -61,7 +62,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           id={id}
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
-          className={`${controlBase} ${mono ? 'font-guia text-sm' : ''} ${className}`}
+          className={`${controlBase} ${mono ? 'valor text-sm' : ''} ${className}`}
           {...rest}
         />
       )}

@@ -6,7 +6,7 @@ import { fireAlert, resolveAlert } from './alerts';
 import { listDomains, refreshDomainDns } from './domains';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
-import { listClientDomains, refreshClientDomain } from './whitelabel';
+import { listClientDomains, refreshClientDomain, type ClientDomain } from './whitelabel';
 
 /**
  * Vigilante de fondo: comprueba periódicamente que todo sigue en pie y abre
@@ -188,37 +188,58 @@ async function checkWhitelabelDomains(): Promise<void> {
   if (!due('whitelabel', 10 * 60_000)) return;
   markRun('whitelabel');
 
-  for (const domain of listClientDomains()) {
+  // Se refrescan también los ya activos: un dominio verificado puede
+  // romperse (le cambian el DNS, caduca el certificado) y si solo miráramos
+  // los que están emitiendo, esa regresión sería invisible.
+  const vigilados = listClientDomains().filter(
+    (d) => d.status === 'issuing' || d.status === 'active',
+  );
+  // En lotes: son sondas de red y en serie el ciclo se bloquea minutos.
+  for (let i = 0; i < vigilados.length; i += 6) {
+    await Promise.allSettled(vigilados.slice(i, i + 6).map((d) => reviewWhitelabelDomain(d)));
+  }
+}
+
+async function reviewWhitelabelDomain(domain: ClientDomain): Promise<void> {
+  try {
+    const updated = await refreshClientDomain(domain.id);
+    if (updated.status === 'active') {
+      resolveAlert(`whitelabel:${domain.id}`, {
+        notify: true,
+        what: `certificado de ${domain.hostname}`,
+      });
+      return;
+    }
+    // Un dominio que ESTABA activo y ha dejado de estarlo es una avería en
+    // producción: el webmail de ese cliente ya no responde.
     if (domain.status === 'active') {
-      resolveAlert(`whitelabel:${domain.id}`, { notify: false });
-      continue;
+      fireAlert({
+        severity: 'critical',
+        type: 'whitelabel_broken',
+        dedupeKey: `whitelabel:${domain.id}`,
+        clientId: domain.clientId,
+        title: `${domain.hostname} ha dejado de funcionar`,
+        message: `Este dominio funcionaba y ahora no responde. ${updated.detail}`,
+        remedy:
+          'Lo más habitual es que hayan tocado el DNS del dominio. Comprueba en el panel qué registro pide y que siga apuntando al servidor.',
+      });
+      return;
     }
-    if (domain.status !== 'issuing') continue;
-    try {
-      const updated = await refreshClientDomain(domain.id);
-      if (updated.status === 'active') {
-        resolveAlert(`whitelabel:${domain.id}`, {
-          notify: true,
-          what: `certificado de ${domain.hostname}`,
-        });
-        continue;
-      }
-      // Lleva demasiado tiempo esperando certificado: algo no encaja.
-      if (now() - domain.createdAt > STUCK_AFTER_MS) {
-        fireAlert({
-          severity: 'warning',
-          type: 'whitelabel_stuck',
-          dedupeKey: `whitelabel:${domain.id}`,
-          clientId: domain.clientId,
-          title: `${domain.hostname} lleva más de 30 minutos sin certificado`,
-          message: `El DNS apunta bien, pero Traefik no consigue emitir el certificado. Último detalle: ${updated.detail}`,
-          remedy:
-            'Comprueba que Traefik tiene configurado el sondeo a Mailway (Ajustes → Marca blanca muestra la línea exacta) y que el puerto 80 está abierto: Let\'s Encrypt lo necesita para validar el dominio.',
-        });
-      }
-    } catch {
-      // se reintenta en la siguiente vuelta
+    // Lleva demasiado tiempo esperando certificado: algo no encaja.
+    if (now() - domain.createdAt > STUCK_AFTER_MS) {
+      fireAlert({
+        severity: 'warning',
+        type: 'whitelabel_stuck',
+        dedupeKey: `whitelabel:${domain.id}`,
+        clientId: domain.clientId,
+        title: `${domain.hostname} lleva más de 30 minutos sin certificado`,
+        message: `El DNS apunta bien, pero Traefik no consigue emitir el certificado. Último detalle: ${updated.detail}`,
+        remedy:
+          'Comprueba que Traefik tiene configurado el sondeo a Mailway (Ajustes → Marca blanca muestra la línea exacta) y que el puerto 80 está abierto: Let\'s Encrypt lo necesita para validar el dominio.',
+      });
     }
+  } catch {
+    // se reintenta en la siguiente vuelta
   }
 }
 
@@ -231,9 +252,10 @@ export async function runWatchdogOnce(): Promise<void> {
   if (running) return; // una vuelta lenta no debe solaparse con la siguiente
   running = true;
   try {
-    await checkEngine();
-    await checkQueue();
-    await checkWebmail();
+    // Las tres rápidas son independientes: en serie sumaban sus tiempos de
+    // espera y, con el webmail caído, la vuelta tardaba 10 s de más.
+    await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);
+    // Las lentas van después y ya se autolimitan por frecuencia.
     await checkBlacklists();
     await checkDomainDns();
     await checkWhitelabelDomains();

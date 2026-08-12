@@ -135,8 +135,13 @@ export function dnsInstructions(hostname: string): DnsInstruction[] {
 
 /* --------------------------- Comprobaciones ------------------------------- */
 
+/**
+ * Tres estados, no dos. `unknown` («no se pudo consultar») NO es lo mismo que
+ * `failed` («el registro no está o apunta a otro sitio»): confundirlos hace
+ * que un corte de red pase por avería del cliente.
+ */
 interface DnsCheckResult {
-  ok: boolean;
+  status: 'ok' | 'failed' | 'unknown';
   detail: string;
 }
 
@@ -148,7 +153,7 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
   const instance = getInstanceSettings();
   if (!instance.publicIp) {
     return {
-      ok: false,
+      status: 'unknown',
       detail:
         'Falta la IP pública del servidor en Ajustes: sin ella no se puede comprobar si el dominio apunta aquí.',
     };
@@ -156,7 +161,7 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
   const ips = await lookupA(hostname);
   if (ips === null) {
     return {
-      ok: false,
+      status: 'unknown',
       detail: 'No se pudo consultar el DNS ahora mismo. Vuelve a intentarlo en un minuto.',
     };
   }
@@ -164,22 +169,22 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
     const cname = await lookupCname(hostname);
     if (cname && cname.length > 0) {
       return {
-        ok: false,
+        status: 'failed',
         detail: `El dominio apunta a ${cname.join(', ')}, pero ese nombre todavía no resuelve a ninguna IP.`,
       };
     }
     return {
-      ok: false,
+      status: 'failed',
       detail: 'El dominio todavía no existe en el DNS. Crea el registro y espera unos minutos.',
     };
   }
   if (!ips.includes(instance.publicIp)) {
     return {
-      ok: false,
+      status: 'failed',
       detail: `El dominio apunta a ${ips.join(', ')} en lugar de a ${instance.publicIp}. Corrige el registro.`,
     };
   }
-  return { ok: true, detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
+  return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
 }
 
 /**
@@ -187,12 +192,12 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
  * una petición HTTPS real: si el certificado aún no está emitido, falla el
  * handshake y sabemos que sigue en proceso.
  */
-async function checkHttps(hostname: string): Promise<DnsCheckResult> {
+async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: string }> {
   try {
     const res = await fetch(`https://${hostname}/`, {
       method: 'HEAD',
       redirect: 'manual',
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(8000),
     });
     return {
       ok: true,
@@ -231,27 +236,32 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   const domain = getClientDomain(id);
   const dns = await checkDns(domain.hostname);
 
-  if (!dns.ok) {
-    db.prepare(
-      `UPDATE client_domains SET status = 'pending_dns', detail = ?, last_checked_at = ? WHERE id = ?`,
-    ).run(dns.detail, now(), id);
+  // Un DNS no concluyente (corte de red, resolutor lento) NO degrada el
+  // dominio: si lo hiciera, saldría de la configuración de Traefik y el
+  // webmail del cliente devolvería 404 por un fallo que no es suyo.
+  if (dns.status === 'unknown') {
+    db.prepare('UPDATE client_domains SET detail = ?, last_checked_at = ? WHERE id = ?').run(
+      dns.detail,
+      now(),
+      id,
+    );
     return getClientDomain(id);
   }
 
-  // DNS correcto: a partir de aquí el dominio ya se publica a Traefik, que
-  // pedirá el certificado en su siguiente sondeo.
-  const https = await checkHttps(domain.hostname);
-  if (https.ok) {
-    db.prepare(
-      `UPDATE client_domains SET status = 'active', detail = ?, last_checked_at = ?,
-         activated_at = COALESCE(activated_at, ?) WHERE id = ?`,
-    ).run(https.detail, now(), now(), id);
-  } else {
-    db.prepare(
-      `UPDATE client_domains SET status = 'issuing', detail = ?, last_checked_at = ? WHERE id = ?`,
-    ).run(https.detail, now(), id);
-  }
-  return getClientDomain(id);
+  // Si el DNS falla de forma definitiva, o si aún no sirve por HTTPS, el
+  // estado se calcula de una vez y se escribe con una sola sentencia.
+  const check = dns.status === 'ok' ? await checkHttps(domain.hostname) : { ok: false, detail: dns.detail };
+  const status: DomainStatus =
+    dns.status === 'failed' ? 'pending_dns' : check.ok ? 'active' : 'issuing';
+
+  const row = db
+    .prepare(
+      `UPDATE client_domains SET status = ?, detail = ?, last_checked_at = ?,
+         activated_at = COALESCE(activated_at, CASE WHEN ? = 'active' THEN ? END)
+       WHERE id = ? RETURNING *`,
+    )
+    .get(status, check.detail, now(), status, now(), id) as DomainRow;
+  return toDomain(row);
 }
 
 /* ------------------ Configuración dinámica para Traefik ------------------- */

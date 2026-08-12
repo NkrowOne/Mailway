@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { api, type SetupStatus, type User } from './lib/api';
 import { AppShell } from './shell/AppShell';
-import { Cargando } from './ui/kit';
+import { Midiendo } from './ui/kit';
 import Login from './pages/Login';
 import Setup from './pages/Setup';
 import PanelAdmin from './pages/admin/PanelAdmin';
@@ -34,7 +34,7 @@ export default function App() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Cargando label="Arrancando la central…" />
+        <Midiendo label="Preparando el informe…" />
       </div>
     );
   }

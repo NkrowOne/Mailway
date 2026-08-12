@@ -1,30 +1,51 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-/* ------------------------------- Panel ------------------------------------ */
+/*
+  Primitivas del informe de laboratorio.
 
-export function Panel({
+  Reglas del mundo:
+  - La estructura la llevan los FILETES, no las cajas ni las sombras.
+  - El color solo aparece para calificar un valor (veredicto). Nunca decora.
+  - Todo lo medido o copiable va en cifras tabulares (clase .valor).
+*/
+
+/* ------------------------------- Hoja ------------------------------------- */
+
+/**
+ * La hoja del informe. Fondo blanco sobre la mesa, filete perimetral fino y
+ * cabecera separada por regla pesada — como una sección de un parte impreso.
+ */
+export function Hoja({
   title,
+  meta,
   actions,
   children,
   className = '',
   flush = false,
 }: {
   title?: ReactNode;
+  /** Línea de contexto a la derecha del título (fecha de medición, recuento). */
+  meta?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
   flush?: boolean;
 }) {
   return (
-    <section className={`rounded-md border border-suave bg-chasis ${className}`}>
+    <section className={`border border-regla bg-hoja ${className}`}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 border-b border-suave px-4 py-2.5">
-          {typeof title === 'string' ? (
-            <h2 className="font-rotulo text-md font-semibold tracking-wide text-tinta">{title}</h2>
-          ) : (
-            title
-          )}
-          {actions}
+        <header className="regla-cabecera flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 px-4 py-3">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            {typeof title === 'string' ? (
+              <h2 className="font-estrecha text-md font-semibold uppercase tracking-[0.06em] text-tinta">
+                {title}
+              </h2>
+            ) : (
+              title
+            )}
+            {meta && <span className="text-sm text-tinta-3">{meta}</span>}
+          </div>
+          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
         </header>
       )}
       <div className={flush ? '' : 'p-4'}>{children}</div>
@@ -32,142 +53,264 @@ export function Panel({
   );
 }
 
-/* ------------------------------- Sello ------------------------------------ */
+/* ------------------------------ Veredicto --------------------------------- */
 
-type SelloTone = 'entregado' | 'transito' | 'devuelto' | 'neutro';
+export type Veredicto = 'normal' | 'vigilar' | 'fuera' | 'sin-dato';
 
-const selloTones: Record<SelloTone, string> = {
-  entregado: 'text-entregado border-[rgb(var(--entregado)/0.55)]',
-  transito: 'text-transito border-[rgb(var(--transito)/0.55)]',
-  devuelto: 'text-devuelto border-[rgb(var(--devuelto)/0.55)]',
-  neutro: 'text-tinta-3 border-fuerte',
+const veredictoTexto: Record<Veredicto, string> = {
+  normal: 'En rango',
+  vigilar: 'Vigilar',
+  fuera: 'Fuera de rango',
+  'sin-dato': 'Sin dato',
 };
 
-/** Estado sellado como un tampón de aduana: los estados no desaparecen. */
-export function Sello({
-  tone,
-  children,
-  stamped = false,
-}: {
-  tone: SelloTone;
-  children: ReactNode;
-  stamped?: boolean;
-}) {
-  return (
-    <span
-      className={`inline-block -rotate-[8deg] select-none whitespace-nowrap rounded-sm border-2 px-1.5
-        font-rotulo text-micro font-semibold uppercase tracking-[0.12em]
-        ${selloTones[tone]} ${stamped ? 'animate-sello' : ''}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-/* ------------------------------ Estado pill ------------------------------- */
-
-const estadoTones: Record<SelloTone, string> = {
-  entregado: 'bg-[rgb(var(--entregado)/0.12)] text-entregado',
-  transito: 'bg-[rgb(var(--transito)/0.12)] text-transito',
-  devuelto: 'bg-[rgb(var(--devuelto)/0.12)] text-devuelto',
-  neutro: 'bg-chasis-2 text-tinta-3',
+const veredictoColor: Record<Veredicto, string> = {
+  normal: 'text-normal',
+  vigilar: 'text-vigilar',
+  fuera: 'text-fuera',
+  'sin-dato': 'text-tinta-3',
 };
 
-export function Estado({ tone, children }: { tone: SelloTone; children: ReactNode }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5
-        text-sm font-medium ${estadoTones[tone]}`}
-    >
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
-      {children}
-    </span>
-  );
-}
-
-/* ---------------------------- Medidor de carga ---------------------------- */
+const veredictoFondo: Record<Veredicto, string> = {
+  normal: 'bg-normal-fondo text-normal',
+  vigilar: 'bg-vigilar-fondo text-vigilar',
+  fuera: 'bg-fuera-fondo text-fuera',
+  'sin-dato': 'bg-hoja-3 text-tinta-3',
+};
 
 /**
- * Medidor de bodega: uso frente a límite del plan con marcas de graduación,
- * como el indicador de carga de un contenedor.
+ * Marca de veredicto en el margen, como la columna de banderas de un análisis.
+ * El glifo es geometría dibujada, no un emoji ni un carácter suelto.
  */
-export function Medidor({
+export function Marca({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap font-estrecha text-micro
+        font-semibold uppercase tracking-[0.08em] ${veredictoColor[veredicto]}`}
+    >
+      <GlifoVeredicto veredicto={veredicto} />
+      {children ?? veredictoTexto[veredicto]}
+    </span>
+  );
+}
+
+/** Igual que la marca, pero sobre fondo teñido para listados densos. */
+export function MarcaFondo({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5
+        font-estrecha text-micro font-semibold uppercase tracking-[0.08em]
+        ${veredictoFondo[veredicto]}`}
+    >
+      <GlifoVeredicto veredicto={veredicto} />
+      {children ?? veredictoTexto[veredicto]}
+    </span>
+  );
+}
+
+function GlifoVeredicto({ veredicto }: { veredicto: Veredicto }) {
+  // Un solo trazo, un solo peso, en la gramática del instrumento.
+  return (
+    <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 shrink-0" aria-hidden>
+      {veredicto === 'normal' && (
+        <path d="M1 5.4L3.8 8 9 2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      )}
+      {veredicto === 'fuera' && (
+        <path d="M2 2l6 6M8 2l-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      )}
+      {veredicto === 'vigilar' && (
+        <path d="M5 1.4v4.4M5 8.2v.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      )}
+      {veredicto === 'sin-dato' && (
+        <path d="M1.6 5h6.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      )}
+    </svg>
+  );
+}
+
+/* -------------------------------- Medida ---------------------------------- */
+
+/**
+ * LA firma del mundo: un valor medido junto a su rango de referencia y su
+ * veredicto. Es la fila del análisis, y sirve igual para el uso del plan, la
+ * puntuación de entregabilidad, la cola de salida o un registro DNS.
+ */
+export function Medida({
+  concepto,
+  valor,
+  unidad,
+  referencia,
+  veredicto,
+  nota,
+}: {
+  concepto: string;
+  valor: ReactNode;
+  unidad?: string;
+  /** Qué se considera normal. Es lo que convierte un número en un diagnóstico. */
+  referencia?: string;
+  veredicto: Veredicto;
+  nota?: ReactNode;
+}) {
+  return (
+    <div className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 last:border-b-0">
+      <span className="min-w-0 flex-1 basis-40 text-base text-tinta">{concepto}</span>
+      <span className="valor shrink-0 text-md font-medium text-tinta">
+        {valor}
+        {unidad && <span className="ml-1.5 text-sm text-tinta-3">{unidad}</span>}
+      </span>
+      {referencia && (
+        <span className="valor shrink-0 basis-28 text-sm text-tinta-3">{referencia}</span>
+      )}
+      <span className="shrink-0 basis-32 text-right">
+        <Marca veredicto={veredicto} />
+      </span>
+      {nota && <p className="w-full text-sm text-tinta-2">{nota}</p>}
+    </div>
+  );
+}
+
+/**
+ * Cabecera de las columnas de una tabla de mediciones. Se pone una vez encima
+ * de un grupo de <Medida>, para que los números tengan nombre.
+ */
+export function CabeceraMedidas({
+  referencia = true,
+}: {
+  referencia?: boolean;
+}) {
+  return (
+    <div className="regla-cabecera flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-1.5">
+      <span className="rotulo min-w-0 flex-1 basis-40">Concepto</span>
+      <span className="rotulo shrink-0">Valor</span>
+      {referencia && <span className="rotulo shrink-0 basis-28">Referencia</span>}
+      <span className="rotulo shrink-0 basis-32 text-right">Veredicto</span>
+    </div>
+  );
+}
+
+/* --------------------------------- Barra ---------------------------------- */
+
+/**
+ * Medición con escala: uso frente al límite del plan. La marca de referencia
+ * al 80 % avisa antes de agotarlo, como el límite superior de un rango.
+ */
+export function Escala({
   label,
-  used,
-  max,
-  unit = '',
+  usado,
+  maximo,
+  unidad = '',
 }: {
   label: string;
-  used: number;
-  max: number;
-  unit?: string;
+  usado: number;
+  maximo: number;
+  unidad?: string;
 }) {
-  const ratio = max > 0 ? Math.min(1, used / max) : 0;
-  const full = ratio >= 1;
-  const near = ratio >= 0.8 && !full;
+  const ratio = maximo > 0 ? Math.min(1, usado / maximo) : 0;
+  const veredicto: Veredicto = ratio >= 1 ? 'fuera' : ratio >= 0.8 ? 'vigilar' : 'normal';
+  const relleno = { normal: 'bg-normal', vigilar: 'bg-vigilar', fuera: 'bg-fuera', 'sin-dato': 'bg-tinta-3' }[
+    veredicto
+  ];
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-tinta-2">{label}</span>
-        <span className="num font-guia text-sm text-tinta">
-          {used}
-          <span className="text-tinta-3">/{max}{unit ? ` ${unit}` : ''}</span>
+        <span className="text-base text-tinta">{label}</span>
+        <span className="valor text-base text-tinta">
+          {usado}
+          <span className="text-tinta-3">
+            /{maximo}
+            {unidad ? ` ${unidad}` : ''}
+          </span>
         </span>
       </div>
       <div
         role="meter"
-        aria-valuenow={used}
+        aria-valuenow={usado}
         aria-valuemin={0}
-        aria-valuemax={max}
+        aria-valuemax={maximo}
         aria-label={label}
-        className="relative h-2.5 overflow-hidden rounded-sm bg-cinta"
+        className="relative h-1.5 bg-hoja-3"
       >
         <div
-          className={`h-full transition-[width] duration-300 ${
-            full ? 'bg-devuelto' : near ? 'bg-transito' : 'bg-entregado'
-          }`}
-          style={{ width: `${Math.max(ratio * 100, used > 0 ? 4 : 0)}%` }}
+          className={`h-full transition-[width] duration-500 ${relleno}`}
+          style={{ width: `${Math.max(ratio * 100, usado > 0 ? 2 : 0)}%` }}
         />
-        {/* Graduación del medidor */}
-        <div
+        {/* Marca del rango: el 80 %, donde conviene empezar a mirar. */}
+        <span
           aria-hidden
-          className="absolute inset-0"
-          style={{
-            backgroundImage:
-              'repeating-linear-gradient(90deg, transparent, transparent calc(25% - 1px), rgb(var(--cinta)) calc(25% - 1px), rgb(var(--cinta)) 25%)',
-          }}
+          className="absolute top-0 h-full w-px bg-[rgb(var(--tinta)/0.3)]"
+          style={{ left: '80%' }}
         />
       </div>
     </div>
   );
 }
 
-/* --------------------------- Código de barras ------------------------------ */
+/* -------------------------------- Muestra --------------------------------- */
 
 /**
- * Código de barras decorativo derivado del dato (prefijo de clave, dominio):
- * geometría determinista, no una imagen. Identifica la fila de un vistazo.
+ * Bloque de valor exacto que el usuario debe llevarse fuera del sistema
+ * (registro DNS, credencial, cadena de conexión). En un parte, es el apartado
+ * que se recorta: filete de laboratorio arriba y el valor en cifras.
  */
-export function Barcode({ seed, className = '' }: { seed: string; className?: string }) {
-  const bars = useMemo(() => {
-    let h = 2166136261;
-    for (let i = 0; i < seed.length; i++) {
-      h ^= seed.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    const widths: number[] = [];
-    for (let i = 0; i < 18; i++) {
-      h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
-      widths.push(1 + (Math.abs(h) % 3));
-    }
-    return widths;
-  }, [seed]);
+export function Muestra({
+  rotulo,
+  children,
+  copiar,
+  className = '',
+}: {
+  rotulo: string;
+  children: ReactNode;
+  /** Texto que se copia al portapapeles. */
+  copiar?: string;
+  className?: string;
+}) {
   return (
-    <div aria-hidden className={`flex h-5 items-stretch gap-px opacity-60 ${className}`}>
-      {bars.map((w, i) => (
-        <span key={i} className="bg-current" style={{ width: `${w}px` }} />
-      ))}
+    <div className={`border border-regla border-t-2 border-t-[rgb(var(--laboratorio))] bg-hoja-2 ${className}`}>
+      <div className="flex items-center justify-between gap-3 px-3 pt-2">
+        <span className="rotulo">{rotulo}</span>
+        {copiar !== undefined && <BotonCopiar text={copiar} />}
+      </div>
+      <div className="px-3 pb-2.5 pt-1">{children}</div>
     </div>
+  );
+}
+
+/* ------------------------------- Copiable --------------------------------- */
+
+export function BotonCopiar({ text, label = 'Copiar' }: { text: string; label?: string }) {
+  const [copiado, setCopiado] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          // Sin permiso de portapapeles: queda la selección manual.
+        }
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 1600);
+      }}
+      className={`inline-flex h-6 shrink-0 items-center gap-1 border px-1.5 font-estrecha text-micro
+        font-semibold uppercase tracking-[0.08em] transition-colors duration-100 active:translate-y-px
+        ${
+          copiado
+            ? 'border-[rgb(var(--normal)/0.45)] text-normal'
+            : 'border-regla-fuerte text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
+        }`}
+    >
+      <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden>
+        {copiado ? (
+          <path d="M1.5 6.5L4.5 9.5 10.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        ) : (
+          <>
+            <rect x="4" y="4" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M8.5 4V1.8a.8.8 0 0 0-.8-.8H1.8a.8.8 0 0 0-.8.8v5.9a.8.8 0 0 0 .8.8H4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          </>
+        )}
+      </svg>
+      {copiado ? 'Copiado' : label}
+    </button>
   );
 }
 
@@ -198,15 +341,15 @@ export function Dialogo({
       onClick={(e) => {
         if (e.target === ref.current) onClose();
       }}
-      className="w-[min(480px,calc(100vw-32px))] rounded-md border border-fuerte bg-chasis-3
-        p-0 text-tinta shadow-flotante backdrop:bg-black/60 open:animate-aparecer"
+      className="w-[min(520px,calc(100vw-32px))] border border-regla-fuerte bg-hoja p-0 text-tinta
+        shadow-flotante backdrop:bg-[rgb(26_25_22/0.45)] open:animate-aparecer"
     >
-      <div className="flex items-center justify-between border-b border-suave px-5 py-3">
-        <h2 className="font-rotulo text-lg font-semibold tracking-wide">{title}</h2>
+      <div className="regla-cabecera flex items-center justify-between gap-3 px-5 py-3">
+        <h2 className="font-estrecha text-md font-semibold uppercase tracking-[0.06em]">{title}</h2>
         <button
           onClick={onClose}
           aria-label="Cerrar"
-          className="flex h-8 w-8 items-center justify-center rounded text-tinta-3 hover:bg-chasis-2 hover:text-tinta"
+          className="flex h-7 w-7 items-center justify-center text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
         >
           <svg viewBox="0 0 14 14" className="h-3.5 w-3.5">
             <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" fill="none" />
@@ -218,76 +361,7 @@ export function Dialogo({
   );
 }
 
-/* ------------------------------ Copiable ---------------------------------- */
-
-export function BotonCopiar({ text, label = 'Copiar' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-        } catch {
-          // Sin permiso de portapapeles: selección manual.
-        }
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1600);
-      }}
-      className={`inline-flex h-7 shrink-0 items-center gap-1 rounded border px-2 text-sm font-medium
-        transition-colors duration-100 active:translate-y-px
-        ${copied
-          ? 'border-[rgb(var(--entregado)/0.5)] text-entregado'
-          : 'border-[rgb(var(--etiqueta-borde))] text-[rgb(var(--etiqueta-tinta)/0.75)] hover:bg-black/5'}`}
-    >
-      {copied ? (
-        <svg viewBox="0 0 14 14" className="h-3 w-3">
-          <path d="M2 7.5L5.5 11L12 3.5" stroke="currentColor" strokeWidth="1.8" fill="none" />
-        </svg>
-      ) : (
-        <svg viewBox="0 0 14 14" className="h-3 w-3">
-          <rect x="4.5" y="4.5" width="8" height="8" rx="1" stroke="currentColor" fill="none" />
-          <path d="M9.5 4.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" stroke="currentColor" fill="none" />
-        </svg>
-      )}
-      {copied ? 'Copiado' : label}
-    </button>
-  );
-}
-
-/* ------------------------------- Etiqueta --------------------------------- */
-
-/**
- * La etiqueta de papel: TODO lo que el usuario debe llevarse fuera del
- * sistema (registros DNS, credenciales, datos de conexión) se imprime aquí.
- */
-export function Etiqueta({
-  children,
-  className = '',
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`relative rounded-sm bg-etiqueta text-etiqueta-tinta ${className}`}
-      style={{
-        clipPath:
-          'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%)',
-      }}
-    >
-      {/* esquina doblada */}
-      <span
-        aria-hidden
-        className="absolute right-0 top-0 h-[14px] w-[14px] bg-[rgb(var(--etiqueta-borde))]"
-        style={{ clipPath: 'polygon(0 0, 100% 100%, 0 100%)' }}
-      />
-      {children}
-    </div>
-  );
-}
-
-/* ----------------------------- Estado vacío -------------------------------- */
+/* ------------------------------ Sin resultados ----------------------------- */
 
 export function Vacio({
   title,
@@ -300,40 +374,40 @@ export function Vacio({
 }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-      {/* silueta de paquete en tránsito */}
-      <svg viewBox="0 0 48 32" className="mb-1 h-8 w-12 text-tinta-3" aria-hidden>
-        <path d="M4 26h28M8 22h20M12 18h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="2 4" />
-        <rect x="26" y="6" width="16" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none" />
-        <path d="M26 10h16M34 6v4" stroke="currentColor" strokeWidth="1.5" />
+      {/* Geometría de instrumento: una escala sin lectura. */}
+      <svg viewBox="0 0 56 20" className="mb-1 h-5 w-14 text-tinta-3" aria-hidden>
+        <path d="M1 15h54" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M8 15v-5M20 15v-8M32 15v-5M44 15v-8" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M1 5h54" stroke="currentColor" strokeWidth="1" strokeDasharray="2 5" opacity=".5" />
       </svg>
       <p className="text-md font-semibold text-tinta">{title}</p>
-      {children && <div className="max-w-sm text-sm text-tinta-2">{children}</div>}
+      {children && <div className="max-w-md text-base text-tinta-2">{children}</div>}
       {action && <div className="mt-2">{action}</div>}
     </div>
   );
 }
 
-/* ------------------------------ Cargando ---------------------------------- */
+/* ------------------------------- Midiendo --------------------------------- */
 
-/** Cinta transportadora en marcha: la carga es movimiento de nave, no spinner. */
-export function Cargando({ label = 'Cargando…' }: { label?: string }) {
+/** Carga: el instrumento barriendo la muestra, no un spinner genérico. */
+export function Midiendo({ label = 'Midiendo…' }: { label?: string }) {
   return (
     <div className="flex flex-col items-center gap-3 px-6 py-12" role="status" aria-label={label}>
-      <div
-        className="h-2 w-40 animate-cinta rounded-sm opacity-50"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(-45deg, rgb(var(--tinta-3)) 0 6px, transparent 6px 14px)',
-        }}
-      />
-      <span className="text-sm text-tinta-3">{label}</span>
+      <div className="medir relative h-px w-48 overflow-hidden bg-[rgb(var(--tinta)/0.15)]" />
+      <span className="font-estrecha text-micro font-semibold uppercase tracking-[0.1em] text-tinta-3">
+        {label}
+      </span>
     </div>
   );
 }
 
-/* ------------------------------ Encabezado --------------------------------- */
+/* ------------------------------- Membrete --------------------------------- */
 
-export function Encabezado({
+/**
+ * Cabecera de página: el membrete del parte. Título, línea de contexto
+ * (cuándo se midió, sobre qué) y la acción que reclama la página.
+ */
+export function Membrete({
   title,
   meta,
   actions,
@@ -343,12 +417,16 @@ export function Encabezado({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div className="min-w-0">
-        <h1 className="font-rotulo text-2xl font-semibold tracking-wide text-tinta">{title}</h1>
-        {meta && <div className="mt-1 text-sm text-tinta-2">{meta}</div>}
+    <div className="mb-5 border-b-2 border-b-[rgb(var(--laboratorio))] pb-3">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <h1 className="font-estrecha text-2xl font-semibold uppercase tracking-[0.04em] text-tinta">
+            {title}
+          </h1>
+          {meta && <div className="mt-1 max-w-2xl text-base text-tinta-2">{meta}</div>}
+        </div>
+        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
   );
 }
