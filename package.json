@@ -1,0 +1,23 @@
+{
+  "name": "mailway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Servicio de correo auto-alojado y multi-cliente: buzones, panel por cliente, API transaccional y asistente de entregabilidad, todo sobre Docker.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "node server/dist/index.js",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

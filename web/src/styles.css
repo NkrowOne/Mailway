@@ -1,0 +1,104 @@
+@import '@fontsource/barlow/400.css';
+@import '@fontsource/barlow/500.css';
+@import '@fontsource/barlow/600.css';
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/martian-mono/400.css';
+@import '@fontsource/martian-mono/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Chasis de la terminal: charcoal cálido, pasos de elevación susurrados. */
+  --cinta: 19 20 23;      /* base, la cinta transportadora */
+  --chasis: 26 27 32;     /* +7%: paneles */
+  --chasis-2: 31 33 39;   /* +9%: filas activas, inputs elevados */
+  --chasis-3: 38 40 47;   /* +12%: popovers y diálogos */
+
+  --tinta: 232 230 225;   /* papel cálido: texto principal */
+  --tinta-2: 174 173 168; /* secundario */
+  --tinta-3: 146 146 140; /* metadatos (AA sobre chasis a tamaños pequeños) */
+
+  /* Etiqueta adhesiva: todo lo que se copia hacia fuera se imprime aquí. */
+  --etiqueta: 243 240 232;
+  --etiqueta-tinta: 26 26 23;
+  --etiqueta-borde: 208 203 190;
+
+  /* Naranja de seguridad: la única tecla de acción. */
+  --accion: 255 122 26;
+  --accion-tinta: 26 18 10;
+
+  /* Semáforo de reparto (desaturado para fondo oscuro). */
+  --entregado: 105 190 130;
+  --transito: 217 168 74;
+  --devuelto: 224 106 106;
+
+  --borde: rgba(255, 255, 255, 0.08);
+  --borde-suave: rgba(255, 255, 255, 0.05);
+  --borde-fuerte: rgba(255, 255, 255, 0.14);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-cinta text-tinta font-ui text-base;
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: rgb(var(--accion) / 0.85);
+  color: rgb(var(--accion-tinta));
+}
+
+* {
+  caret-color: rgb(var(--accion));
+}
+
+*:focus-visible {
+  outline: 2px solid rgb(var(--accion) / 0.9);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Barras de desplazamiento del chasis. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--chasis-3)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--chasis-3));
+  border-radius: 5px;
+  border: 2px solid rgb(var(--cinta));
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Números que no bailan: contadores, cuotas, fechas. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

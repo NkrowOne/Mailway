@@ -7,3 +7,16 @@ skills-lock.json
 
 # Personal Claude Code settings; .claude/settings.json is shared and tracked.
 .claude/settings.local.json
+
+# Dependencias y compilados
+node_modules/
+server/dist/
+web/dist/
+
+# Datos locales de desarrollo (SQLite, clave secreta)
+data/
+deploy/.env
+
+# Capturas de revisión de diseño
+.impeccable/review/
+

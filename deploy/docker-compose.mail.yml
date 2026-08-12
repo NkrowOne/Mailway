@@ -1,0 +1,134 @@
+# ============================================================================
+# Stack de correo de Mailway — para un servidor que YA corre Skyway
+# ----------------------------------------------------------------------------
+# Levanta el motor de correo (Stalwart) y el webmail (Roundcube), unidos a la
+# red `skyway-edge` para que:
+#   - el panel Mailway (desplegado con Skyway desde GitHub) llegue al motor
+#     por http://mailway-mail:8080
+#   - el Traefik de Skyway dé HTTPS al webmail y al administrador del motor
+#
+# Uso:
+#   cp .env.example .env    # y rellena las variables
+#   docker compose -f docker-compose.mail.yml up -d
+#
+# Los puertos de correo (25, 465, 587, 993) se publican directamente en el
+# host: no pasan por Traefik y no chocan con Skyway (que usa 80/443/4000).
+#
+# IMPORTANTE: la imagen de Stalwart va FIJADA a v0.15. La v0.16 eliminó la
+# API REST de gestión que usa Mailway. No la subas sin migrar el driver.
+# ============================================================================
+
+services:
+  mailway-mail:
+    image: stalwartlabs/stalwart:v0.15.5
+    container_name: mailway-mail
+    restart: unless-stopped
+    ports:
+      - '25:25'       # SMTP entre servidores (recepción y entrega)
+      - '465:465'     # SMTP submission con TLS implícito (clientes)
+      - '587:587'     # SMTP submission con STARTTLS (clientes y API)
+      - '993:993'     # IMAP con TLS implícito (clientes)
+      - '4190:4190'   # ManageSieve (filtros; opcional, puedes quitarlo)
+    environment:
+      # Solo se aplica en el PRIMER arranque (crea el fallback admin con
+      # esta contraseña). Después, cámbiala desde el webadmin de Stalwart.
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en .env}
+    volumes:
+      - mailway-mail-data:/opt/stalwart
+      - mailway-mail-certs:/opt/stalwart/certs:ro
+    networks:
+      - mailway-internal
+      - skyway-edge
+    labels:
+      # Webadmin + API de gestión del motor por HTTPS en el dominio del
+      # servidor de correo (p. ej. https://mail.tuempresa.com). Esto además
+      # hace que Traefik emita el certificado de MAIL_HOSTNAME, que el
+      # servicio opcional `certs-dumper` vuelca para IMAP/SMTP.
+      - traefik.enable=true
+      - traefik.docker.network=skyway-edge
+      - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en .env}`)
+      - traefik.http.routers.mailway-mail.entrypoints=web
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https
+      - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
+      - traefik.http.services.mailway-mail.loadbalancer.server.port=8080
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1:8080/healthz/live || exit 1']
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  mailway-webmail:
+    image: roundcube/roundcubemail:1.7.x-apache
+    container_name: mailway-webmail
+    restart: unless-stopped
+    environment:
+      # ssl:// = TLS implícito. Se conecta por el nombre público para que el
+      # certificado del motor valide (necesita el TLS del motor en marcha;
+      # ver docs/DESPLIEGUE-SKYWAY.md, paso «TLS del motor»).
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_DEFAULT_PORT: '993'
+      ROUNDCUBEMAIL_SMTP_SERVER: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_SMTP_PORT: '465'
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+    volumes:
+      - mailway-webmail-db:/var/roundcube/db
+      - mailway-webmail-config:/var/roundcube/config
+    networks:
+      - skyway-edge
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=skyway-edge
+      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Define WEBMAIL_HOSTNAME en .env}`)
+      - traefik.http.routers.mailway-webmail.entrypoints=web
+      - traefik.http.middlewares.mailway-webmail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-webmail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-webmail.middlewares=mailway-webmail-https
+      - traefik.http.routers.mailway-webmail-secure.rule=Host(`${WEBMAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-webmail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-webmail-secure.tls.certresolver=le
+      - traefik.http.services.mailway-webmail.loadbalancer.server.port=80
+
+  # --------------------------------------------------------------------------
+  # OPCIONAL (perfil `tls`): vuelca los certificados que Traefik ya obtuvo
+  # (acme.json) a ficheros PEM que Stalwart puede usar en IMAPS/SMTPS.
+  # Actívalo con:  docker compose -f docker-compose.mail.yml --profile tls up -d
+  # y sigue el paso «TLS del motor» de docs/DESPLIEGUE-SKYWAY.md.
+  # --------------------------------------------------------------------------
+  certs-dumper:
+    image: ghcr.io/kereis/traefik-certs-dumper:latest
+    container_name: mailway-certs-dumper
+    restart: unless-stopped
+    profiles: ['tls']
+    command: file --version v3 --watch --source /traefik/acme.json --dest /output --domain-subdir --crt-name cert --crt-ext .pem --key-name key --key-ext .pem
+    volumes:
+      - traefik-letsencrypt:/traefik:ro
+      - mailway-mail-certs-rw:/output
+
+networks:
+  mailway-internal:
+    name: mailway-internal
+  skyway-edge:
+    external: true
+    name: skyway-edge
+
+volumes:
+  mailway-mail-data:
+  mailway-webmail-db:
+  mailway-webmail-config:
+  # El mismo volumen visto de dos formas: el dumper escribe, Stalwart lee.
+  mailway-mail-certs:
+    name: mailway-mail-certs
+  mailway-mail-certs-rw:
+    name: mailway-mail-certs
+  # Volumen del acme.json del Traefik de Skyway. Si tu instalación lo llama
+  # distinto, ajústalo en .env (compruébalo con: docker volume ls | grep lets)
+  traefik-letsencrypt:
+    external: true
+    name: ${TRAEFIK_ACME_VOLUME:-skyway_traefik-letsencrypt}
