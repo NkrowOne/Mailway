@@ -27,6 +27,14 @@ spam/entregabilidad en español y webmail incluido.
 - **Buzones reales** — IMAP/SMTP/webmail (Roundcube), cuotas, alias,
   contraseñas generadas que se muestran una sola vez, tarjeta de datos de
   conexión para configurar dispositivos.
+- **Marca blanca** — cada cliente puede servir el webmail en **su propio
+  dominio** (`webmail.sucliente.com`) con certificado automático: añade el
+  dominio, copia el CNAME, y cuando el DNS apunta al servidor Traefik lo
+  enruta y emite el certificado solo. Autoservicio, sin tocar el servidor.
+- **Vigilante con avisos** — comprueba el motor, el webmail y la cola cada
+  minuto, el DNS de los dominios cada hora y las listas negras a diario; avisa
+  por **Discord, Telegram o webhook**, sin repetir el mismo aviso y con
+  mensaje de recuperación cuando se arregla.
 - **Motor desacoplado** — Stalwart Mail Server tras una interfaz de driver;
   incluye un **modo demostración** para probar todo el panel sin motor.
 - **Seguridad** — sesiones revocables, límite de intentos de login, registro

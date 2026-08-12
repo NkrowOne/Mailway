@@ -158,6 +158,46 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_login_attempts ON login_attempts(ip, attempted_at);
     `,
   },
+  {
+    id: '002-marca-blanca-y-alertas',
+    sql: `
+      -- Dominios propios de cada cliente (webmail o panel con su marca).
+      -- Traefik los descubre sondeando /api/traefik/config de este panel.
+      CREATE TABLE client_domains (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        hostname TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL CHECK (kind IN ('webmail', 'panel')),
+        status TEXT NOT NULL DEFAULT 'pending_dns'
+          CHECK (status IN ('pending_dns', 'issuing', 'active', 'error')),
+        detail TEXT NOT NULL DEFAULT '',
+        last_checked_at INTEGER,
+        activated_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_client_domains_client ON client_domains(client_id);
+
+      -- Alertas del vigilante. dedupe_key evita repetir la misma alerta
+      -- abierta; al resolverse se marca resolved_at en lugar de borrarla.
+      CREATE TABLE alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        severity TEXT NOT NULL CHECK (severity IN ('critical', 'warning', 'info')),
+        type TEXT NOT NULL,
+        client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        remedy TEXT NOT NULL DEFAULT '',
+        dedupe_key TEXT,
+        created_at INTEGER NOT NULL,
+        resolved_at INTEGER
+      );
+      CREATE INDEX idx_alerts_open ON alerts(resolved_at, created_at);
+      -- Solo puede haber UNA alerta abierta por clave: el índice parcial hace
+      -- que el dedupe lo garantice la base de datos, no la lógica.
+      CREATE UNIQUE INDEX idx_alerts_dedupe
+        ON alerts(dedupe_key) WHERE resolved_at IS NULL AND dedupe_key IS NOT NULL;
+    `,
+  },
 ];
 
 function runMigrations(): void {

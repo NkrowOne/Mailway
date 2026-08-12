@@ -257,6 +257,56 @@ export interface AuditEntry {
   createdAt: number;
 }
 
+export type WhitelabelStatus = 'pending_dns' | 'issuing' | 'active' | 'error';
+
+export interface ClientDomain {
+  id: string;
+  clientId: string;
+  hostname: string;
+  kind: 'webmail' | 'panel';
+  status: WhitelabelStatus;
+  detail: string;
+  lastCheckedAt: number | null;
+  activatedAt: number | null;
+  createdAt: number;
+}
+
+export interface DnsInstruction {
+  type: 'A' | 'CNAME';
+  name: string;
+  value: string;
+  recommended: boolean;
+  help: string;
+}
+
+export interface WhitelabelSetup {
+  token: string;
+  certResolver: string;
+  webmailBackend: string;
+  panelBackend: string;
+  panelDomainsAvailable: boolean;
+  publishedDomains: number;
+}
+
+export interface Alert {
+  id: number;
+  severity: 'critical' | 'warning' | 'info';
+  type: string;
+  clientId: string | null;
+  title: string;
+  message: string;
+  remedy: string;
+  createdAt: number;
+  resolvedAt: number | null;
+}
+
+export interface NotifyChannelsView {
+  webhookUrl: string;
+  discordUrl: string;
+  telegramChat: string;
+  hasTelegramToken: boolean;
+}
+
 export interface ConnectionInfo {
   email: string;
   username: string;

@@ -16,6 +16,9 @@ import { registerDomainRoutes } from './modules/domains';
 import { registerMailboxRoutes } from './modules/mailboxes';
 import { registerSetupRoutes } from './modules/setup';
 import { registerApiKeyRoutes, registerSendRoutes } from './modules/transactional';
+import { registerAlertRoutes } from './modules/alerts';
+import { registerWhitelabelRoutes } from './modules/whitelabel';
+import { startWatchdog } from './modules/watchdog';
 
 async function main(): Promise<void> {
   const app = Fastify({
@@ -64,6 +67,8 @@ async function main(): Promise<void> {
   registerDeliverabilityRoutes(app);
   registerDashboardRoutes(app);
   registerAuditRoutes(app);
+  registerAlertRoutes(app);
+  registerWhitelabelRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');
@@ -82,6 +87,8 @@ async function main(): Promise<void> {
   app.log.info(
     `Mailway escuchando en http://${config.host}:${config.port} (datos en ${config.dataDir})`,
   );
+
+  startWatchdog({ warn: (msg) => app.log.warn(msg) });
 }
 
 main().catch((err) => {

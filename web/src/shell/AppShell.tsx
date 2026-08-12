@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AtSign,
+  BellRing,
   Building2,
   Gauge,
   Globe,
@@ -15,10 +16,12 @@ import {
   Radar,
   Settings,
   Split,
+  Tag,
   UserRound,
   X,
 } from 'lucide-react';
-import { api, type User } from '../lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { api, type Alert, type User } from '../lib/api';
 
 /** Marca: MAILWAY con chevrones de enrutado. */
 function Marca({ brand }: { brand: string }) {
@@ -41,6 +44,8 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   end?: boolean;
+  /** Clave para pintar un contador junto al elemento (avisos abiertos). */
+  badge?: 'alerts';
 }
 
 function buildNav(user: User): { section: string; items: NavItem[] }[] {
@@ -54,6 +59,7 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
           { to: '/clientes', label: 'Clientes', icon: <Building2 className={iconClass} /> },
           { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
           { to: '/buzones', label: 'Buzones', icon: <Inbox className={iconClass} /> },
+          { to: '/marca-blanca', label: 'Marca blanca', icon: <Tag className={iconClass} /> },
         ],
       },
       {
@@ -66,6 +72,7 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
       {
         section: 'Sistema',
         items: [
+          { to: '/avisos', label: 'Avisos', icon: <BellRing className={iconClass} />, badge: 'alerts' },
           { to: '/actividad', label: 'Actividad', icon: <Activity className={iconClass} /> },
           { to: '/ajustes', label: 'Ajustes', icon: <Settings className={iconClass} /> },
         ],
@@ -80,6 +87,7 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
         { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
         { to: '/buzones', label: 'Buzones', icon: <Inbox className={iconClass} /> },
         { to: '/alias', label: 'Alias', icon: <Split className={iconClass} /> },
+        { to: '/marca-blanca', label: 'Marca blanca', icon: <Tag className={iconClass} /> },
       ],
     },
     {
@@ -111,6 +119,15 @@ export function AppShell({
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const nav = buildNav(user);
+
+  // Contador de avisos abiertos: la campana de la nave. Se refresca solo para
+  // que una incidencia nueva se vea sin recargar.
+  const alerts = useQuery({
+    queryKey: ['alerts', false],
+    queryFn: () => api.get<{ alerts: Alert[] }>('/api/alerts'),
+    refetchInterval: 60_000,
+  });
+  const openAlerts = alerts.data?.alerts.length ?? 0;
 
   async function logout() {
     await api.post('/api/auth/logout');
@@ -146,6 +163,15 @@ export function AppShell({
                       <>
                         <span className={isActive ? 'text-accion' : 'text-tinta-3'}>{item.icon}</span>
                         {item.label}
+                        {item.badge === 'alerts' && openAlerts > 0 && (
+                          <span
+                            className="num ml-auto rounded-full bg-[rgb(var(--devuelto)/0.18)] px-1.5
+                              text-sm font-semibold text-devuelto"
+                            aria-label={`${openAlerts} aviso(s) sin resolver`}
+                          >
+                            {openAlerts}
+                          </span>
+                        )}
                       </>
                     )}
                   </NavLink>

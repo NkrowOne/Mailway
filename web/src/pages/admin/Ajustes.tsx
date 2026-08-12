@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type InstanceSettings } from '../../lib/api';
+import { api, ApiError, type InstanceSettings, type WhitelabelSetup } from '../../lib/api';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Cargando, Encabezado, Estado, Panel } from '../../ui/kit';
+import { BotonCopiar, Cargando, Encabezado, Estado, Etiqueta, Panel } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 
 interface SettingsResponse {
@@ -39,8 +39,92 @@ export default function Ajustes() {
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <InstancePanel initial={settings.data.instance} onSaved={() => void queryClient.invalidateQueries()} />
         <EnginePanel data={settings.data} onSaved={() => void queryClient.invalidateQueries()} toast={toast} />
+        <TraefikPanel />
       </div>
     </>
+  );
+}
+
+/**
+ * Marca blanca: para que los dominios propios de los clientes funcionen, el
+ * proxy (Traefik) tiene que sondear este panel. Esto se configura UNA vez y
+ * aquí se da el bloque exacto, con su token ya generado.
+ */
+function TraefikPanel() {
+  const setup = useQuery({
+    queryKey: ['whitelabel-setup'],
+    queryFn: () => api.get<WhitelabelSetup>('/api/whitelabel/setup'),
+  });
+
+  if (setup.isPending) return <Panel title="Marca blanca"><Cargando /></Panel>;
+  if (setup.isError || !setup.data) {
+    return (
+      <Panel title="Marca blanca">
+        <p className="text-devuelto">No se pudo cargar la configuración.</p>
+      </Panel>
+    );
+  }
+
+  const { token, publishedDomains } = setup.data;
+  const override = `# docker-compose.override.yml — en la carpeta de Skyway.
+# Compose lo lee solo; no toca el repositorio de Skyway ni se pierde al actualizar.
+services:
+  traefik:
+    command:
+      # --- los flags que Skyway ya usaba (deben mantenerse) ---
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=skyway-edge
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=\${LETSENCRYPT_EMAIL:-noreply@example.com}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      # --- añadido por Mailway: sondea el panel para los dominios de clientes ---
+      - --providers.http.endpoint=http://mailway-panel:4100/api/traefik/config
+      - --providers.http.pollInterval=15s
+      - --providers.http.headers.X-Mailway-Token=${token}`;
+
+  return (
+    <Panel
+      title="Marca blanca"
+      actions={
+        publishedDomains > 0 ? (
+          <Estado tone="entregado">{publishedDomains} publicado(s)</Estado>
+        ) : (
+          <Estado tone="neutro">Sin dominios</Estado>
+        )
+      }
+      className="lg:col-span-2"
+    >
+      <p className="text-sm text-tinta-2">
+        Para que tus clientes puedan usar su propio dominio de webmail, Traefik tiene que
+        preguntarle a Mailway qué dominios servir. Se configura <strong>una sola vez</strong>:
+        crea este fichero junto al <span className="font-guia">docker-compose.yml</span> de Skyway
+        y ejecuta <span className="font-guia">docker compose up -d</span>.
+      </p>
+
+      <div className="mt-3">
+        <Etiqueta className="p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="font-rotulo text-sm font-semibold uppercase tracking-wide opacity-70">
+              docker-compose.override.yml
+            </span>
+            <BotonCopiar text={override} label="Copiar bloque" />
+          </div>
+          <pre className="overflow-x-auto whitespace-pre text-sm leading-relaxed font-guia">
+            {override}
+          </pre>
+        </Etiqueta>
+      </div>
+
+      <p className="mt-3 text-sm text-tinta-3">
+        El token autentica a Traefik contra Mailway: sin él, cualquiera podría leer la lista de
+        dominios. Si cambias el nombre del contenedor del panel en Skyway, ajusta también la URL
+        del sondeo.
+      </p>
+    </Panel>
   );
 }
 
