@@ -24,14 +24,19 @@ import { api, type Alert, type User } from '../lib/api';
  * Membrete del laboratorio. El logotipo es la marca de una escala medida:
  * geometría, no una ilustración.
  */
+/**
+ * El membrete del índice. Va sobre el mismo campo que la cabecera de página,
+ * de modo que la banda oscura recorre todo el borde superior de la aplicación
+ * en lugar de aparecer y desaparecer.
+ */
 function Marca({ brand }: { brand: string }) {
   return (
-    <div className="flex items-center gap-2.5 border-b-2 border-b-[rgb(var(--laboratorio))] px-4 py-3.5">
-      <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio" aria-hidden>
+    <div className="campo-lab flex items-center gap-2.5 px-4 py-4">
+      <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio-vivo" aria-hidden>
         <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
         <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
       </svg>
-      <span className="font-estrecha text-lg font-semibold uppercase tracking-[0.14em] text-tinta">
+      <span className="font-estrecha text-lg font-semibold uppercase tracking-[0.14em] text-white">
         {brand}
       </span>
     </div>
@@ -226,15 +231,16 @@ export function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-regla bg-hoja px-4 py-2.5 lg:hidden">
+        <header className="campo-lab flex items-center gap-3 px-4 py-2.5 lg:hidden">
           <button
             onClick={() => setOpen(true)}
             aria-label="Abrir menú"
-            className="flex h-8 w-8 items-center justify-center border border-regla text-tinta"
+            className="flex h-8 w-8 items-center justify-center border border-white/30 text-white
+              hover:bg-white/10"
           >
             <Menu className="h-4 w-4" />
           </button>
-          <span className="font-estrecha text-md font-semibold uppercase tracking-[0.12em]">
+          <span className="font-estrecha text-md font-semibold uppercase tracking-[0.12em] text-white">
             {brand}
           </span>
           {open && <X className="hidden" />}

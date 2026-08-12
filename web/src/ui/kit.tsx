@@ -151,12 +151,25 @@ export function Medida({
   veredicto: Veredicto;
   nota?: ReactNode;
 }) {
+  // El veredicto tiñe la fila entera: así «fuera de rango primero» se ve de un
+  // vistazo en lugar de tener que leer la columna de la derecha.
+  const fondo =
+    veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
+  const tinta =
+    veredicto === 'fuera'
+      ? 'text-fuera'
+      : veredicto === 'vigilar'
+        ? 'text-vigilar'
+        : 'text-tinta';
   return (
-    <div className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 last:border-b-0">
+    <div
+      className={`regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-3 last:border-b-0 ${fondo}`}
+    >
       <span className="min-w-0 flex-1 basis-40 text-base text-tinta">{concepto}</span>
-      <span className="valor shrink-0 text-md font-medium text-tinta">
+      {/* El dato medido es el contenido del informe: va a plena escala. */}
+      <span className={`valor shrink-0 text-xl font-medium leading-none ${tinta}`}>
         {valor}
-        {unidad && <span className="ml-1.5 text-sm text-tinta-3">{unidad}</span>}
+        {unidad && <span className="ml-1.5 text-sm font-normal text-tinta-3">{unidad}</span>}
       </span>
       {referencia && (
         <span className="valor shrink-0 basis-28 text-sm text-tinta-3">{referencia}</span>
@@ -164,7 +177,7 @@ export function Medida({
       <span className="shrink-0 basis-32 text-right">
         <Marca veredicto={veredicto} />
       </span>
-      {nota && <p className="w-full text-sm text-tinta-2">{nota}</p>}
+      {nota && <p className="w-full max-w-[75ch] text-sm text-tinta-2">{nota}</p>}
     </div>
   );
 }
@@ -179,7 +192,7 @@ export function CabeceraMedidas({
   referencia?: boolean;
 }) {
   return (
-    <div className="regla-cabecera flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-1.5">
+    <div className="regla-cabecera flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 pb-1.5">
       <span className="rotulo min-w-0 flex-1 basis-40">Concepto</span>
       <span className="rotulo shrink-0">Valor</span>
       {referencia && <span className="rotulo shrink-0 basis-28">Referencia</span>}
@@ -417,13 +430,13 @@ export function Membrete({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-5 border-b-2 border-b-[rgb(var(--laboratorio))] pb-3">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+    <div className="campo-lab mb-5 px-5 py-5 sm:px-6 sm:py-6">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0">
-          <h1 className="font-estrecha text-2xl font-semibold uppercase tracking-[0.04em] text-tinta">
-            {title}
-          </h1>
-          {meta && <div className="mt-1 max-w-2xl text-base text-tinta-2">{meta}</div>}
+          <h1 className="titular text-3xl text-white sm:text-4xl">{title}</h1>
+          {meta && (
+            <div className="mt-2.5 max-w-2xl text-base text-white/70">{meta}</div>
+          )}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>

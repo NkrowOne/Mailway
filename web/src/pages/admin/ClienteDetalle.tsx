@@ -129,7 +129,7 @@ export default function ClienteDetalle() {
               {data.suspended ? 'Suspendido' : 'Activo'}
             </MarcaFondo>
             {data.contactEmail && (
-              <span className={`valor min-w-0 text-sm text-tinta-3 ${cinta}`}>
+              <span className={`valor min-w-0 text-sm text-white/70 ${cinta}`}>
                 {data.contactEmail}
               </span>
             )}
@@ -145,7 +145,7 @@ export default function ClienteDetalle() {
             >
               {data.suspended ? 'Reactivar' : 'Suspender'}
             </Button>
-            <Button variant="tinta" onClick={() => setUserOpen(true)}>Crear usuario de acceso</Button>
+            <Button variant="campo" onClick={() => setUserOpen(true)}>Crear usuario de acceso</Button>
           </>
         }
       />

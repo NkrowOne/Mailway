@@ -15,6 +15,9 @@ export default {
         'tinta-3': 'rgb(var(--tinta-3) / <alpha-value>)',
         // Membrete del laboratorio: identidad y orientación, no adorno.
         laboratorio: 'rgb(var(--laboratorio) / <alpha-value>)',
+        'laboratorio-hondo': 'rgb(var(--laboratorio-hondo) / <alpha-value>)',
+        'laboratorio-vivo': 'rgb(var(--laboratorio-vivo) / <alpha-value>)',
+        'laboratorio-tinta': 'rgb(var(--laboratorio-tinta) / <alpha-value>)',
         'laboratorio-claro': 'rgb(var(--laboratorio-claro) / <alpha-value>)',
         // Veredictos: el único color que califica un dato.
         normal: 'rgb(var(--normal) / <alpha-value>)',
@@ -44,7 +47,9 @@ export default {
         lg: ['17px', { lineHeight: '24px' }],
         xl: ['21px', { lineHeight: '27px' }],
         '2xl': ['26px', { lineHeight: '31px' }],
-        '3xl': ['34px', { lineHeight: '38px' }],
+        '3xl': ['34px', { lineHeight: '36px' }],
+        '4xl': ['46px', { lineHeight: '44px' }],
+        '5xl': ['68px', { lineHeight: '62px' }],
       },
       boxShadow: {
         // Elevación declarada UNA vez: los diálogos flotan; nada más.

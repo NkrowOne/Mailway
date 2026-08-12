@@ -5,6 +5,7 @@ import {
   CabeceraMedidas,
   Hoja,
   Marca,
+  MarcaFondo,
   Medida,
   Membrete,
   Midiendo,
@@ -139,14 +140,14 @@ export default function PanelAdmin() {
         title="Parte de la instancia"
         meta={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="valor text-sm text-tinta-2">
+            <span className="valor text-sm text-white/75">
               {instance.mailHostname || 'servidor sin nombre'}
             </span>
-            <span className="text-sm text-tinta-3">Medido {formatDate(Date.now())}</span>
+            <span className="text-sm text-white/70">Medido {formatDate(Date.now())}</span>
           </span>
         }
         actions={
-          <Marca veredicto={veredictoGlobal}>
+          <MarcaFondo veredicto={veredictoGlobal}>
             {veredictoGlobal === 'normal'
               ? 'Todo en rango'
               : veredictoGlobal === 'fuera'
@@ -154,7 +155,7 @@ export default function PanelAdmin() {
                 : veredictoGlobal === 'vigilar'
                   ? 'Con avisos'
                   : 'Sin datos'}
-          </Marca>
+          </MarcaFondo>
         }
       />
 

@@ -51,7 +51,7 @@ export default function Entregabilidad() {
         meta="Si algo de esto está fuera de rango, tus correos acaban en spam o los rechazan."
         actions={
           <Button
-            variant="tinta"
+            variant="campo"
             busy={health.isFetching}
             onClick={() => void queryClient.invalidateQueries({ queryKey: ['server-health'] })}
           >

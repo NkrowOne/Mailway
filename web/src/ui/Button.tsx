@@ -4,7 +4,7 @@ import { forwardRef, type ButtonHTMLAttributes } from 'react';
   En un parte impreso la acción no se pinta de colores: se imprime en tinta.
   La jerarquía la dan el peso y la posición, no un acento decorativo.
 */
-type Variant = 'tinta' | 'perfil' | 'plano' | 'peligro';
+type Variant = 'tinta' | 'campo' | 'perfil' | 'plano' | 'peligro';
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -16,6 +16,10 @@ const styles: Record<Variant, string> = {
   tinta:
     'bg-tinta text-hoja font-semibold hover:bg-[rgb(var(--laboratorio))] active:translate-y-px ' +
     'disabled:opacity-35 disabled:hover:bg-tinta',
+  // Acción principal SOBRE el campo de laboratorio (membrete): invertida.
+  campo:
+    'bg-white text-laboratorio font-semibold hover:bg-laboratorio-claro active:translate-y-px ' +
+    'disabled:opacity-40 disabled:hover:bg-white',
   // Acción secundaria: filete, sin relleno.
   perfil:
     'border border-regla-fuerte text-tinta hover:bg-hoja-3 active:translate-y-px disabled:opacity-35',

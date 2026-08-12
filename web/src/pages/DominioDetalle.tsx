@@ -142,7 +142,7 @@ export default function DominioDetalle() {
             <MarcaFondo veredicto={enReparto ? 'normal' : medido ? 'fuera' : 'sin-dato'}>
               {enReparto ? 'En reparto' : 'Esperando DNS'}
             </MarcaFondo>
-            <span className="text-tinta-3">Última medición: {formatDate(record.lastCheckedAt)}</span>
+            <span className="text-white/70">Última medición: {formatDate(record.lastCheckedAt)}</span>
           </span>
         }
         actions={
@@ -150,7 +150,7 @@ export default function DominioDetalle() {
             <Button variant="peligro" onClick={() => setConfirmOpen(true)}>
               Eliminar
             </Button>
-            <Button variant="tinta" busy={verify.isPending} onClick={() => verify.mutate()}>
+            <Button variant="campo" busy={verify.isPending} onClick={() => verify.mutate()}>
               Medir el DNS ahora
             </Button>
           </>

@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-radius",
+        "value": "99px",
+        "createdAt": "2026-08-12T10:49:46.206Z",
+        "reason": "pulgar de la barra de desplazamiento: una pastilla es la forma correcta de un control pequeno; valor preexistente, no introducido por el rediseno"
+      }
+    ]
+  }
+}

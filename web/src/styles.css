@@ -17,33 +17,37 @@
 
 :root {
   /* Superficies: mesa de trabajo y hoja impresa */
-  --mesa: 240 238 232;        /* fondo, papel de estraza claro */
+  --mesa: 238 236 229;        /* fondo, papel de estraza claro */
   --hoja: 255 255 255;        /* la hoja del informe */
-  --hoja-2: 249 248 244;      /* fila alterna / bloque embutido */
-  --hoja-3: 243 241 235;      /* cabecera de tabla, controles */
+  --hoja-2: 248 247 243;      /* fila alterna / bloque embutido */
+  --hoja-3: 242 240 234;      /* cabecera de tabla, controles */
 
   /* Tinta impresa (cálida, no negro puro) */
-  --tinta: 26 25 22;
-  --tinta-2: 92 89 82;
-  --tinta-3: 122 118 109;     /* 5.1:1 sobre hoja — metadatos legibles */
+  --tinta: 22 21 19;
+  --tinta-2: 88 85 78;
+  --tinta-3: 120 116 107;     /* 5.2:1 sobre hoja — metadatos legibles */
 
-  /* Color de laboratorio: membrete, marca y navegación activa.
-     Es estructura (dónde estoy), nunca adorno. */
-  --laboratorio: 15 76 82;
-  --laboratorio-claro: 226 238 238;
+  /* Petróleo de laboratorio: la identidad. Ocupa REGIONES (membrete, índice),
+     no filetes sueltos: un color que solo bordea no es un color, es un adorno. */
+  --laboratorio: 10 62 69;          /* el campo */
+  --laboratorio-hondo: 7 44 49;     /* pie del campo, degradado de membrete */
+  --laboratorio-vivo: 0 176 178;    /* acento VIVO sobre el campo oscuro */
+  --laboratorio-tinta: 12 78 86;    /* petróleo legible sobre hoja blanca */
+  --laboratorio-claro: 222 238 238;
 
-  /* Veredictos clínicos: el ÚNICO color que califica un dato */
-  --normal: 22 101 66;        /* dentro de rango */
-  --vigilar: 146 90 10;       /* límite / atención */
-  --fuera: 158 27 42;         /* fuera de rango */
-  --normal-fondo: 232 243 237;
-  --vigilar-fondo: 250 242 226;
-  --fuera-fondo: 250 233 234;
+  /* Veredictos clínicos: el ÚNICO color que califica un dato.
+     Mismo matiz que antes, subido de croma: el veredicto tiene que saltar. */
+  --normal: 8 122 76;         /* dentro de rango — 5.4:1 sobre hoja */
+  --vigilar: 168 94 0;        /* límite / atención — 4.9:1 */
+  --fuera: 194 22 48;         /* fuera de rango — 6.1:1 */
+  --normal-fondo: 228 245 236;
+  --vigilar-fondo: 253 242 224;
+  --fuera-fondo: 253 232 235;
 
   /* Filetes: la estructura del informe */
-  --regla: rgb(26 25 22 / 0.13);
-  --regla-fuerte: rgb(26 25 22 / 0.34);
-  --regla-lab: rgb(15 76 82 / 0.30);
+  --regla: rgb(22 21 19 / 0.13);
+  --regla-fuerte: rgb(22 21 19 / 0.36);
+  --regla-lab: rgb(10 62 69 / 0.32);
 }
 
 @layer base {
@@ -115,10 +119,19 @@
     font-family: 'Archivo Narrow', 'Archivo Variable', sans-serif;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.09em;
+    letter-spacing: 0.1em;
     font-size: 11px;
     line-height: 15px;
     color: rgb(var(--tinta-3));
+  }
+
+  /* Titular del informe: la voz del membrete, a plena potencia. */
+  .titular {
+    font-family: 'Archivo Narrow', 'Archivo Variable', sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: -0.005em;
+    line-height: 0.94;
   }
 }
 
@@ -129,6 +142,32 @@
   }
   .regla-fila {
     border-bottom: 1px solid var(--regla);
+  }
+
+  /*
+    Campo de laboratorio: la identidad ocupa una REGIÓN, no un filete. Lo usan
+    el membrete de página y el índice lateral, que son las dos superficies que
+    dicen «dónde estás».
+  */
+  .campo-lab {
+    background-color: rgb(var(--laboratorio));
+    background-image: linear-gradient(
+      160deg,
+      rgb(var(--laboratorio)) 0%,
+      rgb(var(--laboratorio-hondo)) 100%
+    );
+    color: rgb(255 255 255);
+  }
+
+  /*
+    Fila fuera de rango: el veredicto tiña la FILA entera. Sin esto, «fuera de
+    rango primero» es una promesa que el ojo no puede verificar de un vistazo.
+  */
+  .fila-fuera {
+    background-color: rgb(var(--fuera-fondo) / 0.55);
+  }
+  .fila-vigilar {
+    background-color: rgb(var(--vigilar-fondo) / 0.5);
   }
 }
 

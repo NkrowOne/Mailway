@@ -69,7 +69,7 @@ export default function InicioCliente() {
             </MarcaFondo>
           ) : (
             <span>
-              Plan <span className="font-medium text-tinta">{plan.name}</span> ·{' '}
+              Plan <span className="font-medium text-white">{plan.name}</span> ·{' '}
               {hechos === pasos.length
                 ? 'puesta en marcha completa'
                 : `${hechos} de ${pasos.length} pasos completados`}
@@ -79,12 +79,12 @@ export default function InicioCliente() {
         actions={
           siguiente ? (
             <Link to={siguiente.to}>
-              <Button variant="tinta">{siguiente.label}</Button>
+              <Button variant="campo">{siguiente.label}</Button>
             </Link>
           ) : (
             data.webmailUrl && (
               <a href={data.webmailUrl} target="_blank" rel="noreferrer">
-                <Button variant="tinta">Abrir webmail</Button>
+                <Button variant="campo">Abrir webmail</Button>
               </a>
             )
           )

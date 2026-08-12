@@ -119,7 +119,7 @@ export default function ApiKeys({ user }: { user: User }) {
         meta="Envíos automatizados desde tus aplicaciones: códigos OTP, avisos, facturas."
         actions={
           <Button
-            variant="tinta"
+            variant="campo"
             disabled={mailboxList.length === 0}
             onClick={() => {
               setSenderMailboxId(mailboxList[0]?.id ?? '');

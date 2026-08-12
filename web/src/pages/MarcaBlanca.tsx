@@ -86,7 +86,7 @@ export default function MarcaBlanca() {
         title="Marca blanca"
         meta="Sirve el webmail en el dominio de tu cliente, con su propio certificado."
         actions={
-          <Button variant="tinta" onClick={() => setAbierto(true)}>
+          <Button variant="campo" onClick={() => setAbierto(true)}>
             Añadir dominio
           </Button>
         }

@@ -78,7 +78,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
             Un dominio no entra en reparto hasta que sus registros DNS coinciden con los de
             referencia.
             {list.length > 0 && (
-              <span className="valor mt-1 block text-sm text-tinta-3">
+              <span className="valor mt-1 block text-sm text-white/70">
                 {enRango}/{list.length} en reparto
               </span>
             )}
