@@ -38,20 +38,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-live="polite"
         className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(360px,calc(100vw-32px))] flex-col gap-2"
       >
+        {/* Nota al margen del parte: filete superior con el color del veredicto. */}
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto animate-aparecer rounded border bg-chasis-3 px-3.5 py-2.5
-              text-sm text-tinta shadow-flotante
-              ${toast.tone === 'ok' ? 'border-[rgb(var(--entregado)/0.4)]' : 'border-[rgb(var(--devuelto)/0.5)]'}`}
+            className={`pointer-events-auto animate-aparecer border border-regla border-t-2 bg-hoja
+              px-3.5 py-2.5 text-base text-tinta shadow-flotante
+              ${toast.tone === 'ok' ? 'border-t-[rgb(var(--normal))]' : 'border-t-[rgb(var(--fuera))]'}`}
           >
-            <span
-              className={`mr-2 inline-block h-1.5 w-1.5 rounded-full align-middle ${
-                toast.tone === 'ok' ? 'bg-entregado' : 'bg-devuelto'
-              }`}
-              aria-hidden
-            />
-            {toast.text}
+            <span className={`rotulo ${toast.tone === 'ok' ? 'text-normal' : 'text-fuera'}`}>
+              {toast.tone === 'ok' ? 'Hecho' : 'No se pudo'}
+            </span>
+            <p className="mt-0.5">{toast.text}</p>
           </div>
         ))}
       </div>

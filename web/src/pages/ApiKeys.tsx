@@ -12,19 +12,21 @@ import {
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import {
-  Barcode,
-  BotonCopiar,
-  Cargando,
   Dialogo,
-  Encabezado,
-  Estado,
-  Etiqueta,
-  Panel,
-  Sello,
+  Escala,
+  Hoja,
+  MarcaFondo,
+  Membrete,
+  Midiendo,
+  Muestra,
   Vacio,
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { formatDate } from '../lib/format';
+
+/** Valores largos: se desplazan en horizontal, no se parten a mitad de palabra. */
+const cinta =
+  'block overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
 
 /** Claves de API + historial de envíos + guía de integración (OTP y avisos). */
 export default function ApiKeys({ user }: { user: User }) {
@@ -112,12 +114,12 @@ export default function ApiKeys({ user }: { user: User }) {
 
   return (
     <>
-      <Encabezado
+      <Membrete
         title="API de envío"
         meta="Envíos automatizados desde tus aplicaciones: códigos OTP, avisos, facturas."
         actions={
           <Button
-            variant="accion"
+            variant="campo"
             disabled={mailboxList.length === 0}
             onClick={() => {
               setSenderMailboxId(mailboxList[0]?.id ?? '');
@@ -131,128 +133,165 @@ export default function ApiKeys({ user }: { user: User }) {
 
       <div className="flex flex-col gap-4">
         {keys.isPending ? (
-          <Cargando />
+          <Hoja>
+            <Midiendo label="Leyendo las claves de API…" />
+          </Hoja>
+        ) : keys.isError ? (
+          <Hoja>
+            <p role="alert" className="text-base text-fuera">
+              No se pudieron leer las claves de API. Recarga la página para repetir la lectura.
+            </p>
+          </Hoja>
         ) : keyList.length === 0 ? (
-          <Panel>
+          <Hoja>
             <Vacio title="Sin claves de API">
               {mailboxList.length === 0
                 ? 'Crea antes un buzón: cada clave envía en nombre de un buzón remitente (p. ej. noreply@tudominio.com).'
                 : 'Crea una clave para que tu aplicación envíe correo con una sola llamada HTTP.'}
             </Vacio>
-          </Panel>
+          </Hoja>
         ) : (
-          <Panel title="Claves" flush>
+          <Hoja flush>
+            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+              <span className="rotulo min-w-0 flex-1">Clave y remitente</span>
+              <span className="rotulo shrink-0 basis-52">Envíos de hoy</span>
+              <span className="rotulo shrink-0 basis-20 text-right">Acción</span>
+            </div>
+
             <ul>
               {keyList.map((key) => (
                 <li
                   key={key.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-suave px-4 py-2.5 last:border-0"
+                  className="regla-fila flex flex-wrap items-start gap-x-4 gap-y-2.5 px-4 py-3
+                    last:border-b-0"
                 >
-                  <span className="text-tinta-3">
-                    <Barcode seed={key.prefix} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-2 text-base font-medium text-tinta">
+                  <div className="min-w-0 basis-full sm:basis-0 sm:grow">
+                    <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-base font-medium text-tinta">
                       {key.name}
-                      {key.revokedAt && <Sello tone="devuelto">Revocada</Sello>}
+                      {key.revokedAt && <MarcaFondo veredicto="fuera">Revocada</MarcaFondo>}
                     </p>
-                    <p className="truncate font-guia text-micro text-tinta-3">
-                      mw_{key.prefix}_•••• · remite {key.senderEmail}
-                    </p>
-                  </div>
-                  <div className="num text-right font-guia text-sm text-tinta-2">
-                    <p>{key.usedToday} hoy</p>
-                    <p className="text-micro text-tinta-3">
-                      {key.lastUsedAt ? `último ${formatDate(key.lastUsedAt)}` : 'sin uso'}
+                    {/* Prefijo y remitente identifican la clave: nunca se recortan. */}
+                    <p className={`mt-0.5 text-sm text-tinta-3 ${cinta}`}>
+                      <span className="valor text-tinta-2">mw_{key.prefix}_••••</span>
+                      {' · remite '}
+                      <span className="valor text-tinta-2">{key.senderEmail}</span>
                     </p>
                   </div>
-                  {!key.revokedAt && (
-                    <Button variant="peligro" className="h-8 px-2.5 text-sm" onClick={() => setToRevoke(key)}>
-                      Revocar
-                    </Button>
-                  )}
+
+                  <div className="min-w-0 basis-full sm:shrink-0 sm:basis-52">
+                    {key.dailyLimit != null ? (
+                      <Escala label="Envíos hoy" usado={key.usedToday} maximo={key.dailyLimit} />
+                    ) : (
+                      <p className="flex items-baseline justify-between gap-2">
+                        <span className="text-base text-tinta">Envíos hoy</span>
+                        <span className="valor text-base text-tinta">
+                          {key.usedToday}
+                          <span className="text-tinta-3"> / límite del plan</span>
+                        </span>
+                      </p>
+                    )}
+                    <p className="mt-1 text-sm text-tinta-3">
+                      {key.lastUsedAt ? `último uso ${formatDate(key.lastUsedAt)}` : 'sin uso'}
+                    </p>
+                  </div>
+
+                  <div className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
+                    {!key.revokedAt && (
+                      <Button variant="plano" onClick={() => setToRevoke(key)}>
+                        Revocar
+                      </Button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
-          </Panel>
+          </Hoja>
         )}
 
         {/* Guía de integración */}
-        <Panel title="Cómo enviar (ejemplo listo para pegar)">
+        <Hoja title="Cómo enviar (ejemplo listo para pegar)">
           <div className="flex flex-col gap-3">
-            <p className="max-w-[75ch] text-sm text-tinta-2">
+            <p className="max-w-[75ch] text-base text-tinta-2">
               Una petición HTTP por mensaje. La clave viaja en la cabecera{' '}
-              <code className="font-guia text-micro">Authorization</code>; el remitente es el buzón
-              asociado a la clave. Campos: <code className="font-guia text-micro">to</code> (uno o
-              lista), <code className="font-guia text-micro">subject</code>,{' '}
-              <code className="font-guia text-micro">html</code> y/o{' '}
-              <code className="font-guia text-micro">text</code>; opcionales{' '}
-              <code className="font-guia text-micro">fromName, replyTo, cc, bcc</code>.
+              <code className="valor text-sm text-tinta">Authorization</code>; el remitente es el
+              buzón asociado a la clave. Campos:{' '}
+              <code className="valor text-sm text-tinta">to</code> (uno o lista),{' '}
+              <code className="valor text-sm text-tinta">subject</code>,{' '}
+              <code className="valor text-sm text-tinta">html</code> y/o{' '}
+              <code className="valor text-sm text-tinta">text</code>; opcionales{' '}
+              <code className="valor text-sm text-tinta">fromName, replyTo, cc, bcc</code>.
             </p>
-            <Etiqueta>
-              <div className="flex items-start justify-between gap-3 px-4 py-3">
-                <pre className="min-w-0 flex-1 overflow-x-auto font-guia text-micro leading-relaxed">{curlExample}</pre>
-                <BotonCopiar text={curlExample} label="Copiar" />
-              </div>
-            </Etiqueta>
+            <Muestra rotulo="Petición de ejemplo" copiar={curlExample}>
+              {/* <pre> conserva sus saltos de línea: aquí solo hace falta el
+                  desplazamiento horizontal, nunca partir una línea. */}
+              <pre
+                className="valor overflow-x-auto text-sm leading-relaxed text-tinta
+                  [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >{curlExample}</pre>
+            </Muestra>
             <p className="text-sm text-tinta-3">
-              Respuestas: <code className="font-guia text-micro">200 {'{ id, status: "sent" }'}</code> ·{' '}
-              <code className="font-guia text-micro">401</code> clave no válida ·{' '}
-              <code className="font-guia text-micro">429</code> límite del plan alcanzado (reintenta con
+              Respuestas: <code className="valor text-sm">200 {'{ id, status: "sent" }'}</code> ·{' '}
+              <code className="valor text-sm">401</code> clave no válida ·{' '}
+              <code className="valor text-sm">429</code> límite del plan alcanzado (reintenta con
               espera exponencial).
             </p>
           </div>
-        </Panel>
+        </Hoja>
 
         {/* Historial */}
-        <Panel
+        <Hoja
           title="Últimos envíos"
-          actions={
-            messages.isFetching ? <span className="text-micro text-tinta-3">actualizando…</span> : undefined
-          }
+          meta={messages.isFetching ? <span className="rotulo">midiendo…</span> : undefined}
           flush
         >
-          {messageList.length === 0 ? (
+          {messages.isPending ? (
+            <Midiendo label="Leyendo los últimos envíos…" />
+          ) : messageList.length === 0 ? (
             <Vacio title="Todavía no hay envíos">
               Cuando tu aplicación llame a la API, cada mensaje aparecerá aquí con su estado.
             </Vacio>
           ) : (
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-suave text-sm text-tinta-3">
-                  <th className="px-4 py-2 font-medium">Para</th>
-                  <th className="hidden px-4 py-2 font-medium md:table-cell">Asunto</th>
-                  <th className="hidden px-4 py-2 font-medium sm:table-cell">Fecha</th>
-                  <th className="px-4 py-2 text-right font-medium">Estado</th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+                <span className="rotulo min-w-0 flex-1">Para</span>
+                <span className="rotulo min-w-0 flex-1">Asunto</span>
+                <span className="rotulo shrink-0 basis-28">Fecha</span>
+                <span className="rotulo shrink-0 basis-24 text-right">Veredicto</span>
+              </div>
+              <ul>
                 {messageList.map((message) => (
-                  <tr key={message.id} className="border-b border-suave last:border-0">
-                    <td className="max-w-[200px] truncate px-4 py-2 font-guia text-micro text-tinta">
+                  <li
+                    key={message.id}
+                    className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-2.5
+                      last:border-b-0"
+                  >
+                    {/* El destinatario identifica la fila: línea propia en móvil. */}
+                    <span
+                      className={`valor min-w-0 basis-full text-sm text-tinta sm:basis-0 sm:grow ${cinta}`}
+                    >
                       {message.to.join(', ')}
-                    </td>
-                    <td className="hidden max-w-[280px] truncate px-4 py-2 text-sm text-tinta-2 md:table-cell">
+                    </span>
+                    <span className="min-w-0 basis-full truncate text-sm text-tinta-2 sm:basis-0 sm:grow">
                       {message.subject}
-                    </td>
-                    <td className="hidden whitespace-nowrap px-4 py-2 text-sm text-tinta-3 sm:table-cell">
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap text-sm text-tinta-3 sm:basis-28">
                       {formatDate(message.createdAt)}
-                    </td>
-                    <td className="px-4 py-2 text-right">
+                    </span>
+                    <span className="ml-auto shrink-0 sm:ml-0 sm:basis-24 sm:text-right">
                       {message.status === 'sent' ? (
-                        <Estado tone="entregado">Enviado</Estado>
+                        <MarcaFondo veredicto="normal">Enviado</MarcaFondo>
                       ) : (
                         <span title={message.error}>
-                          <Estado tone="devuelto">Fallido</Estado>
+                          <MarcaFondo veredicto="fuera">Fallido</MarcaFondo>
                         </span>
                       )}
-                    </td>
-                  </tr>
+                    </span>
+                  </li>
                 ))}
-              </tbody>
-            </table>
+              </ul>
+            </>
           )}
-        </Panel>
+        </Hoja>
       </div>
 
       {/* Crear clave */}
@@ -286,32 +325,34 @@ export default function ApiKeys({ user }: { user: User }) {
             ))}
           </Select>
           {error && (
-            <p role="alert" className="rounded border border-[rgb(var(--devuelto)/0.4)] bg-[rgb(var(--devuelto)/0.08)] px-3 py-2 text-sm text-devuelto">
+            <p
+              role="alert"
+              className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
+            >
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="fantasma" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button type="submit" variant="accion" busy={create.isPending}>Crear clave</Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="plano" onClick={() => setOpen(false)}>Cancelar</Button>
+            <Button type="submit" variant="tinta" busy={create.isPending}>Crear clave</Button>
           </div>
         </form>
       </Dialogo>
 
-      {/* Clave impresa: una sola vez */}
+      {/* La clave, una sola vez */}
       <Dialogo open={revealedKey !== null} onClose={() => setRevealedKey(null)} title="Tu clave de API">
         {revealedKey && (
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-tinta-2">
+            <p className="text-base text-tinta-2">
               Guárdala ahora en tu gestor de secretos:{' '}
               <strong className="text-tinta">no se volverá a mostrar</strong>.
             </p>
-            <Etiqueta>
-              <div className="flex items-center justify-between gap-3 px-4 py-3">
-                <code className="break-all font-guia text-sm">{revealedKey}</code>
-                <BotonCopiar text={revealedKey} />
-              </div>
-            </Etiqueta>
-            <Button variant="accion" onClick={() => setRevealedKey(null)}>Ya la he guardado</Button>
+            <Muestra rotulo="Clave de API" copiar={revealedKey}>
+              <code className={`valor text-sm text-tinta ${cinta}`}>{revealedKey}</code>
+            </Muestra>
+            <div className="flex justify-end">
+              <Button variant="tinta" onClick={() => setRevealedKey(null)}>Ya la he guardado</Button>
+            </div>
           </div>
         )}
       </Dialogo>
@@ -320,12 +361,12 @@ export default function ApiKeys({ user }: { user: User }) {
       <Dialogo open={toRevoke !== null} onClose={() => setToRevoke(null)} title="Revocar clave">
         {toRevoke && (
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-tinta-2">
+            <p className="text-base text-tinta-2">
               La clave <strong className="text-tinta">{toRevoke.name}</strong> dejará de funcionar
               al instante. Las aplicaciones que la usen recibirán un error 401.
             </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="fantasma" onClick={() => setToRevoke(null)}>Cancelar</Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="plano" onClick={() => setToRevoke(null)}>Cancelar</Button>
               <Button variant="peligro" busy={revoke.isPending} onClick={() => revoke.mutate(toRevoke)}>
                 Revocar
               </Button>

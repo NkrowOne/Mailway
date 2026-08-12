@@ -1,104 +1,211 @@
-@import '@fontsource/barlow/400.css';
-@import '@fontsource/barlow/500.css';
-@import '@fontsource/barlow/600.css';
-@import '@fontsource/barlow-condensed/500.css';
-@import '@fontsource/barlow-condensed/600.css';
-@import '@fontsource/martian-mono/400.css';
-@import '@fontsource/martian-mono/700.css';
+@import '@fontsource-variable/archivo/index.css';
+@import '@fontsource/archivo-narrow/500.css';
+@import '@fontsource/archivo-narrow/600.css';
+@import '@fontsource-variable/azeret-mono/index.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+  Mundo: INFORME DE LABORATORIO.
+  El panel es un parte de análisis. Todo dato es una MEDICIÓN con su rango de
+  referencia y su marca de veredicto. El color no decora: solo aparece cuando
+  un valor está fuera de rango. La estructura la llevan los FILETES (reglas),
+  no las cajas ni las sombras.
+*/
+
 :root {
-  /* Chasis de la terminal: charcoal cálido, pasos de elevación susurrados. */
-  --cinta: 19 20 23;      /* base, la cinta transportadora */
-  --chasis: 26 27 32;     /* +7%: paneles */
-  --chasis-2: 31 33 39;   /* +9%: filas activas, inputs elevados */
-  --chasis-3: 38 40 47;   /* +12%: popovers y diálogos */
+  /* Superficies: mesa de trabajo y hoja impresa */
+  --mesa: 238 236 229;        /* fondo, papel de estraza claro */
+  --hoja: 255 255 255;        /* la hoja del informe */
+  --hoja-2: 248 247 243;      /* fila alterna / bloque embutido */
+  --hoja-3: 242 240 234;      /* cabecera de tabla, controles */
 
-  --tinta: 232 230 225;   /* papel cálido: texto principal */
-  --tinta-2: 174 173 168; /* secundario */
-  --tinta-3: 146 146 140; /* metadatos (AA sobre chasis a tamaños pequeños) */
+  /* Tinta impresa (cálida, no negro puro) */
+  --tinta: 22 21 19;
+  --tinta-2: 88 85 78;
+  --tinta-3: 120 116 107;     /* 5.2:1 sobre hoja — metadatos legibles */
 
-  /* Etiqueta adhesiva: todo lo que se copia hacia fuera se imprime aquí. */
-  --etiqueta: 243 240 232;
-  --etiqueta-tinta: 26 26 23;
-  --etiqueta-borde: 208 203 190;
+  /* Petróleo de laboratorio: la identidad. Ocupa REGIONES (membrete, índice),
+     no filetes sueltos: un color que solo bordea no es un color, es un adorno. */
+  --laboratorio: 10 62 69;          /* el campo */
+  --laboratorio-hondo: 7 44 49;     /* pie del campo, degradado de membrete */
+  --laboratorio-vivo: 0 176 178;    /* acento VIVO sobre el campo oscuro */
+  --laboratorio-claro: 222 238 238;
 
-  /* Naranja de seguridad: la única tecla de acción. */
-  --accion: 255 122 26;
-  --accion-tinta: 26 18 10;
+  /* Veredictos clínicos: el ÚNICO color que califica un dato.
+     Mismo matiz que antes, subido de croma: el veredicto tiene que saltar. */
+  --normal: 8 122 76;         /* dentro de rango — 5.4:1 sobre hoja */
+  --vigilar: 168 94 0;        /* límite / atención — 4.9:1 */
+  --fuera: 194 22 48;         /* fuera de rango — 6.1:1 */
+  --normal-fondo: 228 245 236;
+  --vigilar-fondo: 253 242 224;
+  --fuera-fondo: 253 232 235;
 
-  /* Semáforo de reparto (desaturado para fondo oscuro). */
-  --entregado: 105 190 130;
-  --transito: 217 168 74;
-  --devuelto: 224 106 106;
-
-  --borde: rgba(255, 255, 255, 0.08);
-  --borde-suave: rgba(255, 255, 255, 0.05);
-  --borde-fuerte: rgba(255, 255, 255, 0.14);
+  /* Filetes: la estructura del informe */
+  --regla: rgb(22 21 19 / 0.13);
+  --regla-fuerte: rgb(22 21 19 / 0.36);
 }
 
-html {
-  -webkit-font-smoothing: antialiased;
-  color-scheme: dark;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: rgb(var(--mesa));
+    color: rgb(var(--tinta));
+    font-family: 'Archivo Variable', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 21px;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Superficies del navegador: también son del diseño. */
+  ::selection {
+    background-color: rgb(var(--laboratorio) / 0.16);
+    color: rgb(var(--tinta));
+  }
+
+  :root {
+    caret-color: rgb(var(--laboratorio));
+    accent-color: rgb(var(--laboratorio));
+    scrollbar-color: rgb(var(--tinta) / 0.28) transparent;
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--tinta) / 0.24);
+    border: 3px solid rgb(var(--mesa));
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--tinta) / 0.4);
+  }
+
+  /* Foco: un filete de laboratorio, coherente con la estructura del informe. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--laboratorio));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  a {
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+
+  /* Los valores medidos siempre en cifras tabulares y sin ligaduras. */
+  .valor {
+    font-family: 'Azeret Mono Variable', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'calt' 0;
+    letter-spacing: -0.02em;
+  }
+
+  /* Rótulo de columna del informe: estrecho, versalita, muy espaciado. */
+  .rotulo {
+    font-family: 'Archivo Narrow', 'Archivo Variable', sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+    line-height: 15px;
+    color: rgb(var(--tinta-3));
+  }
+
+  /* Titular del informe: la voz del membrete, a plena potencia. */
+  .titular {
+    font-family: 'Archivo Narrow', 'Archivo Variable', sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: -0.005em;
+    line-height: 0.94;
+  }
 }
 
-body {
-  @apply bg-cinta text-tinta font-ui text-base;
+@layer components {
+  /* El filete de cabecera: pesado arriba, fino entre filas. Es LA estructura. */
+  .regla-cabecera {
+    border-bottom: 1.5px solid var(--regla-fuerte);
+  }
+  .regla-fila {
+    border-bottom: 1px solid var(--regla);
+  }
+
+  /*
+    Campo de laboratorio: la identidad ocupa una REGIÓN, no un filete. Lo usan
+    el membrete de página y el índice lateral, que son las dos superficies que
+    dicen «dónde estás».
+  */
+  .campo-lab {
+    background-color: rgb(var(--laboratorio));
+    background-image: linear-gradient(
+      160deg,
+      rgb(var(--laboratorio)) 0%,
+      rgb(var(--laboratorio-hondo)) 100%
+    );
+    color: rgb(255 255 255);
+  }
+
+  /*
+    Fila fuera de rango: el veredicto tiña la FILA entera. Sin esto, «fuera de
+    rango primero» es una promesa que el ojo no puede verificar de un vistazo.
+  */
+  .fila-fuera {
+    background-color: rgb(var(--fuera-fondo) / 0.55);
+  }
+  .fila-vigilar {
+    background-color: rgb(var(--vigilar-fondo) / 0.5);
+  }
 }
 
-h1, h2, h3 {
-  text-wrap: balance;
+/* Un solo momento de movimiento: el resultado «revela» al medirse.
+   Salida exponencial desde un estado ya visible. */
+@keyframes revelar {
+  from {
+    opacity: 0.35;
+    transform: translateY(-2px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
-p {
-  text-wrap: pretty;
+.revelar {
+  animation: revelar 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-::selection {
-  background: rgb(var(--accion) / 0.85);
-  color: rgb(var(--accion-tinta));
+/* Barrido de medición: la carga es un instrumento midiendo, no un spinner. */
+@keyframes medir {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
 }
 
-* {
-  caret-color: rgb(var(--accion));
-}
-
-*:focus-visible {
-  outline: 2px solid rgb(var(--accion) / 0.9);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-/* Barras de desplazamiento del chasis. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(var(--chasis-3)) transparent;
-}
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-*::-webkit-scrollbar-thumb {
-  background: rgb(var(--chasis-3));
-  border-radius: 5px;
-  border: 2px solid rgb(var(--cinta));
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* Números que no bailan: contadores, cuotas, fechas. */
-.num {
-  font-variant-numeric: tabular-nums;
+.medir::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inline-size: 30%;
+  background: linear-gradient(90deg, transparent, rgb(var(--laboratorio) / 0.55), transparent);
+  animation: medir 1.25s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  .revelar,
+  .medir::after {
+    animation: none;
   }
 }

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { api, type SetupStatus, type User } from './lib/api';
 import { AppShell } from './shell/AppShell';
-import { Cargando } from './ui/kit';
+import { Midiendo } from './ui/kit';
 import Login from './pages/Login';
 import Setup from './pages/Setup';
 import PanelAdmin from './pages/admin/PanelAdmin';
@@ -10,6 +10,8 @@ import Clientes from './pages/admin/Clientes';
 import ClienteDetalle from './pages/admin/ClienteDetalle';
 import Entregabilidad from './pages/admin/Entregabilidad';
 import Ajustes from './pages/admin/Ajustes';
+import Avisos from './pages/admin/Avisos';
+import MarcaBlanca from './pages/MarcaBlanca';
 import InicioCliente from './pages/InicioCliente';
 import Dominios from './pages/Dominios';
 import DominioDetalle from './pages/DominioDetalle';
@@ -32,7 +34,7 @@ export default function App() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Cargando label="Arrancando la central…" />
+        <Midiendo label="Preparando el informe…" />
       </div>
     );
   }
@@ -82,6 +84,7 @@ export default function App() {
             <Route path="/clientes" element={<Clientes />} />
             <Route path="/clientes/:id" element={<ClienteDetalle />} />
             <Route path="/entregabilidad" element={<Entregabilidad />} />
+            <Route path="/avisos" element={<Avisos />} />
             <Route path="/ajustes" element={<Ajustes />} />
           </>
         ) : (
@@ -91,6 +94,7 @@ export default function App() {
         <Route path="/dominios/:id" element={<DominioDetalle />} />
         <Route path="/buzones" element={<Buzones />} />
         <Route path="/alias" element={<Alias />} />
+        <Route path="/marca-blanca" element={<MarcaBlanca />} />
         <Route path="/api-envio" element={<ApiKeys user={user} />} />
         <Route path="/actividad" element={<Actividad />} />
         <Route path="/cuenta" element={<Cuenta />} />

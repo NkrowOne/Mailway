@@ -1,6 +1,10 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 
-type Variant = 'accion' | 'chasis' | 'fantasma' | 'peligro';
+/*
+  En un parte impreso la acción no se pinta de colores: se imprime en tinta.
+  La jerarquía la dan el peso y la posición, no un acento decorativo.
+*/
+type Variant = 'tinta' | 'campo' | 'perfil' | 'plano' | 'peligro';
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -8,37 +12,41 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const styles: Record<Variant, string> = {
-  // La tecla naranja: una por vista, la acción que importa.
-  accion:
-    'bg-accion text-accion-tinta font-semibold hover:brightness-110 active:translate-y-px ' +
-    'disabled:opacity-40 disabled:hover:brightness-100',
-  chasis:
-    'bg-chasis-2 text-tinta border border-fuerte hover:bg-chasis-3 active:translate-y-px ' +
-    'disabled:opacity-40',
-  fantasma:
-    'text-tinta-2 hover:text-tinta hover:bg-chasis-2 active:translate-y-px disabled:opacity-40',
+  // Acción principal: sólida en tinta, como un sello de conformidad.
+  tinta:
+    'bg-tinta text-hoja font-semibold hover:bg-[rgb(var(--laboratorio))] active:translate-y-px ' +
+    'disabled:opacity-35 disabled:hover:bg-tinta',
+  // Acción principal SOBRE el campo de laboratorio (membrete): invertida.
+  campo:
+    'bg-white text-laboratorio font-semibold hover:bg-laboratorio-claro active:translate-y-px ' +
+    'disabled:opacity-40 disabled:hover:bg-white',
+  // Acción secundaria: filete, sin relleno.
+  perfil:
+    'border border-regla-fuerte text-tinta hover:bg-hoja-3 active:translate-y-px disabled:opacity-35',
+  // Terciaria: solo texto.
+  plano: 'text-tinta-2 hover:bg-hoja-3 hover:text-tinta active:translate-y-px disabled:opacity-35',
+  // Destructiva: el carmín de fuera de rango, coherente con el veredicto.
   peligro:
-    'text-devuelto border border-[rgb(var(--devuelto)/0.35)] hover:bg-[rgb(var(--devuelto)/0.10)] ' +
-    'active:translate-y-px disabled:opacity-40',
+    'border border-[rgb(var(--fuera)/0.4)] text-fuera hover:bg-fuera-fondo active:translate-y-px ' +
+    'disabled:opacity-35',
 };
 
 export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
-  { variant = 'chasis', busy = false, className = '', children, disabled, ...rest },
+  { variant = 'perfil', busy = false, className = '', children, disabled, ...rest },
   ref,
 ) {
   return (
     <button
       ref={ref}
       disabled={disabled || busy}
-      className={`inline-flex h-9 items-center justify-center gap-2 rounded px-4 text-base
-        transition-[background-color,color,transform,filter] duration-100 select-none
-        ${styles[variant]} ${className}`}
+      className={`inline-flex h-8 items-center justify-center gap-2 px-3 text-base
+        transition-colors duration-100 select-none ${styles[variant]} ${className}`}
       {...rest}
     >
       {busy && (
         <span
           aria-hidden
-          className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+          className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
         />
       )}
       {children}

@@ -4,70 +4,63 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Chasis: la carcasa oscura de la terminal de clasificación.
-        cinta: 'rgb(var(--cinta) / <alpha-value>)',
-        chasis: 'rgb(var(--chasis) / <alpha-value>)',
-        'chasis-2': 'rgb(var(--chasis-2) / <alpha-value>)',
-        'chasis-3': 'rgb(var(--chasis-3) / <alpha-value>)',
-        // Tinta sobre chasis.
+        // Superficies: mesa de trabajo y hoja de informe.
+        mesa: 'rgb(var(--mesa) / <alpha-value>)',
+        hoja: 'rgb(var(--hoja) / <alpha-value>)',
+        'hoja-2': 'rgb(var(--hoja-2) / <alpha-value>)',
+        'hoja-3': 'rgb(var(--hoja-3) / <alpha-value>)',
+        // Tinta impresa.
         tinta: 'rgb(var(--tinta) / <alpha-value>)',
         'tinta-2': 'rgb(var(--tinta-2) / <alpha-value>)',
         'tinta-3': 'rgb(var(--tinta-3) / <alpha-value>)',
-        // Etiqueta: papel adhesivo para lo que sale del sistema.
-        etiqueta: 'rgb(var(--etiqueta) / <alpha-value>)',
-        'etiqueta-tinta': 'rgb(var(--etiqueta-tinta) / <alpha-value>)',
-        'etiqueta-borde': 'rgb(var(--etiqueta-borde) / <alpha-value>)',
-        // Naranja de seguridad: EL color de acción, único.
-        accion: 'rgb(var(--accion) / <alpha-value>)',
-        'accion-tinta': 'rgb(var(--accion-tinta) / <alpha-value>)',
-        // Semáforo de reparto.
-        entregado: 'rgb(var(--entregado) / <alpha-value>)',
-        transito: 'rgb(var(--transito) / <alpha-value>)',
-        devuelto: 'rgb(var(--devuelto) / <alpha-value>)',
+        // Membrete del laboratorio: identidad y orientación, no adorno.
+        laboratorio: 'rgb(var(--laboratorio) / <alpha-value>)',
+        'laboratorio-hondo': 'rgb(var(--laboratorio-hondo) / <alpha-value>)',
+        'laboratorio-vivo': 'rgb(var(--laboratorio-vivo) / <alpha-value>)',
+        'laboratorio-claro': 'rgb(var(--laboratorio-claro) / <alpha-value>)',
+        // Veredictos: el único color que califica un dato.
+        normal: 'rgb(var(--normal) / <alpha-value>)',
+        vigilar: 'rgb(var(--vigilar) / <alpha-value>)',
+        fuera: 'rgb(var(--fuera) / <alpha-value>)',
+        'normal-fondo': 'rgb(var(--normal-fondo) / <alpha-value>)',
+        'vigilar-fondo': 'rgb(var(--vigilar-fondo) / <alpha-value>)',
+        'fuera-fondo': 'rgb(var(--fuera-fondo) / <alpha-value>)',
       },
       borderColor: {
-        DEFAULT: 'var(--borde)',
-        suave: 'var(--borde-suave)',
-        fuerte: 'var(--borde-fuerte)',
+        DEFAULT: 'var(--regla)',
+        regla: 'var(--regla)',
+        'regla-fuerte': 'var(--regla-fuerte)',
       },
       fontFamily: {
-        ui: ['Barlow', 'system-ui', 'sans-serif'],
-        rotulo: ['"Barlow Condensed"', 'Barlow', 'sans-serif'],
-        guia: ['"Martian Mono"', 'ui-monospace', 'monospace'],
+        ui: ['"Archivo Variable"', 'system-ui', 'sans-serif'],
+        estrecha: ['"Archivo Narrow"', '"Archivo Variable"', 'sans-serif'],
+        valor: ['"Azeret Mono Variable"', 'ui-monospace', 'monospace'],
       },
       fontSize: {
-        // Escala 1.25 sobre cuerpo 14.
-        micro: ['11px', { lineHeight: '16px' }],
-        sm: ['12.5px', { lineHeight: '18px' }],
+        // Escala de informe: densa y precisa, cuerpo 14.
+        micro: ['11px', { lineHeight: '15px' }],
+        sm: ['12px', { lineHeight: '17px' }],
         base: ['14px', { lineHeight: '21px' }],
-        md: ['16px', { lineHeight: '23px' }],
-        lg: ['18px', { lineHeight: '25px' }],
-        xl: ['22px', { lineHeight: '28px' }],
-        '2xl': ['28px', { lineHeight: '33px' }],
-        '3xl': ['44px', { lineHeight: '48px' }],
+        md: ['15px', { lineHeight: '22px' }],
+        lg: ['17px', { lineHeight: '24px' }],
+        xl: ['21px', { lineHeight: '27px' }],
+        '2xl': ['26px', { lineHeight: '31px' }],
+        '3xl': ['34px', { lineHeight: '36px' }],
+        '4xl': ['46px', { lineHeight: '44px' }],
+        '5xl': ['68px', { lineHeight: '62px' }],
       },
       boxShadow: {
-        flotante: '0 0 0 1px rgba(255,255,255,.08), 0 12px 32px -12px rgba(0,0,0,.55)',
+        // Elevación declarada UNA vez: los diálogos flotan; nada más.
+        flotante: '0 18px 48px -20px rgb(var(--tinta) / 0.38)',
       },
       keyframes: {
-        sello: {
-          '0%': { transform: 'scale(1.5) rotate(-14deg)', opacity: '0' },
-          '65%': { transform: 'scale(0.96) rotate(-8deg)', opacity: '1' },
-          '100%': { transform: 'scale(1) rotate(-8deg)', opacity: '1' },
-        },
         aparecer: {
-          '0%': { transform: 'translateY(4px)', opacity: '0' },
+          '0%': { transform: 'translateY(6px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
-        },
-        cintaAvance: {
-          '0%': { backgroundPosition: '0 0' },
-          '100%': { backgroundPosition: '28px 0' },
         },
       },
       animation: {
-        sello: 'sello 260ms cubic-bezier(0.23, 1, 0.32, 1) both',
-        aparecer: 'aparecer 200ms cubic-bezier(0.23, 1, 0.32, 1) both',
-        cinta: 'cintaAvance 1.2s linear infinite',
+        aparecer: 'aparecer 220ms cubic-bezier(0.16, 1, 0.3, 1) both',
       },
     },
   },

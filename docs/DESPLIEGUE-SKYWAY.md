@@ -178,6 +178,57 @@ En el panel (`https://panel.tuempresa.com`):
      el botón «Conexión» da la tarjeta IMAP/SMTP para configurar dispositivos.
    - **Clave de API** → para envíos automatizados; ver `docs/API.md`.
 
+## 6 bis. Avisos: que te enteres si algo se cae
+
+El panel trae un **vigilante** que comprueba cada minuto el motor de correo, el
+webmail y la cola de salida, cada hora el DNS de los dominios ya verificados, y
+una vez al día las listas negras de la IP. Cuando algo se rompe abre una
+incidencia en **Avisos** y te la manda por los canales que configures.
+
+En **Avisos → Cómo quieres que te avise** rellena al menos uno:
+
+- **Discord**: Ajustes del canal → Integraciones → Webhooks → Copiar URL.
+- **Telegram**: crea un bot con [@BotFather](https://t.me/BotFather) y pon su
+  token y el ID de tu chat.
+- **Webhook genérico**: recibe un JSON; útil para n8n o tu propio sistema.
+
+Pulsa **Enviar aviso de prueba** y confirma que te llega. Sin ningún canal, las
+incidencias solo aparecen en el panel y no te enterarás hasta entrar.
+
+> Skyway no vigila estos contenedores (su monitor solo ve sus propios
+> servicios), así que este vigilante es lo que cubre el correo.
+
+## 6 ter. Marca blanca: el webmail en el dominio de cada cliente
+
+Por defecto todos tus clientes entran por `webmail.tuempresa.com`. Si quieres
+que entren por `webmail.sucliente.com`, con su propio certificado, hay que
+configurar Traefik **una sola vez**:
+
+1. En el panel, **Ajustes → Marca blanca**: copia el bloque que te muestra (ya
+   trae tu token generado).
+2. Pégalo en la carpeta de Skyway como `docker-compose.override.yml`. Hay una
+   plantilla comentada en `deploy/skyway-traefik-override.yml`.
+3. Comprueba con `docker ps` el nombre real del contenedor del panel y ajusta
+   la URL del sondeo si no es `mailway-panel`.
+4. Aplica: `cd /ruta/a/Skyway && docker compose up -d`.
+
+A partir de ahí es autoservicio: en **Marca blanca**, el cliente añade su
+dominio, copia el CNAME que le damos, pulsa **Comprobar**, y cuando el DNS
+apunta aquí Traefik pide el certificado solo. El panel pasa el dominio por
+*Esperando DNS → Emitiendo certificado → En marcha*.
+
+**Por qué funciona así**: Compose fusiona `docker-compose.override.yml` con el
+principal, de modo que el repositorio de Skyway no se toca y el cambio
+sobrevive a un `git pull`. Traefik pregunta a Mailway qué dominios servir
+(`--providers.http.endpoint`), autenticándose con el token; Mailway solo
+publica los dominios cuyo DNS **ya** apunta al servidor, porque publicar uno
+que no resuelve haría fallar la validación de Let's Encrypt y acabaría en un
+bloqueo temporal por reintentos.
+
+> Ojo con `command`: Compose lo **reemplaza** entero, no lo fusiona. Por eso la
+> plantilla repite los flags que Skyway ya traía. Si algún día actualizas
+> Skyway y cambia su configuración de Traefik, compara ambas listas.
+
 ## 7. Entregabilidad: antes de enviar en volumen
 
 En **Entregabilidad** el panel comprueba PTR, registro A y listas negras
@@ -208,6 +259,19 @@ oro para no caer en spam:
   ```
 - **Logs del motor**: `docker logs -f mailway-mail`.
 - **Cola de salida**: visible en el Panel de operaciones de Mailway.
+- **Actualizar el stack de correo** (no va por Skyway):
+  ```bash
+  cd /ruta/a/Mailway/deploy
+  git pull
+  docker compose -f docker-compose.mail.yml pull
+  docker compose -f docker-compose.mail.yml up -d
+  ```
+  Los volúmenes no se tocan: el correo sobrevive. Stalwart está fijado a
+  `v0.15.5` a propósito (ver el aviso del apartado 9), así que ese `pull` nunca
+  salta a v0.16.
+- **Liberar espacio desde Skyway es seguro**: su botón ejecuta
+  `docker image prune -f` y `docker builder prune -f`, que solo borran imágenes
+  huérfanas y caché de compilación. No toca volúmenes ni imágenes en uso.
 
 ## 9. Problemas frecuentes
 
@@ -219,3 +283,6 @@ oro para no caer en spam:
 | No sale correo a Gmail/Outlook | Puerto 25 de salida bloqueado por el proveedor | Ticket al proveedor (paso 0.3) |
 | Thunderbird avisa de certificado | TLS del motor sin configurar | Paso 5 |
 | El envío por API falla con 502 | SMTP interno con certificado autofirmado | `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en variables del panel (o completa el paso 5 y apunta `STALWART_SMTP_HOST` a `mail.tuempresa.com`) |
+| Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no está sondeando el panel, o el puerto 80 está cerrado | Revisa el bloque de Ajustes → Marca blanca en el `docker-compose.override.yml` de Skyway y que el nombre del contenedor del panel sea el real (`docker ps`). Let's Encrypt valida por el puerto 80: tiene que estar abierto |
+| El dominio de marca blanca da 404 de Traefik | El DNS todavía no apunta aquí, así que Mailway no lo publica | Es el comportamiento correcto: publica solo lo verificado para no quemar el cupo de Let's Encrypt. Pulsa «Comprobar» cuando el DNS esté puesto |
+| No me llegan los avisos | Ningún canal configurado, o token/URL mal | Avisos → «Enviar aviso de prueba»; si falla, el panel dice qué canal |

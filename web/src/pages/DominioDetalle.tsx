@@ -1,38 +1,58 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type DnsCheck, type DomainRecord } from '../lib/api';
+import { api, ApiError, type CheckStatus, type DnsCheck, type DomainRecord } from '../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
-  Barcode,
-  BotonCopiar,
-  Cargando,
+  CabeceraMedidas,
   Dialogo,
-  Encabezado,
-  Estado,
-  Etiqueta,
-  Panel,
-  Sello,
+  Hoja,
+  MarcaFondo,
+  Medida,
+  Membrete,
+  Midiendo,
+  Muestra,
+  type Veredicto,
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { formatDate } from '../lib/format';
 
-const statusMeta: Record<
-  DnsCheck['status'],
-  { tone: 'entregado' | 'transito' | 'devuelto' | 'neutro'; label: string }
-> = {
-  ok: { tone: 'entregado', label: 'Verificado' },
-  missing: { tone: 'transito', label: 'Falta' },
-  mismatch: { tone: 'devuelto', label: 'No coincide' },
-  unknown: { tone: 'neutro', label: 'Sin comprobar' },
+/*
+  El análisis del dominio.
+
+  Cada registro DNS es una MEDICIÓN: `expected` es el valor de referencia,
+  `found` es el valor medido y el estado es el veredicto. Lo que está fuera de
+  rango se lee primero; lo que está en rango baja al final de su grupo.
+*/
+
+const veredictoDe: Record<CheckStatus, Veredicto> = {
+  ok: 'normal',
+  missing: 'fuera',
+  mismatch: 'fuera',
+  unknown: 'sin-dato',
 };
 
-/**
- * La aduana del dominio: cada registro DNS es una etiqueta que el usuario
- * imprime (copia) en su proveedor; al verificar, los correctos quedan
- * sellados como VERIFICADO.
- */
+const etiquetaDe: Record<CheckStatus, string> = {
+  ok: 'En rango',
+  missing: 'Falta',
+  mismatch: 'No coincide',
+  unknown: 'Sin medir',
+};
+
+/** Orden de lectura del informe: primero lo que reclama una acción. */
+const prioridad: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
+
+function porVeredicto(checks: DnsCheck[]): DnsCheck[] {
+  return [...checks].sort(
+    (a, b) => prioridad[veredictoDe[a.status]] - prioridad[veredictoDe[b.status]],
+  );
+}
+
+/** Valores largos: se desplazan en horizontal, nunca se parten a mitad de palabra. */
+const cinta =
+  'block overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
+
 export default function DominioDetalle() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -79,12 +99,23 @@ export default function DominioDetalle() {
       toast('error', err instanceof ApiError ? err.message : 'No se pudo eliminar.'),
   });
 
-  if (domain.isPending) return <Cargando label="Abriendo el expediente del dominio…" />;
+  if (domain.isPending) {
+    return (
+      <Hoja>
+        <Midiendo label="Leyendo la ficha del dominio…" />
+      </Hoja>
+    );
+  }
   if (domain.isError || !domain.data) {
     return (
-      <p className="text-devuelto">
-        No se encontró el dominio. <Link className="underline" to="/dominios">Volver a dominios</Link>
-      </p>
+      <Hoja>
+        <p role="alert" className="text-base text-tinta-2">
+          <span className="text-fuera">No se encontró el dominio.</span>{' '}
+          <Link className="text-laboratorio underline" to="/dominios">
+            Volver a dominios
+          </Link>
+        </p>
+      </Hoja>
     );
   }
 
@@ -92,21 +123,26 @@ export default function DominioDetalle() {
   const checks = record.dnsStatus.checks ?? [];
   const required = checks.filter((c) => c.required);
   const optional = checks.filter((c) => !c.required);
+  const requiredOk = record.dnsStatus.requiredOk ?? required.filter((c) => c.status === 'ok').length;
+  const requiredTotal = record.dnsStatus.requiredTotal ?? required.length;
+  const optionalOk = optional.filter((c) => c.status === 'ok').length;
+  const medido = Boolean(record.lastCheckedAt);
+  const enReparto = record.status === 'active';
 
   return (
     <>
-      <Encabezado
-        title={<span className="font-guia text-xl font-bold tracking-normal">{record.domain}</span>}
+      <Membrete
+        title={
+          <span className="valor text-xl font-semibold normal-case tracking-normal">
+            {record.domain}
+          </span>
+        }
         meta={
-          <span className="flex flex-wrap items-center gap-2.5">
-            {record.status === 'active' ? (
-              <Estado tone="entregado">En reparto</Estado>
-            ) : (
-              <Estado tone="transito">Esperando DNS</Estado>
-            )}
-            <span className="text-tinta-3">
-              Última verificación: {formatDate(record.lastCheckedAt)}
-            </span>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <MarcaFondo veredicto={enReparto ? 'normal' : medido ? 'fuera' : 'sin-dato'}>
+              {enReparto ? 'En reparto' : 'Esperando DNS'}
+            </MarcaFondo>
+            <span className="text-white/70">Última medición: {formatDate(record.lastCheckedAt)}</span>
           </span>
         }
         actions={
@@ -114,51 +150,86 @@ export default function DominioDetalle() {
             <Button variant="peligro" onClick={() => setConfirmOpen(true)}>
               Eliminar
             </Button>
-            <Button variant="accion" busy={verify.isPending} onClick={() => verify.mutate()}>
-              Verificar DNS ahora
+            <Button variant="campo" busy={verify.isPending} onClick={() => verify.mutate()}>
+              Medir el DNS ahora
             </Button>
           </>
         }
       />
 
       {checks.length === 0 ? (
-        <Panel>
-          <p className="text-tinta-2">
-            Aún no hay lectura del DNS. Pulsa «Verificar DNS ahora» para obtener los
-            registros que debes crear.
+        <Hoja title="Sin lectura del DNS">
+          <p className="max-w-[75ch] text-base text-tinta-2">
+            Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
+            que debes crear.
           </p>
-        </Panel>
+        </Hoja>
       ) : (
         <div className="flex flex-col gap-4">
-          <p className="max-w-[70ch] text-sm text-tinta-2">
+          <Hoja title="Resumen de la medición" meta={formatDate(record.lastCheckedAt)}>
+            <CabeceraMedidas />
+            <Medida
+              concepto="Registros obligatorios en rango"
+              valor={`${requiredOk}/${requiredTotal}`}
+              referencia={`${requiredTotal}/${requiredTotal}`}
+              veredicto={
+                !medido ? 'sin-dato' : requiredOk >= requiredTotal ? 'normal' : 'fuera'
+              }
+              nota={
+                requiredOk >= requiredTotal && medido
+                  ? undefined
+                  : 'Mientras falte alguno, el dominio no reparte correo.'
+              }
+            />
+            {optional.length > 0 && (
+              <Medida
+                concepto="Registros recomendados en rango"
+                valor={`${optionalOk}/${optional.length}`}
+                referencia={`${optional.length}/${optional.length}`}
+                veredicto={
+                  !medido ? 'sin-dato' : optionalOk >= optional.length ? 'normal' : 'vigilar'
+                }
+              />
+            )}
+          </Hoja>
+
+          <p className="max-w-[75ch] text-base text-tinta-2">
             Crea estos registros en el panel DNS de tu proveedor (Cloudflare, IONOS,
-            GoDaddy…) copiando cada etiqueta tal cual. Los cambios pueden tardar de
-            minutos a horas en propagarse; vuelve a pulsar «Verificar» cuando los tengas.
+            GoDaddy…) copiando cada muestra tal cual. Los cambios pueden tardar de minutos a
+            horas en propagarse; vuelve a medir cuando los tengas.
           </p>
 
-          <Panel title="Registros obligatorios" flush>
+          <Hoja
+            title="Registros obligatorios"
+            meta={`${requiredOk} de ${requiredTotal} en rango`}
+            flush
+          >
             <ul>
-              {required.map((check) => (
-                <ChecklistRow key={check.id} check={check} stamped={justVerified} />
+              {porVeredicto(required).map((check) => (
+                <RegistroMedido key={check.id} check={check} recien={justVerified} />
               ))}
             </ul>
-          </Panel>
+          </Hoja>
 
           {optional.length > 0 && (
-            <Panel title="Recomendados (autoconfiguración y endurecimiento)" flush>
+            <Hoja
+              title="Recomendados (autoconfiguración y endurecimiento)"
+              meta={`${optionalOk} de ${optional.length} en rango`}
+              flush
+            >
               <ul>
-                {optional.map((check) => (
-                  <ChecklistRow key={check.id} check={check} stamped={justVerified} />
+                {porVeredicto(optional).map((check) => (
+                  <RegistroMedido key={check.id} check={check} recien={justVerified} />
                 ))}
               </ul>
-            </Panel>
+            </Hoja>
           )}
         </div>
       )}
 
       <Dialogo open={confirmOpen} onClose={() => setConfirmOpen(false)} title="Eliminar dominio">
         <div className="flex flex-col gap-4">
-          <p className="text-sm text-tinta-2">
+          <p className="text-base text-tinta-2">
             Se eliminarán el dominio, <strong className="text-tinta">todos sus buzones con su
             correo dentro</strong> y sus alias, tanto de Mailway como del motor de correo. Esta
             acción no tiene vuelta atrás.
@@ -170,8 +241,8 @@ export default function DominioDetalle() {
             onChange={(e) => setConfirmText(e.target.value)}
             placeholder={record.domain}
           />
-          <div className="flex justify-end gap-2">
-            <Button variant="fantasma" onClick={() => setConfirmOpen(false)}>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="plano" onClick={() => setConfirmOpen(false)}>
               Cancelar
             </Button>
             <Button
@@ -189,51 +260,55 @@ export default function DominioDetalle() {
   );
 }
 
-function ChecklistRow({ check, stamped }: { check: DnsCheck; stamped: boolean }) {
-  const meta = statusMeta[check.status];
+/**
+ * Una medición: el valor de referencia que hay que crear (la muestra que el
+ * usuario se lleva a su proveedor) y, debajo, lo que el DNS devuelve ahora.
+ */
+function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean }) {
+  const veredicto = veredictoDe[check.status];
+  const fuera = veredicto === 'fuera';
+
   return (
-    <li className="border-b border-suave px-4 py-3 last:border-0">
-      <div className="mb-2 flex flex-wrap items-center gap-2.5">
-        <span className="text-base font-medium text-tinta">{check.label}</span>
-        <span className="flex-1" />
-        {check.status === 'ok' ? (
-          <Sello tone="entregado" stamped={stamped}>
-            Verificado
-          </Sello>
-        ) : (
-          <Estado tone={meta.tone}>{meta.label}</Estado>
-        )}
+    <li className="regla-fila px-4 py-3.5 last:border-b-0">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+        <h3 className="min-w-0 basis-full text-base font-medium text-tinta sm:basis-0 sm:grow">
+          {check.label}
+        </h3>
+        <span className="rotulo shrink-0">{check.type}</span>
+        <span className={`ml-auto shrink-0 sm:ml-0 ${recien ? 'revelar' : ''}`}>
+          <MarcaFondo veredicto={veredicto}>{etiquetaDe[check.status]}</MarcaFondo>
+        </span>
       </div>
 
-      {/* La etiqueta imprimible: lo que hay que pegar en el proveedor DNS.
-          Los valores no se parten a mitad de palabra: en pantallas estrechas
-          se desplazan en horizontal para poder copiarlos sin errores. */}
-      <Etiqueta>
-        <div className="flex items-start gap-3 px-3.5 py-2.5">
-          <div className="grid min-w-0 flex-1 gap-1.5 sm:grid-cols-[52px_minmax(120px,0.8fr)_1.4fr] sm:items-baseline">
-            <span className="font-guia text-micro font-bold uppercase text-[rgb(var(--etiqueta-tinta)/0.65)]">
-              {check.type}
-            </span>
-            <code className="block overflow-x-auto whitespace-nowrap font-guia text-sm [scrollbar-width:none]">
-              {check.name}
-            </code>
-            <code className="block overflow-x-auto whitespace-nowrap font-guia text-sm [scrollbar-width:none]">
-              {check.expected}
-            </code>
-          </div>
-          <div className="hidden text-[rgb(var(--etiqueta-tinta))] sm:block">
-            <Barcode seed={check.name + check.type} />
-          </div>
-          <BotonCopiar text={check.expected} label="Copiar valor" />
-        </div>
-      </Etiqueta>
+      <Muestra
+        rotulo="Valor de referencia"
+        copiar={check.expected}
+        className="mt-2.5"
+      >
+        {/* Las pistas se acotan a minmax(0,…) para que un valor largo se
+            desplace dentro de su celda en vez de ensanchar la hoja. */}
+        <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+          <dt className="rotulo sm:pt-px">Nombre</dt>
+          <dd className={`valor min-w-0 text-sm text-tinta ${cinta}`}>{check.name}</dd>
+          <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
+          <dd className={`valor min-w-0 text-sm text-tinta ${cinta}`}>{check.expected}</dd>
+        </dl>
+      </Muestra>
 
-      <p className="mt-2 max-w-[75ch] text-sm text-tinta-3">{check.help}</p>
-      {check.status === 'mismatch' && check.found && (
-        <p className="mt-1 break-all font-guia text-micro text-devuelto">
-          Ahora mismo el DNS devuelve: {check.found}
+      {check.status !== 'ok' && (
+        <p className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="rotulo shrink-0">Ahora mismo el DNS devuelve</span>
+          <span
+            className={`valor min-w-0 basis-full text-sm sm:basis-0 sm:grow ${cinta} ${
+              check.found ? (fuera ? 'text-fuera' : 'text-tinta-2') : 'text-tinta-3'
+            }`}
+          >
+            {check.found || (check.status === 'unknown' ? 'sin lectura' : 'ningún registro')}
+          </span>
         </p>
       )}
+
+      <p className="mt-2 max-w-[75ch] text-sm text-tinta-2">{check.help}</p>
     </li>
   );
 }

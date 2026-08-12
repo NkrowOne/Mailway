@@ -4,9 +4,21 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, type Client, type DomainRecord, type Plan } from '../../lib/api';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Cargando, Dialogo, Encabezado, Estado, Medidor, Panel } from '../../ui/kit';
+import {
+  Dialogo,
+  Escala,
+  Hoja,
+  MarcaFondo,
+  Membrete,
+  Midiendo,
+  Vacio,
+} from '../../ui/kit';
 import { useToast } from '../../ui/toast';
-import { formatDate } from '../../lib/format';
+import { formatDate, plural } from '../../lib/format';
+
+/** Valores largos: se desplazan en horizontal, no se parten a mitad de palabra. */
+const cinta =
+  'block overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
 
 export default function ClienteDetalle() {
   const { id = '' } = useParams();
@@ -76,12 +88,23 @@ export default function ClienteDetalle() {
     },
   });
 
-  if (client.isPending) return <Cargando />;
+  if (client.isPending) {
+    return (
+      <Hoja>
+        <Midiendo label="Leyendo la ficha del cliente…" />
+      </Hoja>
+    );
+  }
   if (client.isError || !client.data) {
     return (
-      <p className="text-devuelto">
-        Cliente no encontrado. <Link className="underline" to="/clientes">Volver</Link>
-      </p>
+      <Hoja>
+        <p role="alert" className="text-base text-tinta-2">
+          <span className="text-fuera">Cliente no encontrado.</span>{' '}
+          <Link className="text-laboratorio underline" to="/clientes">
+            Volver
+          </Link>
+        </p>
+      </Hoja>
     );
   }
 
@@ -98,34 +121,37 @@ export default function ClienteDetalle() {
 
   return (
     <>
-      <Encabezado
+      <Membrete
         title={data.name}
         meta={
-          <span className="flex items-center gap-2.5">
-            {data.suspended ? (
-              <Estado tone="devuelto">Suspendido</Estado>
-            ) : (
-              <Estado tone="entregado">Activo</Estado>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <MarcaFondo veredicto={data.suspended ? 'fuera' : 'normal'}>
+              {data.suspended ? 'Suspendido' : 'Activo'}
+            </MarcaFondo>
+            {data.contactEmail && (
+              <span className={`valor min-w-0 text-sm text-white/70 ${cinta}`}>
+                {data.contactEmail}
+              </span>
             )}
-            {data.contactEmail && <span className="text-tinta-3">{data.contactEmail}</span>}
           </span>
         }
         actions={
           <>
             <Button variant="peligro" onClick={() => setDeleteOpen(true)}>Eliminar</Button>
             <Button
+              variant="perfil"
               onClick={() => update.mutate({ suspended: !data.suspended })}
               busy={update.isPending}
             >
               {data.suspended ? 'Reactivar' : 'Suspender'}
             </Button>
-            <Button variant="accion" onClick={() => setUserOpen(true)}>Crear usuario de acceso</Button>
+            <Button variant="campo" onClick={() => setUserOpen(true)}>Crear usuario de acceso</Button>
           </>
         }
       />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Plan y carga">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Hoja title="Plan y carga">
           <div className="flex flex-col gap-4">
             <Select
               label="Plan asignado"
@@ -138,67 +164,107 @@ export default function ClienteDetalle() {
                 </option>
               ))}
             </Select>
-            <Medidor label="Dominios" used={usage.domains} max={plan.maxDomains} />
-            <Medidor label="Buzones" used={usage.mailboxes} max={plan.maxMailboxes} />
-            <Medidor label="Alias" used={usage.aliases} max={plan.maxAliases} />
-            <p className="num text-sm text-tinta-3">
-              {usage.messagesLast30d} envíos por API en los últimos 30 días
-            </p>
-          </div>
-        </Panel>
-
-        <Panel title="Usuarios con acceso al panel" flush>
-          {users.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-tinta-3">
-              Sin usuarios: este cliente aún no puede entrar. Crea su primer usuario con la
-              tecla naranja.
+            <div className="flex flex-col gap-3">
+              <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
+              <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />
+              <Escala label="Alias" usado={usage.aliases} maximo={plan.maxAliases} />
             </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-regla pt-3">
+              <span className="text-base text-tinta">Envíos por API (últimos 30 días)</span>
+              <span className="valor text-md text-tinta">{usage.messagesLast30d}</span>
+            </div>
+          </div>
+        </Hoja>
+
+        <Hoja
+          title="Usuarios con acceso al panel"
+          meta={plural(users.length, 'usuario', 'usuarios')}
+          flush
+        >
+          {users.length === 0 ? (
+            <Vacio title="Sin usuarios de acceso">
+              Este cliente aún no puede entrar. Crea su primer usuario con «Crear usuario de
+              acceso».
+            </Vacio>
           ) : (
             <ul>
               {users.map((user) => (
-                <li key={user.id} className="flex items-center gap-3 border-b border-suave px-4 py-2.5 last:border-0">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-medium text-tinta">{user.name}</p>
-                    <p className="truncate text-sm text-tinta-3">
-                      {user.email} · último acceso {formatDate(user.lastLoginAt)}
+                <li
+                  key={user.id}
+                  className="regla-fila flex flex-wrap items-baseline gap-x-3 gap-y-1.5 px-4 py-2.5
+                    last:border-b-0"
+                >
+                  {/* Nombre y correo identifican la fila: nunca se recortan. */}
+                  <div className="min-w-0 basis-full sm:basis-0 sm:grow">
+                    <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base font-medium text-tinta">
+                      {user.name}
+                      {user.disabled && (
+                        <MarcaFondo veredicto="fuera">Deshabilitado</MarcaFondo>
+                      )}
+                    </p>
+                    <p className={`text-sm text-tinta-3 ${cinta}`}>
+                      <span className="valor">{user.email}</span> · último acceso{' '}
+                      {formatDate(user.lastLoginAt)}
                     </p>
                   </div>
-                  {user.disabled && <Estado tone="devuelto">Deshabilitado</Estado>}
-                  <UserActions clientId={id} userId={user.id} disabled={user.disabled} />
+                  <div className="ml-auto shrink-0 sm:ml-0">
+                    <UserActions clientId={id} userId={user.id} disabled={user.disabled} />
+                  </div>
                 </li>
               ))}
             </ul>
           )}
-        </Panel>
+        </Hoja>
       </div>
 
-      <Panel title="Dominios del cliente" className="mt-4" flush>
-        {domainList.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-tinta-3">
-            Sin dominios. El cliente puede añadirlos desde su panel, o tú desde «Dominios».
-          </div>
+      <Hoja
+        title="Dominios del cliente"
+        meta={
+          domains.isPending ? 'midiendo…' : plural(domainList.length, 'dominio', 'dominios')
+        }
+        className="mt-4"
+        flush
+      >
+        {domains.isPending ? (
+          <Midiendo label="Leyendo los dominios del cliente…" />
+        ) : domainList.length === 0 ? (
+          <Vacio title="Sin dominios">
+            El cliente puede añadirlos desde su panel, o tú desde «Dominios».
+          </Vacio>
         ) : (
           <ul>
             {domainList.map((domain) => (
-              <li key={domain.id} className="border-b border-suave last:border-0">
-                <Link to={`/dominios/${domain.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-chasis-2">
-                  <span className="min-w-0 flex-1 truncate font-guia text-sm">{domain.domain}</span>
-                  {domain.status === 'active' ? (
-                    <Estado tone="entregado">En reparto</Estado>
-                  ) : (
-                    <Estado tone="transito">DNS pendiente</Estado>
-                  )}
+              <li key={domain.id} className="regla-fila last:border-b-0">
+                <Link
+                  to={`/dominios/${domain.id}`}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5
+                    transition-colors duration-100 hover:bg-hoja-2"
+                >
+                  <span
+                    className={`valor min-w-0 basis-full text-base text-tinta sm:basis-0 sm:grow ${cinta}`}
+                  >
+                    {domain.domain}
+                  </span>
+                  <span className="ml-auto shrink-0 sm:ml-0">
+                    {domain.status === 'active' ? (
+                      <MarcaFondo veredicto="normal">En reparto</MarcaFondo>
+                    ) : (
+                      <MarcaFondo veredicto={domain.lastCheckedAt ? 'fuera' : 'sin-dato'}>
+                        {domain.lastCheckedAt ? 'DNS pendiente' : 'Sin medir'}
+                      </MarcaFondo>
+                    )}
+                  </span>
                 </Link>
               </li>
             ))}
           </ul>
         )}
-      </Panel>
+      </Hoja>
 
       {/* Crear usuario */}
       <Dialogo open={userOpen} onClose={() => setUserOpen(false)} title="Usuario de acceso al panel">
         <form onSubmit={submitUser} className="flex flex-col gap-4">
-          <p className="text-sm text-tinta-2">
+          <p className="text-base text-tinta-2">
             Este usuario entrará al panel de {data.name} y podrá gestionar sus buzones,
             dominios y claves de API, dentro de los límites del plan.
           </p>
@@ -214,13 +280,16 @@ export default function ClienteDetalle() {
             help="Mínimo 10 caracteres. Entrégasela por un canal seguro; podrá cambiarla al entrar."
           />
           {userError && (
-            <p role="alert" className="rounded border border-[rgb(var(--devuelto)/0.4)] bg-[rgb(var(--devuelto)/0.08)] px-3 py-2 text-sm text-devuelto">
+            <p
+              role="alert"
+              className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
+            >
               {userError}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="fantasma" onClick={() => setUserOpen(false)}>Cancelar</Button>
-            <Button type="submit" variant="accion" busy={createUser.isPending}>Crear usuario</Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="plano" onClick={() => setUserOpen(false)}>Cancelar</Button>
+            <Button type="submit" variant="tinta" busy={createUser.isPending}>Crear usuario</Button>
           </div>
         </form>
       </Dialogo>
@@ -228,12 +297,12 @@ export default function ClienteDetalle() {
       {/* Eliminar cliente */}
       <Dialogo open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Eliminar cliente">
         <div className="flex flex-col gap-4">
-          <p className="text-sm text-tinta-2">
+          <p className="text-base text-tinta-2">
             Solo se puede eliminar un cliente sin dominios (para no dejar buzones huérfanos).
             Sus usuarios de panel se eliminarán también.
           </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="fantasma" onClick={() => setDeleteOpen(false)}>Cancelar</Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="plano" onClick={() => setDeleteOpen(false)}>Cancelar</Button>
             <Button variant="peligro" busy={removeClient.isPending} onClick={() => removeClient.mutate()}>
               Eliminar cliente
             </Button>
@@ -257,7 +326,7 @@ function UserActions({ clientId, userId, disabled }: { clientId: string; userId:
     onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudo cambiar.'),
   });
   return (
-    <Button variant="fantasma" className="h-8 px-2.5 text-sm" busy={toggle.isPending} onClick={() => toggle.mutate()}>
+    <Button variant="plano" busy={toggle.isPending} onClick={() => toggle.mutate()}>
       {disabled ? 'Rehabilitar' : 'Deshabilitar'}
     </Button>
   );

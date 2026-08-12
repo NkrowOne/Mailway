@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-process.env.MAILWAY_DATA_DIR = process.env.MAILWAY_DATA_DIR || '/tmp/mailway-test-data';
 import {
   decryptSecret,
   encryptSecret,
