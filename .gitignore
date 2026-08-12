@@ -1,4 +1,9 @@
-# Locally installed agent skills (npx skills add)
+# Locally installed agent skills (npx skills add).
+# The skills themselves are not versioned — .claude/hooks/session-start.sh
+# reinstalls them on each web session, so these stay out of the repo.
 .agents/
-.claude/
+.claude/skills/
 skills-lock.json
+
+# Personal Claude Code settings; .claude/settings.json is shared and tracked.
+.claude/settings.local.json
