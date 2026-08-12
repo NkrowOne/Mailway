@@ -193,10 +193,12 @@ export default function DominioDetalle() {
             )}
           </Hoja>
 
+          <DescargaZona domainId={id} domain={record.domain} />
+
           <p className="max-w-[75ch] text-base text-tinta-2">
-            Crea estos registros en el panel DNS de tu proveedor (Cloudflare, IONOS,
-            GoDaddy…) copiando cada muestra tal cual. Los cambios pueden tardar de minutos a
-            horas en propagarse; vuelve a medir cuando los tengas.
+            Si prefieres crearlos a mano, copia cada muestra tal cual en el panel DNS de tu
+            proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a
+            medir cuando los tengas.
           </p>
 
           <Hoja
@@ -310,5 +312,104 @@ function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean })
 
       <p className="mt-2 max-w-[75ch] text-sm text-tinta-2">{check.help}</p>
     </li>
+  );
+}
+
+/* ------------------------- Descarga del fichero DNS ----------------------- */
+
+const NIVELES = [
+  {
+    id: 'obligatorios' as const,
+    titulo: 'Solo lo obligatorio',
+    descripcion: 'MX, SPF, DKIM y DMARC: lo mínimo para enviar y recibir.',
+  },
+  {
+    id: 'recomendados' as const,
+    titulo: 'Recomendado',
+    descripcion:
+      'Lo anterior más la autoconfiguración: el móvil y Thunderbird se configuran solos.',
+  },
+  {
+    id: 'completo' as const,
+    titulo: 'Todo',
+    descripcion: 'Añade MTA-STS y TLS-RPT. Exigen publicar un fichero en tu web.',
+  },
+];
+
+/**
+ * Descarga del fichero de zona. Antes de ofrecerlo se comprueba si el dominio
+ * ya recibe correo en otro proveedor: importar encima no da error, rompe el
+ * correo en silencio, así que el aviso tiene que llegar ANTES de la descarga.
+ */
+function DescargaZona({ domainId, domain }: { domainId: string; domain: string }) {
+  const [nivel, setNivel] = useState<(typeof NIVELES)[number]['id']>('recomendados');
+
+  const conflicto = useQuery({
+    queryKey: ['domain-conflicto', domainId],
+    queryFn: () =>
+      api.get<{ hayOtroProveedor: boolean; mxActuales: string[]; aviso: string | null }>(
+        `/api/domains/${domainId}/conflicto`,
+      ),
+  });
+
+  const hayConflicto = conflicto.data?.hayOtroProveedor ?? false;
+
+  return (
+    <Hoja
+      title="Importar en tu proveedor de DNS"
+      meta="Fichero de zona"
+      actions={
+        <a href={`/api/domains/${domainId}/zonefile?nivel=${nivel}`} download>
+          <Button variant="tinta">Descargar</Button>
+        </a>
+      }
+    >
+      {hayConflicto && conflicto.data?.aviso && (
+        <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
+          <p className="rotulo text-fuera">No lo importes todavía</p>
+          <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.aviso}</p>
+        </div>
+      )}
+
+      <p className="max-w-[75ch] text-base text-tinta-2">
+        En Cloudflare: <span className="valor">DNS → Records → Import and Export → Import</span>{' '}
+        y sube el fichero. Al terminar, comprueba que los registros quedan en{' '}
+        <strong>gris (DNS only)</strong>: con la nube naranja el correo no funciona.
+      </p>
+
+      <fieldset className="mt-4">
+        <legend className="rotulo mb-1.5">Qué incluir</legend>
+        <div className="flex flex-col">
+          {NIVELES.map((n) => (
+            <label
+              key={n.id}
+              className={`regla-fila flex cursor-pointer items-baseline gap-3 py-2.5 last:border-b-0 ${
+                nivel === n.id ? '' : 'text-tinta-2'
+              }`}
+            >
+              <input
+                type="radio"
+                name={`nivel-${domainId}`}
+                value={n.id}
+                checked={nivel === n.id}
+                onChange={() => setNivel(n.id)}
+                className="mt-1 shrink-0"
+              />
+              <span className="min-w-0">
+                <span className={`text-base ${nivel === n.id ? 'font-medium text-tinta' : ''}`}>
+                  {n.titulo}
+                </span>
+                <span className="block max-w-[70ch] text-sm text-tinta-2">{n.descripcion}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <p className="mt-3 text-sm text-tinta-3">
+        El fichero se llamará <span className="valor">{domain}-mailway-{nivel}.txt</span> y lleva
+        dentro las instrucciones y los avisos.
+      </p>
+    </Hoja>
   );
 }
