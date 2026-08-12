@@ -1,0 +1,90 @@
+# ============================================================================
+# Mailway completo SIN Skyway — panel + motor + webmail en un solo compose
+# ----------------------------------------------------------------------------
+# Para un servidor limpio (sin Traefik ni Skyway). El panel queda en el
+# puerto 4100 y el webmail en el 8000, ambos en HTTP: ponles delante tu
+# proxy con TLS (Caddy, Nginx, Traefik) o usa docker-compose.mail.yml si ya
+# tienes Skyway. Los puertos de correo van directos al host.
+#
+# Uso:
+#   cp .env.example .env    # y rellena las variables
+#   docker compose -f docker-compose.standalone.yml up -d
+# ============================================================================
+
+services:
+  mailway-panel:
+    build: ..
+    container_name: mailway-panel
+    restart: unless-stopped
+    ports:
+      - '4100:4100'
+    environment:
+      STALWART_URL: http://mailway-mail:8080
+      STALWART_ADMIN_USER: admin
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en .env}
+      STALWART_SMTP_HOST: mailway-mail
+      STALWART_SMTP_PORT: '587'
+      MAILWAY_MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en .env}
+      MAILWAY_WEBMAIL_URL: http://localhost:8000
+      # La conexión SMTP interna usa el certificado del motor (autofirmado
+      # hasta configurar TLS): se permite explícitamente por ir por la red
+      # interna de Docker.
+      MAILWAY_SMTP_ALLOW_SELF_SIGNED: '1'
+    volumes:
+      - mailway-panel-data:/data
+    networks:
+      - mailway-internal
+    depends_on:
+      - mailway-mail
+
+  mailway-mail:
+    image: stalwartlabs/stalwart:v0.15.5
+    container_name: mailway-mail
+    restart: unless-stopped
+    ports:
+      - '25:25'
+      - '465:465'
+      - '587:587'
+      - '993:993'
+      - '4190:4190'
+      # Webadmin del motor, solo accesible desde el propio servidor:
+      - '127.0.0.1:8080:8080'
+    environment:
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD}
+    volumes:
+      - mailway-mail-data:/opt/stalwart
+    networks:
+      - mailway-internal
+
+  mailway-webmail:
+    image: roundcube/roundcubemail:1.7.x-apache
+    container_name: mailway-webmail
+    restart: unless-stopped
+    ports:
+      - '8000:80'
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_DEFAULT_PORT: '993'
+      ROUNDCUBEMAIL_SMTP_SERVER: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_SMTP_PORT: '465'
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+    volumes:
+      - mailway-webmail-db:/var/roundcube/db
+      - mailway-webmail-config:/var/roundcube/config
+    networks:
+      - mailway-internal
+    depends_on:
+      - mailway-mail
+
+networks:
+  mailway-internal:
+    name: mailway-internal
+
+volumes:
+  mailway-panel-data:
+  mailway-mail-data:
+  mailway-webmail-db:
+  mailway-webmail-config:
