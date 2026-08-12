@@ -8,6 +8,9 @@ import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit } from './clients';
 import { checkDomainDns, type DomainDnsReport } from './deliverability';
+import { evaluarConflicto, generarZona, nombreFichero, type NivelZona } from './zonefile';
+import { lookupMx, lookupTxt } from '../core/dns';
+import { getInstanceSettings } from './settings';
 
 export interface DomainRecord {
   id: string;
@@ -192,6 +195,53 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const engine = getEngine();
     const records = await engine.getDnsRecords(domain.domain);
     return { records };
+  });
+
+  /**
+   * ¿Este dominio ya recibe correo en otro proveedor? Se consulta antes de
+   * ofrecer la descarga: importar sobre un dominio en uso rompe su correo.
+   */
+  app.get('/api/domains/:id/conflicto', async (req) => {
+    const { id } = req.params as { id: string };
+    const { domain } = requireDomainAccess(req, id);
+    const [mx, txt, dmarc] = await Promise.all([
+      lookupMx(domain.domain),
+      lookupTxt(domain.domain),
+      lookupTxt(`_dmarc.${domain.domain}`),
+    ]);
+    return evaluarConflicto({
+      mx,
+      txt,
+      dmarc,
+      mailHostname: getInstanceSettings().mailHostname,
+    });
+  });
+
+  /**
+   * Fichero de zona BIND listo para importar en Cloudflare y equivalentes.
+   * Evita el copiado a mano, que es donde se cuelan los DKIM truncados.
+   */
+  app.get('/api/domains/:id/zonefile', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { domain } = requireDomainAccess(req, id);
+    const { nivel } = req.query as { nivel?: string };
+    const elegido: NivelZona =
+      nivel === 'obligatorios' || nivel === 'recomendados' || nivel === 'completo'
+        ? nivel
+        : 'recomendados';
+
+    const engine = getEngine();
+    const records = await engine.getDnsRecords(domain.domain);
+    const zona = generarZona({ domain: domain.domain, records, nivel: elegido });
+
+    audit(req, 'domain.zonefile_downloaded', { id, domain: domain.domain, nivel: elegido });
+    reply
+      .type('text/plain; charset=utf-8')
+      .header(
+        'Content-Disposition',
+        `attachment; filename="${nombreFichero(domain.domain, elegido)}"`,
+      );
+    return zona;
   });
 
   /** Verificación en vivo: consulta el DNS público y actualiza el estado. */
