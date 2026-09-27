@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
-import { notFound } from '../core/errors';
+import { conflict, notFound } from '../core/errors';
 import { getEngine } from '../engine';
-import { getMailbox } from './mailboxes';
+import { audit } from './audit';
+import { getMailbox, requireMailboxAccess } from './mailboxes';
 
 /**
  * Contraseñas de aplicación por buzón: una por dispositivo o aplicación
@@ -131,5 +133,60 @@ export async function revokeAppPassword(mailboxId: string, appId: string): Promi
   db.prepare('UPDATE app_passwords SET revoked_at = ? WHERE id = ?').run(now(), appId);
 }
 
-/** Rutas del panel (administración y cliente). Pendiente de implementar. */
-export function registerAppPasswordRoutes(_app: FastifyInstance): void {}
+/**
+ * Máximo de contraseñas de aplicación activas por buzón. Una por dispositivo
+ * o aplicación es lo normal; decenas suelen indicar que no se revocan las
+ * antiguas, y cada una es una puerta más al buzón.
+ */
+const MAX_ACTIVE_APP_PASSWORDS = 25;
+
+const createSchema = z.object({
+  name: z
+    .string({ required_error: 'Indique un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).' })
+    .trim()
+    .min(1, 'Indique un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).')
+    .max(60, 'El nombre no puede superar los 60 caracteres.'),
+});
+
+/** Rutas del panel (administración y usuarios del cliente dueño del buzón). */
+export function registerAppPasswordRoutes(app: FastifyInstance): void {
+  app.get('/api/mailboxes/:id/app-passwords', async (req) => {
+    const { id } = req.params as { id: string };
+    requireMailboxAccess(req, id);
+    return { appPasswords: listAppPasswords(id) };
+  });
+
+  app.post('/api/mailboxes/:id/app-passwords', async (req) => {
+    const { id } = req.params as { id: string };
+    const { user, mailbox } = requireMailboxAccess(req, id);
+    const body = createSchema.parse(req.body ?? {});
+    const active = (
+      db
+        .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+        .get(id) as { c: number }
+    ).c;
+    if (active >= MAX_ACTIVE_APP_PASSWORDS) {
+      throw conflict(
+        `Este buzón ya tiene ${MAX_ACTIVE_APP_PASSWORDS} contraseñas de aplicación activas. Revoque las que ya no se utilicen antes de crear otra.`,
+        'app_password_limit',
+      );
+    }
+    const result = await createAppPassword(id, body.name, user.id);
+    audit(req, 'mailbox.app_password_created', {
+      mailboxId: id,
+      email: mailbox.email,
+      appPasswordId: result.appPassword.id,
+      name: result.appPassword.name,
+    });
+    // La contraseña en claro viaja solo en esta respuesta.
+    return result;
+  });
+
+  app.delete('/api/mailboxes/:id/app-passwords/:appId', async (req) => {
+    const { id, appId } = req.params as { id: string; appId: string };
+    const { mailbox } = requireMailboxAccess(req, id);
+    await revokeAppPassword(id, appId);
+    audit(req, 'mailbox.app_password_revoked', { mailboxId: id, email: mailbox.email, appPasswordId: appId });
+    return { ok: true };
+  });
+}
