@@ -39,9 +39,11 @@ export function FieldWrap({ label, help, error, children }: FieldWrapProps) {
 
 // Casilla de formulario impreso: filete perimetral fino, fondo de hoja.
 const controlBase =
-  'h-9 w-full border border-regla bg-hoja px-2.5 text-base text-tinta ' +
+  'h-9 w-full min-w-0 border border-regla bg-hoja px-2.5 text-base text-tinta ' +
   'placeholder:text-tinta-3 transition-colors duration-100 ' +
-  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] disabled:opacity-35';
+  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] disabled:opacity-35 ' +
+  // Un campo con error lleva el filete del veredicto, no solo el texto de debajo.
+  'aria-[invalid=true]:border-[rgb(var(--fuera)/0.6)]';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -88,6 +90,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
             ref={ref}
             id={id}
             aria-describedby={describedBy}
+            aria-invalid={error ? true : undefined}
             className={`${controlBase} appearance-none pr-9 ${className}`}
             {...rest}
           >
@@ -123,6 +126,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
           ref={ref}
           id={id}
           aria-describedby={describedBy}
+          aria-invalid={error ? true : undefined}
           className={`${controlBase} h-auto min-h-[84px] py-2 ${className}`}
           {...rest}
         />

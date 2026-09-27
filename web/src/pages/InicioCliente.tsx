@@ -1,62 +1,136 @@
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, type ClientDashboard } from '../lib/api';
-import { Button } from '../ui/Button';
-import { Escala, Hoja, Marca, MarcaFondo, Membrete, Midiendo } from '../ui/kit';
+import { api, type ClientDashboard, type DomainRecord } from '../lib/api';
+import { plural } from '../lib/format';
+import { estiloBoton } from '../ui/Button';
+import {
+  AvisoError,
+  Escala,
+  Hoja,
+  Marca,
+  MarcaFondo,
+  Membrete,
+  Midiendo,
+  type Veredicto,
+} from '../ui/kit';
+
+interface Paso {
+  key: string;
+  label: string;
+  /** null = no se puede medir desde el panel (p. ej. dispositivos conectados). */
+  done: boolean | null;
+  to: string;
+  hint: ReactNode;
+  /** Los pasos opcionales no cuentan para «puesta en marcha completa». */
+  obligatorio: boolean;
+}
+
+/** Enlace dentro de la pista de un paso: por encima del enlace que ocupa la fila. */
+const enlacePista = 'relative z-10 text-laboratorio underline underline-offset-2 hover:text-tinta';
+
+const estadoDominio: Record<DomainRecord['status'], { veredicto: Veredicto; texto: string }> = {
+  error: { veredicto: 'fuera', texto: 'Error' },
+  pending_dns: { veredicto: 'vigilar', texto: 'DNS pendiente' },
+  active: { veredicto: 'normal', texto: 'Verificado' },
+};
+
+const pesoDominio: Record<DomainRecord['status'], number> = { error: 0, pending_dns: 1, active: 2 };
 
 /**
  * El parte del cliente. Arriba, la puesta en marcha como lista de pasos
- * pendientes (aquí el orden SÍ es información: cada paso depende del
- * anterior). A la derecha, la carga del plan medida frente a su límite.
+ * (aquí el orden SÍ es información: cada paso depende del anterior). A la
+ * derecha, la carga del plan medida frente a su límite.
  */
 export default function InicioCliente() {
-  const { data, isPending, isError } = useQuery({
+  const { data, isPending, isFetching, refetch } = useQuery({
     queryKey: ['client-dashboard'],
     queryFn: () => api.get<ClientDashboard>('/api/dashboard/client'),
   });
 
-  if (isPending) return <Midiendo label="Leyendo tu parte…" />;
-  if (isError || !data) {
+  if (isPending) return <Midiendo label="Leyendo el estado de su correo…" />;
+  // Si una relectura falla pero ya hubo datos, se siguen mostrando.
+  if (!data) {
     return (
-      <p className="border border-regla bg-fuera-fondo px-4 py-3 text-base text-fuera">
-        No se pudo cargar tu panel. Recarga la página.
-      </p>
+      <>
+        <Membrete title="Resumen" />
+        <AvisoError onRetry={() => void refetch()} retrying={isFetching}>
+          No se pudo cargar el resumen de su correo. Compruebe la conexión y vuelva a intentarlo.
+        </AvisoError>
+      </>
     );
   }
 
   const { onboarding, plan, usage, domains, messages } = data;
-  const pasos = [
+  // El paso del DNS lleva al dominio que falta por verificar, no al primero
+  // de la lista (que puede estar ya verificado).
+  const porVerificar = domains.find((d) => d.status !== 'active') ?? domains[0];
+  const portal = `${window.location.origin}/mi-buzon`;
+
+  const pasos: Paso[] = [
     {
       key: 'alta',
-      label: 'Dar de alta tu dominio',
+      label: 'Dar de alta el dominio',
       done: onboarding.hasDomain,
       to: '/dominios',
-      hint: 'Registra el dominio con el que enviarás y recibirás correo.',
+      hint: 'Registre el dominio con el que enviará y recibirá correo (por ejemplo, su-empresa.com).',
+      obligatorio: true,
     },
     {
       key: 'dns',
-      label: 'Verificar el DNS',
+      label: 'Configurar el DNS',
       done: onboarding.hasActiveDomain,
-      to: domains[0] ? `/dominios/${domains[0].id}` : '/dominios',
-      hint: 'Copia los registros en tu proveedor de dominios y comprueba que apuntan bien.',
+      to: porVerificar ? `/dominios/${porVerificar.id}` : '/dominios',
+      hint: (
+        <>
+          {/* Sin nombrar el producto: el panel del cliente puede ir con marca blanca. */}
+          Publique en el proveedor del dominio los registros que figuran en la ficha del
+          dominio. Si el dominio está en Cloudflare,{' '}
+          <Link to="/conexiones" className={enlacePista}>
+            conecte su cuenta en Conexiones
+          </Link>{' '}
+          y los registros se crearán automáticamente.
+        </>
+      ),
+      obligatorio: true,
     },
     {
       key: 'buzones',
-      label: 'Crear el primer buzón',
+      label: 'Crear los buzones',
       done: onboarding.hasMailbox,
       to: '/buzones',
-      hint: 'Las cuentas de correo de tu equipo.',
+      hint: 'Las cuentas de correo de su equipo (por ejemplo, info@ o ventas@).',
+      obligatorio: true,
+    },
+    {
+      key: 'dispositivos',
+      label: 'Conectar los dispositivos',
+      done: null,
+      to: '/buzones',
+      hint: (
+        <>
+          Envíe a cada persona el enlace de configuración de su buzón desde Buzones, o indíquele
+          que acceda a <span className="valor text-sm text-tinta">{portal}</span> con su dirección
+          y contraseña: el móvil y el ordenador se configuran solos.
+        </>
+      ),
+      obligatorio: false,
     },
     {
       key: 'api',
       label: 'Crear una clave de API',
       done: onboarding.hasApiKey,
       to: '/api-envio',
-      hint: 'Solo si vas a enviar correos automáticos (códigos, avisos).',
+      hint: 'Solo si sus aplicaciones envían correo automático (códigos de acceso, avisos, facturas).',
+      obligatorio: false,
     },
   ];
-  const siguiente = pasos.find((p) => !p.done);
-  const hechos = pasos.filter((p) => p.done).length;
+  const obligatorios = pasos.filter((p) => p.obligatorio);
+  const hechos = obligatorios.filter((p) => p.done).length;
+  const siguiente = obligatorios.find((p) => !p.done);
+  const dominiosOrdenados = [...domains].sort(
+    (a, b) => pesoDominio[a.status] - pesoDominio[b.status],
+  );
 
   return (
     <>
@@ -65,29 +139,32 @@ export default function InicioCliente() {
         meta={
           data.client.suspended ? (
             <MarcaFondo veredicto="fuera">
-              Cuenta suspendida: contacta con tu proveedor
+              Cuenta suspendida: póngase en contacto con su proveedor
             </MarcaFondo>
           ) : (
             <span>
               Plan <span className="font-medium text-white">{plan.name}</span> ·{' '}
-              {hechos === pasos.length
+              {hechos === obligatorios.length
                 ? 'puesta en marcha completa'
-                : `${hechos} de ${pasos.length} pasos completados`}
+                : `${hechos} de ${obligatorios.length} pasos obligatorios completados`}
             </span>
           )
         }
         actions={
           siguiente ? (
-            <Link to={siguiente.to}>
-              <Button variant="campo">{siguiente.label}</Button>
+            <Link to={siguiente.to} className={estiloBoton('campo')}>
+              {siguiente.label}
             </Link>
-          ) : (
-            data.webmailUrl && (
-              <a href={data.webmailUrl} target="_blank" rel="noreferrer">
-                <Button variant="campo">Abrir webmail</Button>
-              </a>
-            )
-          )
+          ) : data.webmailUrl ? (
+            <a
+              href={data.webmailUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={estiloBoton('campo')}
+            >
+              Abrir webmail
+            </a>
+          ) : undefined
         }
       />
 
@@ -96,52 +173,61 @@ export default function InicioCliente() {
           title="Puesta en marcha"
           meta={
             <span className="valor">
-              {hechos}/{pasos.length}
+              {hechos}/{obligatorios.length}
             </span>
           }
           flush
         >
           <ol>
-            {pasos.map((paso, i) => (
-              <li key={paso.key} className="regla-fila last:border-b-0">
-                <Link
-                  to={paso.to}
-                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 transition-colors duration-100 hover:bg-hoja-3"
+            {pasos.map((paso, i) => {
+              const esSiguiente = paso === siguiente;
+              return (
+                <li
+                  key={paso.key}
+                  className="regla-fila relative flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3
+                    transition-colors duration-100 last:border-b-0 focus-within:bg-hoja-3 hover:bg-hoja-3"
                 >
                   <span
                     aria-hidden
                     className={`valor shrink-0 text-sm ${
-                      paso.done ? 'text-normal' : paso === siguiente ? 'text-laboratorio' : 'text-tinta-3'
+                      paso.done ? 'text-normal' : esSiguiente ? 'text-laboratorio' : 'text-tinta-3'
                     }`}
                   >
                     {i + 1}
                   </span>
                   <div className="min-w-0 flex-1 basis-48">
-                    <p
-                      className={`text-base ${
+                    {/* Un solo enlace por fila; su ::after cubre la fila entera
+                        para que todo el renglón sea pulsable sin anidar enlaces. */}
+                    <Link
+                      to={paso.to}
+                      className={`text-base after:absolute after:inset-0 after:content-[''] ${
                         paso.done ? 'text-tinta-2' : 'font-medium text-tinta'
                       }`}
                     >
                       {paso.label}
-                    </p>
+                    </Link>
                     {!paso.done && <p className="text-sm text-tinta-2">{paso.hint}</p>}
                   </div>
-                  <span className="shrink-0">
+                  <span className="ml-auto shrink-0">
                     {paso.done ? (
                       <Marca veredicto="normal">Hecho</Marca>
-                    ) : paso === siguiente ? (
+                    ) : esSiguiente ? (
                       <Marca veredicto="vigilar">Siguiente</Marca>
-                    ) : (
+                    ) : paso.done === null ? (
+                      <Marca veredicto="sin-dato">Recomendado</Marca>
+                    ) : paso.obligatorio ? (
                       <Marca veredicto="sin-dato">Pendiente</Marca>
+                    ) : (
+                      <Marca veredicto="sin-dato">Opcional</Marca>
                     )}
                   </span>
-                </Link>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ol>
         </Hoja>
 
-        <Hoja title="Carga del plan" meta="Uso frente a tu límite">
+        <Hoja title="Carga del plan" meta="Uso frente al límite">
           <div className="flex flex-col gap-4">
             <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
             <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />
@@ -151,32 +237,49 @@ export default function InicioCliente() {
                 <span className="text-base text-tinta-2">Envíos por API · 7 días</span>
                 <span className="valor text-md font-medium text-tinta">{messages.last7d}</span>
               </div>
-              {messages.failed7d > 0 && (
+              {messages.failed7d > 0 ? (
                 <p className="mt-1 text-sm text-fuera">
-                  {messages.failed7d} envío(s) fallido(s). Míralos en API de envío.
+                  {plural(messages.failed7d, 'envío fallido', 'envíos fallidos')}. Consulte el
+                  detalle en{' '}
+                  <Link to="/api-envio" className="underline underline-offset-2 hover:text-tinta">
+                    API de envío
+                  </Link>
+                  .
                 </p>
-              )}
+              ) : onboarding.hasApiKey && !onboarding.hasSentMessage ? (
+                <p className="mt-1 text-sm text-tinta-3">
+                  La clave de API está creada, pero todavía no se ha enviado ningún mensaje.
+                </p>
+              ) : null}
             </div>
           </div>
         </Hoja>
       </div>
 
       {domains.length > 0 && (
-        <Hoja title="Tus dominios" className="mt-4" flush>
+        <Hoja title="Sus dominios" meta="Pendientes primero" className="mt-4" flush>
           <ul>
-            {domains.map((domain) => (
-              <li key={domain.id} className="regla-fila last:border-b-0">
-                <Link
-                  to={`/dominios/${domain.id}`}
-                  className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 py-2.5 transition-colors duration-100 hover:bg-hoja-3"
-                >
-                  <span className="valor min-w-0 text-base text-tinta">{domain.domain}</span>
-                  <MarcaFondo veredicto={domain.status === 'active' ? 'normal' : 'vigilar'}>
-                    {domain.status === 'active' ? 'Verificado' : 'DNS pendiente'}
-                  </MarcaFondo>
-                </Link>
-              </li>
-            ))}
+            {dominiosOrdenados.map((domain) => {
+              const estado = estadoDominio[domain.status] ?? estadoDominio.pending_dns;
+              return (
+                <li key={domain.id} className="regla-fila last:border-b-0">
+                  <Link
+                    to={`/dominios/${domain.id}`}
+                    className={`flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 py-2.5
+                      transition-colors duration-100 hover:bg-hoja-3 ${
+                        estado.veredicto === 'fuera'
+                          ? 'fila-fuera'
+                          : estado.veredicto === 'vigilar'
+                            ? 'fila-vigilar'
+                            : ''
+                      }`}
+                  >
+                    <span className="valor min-w-0 break-all text-base text-tinta">{domain.domain}</span>
+                    <MarcaFondo veredicto={estado.veredicto}>{estado.texto}</MarcaFondo>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </Hoja>
       )}

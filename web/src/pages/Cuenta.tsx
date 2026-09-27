@@ -1,34 +1,55 @@
-import { useState, type FormEvent } from 'react';
-import { api, ApiError } from '../lib/api';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, ApiError, type User } from '../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
-import { Hoja, Membrete } from '../ui/kit';
+import { AvisoError, Hoja, Membrete } from '../ui/kit';
 import { useToast } from '../ui/toast';
+
+const LONGITUD_MINIMA = 10;
 
 export default function Cuenta() {
   const toast = useToast();
+  const queryClient = useQueryClient();
+  // Ya está en caché (App la lee al arrancar): no genera otra petición.
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
+  });
+  const user = me.data?.user ?? null;
+
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [intentado, setIntentado] = useState(false);
+
+  const noCoinciden = repeat !== '' && newPassword !== repeat;
+  const corta = newPassword !== '' && newPassword.length < LONGITUD_MINIMA;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (newPassword !== repeat) {
-      setError('Las contraseñas no coinciden.');
-      return;
-    }
+    setIntentado(true);
+    if (!currentPassword || newPassword !== repeat || newPassword.length < LONGITUD_MINIMA) return;
     setBusy(true);
     setError('');
     try {
       await api.post('/api/auth/password', { currentPassword, newPassword });
-      toast('ok', 'Contraseña actualizada. El resto de sesiones se han cerrado.');
+      toast('ok', 'Contraseña actualizada. Se han cerrado las demás sesiones abiertas.');
       setCurrentPassword('');
       setNewPassword('');
       setRepeat('');
+      setIntentado(false);
+      // Si el servidor cerró también esta sesión, la aplicación lo detecta
+      // aquí y lleva a la portada de acceso en lugar de fallar más tarde.
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo cambiar.');
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'No se pudo cambiar la contraseña. Compruebe la conexión e inténtelo de nuevo.',
+      );
     } finally {
       setBusy(false);
     }
@@ -36,51 +57,94 @@ export default function Cuenta() {
 
   return (
     <>
-      <Membrete title="Mi cuenta" meta="Tu acceso al panel." />
-      <Hoja title="Cambiar contraseña" className="max-w-lg">
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <Input
-            label="Contraseña actual"
-            type="password"
-            required
-            autoComplete="current-password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-          />
-          <Input
-            label="Nueva contraseña"
-            type="password"
-            required
-            minLength={10}
-            autoComplete="new-password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            help="Mínimo 10 caracteres."
-          />
-          <Input
-            label="Repite la nueva contraseña"
-            type="password"
-            required
-            autoComplete="new-password"
-            value={repeat}
-            onChange={(e) => setRepeat(e.target.value)}
-          />
-          {error && (
-            <p
-              role="alert"
-              className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-            >
-              {error}
+      <Membrete title="Mi cuenta" meta="Datos de acceso al panel." />
+      <div className="flex max-w-2xl flex-col gap-4">
+        {user && (
+          <Hoja title="Identidad" flush>
+            <dl>
+              <FilaDato rotulo="Nombre">{user.name || '—'}</FilaDato>
+              <FilaDato rotulo="Correo de acceso" valor>
+                {user.email}
+              </FilaDato>
+              <FilaDato rotulo="Perfil">
+                {user.role === 'admin' ? 'Responsable de la instancia' : 'Usuario de cliente'}
+              </FilaDato>
+            </dl>
+          </Hoja>
+        )}
+
+        <Hoja title="Cambiar contraseña">
+          <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
+            <Input
+              label="Contraseña actual"
+              type="password"
+              required
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              error={intentado && !currentPassword ? 'Indique la contraseña actual.' : undefined}
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Nueva contraseña"
+                type="password"
+                required
+                minLength={LONGITUD_MINIMA}
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                help={`Mínimo ${LONGITUD_MINIMA} caracteres.`}
+                error={
+                  intentado && (corta || newPassword === '')
+                    ? `Debe tener al menos ${LONGITUD_MINIMA} caracteres.`
+                    : undefined
+                }
+              />
+              <Input
+                label="Repita la nueva contraseña"
+                type="password"
+                required
+                autoComplete="new-password"
+                value={repeat}
+                onChange={(e) => setRepeat(e.target.value)}
+                error={
+                  noCoinciden || (intentado && repeat === '' && newPassword !== '')
+                    ? 'Las contraseñas no coinciden.'
+                    : undefined
+                }
+              />
+            </div>
+            {error && <AvisoError>{error}</AvisoError>}
+            <p className="text-sm text-tinta-3">
+              Al cambiarla se cierran las demás sesiones abiertas con esta cuenta.
             </p>
-          )}
-          <p className="text-sm text-tinta-3">
-            Al cambiarla se cierran el resto de sesiones abiertas con esta cuenta.
-          </p>
-          <Button type="submit" variant="tinta" busy={busy} className="self-start">
-            Cambiar contraseña
-          </Button>
-        </form>
-      </Hoja>
+            <Button type="submit" variant="tinta" busy={busy} className="self-start">
+              Cambiar contraseña
+            </Button>
+          </form>
+        </Hoja>
+      </div>
     </>
+  );
+}
+
+function FilaDato({
+  rotulo,
+  valor = false,
+  children,
+}: {
+  rotulo: string;
+  valor?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-0.5 px-4 py-2.5 last:border-b-0">
+      <dt className="rotulo basis-full sm:basis-40">{rotulo}</dt>
+      <dd
+        className={`min-w-0 flex-1 text-base text-tinta [overflow-wrap:anywhere] ${valor ? 'valor text-sm' : ''}`}
+      >
+        {children}
+      </dd>
+    </div>
   );
 }
