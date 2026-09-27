@@ -24,6 +24,7 @@ import { registerCloudflareRoutes } from './modules/cloudflare';
 import { registerAutoconfigRoutes } from './modules/autoconfig';
 import { registerPortalRoutes } from './modules/portal';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
+import { registerEngineOpsRoutes } from './modules/engineops';
 
 export interface BuildAppOptions {
   /** Registro de Fastify; en las pruebas se desactiva para no ensuciar la salida. */
@@ -99,6 +100,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerAutoconfigRoutes(app);
   registerPortalRoutes(app);
   registerAppPasswordRoutes(app);
+  registerEngineOpsRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');

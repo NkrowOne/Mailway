@@ -74,6 +74,17 @@ function PanelApp() {
   const status = setup.data!;
   const needsSetup = !status.setupComplete;
 
+  // Si el administrador ya existe pero no hay sesión (caducó, otro
+  // navegador…), el asistente no puede continuar: primero hay que entrar.
+  if (needsSetup && status.hasAdmin && !user) {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login brand={status.instance.brandName} />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
   if (needsSetup) {
     return (
       <Routes>

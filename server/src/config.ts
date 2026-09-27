@@ -75,6 +75,12 @@ export const config = {
    * quede con la instancia. El instalador lo genera y lo muestra.
    */
   setupToken: process.env.MAILWAY_SETUP_TOKEN?.trim() || '',
+  /**
+   * Secreto compartido con el webmail (Roundcube) para su complemento de
+   * cambio de contraseña, que llama a /api/webmail/password. Sin él, esa
+   * ruta está desactivada.
+   */
+  webmailToken: process.env.MAILWAY_WEBMAIL_TOKEN?.trim() || '',
   /** Token fijo para el proveedor HTTP de Traefik (si no, se genera y se guarda). */
   traefikTokenOverride: process.env.MAILWAY_TRAEFIK_TOKEN?.trim() || '',
   mailHostnameDefault: process.env.MAILWAY_MAIL_HOSTNAME || '',
