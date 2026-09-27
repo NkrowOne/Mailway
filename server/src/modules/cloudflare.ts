@@ -1,3 +1,4 @@
+import { domainToUnicode } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
@@ -21,10 +22,11 @@ import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { getClient } from './clients';
 import { mecanismosSpf } from './deliverability';
-import { getDomain, refreshDomainDns, type DomainRecord } from './domains';
+import { instanceAutoconfigBase } from './connection';
+import { getDomain, marcarPropiedadComprobada, refreshDomainDns, type DomainRecord } from './domains';
 import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import { getClientDomain, refreshClientDomain, type ClientDomain } from './whitelabel';
-import { esObligatorio, filtrarPorNivel, seleccionarRegistros } from './zonefile';
+import { esObligatorio, filtrarPorNivel, registrosDelDominio } from './zonefile';
 
 /**
  * Integración con Cloudflare: el DNS de correo de un dominio en un clic.
@@ -262,7 +264,7 @@ export async function resolverZona(
   const detalle = errores.length > 0 ? ` Último error: ${errores[errores.length - 1]}` : '';
   return {
     resolucion: null,
-    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${hostname}. Compruebe que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}`,
+    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${domainToUnicode(hostname) || hostname}. Compruebe que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}`,
   };
 }
 
@@ -539,10 +541,32 @@ function planificarUno(
 
     case 'MX': {
       const mx = aqui.filter((r) => r.type === 'MX');
-      const propio = mx.find((r) => sinPunto(r.content) === d.content);
-      const ajenos = mx.filter((r) => r !== propio);
-      if (ajenos.length === 0) {
-        if (propio) return conservar('Ya existe con el valor correcto.', [propio]);
+      const propios = mx.filter((r) => sinPunto(r.content) === d.content);
+      const propio = propios[0];
+      const ajenos = mx.filter((r) => sinPunto(r.content) !== d.content);
+      // Mismo criterio que la comprobación DNS (veredictoMx): un MX ajeno con
+      // prioridad menor o igual que la nuestra se queda con parte del correo;
+      // uno con prioridad mayor es un respaldo y no impide recibir aquí.
+      const mejorPropia = propios.length > 0 ? Math.min(...propios.map((r) => r.priority ?? 0)) : null;
+      const porDelante = mejorPropia === null ? ajenos : ajenos.filter((r) => (r.priority ?? 0) <= mejorPropia);
+      if (porDelante.length === 0) {
+        if (propio && ajenos.length > 0) {
+          return conservar(
+            `Ya existe con el valor correcto. ${ajenos.length === 1 ? 'El MX' : 'Los MX'} de ${ajenos
+              .map((r) => sinPunto(r.content))
+              .join(', ')} ${ajenos.length === 1 ? 'tiene' : 'tienen'} menor preferencia y solo recibirá${ajenos.length === 1 ? '' : 'n'} correo si este servidor no responde; se conserva${ajenos.length === 1 ? '' : 'n'}.`,
+            [...propios, ...ajenos],
+          );
+        }
+        if (propio) {
+          // Otra prioridad que la propuesta funciona igual: no se toca.
+          return conservar(
+            propio.priority !== undefined && propio.priority !== d.priority
+              ? `Ya existe con prioridad ${propio.priority}; funciona igual que la propuesta.`
+              : 'Ya existe con el valor correcto.',
+            [propio],
+          );
+        }
         if (cnameEstorba) {
           return enConflicto(
             'Existe un CNAME con este nombre; impide publicar el MX.',
@@ -552,7 +576,7 @@ function planificarUno(
         }
         return crear();
       }
-      const hosts = ajenos.map((r) => sinPunto(r.content)).join(', ');
+      const hosts = porDelante.map((r) => sinPunto(r.content)).join(', ');
       const routing = ajenos.some((r) => esHostEmailRouting(r.content));
       let reason = `El dominio recibe hoy el correo en ${hosts}. Si se reemplazan estos MX, el correo dejará de llegar a ese proveedor.`;
       if (routing) {
@@ -643,8 +667,11 @@ function planificarUno(
         return enConflicto('Ya existe otra clave DKIM con este selector.', txts, borrarYCrear(txts));
       }
 
-      // Otros TXT (MTA-STS, TLS-RPT…): se comparan con los de su mismo tipo.
-      const prefijo = valor.match(/^v=[a-z0-9]+/)?.[0];
+      // Otros TXT (MTA-STS, TLS-RPT, verificación de propiedad…): se comparan
+      // con los de su mismo tipo, reconocido por «v=…» o por la clave inicial
+      // («mailway-verificacion=»). Sin prefijo, un segundo «Aplicar» intentaría
+      // crear otra vez el mismo registro.
+      const prefijo = valor.match(/^v=[a-z0-9]+/)?.[0] ?? valor.match(/^[a-z0-9-]+=/)?.[0];
       const mismos = prefijo ? txts.filter((r) => txtDe(r).toLowerCase().startsWith(prefijo)) : [];
       const normal = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
       if (mismos.some((r) => normal(txtDe(r)) === normal(d.content))) {
@@ -785,11 +812,37 @@ export function construirLote(grupos: Operaciones[]): CfLote {
   return lote;
 }
 
+function cuentaOperaciones(ops: Operaciones): number {
+  return ops.deletes.length + ops.patches.length + ops.puts.length + ops.posts.length;
+}
+
+/**
+ * Aplica las operaciones de un cambio en un lote atómico. «Ya existe un
+ * registro idéntico» en el alta es justo el resultado buscado: se repite el
+ * lote sin el alta para que lo demás (borrados, cambios) sí se aplique.
+ */
+async function aplicarCambio(cliente: CloudflareClient, zoneId: string, ops: Operaciones): Promise<void> {
+  if (cuentaOperaciones(ops) === 0) return;
+  try {
+    await cliente.batch(zoneId, construirLote([ops]));
+  } catch (err) {
+    if (!(err instanceof CloudflareError) || !err.idempotente || ops.posts.length === 0) throw err;
+    const sinAltas: Operaciones = { ...ops, posts: [] };
+    if (cuentaOperaciones(sinAltas) === 0) return;
+    await cliente.batch(zoneId, construirLote([sinAltas]));
+  }
+}
+
 /**
  * Aplica un plan en un único lote. Si Cloudflare rechaza el lote por un
  * registro concreto (validación, un registro que ya existe, Email Routing…),
- * se aplican los cambios uno a uno para que los correctos no se pierdan por
- * uno erróneo, y el error se atribuye a su registro.
+ * se aplica cada cambio en su propio lote para que los correctos no se
+ * pierdan por uno erróneo, y el error se atribuye a su registro.
+ *
+ * Cada cambio va en un lote y no en llamadas sueltas: un reemplazo de MX es
+ * «borrar los ajenos + crear el propio», y si el alta fallara después del
+ * borrado (límite de peticiones, un error del propio registro) la zona se
+ * quedaría sin ningún MX. En un lote, o se aplica entero o no se aplica.
  */
 export async function ejecutarPlan(
   cliente: CloudflareClient,
@@ -826,38 +879,30 @@ export async function ejecutarPlan(
     if (!(err instanceof CloudflareError) || ERRORES_GLOBALES.has(err.code)) throw err;
   }
 
-  // Uno a uno, por fases (borrados, cambios, sustituciones, altas), igual que
-  // el lote: así un CNAME que estorba se borra antes de crear lo nuevo.
+  // Un lote por cambio. Los borrados compartidos (un CNAME que estorba a dos
+  // cambios) solo van en el primer lote que lo consigue: repetirlos en el
+  // siguiente haría fallar ese lote entero por «el registro ya no existe».
   const fallidos = new Map<CambioInterno, string>();
-  const intentar = async (a: (typeof aplicar)[number], paso: () => Promise<unknown>, esBorrado = false) => {
-    if (fallidos.has(a.cambio)) return;
+  const borrados = new Set<string>();
+  let alguno = false;
+  for (let i = 0; i < aplicar.length; i++) {
+    const a = aplicar[i]!;
+    const ops: Operaciones = { ...a.ops, deletes: a.ops.deletes.filter((id) => !borrados.has(id)) };
     try {
-      await paso();
+      await aplicarCambio(cliente, zoneId, ops);
+      for (const id of ops.deletes) borrados.add(id);
+      alguno = true;
     } catch (err) {
-      // «Ya existe idéntico» es el resultado buscado; borrar algo que ya no
-      // existe, también.
-      if (err instanceof CloudflareError && err.idempotente) return;
-      if (esBorrado && err instanceof CloudflareError && err.code === 'cloudflare_not_found') return;
-      if (err instanceof CloudflareError && ERRORES_GLOBALES.has(err.code)) throw err;
+      if (err instanceof CloudflareError && ERRORES_GLOBALES.has(err.code)) {
+        // Sin nada aplicado, el error es de toda la operación. Con algo ya
+        // aplicado, se informa de lo hecho y lo pendiente queda como error:
+        // cada lote es atómico, así que la zona no ha quedado a medias.
+        if (!alguno) throw err;
+        for (const pendiente of aplicar.slice(i)) fallidos.set(pendiente.cambio, err.message);
+        break;
+      }
       fallidos.set(a.cambio, mensajeDe(err));
     }
-  };
-  const borrados = new Set<string>();
-  for (const a of aplicar) {
-    for (const id of a.ops.deletes) {
-      if (borrados.has(id)) continue;
-      borrados.add(id);
-      await intentar(a, () => cliente.deleteRecord(zoneId, id), true);
-    }
-  }
-  for (const a of aplicar) {
-    for (const { id, ...cambios } of a.ops.patches) await intentar(a, () => cliente.patchRecord(zoneId, id, cambios));
-  }
-  for (const a of aplicar) {
-    for (const { id, ...registro } of a.ops.puts) await intentar(a, () => cliente.updateRecord(zoneId, id, registro));
-  }
-  for (const a of aplicar) {
-    for (const registro of a.ops.posts) await intentar(a, () => cliente.createRecord(zoneId, registro));
   }
 
   return {
@@ -905,25 +950,44 @@ interface PlanDominio {
   resolucion: Resolucion | null;
 }
 
-/** Registros que Mailway quiere en Cloudflare para un dominio de correo. */
+/**
+ * Registros que Mailway quiere en Cloudflare para un dominio de correo. Con
+ * lo recomendado va también el TXT de verificación de la propiedad: así,
+ * aplicar en Cloudflare prueba la propiedad sin esperar a mover el MX.
+ */
 async function deseadosDeDominio(domain: string, includeRecommended: boolean): Promise<Deseado[]> {
   const records = await getEngine().getDnsRecords(domain);
   const seleccion = filtrarPorNivel(
-    seleccionarRegistros(domain, records),
+    registrosDelDominio(domain, records),
     includeRecommended ? 'recomendados' : 'obligatorios',
   );
   return seleccion.map(deseadoDe).filter((d): d is Deseado => d !== null);
 }
 
+/**
+ * ¿Puede esta petición usar las cuentas de Cloudflare de la instancia?
+ * Solo el administrador, y nunca si pide `soloCliente=1`: Skyway usa un
+ * token de administrador en nombre de sus proyectos y lo envía cuando quien
+ * actúa en Skyway no es administrador, para que el plan y la aplicación se
+ * limiten a las cuentas del propio cliente (más la de la instancia que el
+ * administrador ya asoció al dominio al aplicar su DNS, igual que para un
+ * usuario del cliente).
+ */
+export function permiteInstancia(user: AuthedUser, query: unknown): boolean {
+  const { soloCliente } = (query ?? {}) as { soloCliente?: string };
+  if (soloCliente === '1' || soloCliente === 'true') return false;
+  return user.role === 'admin';
+}
+
 async function planDeDominio(
   domain: DomainRecord,
-  user: AuthedUser,
   includeRecommended: boolean,
+  permitirInstancia: boolean,
 ): Promise<PlanDominio> {
   const { resolucion, motivo } = await resolverZona(domain.domain, {
     clientId: domain.clientId,
     storedAccountId: domain.cloudflare?.accountId ?? null,
-    permitirInstancia: user.role === 'admin',
+    permitirInstancia,
   });
   if (!resolucion) {
     return { available: false, reason: motivo, changes: [], resolucion: null };
@@ -940,7 +1004,10 @@ async function planDeDominio(
     deseados.map((d) => d.name),
   );
   const { publicIp } = getInstanceSettings();
-  const changes = planificar(deseados, existentes, { apex: domain.domain, publicIp });
+  // El vértice es el de la ZONA, no el dominio: con un dominio de correo que
+  // es subdominio (envios.acme.es en la zona acme.es), un CNAME en su nombre
+  // sí impide publicar el MX y el SPF, y debe salir como conflicto.
+  const changes = planificar(deseados, existentes, { apex: sinPunto(resolucion.zona.name), publicIp });
   return {
     available: true,
     account: { id: resolucion.cuenta.id, label: resolucion.cuenta.label },
@@ -948,6 +1015,33 @@ async function planDeDominio(
     changes,
     resolucion,
   };
+}
+
+/**
+ * Escribir en una zona ACTIVA de Cloudflare el TXT de verificación (o el MX
+ * a este servidor) prueba la propiedad sin esperar al DNS público, cuyos
+ * resolutores pueden tener en caché durante media hora el «no existe» de la
+ * primera medición. Cloudflare solo marca una zona como activa cuando la
+ * delegación del dominio apunta a sus servidores de nombres, así que quien
+ * escribe en ella controla el dominio. Una zona pendiente no prueba nada:
+ * cualquiera puede añadir gmail.com a su cuenta de Cloudflare.
+ */
+export function pruebaPropiedadEnZona(
+  domain: DomainRecord,
+  zona: CfZona,
+  cambios: CambioPlan[],
+  resultado: ResultadoAplicacion,
+): boolean {
+  if (zona.status !== 'active') return false;
+  const nombreTxt = domain.ownershipRecord.name.toLowerCase();
+  const apex = domain.domain.toLowerCase();
+  // «keep» del TXT o del MX = el nuestro ya está en la zona; «applied» = se
+  // acaba de escribir. Un conflicto sin reemplazar no prueba nada.
+  const esPrueba = (type: string, name: string) =>
+    (type === 'TXT' && name === nombreTxt) || (type === 'MX' && name === apex);
+  const conservado = cambios.some((c) => c.action === 'keep' && esPrueba(c.type, c.name));
+  const aplicado = resultado.applied.some((a) => esPrueba(a.type, a.name));
+  return conservado || aplicado;
 }
 
 function guardarAsociacion(domainId: string, r: Resolucion): void {
@@ -970,10 +1064,11 @@ export interface ResultadoDominio extends ResultadoAplicacion {
 export async function aplicarDnsDominio(
   domainId: string,
   user: AuthedUser,
-  opts: { replaceConflicts: boolean; includeRecommended: boolean },
+  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia?: boolean },
 ): Promise<ResultadoDominio | { unavailable: string }> {
   const domain = getDomain(domainId);
-  const plan = await planDeDominio(domain, user, opts.includeRecommended);
+  const permitirInstancia = opts.permitirInstancia ?? user.role === 'admin';
+  const plan = await planDeDominio(domain, opts.includeRecommended, permitirInstancia);
   if (!plan.available || !plan.resolucion) return { unavailable: plan.reason || '' };
   const r = plan.resolucion;
   const resultado = await ejecutarPlan(r.cliente, r.zona.id, plan.changes, {
@@ -982,6 +1077,9 @@ export async function aplicarDnsDominio(
   guardarAsociacion(domainId, r);
   if (resultado.applied.length > 0) {
     db.prepare('UPDATE domains SET dns_applied_at = ? WHERE id = ?').run(now(), domainId);
+  }
+  if (domain.ownershipVerifiedAt === null && pruebaPropiedadEnZona(domain, r.zona, plan.changes, resultado)) {
+    marcarPropiedadComprobada(domainId);
   }
   // La verificación no debe tapar el resultado: si el motor no responde, el
   // DNS ya está aplicado y se medirá en la siguiente vuelta del vigilante.
@@ -1024,8 +1122,10 @@ export function deseadosDeInstancia(): { deseados: Deseado[]; motivo: string } {
     nombres.add(host);
     deseados.push({ type: 'A', name: host, content: ip, required: false, proxyTolerado: true });
   }
-  const base = mail.split('.').slice(1).join('.');
-  if (base.includes('.')) {
+  // El mismo dominio base que sirve la autoconfiguración (connection.ts):
+  // con un servidor de dos etiquetas (ejemplo.com) es el propio nombre.
+  const base = instanceAutoconfigBase(mail);
+  if (base) {
     for (const prefijo of ['autoconfig', 'autodiscover']) {
       const name = `${prefijo}.${base}`;
       if (nombres.has(name)) continue;
@@ -1213,13 +1313,19 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
   });
 
   /** Plan de cambios del DNS de correo de un dominio (no modifica nada). */
+  /*
+   * `?soloCliente=1` (plan y aplicación): limita las cuentas a las del propio
+   * cliente aunque quien llame sea administrador. Lo usa Skyway, que trabaja
+   * con un token de administrador en nombre de usuarios que no lo son; véase
+   * permiteInstancia().
+   */
   app.get('/api/domains/:id/cloudflare', async (req) => {
     const user = requireAuth(req);
     const { id } = req.params as { id: string };
     const domain = getDomain(id);
     requireClientAccess(req, domain.clientId);
     const { includeRecommended } = req.query as { includeRecommended?: string };
-    const plan = await planDeDominio(domain, user, includeRecommended !== 'false');
+    const plan = await planDeDominio(domain, includeRecommended !== 'false', permiteInstancia(user, req.query));
     const changes = plan.changes.map(publico);
     return {
       available: plan.available,
@@ -1240,6 +1346,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const resultado = await aplicarDnsDominio(id, user, {
       replaceConflicts: body.replaceConflicts === true,
       includeRecommended: body.includeRecommended !== false,
+      permitirInstancia: permiteInstancia(user, req.query),
     });
     if ('unavailable' in resultado) throw badRequest(resultado.unavailable, 'cloudflare_unavailable');
     audit(req, 'cloudflare.dns_applied', {
@@ -1253,7 +1360,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     return { applied: resultado.applied, errors: resultado.errors, skipped: resultado.skipped, domain: resultado.domain };
   });
 
-  /** Marca blanca: apunta el dominio propio del cliente a este servidor. */
+  /** Marca blanca: apunta el dominio propio del cliente a este servidor (admite `?soloCliente=1`). */
   app.post('/api/whitelabel/domains/:id/cloudflare', async (req) => {
     const user = requireAuth(req);
     const { id } = req.params as { id: string };
@@ -1279,7 +1386,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
 
     const { resolucion, motivo } = await resolverZona(host, {
       clientId: destino.clientId,
-      permitirInstancia: user.role === 'admin',
+      permitirInstancia: permiteInstancia(user, req.query),
     });
     if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
     const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);

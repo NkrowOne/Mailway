@@ -12,6 +12,7 @@ import {
   type WhitelabelStatus,
 } from '../lib/api';
 import { formatDate } from '../lib/format';
+import { nombreVisible } from '../lib/cloudflare';
 import {
   cuentaCloudflarePara,
   MAX_DOMINIOS_PROPIOS,
@@ -21,6 +22,7 @@ import {
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import {
+  AvisoError,
   Dialogo,
   Hoja,
   MarcaFondo,
@@ -50,15 +52,10 @@ const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: str
 /** «Fuera de rango primero»: lo que requiere acción, arriba. */
 const ORDEN: Record<WhitelabelStatus, number> = { error: 0, pending_dns: 1, issuing: 2, active: 3 };
 
-function BandaError({ texto }: { texto: string }) {
-  return (
-    <p
-      role="alert"
-      className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-    >
-      {texto}
-    </p>
-  );
+/** «a.es», «a.es y b.es», «a.es, b.es y c.es». */
+function listaNatural(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
 }
 
 /** Dominio de correo que ya demostró que el cliente controla su DNS. */
@@ -116,7 +113,11 @@ export default function MarcaBlanca() {
     <>
       <Membrete
         title="Marca blanca"
-        meta="El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo verificado del cliente."
+        meta={
+          isAdmin || !me.isSuccess
+            ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo verificado del cliente.'
+            : 'Su webmail en su propio dominio, con certificado. El nombre debe ser un subdominio de uno de sus dominios de correo verificados.'
+        }
         actions={
           <Button variant="campo" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
             Añadir dominio
@@ -140,19 +141,15 @@ export default function MarcaBlanca() {
       )}
 
       {me.isError || domains.isError ? (
-        <Hoja>
-          <BandaError texto="No se han podido cargar los dominios propios. Compruebe la conexión y vuelva a intentarlo." />
-          <Button
-            variant="perfil"
-            className="mt-3"
-            onClick={() => {
-              void me.refetch();
-              void domains.refetch();
-            }}
-          >
-            Reintentar
-          </Button>
-        </Hoja>
+        <AvisoError
+          retrying={me.isFetching || domains.isFetching}
+          onRetry={() => {
+            void me.refetch();
+            void domains.refetch();
+          }}
+        >
+          No se han podido cargar los dominios propios. Compruebe la conexión y vuelva a intentarlo.
+        </AvisoError>
       ) : me.isPending || domains.isPending ? (
         <Hoja>
           <Midiendo label="Leyendo los dominios propios…" />
@@ -170,7 +167,9 @@ export default function MarcaBlanca() {
             Por omisión, el webmail se abre en la dirección general del servidor. Con un dominio
             propio —por ejemplo <span className="valor">webmail.suempresa.com</span>, si{' '}
             <span className="valor">suempresa.com</span> es un dominio de correo verificado— se abre
-            con la marca del cliente. Máximo {MAX_DOMINIOS_PROPIOS} por cliente.
+            {isAdmin
+              ? ` con la marca del cliente. Máximo ${MAX_DOMINIOS_PROPIOS} por cliente.`
+              : ` con su marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}
           </Vacio>
         </Hoja>
       ) : (
@@ -318,17 +317,21 @@ function DialogoAlta({
         {sinCliente ? null : dominiosCorreo.isPending ? (
           <Midiendo label="Leyendo los dominios de correo…" />
         ) : dominiosCorreo.isError ? (
-          <BandaError texto="No se han podido leer los dominios de correo del cliente. Vuelva a intentarlo." />
+          <AvisoError onRetry={() => void dominiosCorreo.refetch()} retrying={dominiosCorreo.isFetching}>
+            No se han podido leer los dominios de correo del cliente.
+          </AvisoError>
         ) : verificados.length === 0 ? (
           <div className="flex flex-col gap-2 text-base text-tinta-2">
             <p>
               {pendientes.length > 0
-                ? `El cliente todavía no tiene ningún dominio de correo verificado (${pendientes
-                    .map((d) => d.domain)
-                    .join(', ')} está pendiente de DNS).`
-                : 'El cliente todavía no tiene dominios de correo.'}{' '}
+                ? `${isAdmin ? 'El cliente todavía no tiene' : 'Todavía no tiene'} ningún dominio de correo verificado (${listaNatural(
+                    pendientes.map(nombreVisible),
+                  )} ${pendientes.length === 1 ? 'está pendiente' : 'están pendientes'} de DNS).`
+                : isAdmin
+                  ? 'El cliente todavía no tiene dominios de correo.'
+                  : 'Todavía no tiene dominios de correo.'}{' '}
               El dominio propio debe ser un subdominio de un dominio de correo verificado: así se
-              garantiza que el cliente controla su DNS.
+              garantiza que {isAdmin ? 'el cliente controla' : 'usted controla'} su DNS.
             </p>
             <Link to="/dominios" className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta">
               Ir a Dominios
@@ -349,7 +352,7 @@ function DialogoAlta({
               <Select label="Dominio de correo" value={dominioPadre} onChange={(e) => setPadre(e.target.value)}>
                 {verificados.map((d) => (
                   <option key={d.id} value={d.domain}>
-                    {d.domain}
+                    {nombreVisible(d)}
                   </option>
                 ))}
               </Select>
@@ -360,15 +363,15 @@ function DialogoAlta({
               </span>
             </Muestra>
             <p className="text-sm text-tinta-2">
-              Solo se admiten subdominios de los dominios de correo verificados del cliente, hasta{' '}
-              {MAX_DOMINIOS_PROPIOS} por cliente. Los nombres autoconfig, autodiscover y mta-sts están
+              Solo se admiten subdominios de los dominios de correo verificados
+              {isAdmin ? ` del cliente, hasta ${MAX_DOMINIOS_PROPIOS} por cliente.` : `, hasta ${MAX_DOMINIOS_PROPIOS}.`} Los nombres autoconfig, autodiscover y mta-sts están
               reservados para la configuración automática de los programas de correo. Después se
               indicará el registro DNS que hay que crear.
             </p>
           </>
         )}
 
-        {error && <BandaError texto={error} />}
+        {error && <AvisoError>{error}</AvisoError>}
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="plano" onClick={onClose}>
@@ -432,7 +435,11 @@ function FichaDominio({
       if (data.domain.status === 'active') {
         toast('ok', `${data.domain.hostname} ya funciona con HTTPS.`);
       } else {
-        toast('ok', data.domain.detail || 'Se ha completado la comprobación.');
+        // Pendiente de DNS reclama una acción; emitiendo certificado, solo esperar.
+        toast(
+          data.domain.status === 'issuing' ? 'ok' : 'error',
+          data.domain.detail || 'Se ha completado la comprobación.',
+        );
       }
     },
     onError: (err) =>
@@ -517,9 +524,9 @@ function FichaDominio({
           )}
         </p>
       ) : detalle.isError ? (
-        <div className="mt-3">
-          <BandaError texto="No se han podido leer las instrucciones de DNS de este dominio. Vuelva a cargar la página." />
-        </div>
+        <AvisoError className="mt-3" onRetry={() => void detalle.refetch()} retrying={detalle.isFetching}>
+          No se han podido leer las instrucciones de DNS de este dominio.
+        </AvisoError>
       ) : (
         instrucciones.length > 0 && (
           <div className="mt-3 flex flex-col gap-3">

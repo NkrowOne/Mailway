@@ -2,6 +2,7 @@ import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
+import { fireAlert } from '../src/modules/alerts';
 import { setInstanceSettings } from '../src/modules/settings';
 import { adminContext, createClient, createDomain, type TestContext } from './helpers';
 
@@ -116,6 +117,31 @@ test('el administrador tiene que indicar el cliente y se le aplica la misma regl
 
   const inexistente = await crear(ctx.adminCookie, { hostname: 'webmail.empresa-b.test', clientId: 'cli_no' });
   assert.equal(inexistente.statusCode, 404);
+});
+
+test('eliminar un dominio propio cierra su alerta abierta', async () => {
+  const res = await crear(clientA.userCookie!, { hostname: 'caido.empresa-a.test' });
+  assert.equal(res.statusCode, 200, res.body);
+  const id = (res.json() as { domain: { id: string } }).domain.id;
+  fireAlert({
+    severity: 'critical',
+    type: 'whitelabel_broken',
+    dedupeKey: `whitelabel:${id}`,
+    clientId: clientA.clientId,
+    title: 'Prueba',
+    message: 'Prueba',
+    quiet: true,
+  });
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/whitelabel/domains/${id}`,
+    headers: { cookie: clientA.userCookie! },
+  });
+  assert.equal(borrar.statusCode, 200);
+  const abiertas = db
+    .prepare('SELECT COUNT(*) AS c FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL')
+    .get(`whitelabel:${id}`) as { c: number };
+  assert.equal(abiertas.c, 0);
 });
 
 test('un cliente no puede crear dominios para otro indicando su clientId', async () => {

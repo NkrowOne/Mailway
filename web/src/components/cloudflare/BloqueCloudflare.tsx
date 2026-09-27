@@ -24,7 +24,7 @@ import { RevisionCambios } from './RevisionCambios';
   2. Revisión: el plan completo (crear, actualizar, conservar, conflicto) en
      un diálogo, con el reemplazo de conflictos como decisión explícita.
   3. Verificación: tras aplicar, se mide el DNS público cada 15 segundos
-     durante 5 minutos, a la vista, hasta que el dominio entra en reparto.
+     durante 5 minutos, a la vista, hasta que el dominio queda activo.
 */
 
 const INTERVALO_MS = 15_000;
@@ -105,14 +105,29 @@ export function BloqueCloudflare({
         queryClient.invalidateQueries({ queryKey: ['domains'] }),
         queryClient.invalidateQueries({ queryKey: ['domain-cloudflare', id] }),
       ]);
-      if (data.domain.dnsStatus.allRequiredOk) {
-        setSondeo(null);
-        toast('ok', 'DNS aplicado en Cloudflare. El dominio ya está en reparto.');
-      } else if (data.applied.length > 0) {
+      const omitidos = data.skipped?.length ?? 0;
+      if (data.applied.length > 0 && !data.domain.dnsStatus.allRequiredOk) {
         setSondeo({ medicion: 0, siguienteEn: Date.now() + INTERVALO_MS, estado: 'midiendo' });
+      } else {
+        setSondeo(null);
+      }
+      // El aviso dice lo que pasó: un fallo parcial o unos conflictos sin
+      // tocar reclaman atención y no se anuncian como un éxito.
+      if (data.errors.length > 0) {
+        toast(
+          'error',
+          data.applied.length > 0
+            ? 'Parte de los registros no se ha podido aplicar en Cloudflare. Consulte el detalle en la ficha.'
+            : 'No se ha podido aplicar ningún registro en Cloudflare. Consulte el detalle en la ficha.',
+        );
+      } else if (data.domain.dnsStatus.allRequiredOk) {
+        toast('ok', 'DNS aplicado en Cloudflare. El dominio ya puede enviar y recibir correo.');
+      } else if (data.applied.length > 0) {
         toast('ok', 'DNS aplicado en Cloudflare. Se comprobará la propagación durante 5 minutos.');
-      } else if (data.errors.length > 0) {
-        toast('error', 'No se ha podido aplicar ningún registro en Cloudflare.');
+      } else if (omitidos > 0) {
+        toast('error', 'No se ha modificado nada: los registros en conflicto necesitan su confirmación.');
+      } else {
+        toast('ok', 'No había cambios pendientes en Cloudflare.');
       }
     },
   });
@@ -122,22 +137,22 @@ export function BloqueCloudflare({
     if (!sondeo || sondeo.estado !== 'midiendo') return;
     const espera = Math.max(0, sondeo.siguienteEn - Date.now());
     const temporizador = window.setTimeout(async () => {
-      let enReparto = false;
+      let activo = false;
       try {
         const data = await api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify?auto=1`);
         queryClient.setQueryData(['domain', id], data);
-        enReparto = Boolean(data.domain.dnsStatus.allRequiredOk);
+        activo = Boolean(data.domain.dnsStatus.allRequiredOk);
       } catch {
         // Un fallo puntual de red no detiene el sondeo: se reintenta.
       }
-      if (enReparto) {
+      if (activo) {
         void queryClient.invalidateQueries({ queryKey: ['domains'] });
-        toast('ok', 'Los registros obligatorios ya están en rango. El dominio está en reparto.');
+        toast('ok', 'Los registros obligatorios ya están en rango. El dominio ya puede enviar y recibir correo.');
       }
       setSondeo((s) => {
         if (!s) return s;
         const medicion = s.medicion + 1;
-        if (enReparto) return { ...s, medicion, estado: 'completado' };
+        if (activo) return { ...s, medicion, estado: 'completado' };
         if (medicion >= MAX_MEDICIONES) return { ...s, medicion, estado: 'agotado' };
         return { medicion, siguienteEn: Date.now() + INTERVALO_MS, estado: 'midiendo' };
       });
@@ -176,13 +191,15 @@ export function BloqueCloudflare({
       <Hoja title={titulo} meta="Sin cuenta conectada">
         {cuentas.isError && (
           <div className="mb-3">
-            <BandaError>{mensajeError(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}</BandaError>
+            <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
+              {mensajeError(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
+            </BandaError>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-[75ch] text-base text-tinta-2">
             Si el DNS de este dominio está en Cloudflare, conecte la cuenta para crear todos estos
-            registros con un clic, sin copiarlos a mano. Mailway muestra los cambios antes de
+            registros con un clic, sin copiarlos manualmente. Mailway muestra los cambios antes de
             aplicarlos y nunca activa el proxy de Cloudflare en los registros de correo.
           </p>
           <Link to="/conexiones" className={claseEnlacePerfil}>
@@ -217,7 +234,9 @@ export function BloqueCloudflare({
           ) : resumenAutomatico && plan.isPending ? (
             <Midiendo label="Leyendo la zona en Cloudflare…" />
           ) : resumenAutomatico && plan.isError ? (
-            <BandaError>{mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.')}</BandaError>
+            <BandaError onRetry={() => void plan.refetch()} retrying={plan.isFetching}>
+              {mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.')}
+            </BandaError>
           ) : resumen ? (
             <p className="max-w-[75ch] text-base text-tinta-2">
               {resumen.create + resumen.update + resumen.conflict === 0 ? (
@@ -293,7 +312,7 @@ function ProgresoSondeo({
   if (sondeo.estado === 'completado') {
     return (
       <p className="revelar text-base text-normal" role="status">
-        Los registros obligatorios ya están en rango: el dominio está en reparto.
+        Los registros obligatorios ya están en rango: el dominio ya puede enviar y recibir correo.
       </p>
     );
   }
@@ -310,12 +329,17 @@ function ProgresoSondeo({
       </div>
     );
   }
+  // Solo el número de comprobación se anuncia (cambia cada 15 s); la cuenta
+  // atrás cambia cada segundo y, anunciada, taparía todo lo demás.
   return (
-    <div className="flex flex-col gap-1.5" role="status" aria-live="polite">
+    <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-base text-tinta">Comprobando la propagación del DNS</span>
         <span className="valor text-sm text-tinta-3">
-          medición {sondeo.medicion + 1} de {MAX_MEDICIONES} · {segundos} s
+          <span role="status">
+            comprobación {sondeo.medicion + 1} de {MAX_MEDICIONES}
+          </span>
+          <span aria-hidden> · {segundos} s</span>
         </span>
       </div>
       <div

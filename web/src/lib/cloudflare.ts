@@ -1,11 +1,20 @@
+import type { QueryClient } from '@tanstack/react-query';
 import type { DomainRecord } from './api';
 import type { Veredicto } from '../ui/kit';
 
 /*
-  Tipos y utilidades de la integración con Cloudflare (DNS automático).
-  Viven aquí y no en lib/api.ts para no mezclar áreas: lib/api.ts es de otro
-  equipo y estos tipos solo los usan Dominios, la ficha y Conexiones.
+  Tipos y utilidades de los dominios de correo y de la integración con
+  Cloudflare (DNS automático). Viven aquí y no en lib/api.ts para no mezclar
+  áreas: lib/api.ts es de otro equipo y estos tipos solo los usan Dominios,
+  la ficha y Conexiones.
 */
+
+/** TXT que demuestra la propiedad del dominio sin cambiar el MX. */
+export interface RegistroPropiedad {
+  type: 'TXT';
+  name: string;
+  content: string;
+}
 
 /** Dominio de correo con los campos que añade la integración. */
 export type DominioCorreo = DomainRecord & {
@@ -13,7 +22,75 @@ export type DominioCorreo = DomainRecord & {
   domainUnicode?: string;
   cloudflare?: { accountId: string; zoneId: string } | null;
   dnsAppliedAt?: number | null;
+  /**
+   * Cuándo quedó probado que el dominio es de su cliente (MX a este servidor
+   * o TXT de verificación). null = pendiente: no se pueden crear buzones ni
+   * alias. Ausente en servidores anteriores a la verificación de propiedad.
+   */
+  ownershipVerifiedAt?: number | null;
+  ownershipRecord?: RegistroPropiedad;
 };
+
+/** true si la propiedad del dominio está pendiente de comprobar. */
+export function propiedadPendiente(d: DominioCorreo): boolean {
+  return d.ownershipVerifiedAt === null;
+}
+
+/**
+ * Última medición sin datos concluyentes: ningún registro obligatorio se ha
+ * medido mal, pero alguno no se ha podido consultar. No es lo mismo que
+ * «falta el registro» y no debe pintarse como fuera de rango.
+ */
+export function medicionIlegible(d: DominioCorreo): boolean {
+  const obligatorios = (d.dnsStatus.checks ?? []).filter((c) => c.required);
+  const definitivo = obligatorios.some((c) => c.status === 'missing' || c.status === 'mismatch');
+  return !definitivo && obligatorios.some((c) => c.status === 'unknown');
+}
+
+/**
+ * Veredicto de un dominio en listados y fichas. Uno que nunca funcionó y
+ * espera su DNS es una tarea pendiente (ámbar); uno que funcionaba y ha
+ * dejado de hacerlo es una avería (carmín); si el DNS no se pudo leer, no se
+ * finge un veredicto. InicioCliente y ClienteDetalle deberían usar esta misma
+ * función para no pintar el mismo dominio de dos colores.
+ */
+export function lecturaDominio(d: DominioCorreo): { veredicto: Veredicto; etiqueta: string } {
+  if (d.status === 'active') return { veredicto: 'normal', etiqueta: 'Activo' };
+  if (!d.lastCheckedAt) return { veredicto: 'sin-dato', etiqueta: 'Sin medir' };
+  if (medicionIlegible(d)) return { veredicto: 'sin-dato', etiqueta: 'Sin dato' };
+  if (d.verifiedAt) return { veredicto: 'fuera', etiqueta: 'DNS incorrecto' };
+  return { veredicto: 'vigilar', etiqueta: 'DNS pendiente' };
+}
+
+/**
+ * Tras dar de alta o eliminar un dominio: la lista, los paneles y el uso del
+ * plan (ficha del cliente, lista de clientes y resumen del cliente).
+ */
+export function invalidarTrasAltaOBaja(queryClient: QueryClient, clientId?: string): Promise<unknown> {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['domains'] }),
+    queryClient.invalidateQueries({ queryKey: ['clients'] }),
+    queryClient.invalidateQueries({ queryKey: clientId ? ['client', clientId] : ['client'] }),
+    queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
+    queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] }),
+  ]);
+}
+
+/**
+ * Tras conectar o eliminar una cuenta de Cloudflare: cambia qué zonas se
+ * pueden gestionar y, al eliminarla, los dominios pierden su asociación. Las
+ * fichas (['domain', id]) y sus planes (['domain-cloudflare', id]) no
+ * empiezan por ['domains'] y hay que invalidarlas aparte.
+ */
+export function invalidarTrasCambioDeCuenta(queryClient: QueryClient): Promise<unknown> {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['cloudflare-accounts'] }),
+    queryClient.invalidateQueries({ queryKey: ['domains'] }),
+    queryClient.invalidateQueries({ queryKey: ['domain'] }),
+    queryClient.invalidateQueries({ queryKey: ['domain-cloudflare'] }),
+    queryClient.invalidateQueries({ queryKey: ['cloudflare-instance-dns'] }),
+  ]);
+}
 
 export interface CuentaCloudflare {
   id: string;

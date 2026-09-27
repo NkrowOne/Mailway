@@ -161,8 +161,9 @@ const FRECUENTE_MS = 10 * MINUTE;
 /**
  * Cada cuánto se vuelve a medir un dominio. Uno pendiente al que se le acaba
  * de aplicar el DNS (o recién dado de alta) se mide cada 10 minutos, para
- * que pase a «en reparto» sin que nadie tenga que pulsar «Medir»; el resto,
- * cada hora.
+ * que pase a activo sin que nadie tenga que pulsar «Medir»; el resto, cada
+ * hora. Cada medición de un dominio con la propiedad pendiente la comprueba
+ * también (refreshDomainDns).
  */
 export function intervaloDeMedicion(domain: DomainRecord, ahora = now()): number {
   if (domain.status === 'active') return HOUR;
@@ -221,16 +222,27 @@ async function checkDomainDns(): Promise<void> {
 
 const STUCK_AFTER_MS = 30 * MINUTE;
 
+/**
+ * Dominios propios que el vigilante vuelve a medir: los que emiten
+ * certificado, los activos y los que alguna vez estuvieron activos. Uno que
+ * nunca llegó a funcionar y espera DNS es una tarea pendiente del cliente,
+ * que lo comprueba desde su ficha.
+ */
+export function debeVigilarse(domain: ClientDomain): boolean {
+  if (domain.status === 'issuing' || domain.status === 'active') return true;
+  return domain.status === 'pending_dns' && domain.activatedAt !== null;
+}
+
 async function checkWhitelabelDomains(): Promise<void> {
   if (!due('whitelabel', 10 * MINUTE)) return;
   markRun('whitelabel');
 
   // Se refrescan también los ya activos: un dominio verificado puede
   // romperse (le cambian el DNS, caduca el certificado) y si solo se miraran
-  // los que están emitiendo, esa regresión sería invisible.
-  const vigilados = listClientDomains().filter(
-    (d) => d.status === 'issuing' || d.status === 'active',
-  );
+  // los que están emitiendo, esa regresión sería invisible. Y los que
+  // estuvieron activos y cayeron a «pendiente de DNS»: fuera de Traefik nadie
+  // los volvería a medir y seguirían caídos aunque el DNS ya estuviera bien.
+  const vigilados = listClientDomains().filter(debeVigilarse);
   // En lotes: son sondas de red y en serie el ciclo se bloquea minutos.
   for (let i = 0; i < vigilados.length; i += 6) {
     await Promise.allSettled(vigilados.slice(i, i + 6).map((d) => reviewWhitelabelDomain(d)));
@@ -262,8 +274,9 @@ async function reviewWhitelabelDomain(domain: ClientDomain): Promise<void> {
       });
       return;
     }
-    // Lleva demasiado tiempo esperando certificado: algo no encaja.
-    if (now() - domain.createdAt > STUCK_AFTER_MS) {
+    // Lleva demasiado tiempo esperando certificado: algo no encaja. Solo con
+    // el DNS ya correcto; uno pendiente de DNS es tarea del cliente.
+    if (updated.status === 'issuing' && now() - domain.createdAt > STUCK_AFTER_MS) {
       fireAlert({
         severity: 'warning',
         type: 'whitelabel_stuck',
