@@ -14,11 +14,11 @@ export function badRequest(message: string, code = 'bad_request'): HttpError {
   return new HttpError(400, message, code);
 }
 
-export function unauthorized(message = 'No has iniciado sesión.', code = 'unauthorized'): HttpError {
+export function unauthorized(message = 'Es necesario iniciar sesión.', code = 'unauthorized'): HttpError {
   return new HttpError(401, message, code);
 }
 
-export function forbidden(message = 'No tienes permiso para hacer esto.', code = 'forbidden'): HttpError {
+export function forbidden(message = 'No tiene permiso para realizar esta acción.', code = 'forbidden'): HttpError {
   return new HttpError(403, message, code);
 }
 
