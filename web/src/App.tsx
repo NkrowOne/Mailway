@@ -40,6 +40,9 @@ export default function App() {
 }
 
 function PanelApp() {
+  const location = useLocation();
+  // Al volver a entrar se regresa a la página que se intentaba abrir.
+  const irALogin = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
   const setup = useQuery({
     queryKey: ['setup'],
     queryFn: () => api.get<SetupStatus>('/api/setup/status'),
@@ -80,7 +83,7 @@ function PanelApp() {
     return (
       <Routes>
         <Route path="/login" element={<Login brand={status.instance.brandName} />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to={irALogin} replace />} />
       </Routes>
     );
   }
@@ -98,7 +101,7 @@ function PanelApp() {
     return (
       <Routes>
         <Route path="/login" element={<Login brand={status.instance.brandName} />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to={irALogin} replace />} />
       </Routes>
     );
   }
