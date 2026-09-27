@@ -386,3 +386,25 @@ test('las rutas de clientes de integración son solo para administradores', asyn
     assert.equal(res.statusCode, 403, `${ruta.method} ${ruta.url}`);
   }
 });
+
+test('desvincular con externalRef esperada solo borra la referencia si sigue siendo esa', async () => {
+  const creado = await ensure({ externalRef: 'skyway:project:condicional', name: 'Condicional' });
+  assert.equal(creado.statusCode, 200, creado.body);
+  const id = (creado.json() as { client: ClientView }).client.id;
+
+  const distinta = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/integrations/clients/${id}/link?externalRef=${encodeURIComponent('skyway:project:otro')}`,
+    headers: bearer(adminToken),
+  });
+  assert.equal(distinta.statusCode, 409, distinta.body);
+  assert.equal((distinta.json() as { code: string }).code, 'external_ref_mismatch');
+
+  const igual = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/integrations/clients/${id}/link?externalRef=${encodeURIComponent('skyway:project:condicional')}`,
+    headers: bearer(adminToken),
+  });
+  assert.equal(igual.statusCode, 200, igual.body);
+  assert.equal((igual.json() as { client: ClientView }).client.externalRef, null);
+});

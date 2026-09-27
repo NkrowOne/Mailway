@@ -428,6 +428,17 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const client = getClient(id);
     const previous = externalRefOf(id);
+    // Desvinculación condicional: si la integración indica qué referencia
+    // espera, solo se borra si sigue siendo esa. Así un proyecto de Skyway
+    // que se desactiva no puede quitarle el cliente a otro que lo reclamó
+    // entre su comprobación y esta llamada.
+    const { externalRef: expected } = (req.query ?? {}) as { externalRef?: string };
+    if (expected !== undefined && previous !== null && previous !== expected) {
+      throw conflict(
+        'El cliente está vinculado a otra referencia externa; no se ha modificado.',
+        'external_ref_mismatch',
+      );
+    }
     if (previous !== null) {
       db.prepare('UPDATE clients SET external_ref = NULL WHERE id = ?').run(id);
       audit(req, 'client.external_unlinked', { id, name: client.name, externalRef: previous }, id);
