@@ -9,6 +9,7 @@ import { Input, Select } from '../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera, Casilla } from '../../components/gestion/comun';
+import { useDireccionPanel } from '../../components/gestion/consultas';
 
 /**
  * Cartera de clientes: una fila por cliente, con el uso de buzones medido
@@ -60,7 +61,7 @@ export default function Clientes() {
 
       {clients.isPending ? (
         <Hoja flush>
-          <Midiendo label="Midiendo clientes…" />
+          <Midiendo label="Cargando los clientes…" />
         </Hoja>
       ) : clients.isError ? (
         <BandaError onRetry={() => void clients.refetch()}>
@@ -195,6 +196,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
   const [dominio, setDominio] = useState('');
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  // El cliente recibirá esta dirección: la pública de la instancia, no la
+  // IP o la URL interna por la que haya entrado el administrador.
+  const panel = useDireccionPanel();
 
   const plan = planList.find((p) => p.id === planId) ?? planList[0];
   // Por defecto, el usuario del panel es la persona de contacto.
@@ -250,6 +254,14 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
       setError('Es necesario crear antes un plan en «Planes».');
       return;
     }
+    if (name.trim().length < 2) {
+      setError('El nombre del cliente debe tener al menos 2 caracteres.');
+      return;
+    }
+    if (contactEmail.trim() && !esCorreoValido(contactEmail)) {
+      setError('El correo de contacto no es una dirección válida.');
+      return;
+    }
     if (conUsuario && !esCorreoValido(correoUsuario)) {
       setError('Indique el correo del usuario de acceso (o el correo de contacto).');
       return;
@@ -258,9 +270,42 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
     alta.mutate();
   }
 
+  function limpiar<T>(set: (v: T) => void) {
+    return (v: T) => {
+      setError('');
+      set(v);
+    };
+  }
+
   if (resultado) {
+    const conContrasena = Boolean(resultado.password && resultado.user);
+    const irAFicha = () => navigate(`/clientes/${resultado.client.id}`);
     return (
-      <Dialogo open onClose={() => navigate(`/clientes/${resultado.client.id}`)} title="Cliente dado de alta">
+      <Dialogo
+        open
+        onClose={irAFicha}
+        title="Cliente dado de alta"
+        confirmarCierre={
+          conContrasena ? { pregunta: '¿Ha guardado la contraseña?', detalle: 'No se podrá volver a ver.' } : null
+        }
+        pie={
+          <>
+            {/* Con una contraseña a la vista, la única salida es confirmar que
+                se ha guardado; el DNS se configura después desde la ficha. */}
+            {resultado.dominio?.ok && !conContrasena && (
+              <Button
+                variant="perfil"
+                onClick={() => navigate(`/dominios/${(resultado.dominio as { domain: DomainRecord }).domain.id}`)}
+              >
+                Configurar el DNS
+              </Button>
+            )}
+            <Button variant="tinta" onClick={irAFicha}>
+              {conContrasena ? 'Ya he guardado la contraseña' : 'Ir a la ficha del cliente'}
+            </Button>
+          </>
+        }
+      >
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
             Se ha dado de alta <strong className="font-semibold text-tinta">{resultado.client.name}</strong> con
@@ -272,8 +317,8 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 La contraseña del usuario <strong className="font-semibold">solo se muestra ahora</strong>.
                 Entréguela por un canal seguro; podrá cambiarla desde «Mi cuenta».
               </BandaAviso>
-              <Muestra rotulo="Dirección del panel" copiar={window.location.origin}>
-                <p className="valor break-all text-base text-tinta">{window.location.origin}</p>
+              <Muestra rotulo="Dirección del panel" copiar={panel}>
+                <p className="valor break-all text-base text-tinta">{panel}</p>
               </Muestra>
               <Muestra rotulo="Usuario" copiar={resultado.user.email}>
                 <p className="valor break-all text-base text-tinta">{resultado.user.email}</p>
@@ -295,16 +340,6 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 añadirlo después desde «Dominios».
               </BandaError>
             ))}
-          <Botonera>
-            {resultado.dominio?.ok && (
-              <Button variant="perfil" onClick={() => navigate(`/dominios/${(resultado.dominio as { domain: DomainRecord }).domain.id}`)}>
-                Configurar el DNS
-              </Button>
-            )}
-            <Button variant="tinta" onClick={() => navigate(`/clientes/${resultado.client.id}`)}>
-              Ir a la ficha del cliente
-            </Button>
-          </Botonera>
         </div>
       </Dialogo>
     );
@@ -312,23 +347,21 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialogo open onClose={onClose} title="Alta de cliente">
-      <form onSubmit={submit} className="flex flex-col gap-5">
+      <form onSubmit={submit} noValidate className="flex flex-col gap-5">
         <section className="flex flex-col gap-3">
           <p className="rotulo">1 · Datos del cliente</p>
           <Input
             label="Nombre"
-            required
-            minLength={2}
             maxLength={80}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => limpiar(setName)(e.target.value)}
             placeholder="Empresa o proyecto"
           />
           <Input
             label="Correo de contacto (opcional)"
             type="email"
             value={contactEmail}
-            onChange={(e) => setContactEmail(e.target.value)}
+            onChange={(e) => limpiar(setContactEmail)(e.target.value)}
             placeholder="gerencia@empresa.com"
           />
         </section>
@@ -340,12 +373,11 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
           ) : (
             <Select
               label="Plan"
-              required
               value={plan?.id ?? ''}
-              onChange={(e) => setPlanId(e.target.value)}
+              onChange={(e) => limpiar(setPlanId)(e.target.value)}
               help={
                 plan
-                  ? `${plural(plan.maxDomains, 'dominio', 'dominios')} · ${plural(plan.maxMailboxes, 'buzón', 'buzones')} de ${formatQuota(plan.mailboxQuotaMb)} · ${plan.maxAliases} alias · ${plan.apiDailyLimit === 0 ? 'envíos por API sin límite diario' : `${plan.apiDailyLimit} envíos por API al día`}`
+                  ? `${plural(plan.maxDomains, 'dominio', 'dominios')} · ${plural(plan.maxMailboxes, 'buzón', 'buzones')} de ${formatQuota(plan.mailboxQuotaMb)} · ${plan.maxAliases} alias · ${plan.apiDailyLimit === 0 ? 'envíos por API sin límite diario' : plural(plan.apiDailyLimit, 'envío por API al día', 'envíos por API al día')}`
                   : plans.isPending
                     ? 'Cargando planes…'
                     : undefined
@@ -364,7 +396,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
           <p className="rotulo">3 · Acceso al panel</p>
           <Casilla
             checked={conUsuario}
-            onChange={setConUsuario}
+            onChange={limpiar(setConUsuario)}
             label="Crear el primer usuario del panel"
             help="Se generará una contraseña segura que se mostrará una sola vez."
           />
@@ -374,14 +406,14 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 label="Nombre del usuario"
                 maxLength={80}
                 value={userName}
-                onChange={(e) => setUserName(e.target.value)}
+                onChange={(e) => limpiar(setUserName)(e.target.value)}
                 placeholder={name || 'Nombre y apellidos'}
               />
               <Input
                 label="Correo (será su usuario)"
                 type="email"
                 value={userEmail}
-                onChange={(e) => setUserEmail(e.target.value)}
+                onChange={(e) => limpiar(setUserEmail)(e.target.value)}
                 placeholder={contactEmail || 'persona@empresa.com'}
               />
             </div>
@@ -395,7 +427,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             mono
             autoComplete="off"
             value={dominio}
-            onChange={(e) => setDominio(e.target.value)}
+            onChange={(e) => limpiar(setDominio)(e.target.value)}
             placeholder="empresa.com"
             help="Después se indicarán los registros DNS que hay que configurar."
           />

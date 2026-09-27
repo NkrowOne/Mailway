@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alias, type DomainRecord, type Mailbox } from '../lib/api';
 import { plural } from '../lib/format';
 import {
+  errorNombreBuzon,
   formatBytes,
   formatQuota,
   mensajeDe,
@@ -15,8 +16,17 @@ import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import { Dialogo, Hoja, MarcaFondo, Membrete, Midiendo, Vacio } from '../ui/kit';
 import { AltaMasiva } from '../components/gestion/AltaMasiva';
-import { BandaAviso, BandaError, Botonera, Opcion } from '../components/gestion/comun';
-import { useClientes, useUsuario } from '../components/gestion/consultas';
+import {
+  BandaAviso,
+  BandaError,
+  Botonera,
+  dominioInicialDisponible,
+  Opcion,
+  SelectorDominio,
+  type MotivoBloqueoDominio,
+} from '../components/gestion/comun';
+import { useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
+import { esPropiedadPendiente } from '../lib/dominios';
 import { FichaBuzon, type VistaFicha } from '../components/gestion/FichaBuzon';
 
 interface FichaAbierta {
@@ -114,10 +124,17 @@ export default function Buzones() {
     const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
     return cliente ? `${d.domain} · ${cliente}` : d.domain;
   };
+  // Un dominio de un cliente suspendido o sin plazas no admite buzones: se
+  // dice en el selector, no al enviar el formulario.
+  const motivoBloqueo: MotivoBloqueoDominio = (d) => bloqueoCliente(clientes.get(d.clientId));
 
   const fichaMailbox = ficha ? (all.find((m) => m.id === ficha.id) ?? ficha.mailbox) : null;
   const fichaCliente = fichaMailbox?.clientId ? clientes.get(fichaMailbox.clientId) : undefined;
   const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
+  const limiteAlcanzado = clientePropio ? clientePropio.usage.mailboxes >= clientePropio.plan.maxMailboxes : false;
+  // Crear está vetado con el plan lleno o la cuenta suspendida: el botón lo
+  // dice antes de rellenar el formulario, no el servidor al enviarlo.
+  const altaBloqueada = domainList.length === 0 || limiteAlcanzado || Boolean(clientePropio?.suspended);
   const hayFiltros = Boolean(q || filtroCliente || filtroDominio);
   const cargando = mailboxes.isPending || domains.isPending;
 
@@ -138,7 +155,7 @@ export default function Buzones() {
           </>
         }
         actions={
-          <Button variant="campo" onClick={() => setCreateOpen(true)} disabled={domainList.length === 0}>
+          <Button variant="campo" onClick={() => setCreateOpen(true)} disabled={altaBloqueada}>
             Crear buzón
           </Button>
         }
@@ -147,10 +164,18 @@ export default function Buzones() {
       {altaResultado && !altaOpen && (
         <div className="mb-4">
           <BandaAviso>
-            Hay credenciales del último alta masiva sin confirmar.{' '}
+            Hay credenciales de la última alta masiva sin confirmar.{' '}
             <button type="button" className="underline" onClick={() => setAltaOpen(true)}>
               Ver las credenciales
             </button>
+          </BandaAviso>
+        </div>
+      )}
+      {limiteAlcanzado && !clientePropio?.suspended && (
+        <div className="mb-4">
+          <BandaAviso>
+            Se ha alcanzado el máximo de buzones del plan ({clientePropio!.plan.maxMailboxes}). Para crear más,
+            elimine alguno o solicite una ampliación del plan.
           </BandaAviso>
         </div>
       )}
@@ -165,7 +190,7 @@ export default function Buzones() {
 
       {cargando ? (
         <Hoja flush>
-          <Midiendo label="Midiendo buzones…" />
+          <Midiendo label="Cargando los buzones…" />
         </Hoja>
       ) : mailboxes.isError || domains.isError ? (
         <BandaError
@@ -196,10 +221,10 @@ export default function Buzones() {
             title="Aún no hay buzones"
             action={
               <div className="flex flex-wrap justify-center gap-2">
-                <Button variant="perfil" onClick={() => setCreateOpen(true)}>
+                <Button variant="perfil" disabled={altaBloqueada} onClick={() => setCreateOpen(true)}>
                   Crear el primero
                 </Button>
-                <Button variant="plano" onClick={() => setAltaOpen(true)}>
+                <Button variant="plano" disabled={altaBloqueada} onClick={() => setAltaOpen(true)}>
                   Alta masiva
                 </Button>
               </div>
@@ -214,7 +239,7 @@ export default function Buzones() {
           title="Registro de buzones"
           meta={hayFiltros ? `${filtrados.length} de ${all.length}` : undefined}
           actions={
-            <Button variant="perfil" onClick={() => setAltaOpen(true)}>
+            <Button variant="perfil" disabled={altaBloqueada} onClick={() => setAltaOpen(true)}>
               Alta masiva
             </Button>
           }
@@ -297,6 +322,7 @@ export default function Buzones() {
           domains={dominiosVisibles.length > 0 ? dominiosVisibles : domainList}
           dominioInicial={filtroDominio}
           etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
           onClose={() => setCreateOpen(false)}
           onCreado={(mailbox, password) => {
             setCreateOpen(false);
@@ -317,6 +343,7 @@ export default function Buzones() {
           resultado={altaResultado}
           onResultado={setAltaResultado}
           etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
         />
       )}
 
@@ -332,6 +359,17 @@ export default function Buzones() {
       />
     </>
   );
+}
+
+/**
+ * Motivo por el que un cliente no admite buzones nuevos, o null. El servidor
+ * aplica las mismas reglas; aquí se adelantan para no dejar rellenar en vano.
+ */
+function bloqueoCliente(cliente: FichaCliente | undefined): string | null {
+  if (!cliente) return null;
+  if (cliente.suspended) return 'Cliente suspendido';
+  if (cliente.usage.mailboxes >= cliente.plan.maxMailboxes) return 'Límite de buzones del plan alcanzado';
+  return null;
 }
 
 /* ---------------------------------- Fila ---------------------------------- */
@@ -439,19 +477,19 @@ function CrearBuzon({
   domains,
   dominioInicial,
   etiquetaDominio,
+  motivoBloqueo,
   onClose,
   onCreado,
 }: {
   domains: DomainRecord[];
   dominioInicial: string;
   etiquetaDominio: (d: DomainRecord) => string;
+  motivoBloqueo: MotivoBloqueoDominio;
   onClose: () => void;
   onCreado: (mailbox: Mailbox, password?: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const [domainId, setDomainId] = useState(
-    domains.some((d) => d.id === dominioInicial) ? dominioInicial : (domains[0]?.id ?? ''),
-  );
+  const [domainId, setDomainId] = useState(() => dominioInicialDisponible(domains, dominioInicial, motivoBloqueo));
   const [localPart, setLocalPart] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [modo, setModo] = useState<'generar' | 'propia'>('generar');
@@ -471,14 +509,28 @@ function CrearBuzon({
         queryClient.invalidateQueries({ queryKey: ['mailboxes'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        // Uso frente al plan en la ficha del cliente.
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       onCreado(data.mailbox, data.password);
     },
-    onError: (err) => setError(mensajeDe(err, 'No se ha podido crear el buzón.')),
+    onError: (err) => {
+      if (esPropiedadPendiente(err)) void queryClient.invalidateQueries({ queryKey: ['domains'] });
+      setError(mensajeDe(err, 'No se ha podido crear el buzón.'));
+    },
   });
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    const errorNombre = errorNombreBuzon(localPart.trim().toLowerCase());
+    if (!domainId) {
+      setError('Seleccione un dominio que admita buzones.');
+      return;
+    }
+    if (errorNombre) {
+      setError(`Nombre del buzón: ${errorNombre}`);
+      return;
+    }
     if (modo === 'propia' && password.length < 10) {
       setError('La contraseña debe tener al menos 10 caracteres.');
       return;
@@ -487,25 +539,33 @@ function CrearBuzon({
     create.mutate();
   }
 
+  // Un error ya mostrado deja de ser cierto en cuanto se corrige el formulario.
+  function limpiar<T>(set: (v: T) => void) {
+    return (v: T) => {
+      setError('');
+      set(v);
+    };
+  }
+
   return (
     <Dialogo open onClose={onClose} title="Crear buzón">
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <Select label="Dominio" required value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-          {domains.map((domain) => (
-            <option key={domain.id} value={domain.id}>
-              {etiquetaDominio(domain)}
-            </option>
-          ))}
-        </Select>
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <SelectorDominio
+          domains={domains}
+          value={domainId}
+          onChange={limpiar(setDomainId)}
+          etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
+          uso="buzones"
+        />
         <div className="flex flex-wrap items-end gap-2">
           <div className="min-w-[10rem] flex-1">
             <Input
               label="Nombre del buzón"
-              required
               mono
               autoComplete="off"
               value={localPart}
-              onChange={(e) => setLocalPart(e.target.value)}
+              onChange={(e) => limpiar(setLocalPart)(e.target.value)}
               placeholder="hola"
             />
           </div>
@@ -517,7 +577,7 @@ function CrearBuzon({
           label="Nombre visible (opcional)"
           maxLength={80}
           value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
+          onChange={(e) => limpiar(setDisplayName)(e.target.value)}
           placeholder="Equipo de soporte"
         />
         <fieldset className="flex flex-col gap-2.5">
@@ -525,14 +585,14 @@ function CrearBuzon({
           <Opcion
             name="crear-modo"
             checked={modo === 'generar'}
-            onChange={() => setModo('generar')}
+            onChange={() => limpiar(setModo)('generar')}
             label="Generar una contraseña segura"
             help="Se mostrará una sola vez, junto con los datos para conectar dispositivos."
           />
           <Opcion
             name="crear-modo"
             checked={modo === 'propia'}
-            onChange={() => setModo('propia')}
+            onChange={() => limpiar(setModo)('propia')}
             label="Escribir una contraseña"
           />
         </fieldset>
@@ -541,10 +601,8 @@ function CrearBuzon({
             label="Contraseña"
             type="password"
             autoComplete="new-password"
-            minLength={10}
-            required
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => limpiar(setPassword)(e.target.value)}
             help="Mínimo 10 caracteres."
           />
         )}
@@ -556,7 +614,7 @@ function CrearBuzon({
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={create.isPending}>
+          <Button type="submit" variant="tinta" busy={create.isPending} disabled={!domainId}>
             Crear buzón
           </Button>
         </Botonera>

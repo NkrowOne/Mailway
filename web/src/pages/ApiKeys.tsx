@@ -25,6 +25,7 @@ import {
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { formatDate } from '../lib/format';
+import { useDireccionPanel } from '../components/gestion/consultas';
 
 /** Documentación completa de la API (solo se enlaza para el administrador). */
 const DOCS_API = 'https://github.com/NkrowOne/Mailway/blob/main/docs/API.md';
@@ -133,7 +134,10 @@ const RESPUESTAS: { codigo: string; nota: string }[] = [
   { codigo: '400', nota: 'Datos no válidos: el campo error indica cuál.' },
   { codigo: '401', nota: 'Clave ausente, no válida o revocada.' },
   { codigo: '403', nota: 'Cuenta del cliente o buzón remitente suspendidos.' },
-  { codigo: '429', nota: 'Límite del plan alcanzado (por minuto o diario). Reintente con espera exponencial.' },
+  {
+    codigo: '429',
+    nota: 'Límite alcanzado: el del plan (por minuto o diario, compartido por todas las claves del cliente) o el diario propio de la clave. El campo error indica cuál. Reintente con espera exponencial.',
+  },
 ];
 
 /** Pestañas accesibles: flechas para moverse entre lenguajes, una sola parada de tabulación. */
@@ -167,7 +171,7 @@ function PestanasLenguaje({
       role="tablist"
       aria-label="Lenguaje del ejemplo"
       onKeyDown={onKeyDown}
-      className="flex flex-wrap border-b border-regla"
+      className="flex flex-wrap gap-1.5"
     >
       {LENGUAJES.map((l) => {
         const seleccionado = l.id === activo;
@@ -184,10 +188,12 @@ function PestanasLenguaje({
             aria-controls={panelId}
             tabIndex={seleccionado ? 0 : -1}
             onClick={() => onCambio(l.id)}
-            className={`-mb-px border-b-2 px-3 py-1.5 text-base transition-colors duration-100 ${
+            // Como la navegación activa: fondo petróleo tenue, sin filete de
+            // acento (DESIGN.md solo admite dos bordes de petróleo).
+            className={`border px-3 py-1.5 text-base transition-colors duration-100 ${
               seleccionado
-                ? 'border-b-[rgb(var(--laboratorio))] font-semibold text-laboratorio'
-                : 'border-b-transparent text-tinta-2 hover:text-tinta'
+                ? 'border-[rgb(var(--laboratorio)/0.35)] bg-laboratorio-claro font-semibold text-laboratorio'
+                : 'border-regla text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
             }`}
           >
             {l.label}
@@ -203,7 +209,9 @@ export default function ApiKeys({ user }: { user: User }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const isAdmin = user.role === 'admin';
-  const base = window.location.origin;
+  // Los ejemplos se copian a otras máquinas: la dirección pública del panel,
+  // no la IP o la URL interna por la que se esté entrando ahora.
+  const base = useDireccionPanel({ user });
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -251,7 +259,12 @@ export default function ApiKeys({ user }: { user: User }) {
         clientId: isAdmin ? clientId || undefined : undefined,
       }),
     onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ['apikeys'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['apikeys'] }),
+        // La puesta en marcha del cliente y el parte cuentan las claves.
+        queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] }),
+      ]);
       setOpen(false);
       setName('');
       setLimite('');
@@ -259,19 +272,23 @@ export default function ApiKeys({ user }: { user: User }) {
       setRevealedKey(data.key);
     },
     onError: (err) =>
-      setError(err instanceof ApiError ? err.message : 'No se pudo crear la clave. Inténtelo de nuevo.'),
+      setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Inténtelo de nuevo.'),
   });
 
   const revoke = useMutation({
     mutationFn: (key: ApiKeyInfo) => api.delete(`/api/apikeys/${key.id}`),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['apikeys'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['apikeys'] }),
+        queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] }),
+      ]);
       setToRevoke(null);
       toast('ok', 'Clave revocada. Los envíos con ella se rechazarán.');
     },
     onError: (err) => {
       setToRevoke(null);
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo revocar la clave.');
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido revocar la clave.');
     },
   });
 
@@ -305,7 +322,16 @@ export default function ApiKeys({ user }: { user: User }) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (isAdmin && !clientId) {
+      setError('Seleccione el cliente propietario de la clave.');
+      return;
+    }
+    if (!name.trim()) {
+      setError('Indique un nombre para reconocer la clave.');
+      return;
+    }
     if (limiteInvalido || !remitente) return;
+    setError('');
     create.mutate({ senderMailboxId: remitente, dailyLimit: limiteNumero });
   }
 
@@ -324,7 +350,7 @@ export default function ApiKeys({ user }: { user: User }) {
       <div className="flex flex-col gap-4">
         {mailboxes.isError && (
           <AvisoError onRetry={() => void mailboxes.refetch()} retrying={mailboxes.isFetching}>
-            No se pudieron leer los buzones remitentes: sin ellos no se pueden crear claves.
+            No se han podido leer los buzones remitentes: sin ellos no se pueden crear claves.
           </AvisoError>
         )}
 
@@ -334,7 +360,7 @@ export default function ApiKeys({ user }: { user: User }) {
           </Hoja>
         ) : keys.isError ? (
           <AvisoError onRetry={() => void keys.refetch()} retrying={keys.isFetching}>
-            No se pudieron leer las claves de API.
+            No se han podido leer las claves de API.
           </AvisoError>
         ) : keyList.length === 0 ? (
           <Hoja>
@@ -390,13 +416,13 @@ export default function ApiKeys({ user }: { user: User }) {
 
                   <div className="min-w-0 basis-full sm:shrink-0 sm:basis-52">
                     {key.dailyLimit != null ? (
-                      <Escala label="Envíos hoy" usado={key.usedToday} maximo={key.dailyLimit} />
+                      <Escala label="Envíos hoy" usado={key.usedToday} maximo={key.dailyLimit} limiteEsFuera />
                     ) : (
                       <p className="flex items-baseline justify-between gap-2">
                         <span className="text-base text-tinta">Envíos hoy</span>
                         <span className="valor text-base text-tinta">
                           {key.usedToday}
-                          <span className="text-tinta-3"> / límite del plan</span>
+                          <span className="text-tinta-3"> / límite del plan (compartido)</span>
                         </span>
                       </p>
                     )}
@@ -491,7 +517,8 @@ export default function ApiKeys({ user }: { user: User }) {
                 </ul>
                 <p className="mt-2 text-sm text-tinta-3">
                   Los errores devuelven <code className="valor">{'{ error, code }'}</code> con el
-                  motivo en español. El contador diario se reinicia a medianoche UTC.
+                  motivo en español. Los límites del plan son del cliente: todas sus claves suman. El
+                  contador diario se reinicia a medianoche UTC.
                 </p>
               </div>
             </div>
@@ -509,7 +536,7 @@ export default function ApiKeys({ user }: { user: User }) {
           ) : messages.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void messages.refetch()} retrying={messages.isFetching}>
-                No se pudo leer el historial de envíos.
+                No se ha podido leer el historial de envíos.
               </AvisoError>
             </div>
           ) : messageList.length === 0 ? (
@@ -568,13 +595,13 @@ export default function ApiKeys({ user }: { user: User }) {
 
       {/* Crear clave */}
       <Dialogo open={open} onClose={() => setOpen(false)} title="Nueva clave de API">
-        <form onSubmit={submit} className="flex flex-col gap-4">
+        <form onSubmit={submit} noValidate className="flex flex-col gap-4">
           {isAdmin && (
             <Select
               label="Cliente propietario"
-              required
               value={clientId}
               onChange={(e) => {
+                setError('');
                 setClientId(e.target.value);
                 setSenderMailboxId('');
               }}
@@ -589,25 +616,30 @@ export default function ApiKeys({ user }: { user: User }) {
           )}
           <Input
             label="Nombre de la clave"
-            required
+            maxLength={60}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setName(e.target.value);
+            }}
             placeholder="OTP producción"
             help="Para reconocerla después: una clave por aplicación y entorno."
           />
           <Select
             label="Buzón remitente"
-            required
             value={remitente}
             disabled={senderOptions.length === 0}
-            onChange={(e) => setSenderMailboxId(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setSenderMailboxId(e.target.value);
+            }}
             help={
               isAdmin && !clientId
                 ? 'Seleccione primero el cliente: solo se ofrecen sus buzones.'
                 : isAdmin && buzonesCliente.isPending
                   ? 'Leyendo los buzones del cliente…'
                   : senderOptions.length === 0
-                    ? 'Este cliente no tiene buzones activos. Cree uno en Buzones.'
+                    ? 'Este cliente no tiene buzones activos. Cree uno en «Buzones».'
                     : 'Los mensajes saldrán con esta dirección. Recomendado: noreply@su-dominio.com.'
             }
           >
@@ -622,20 +654,22 @@ export default function ApiKeys({ user }: { user: User }) {
             label="Límite diario (opcional)"
             type="number"
             inputMode="numeric"
-            min={1}
             step={1}
             value={limite}
-            onChange={(e) => setLimite(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setLimite(e.target.value);
+            }}
             placeholder="Límite del plan"
             error={limiteInvalido ? 'Indique un número entero mayor que cero.' : undefined}
-            help="Vacío: se aplica el límite del plan. Nunca puede superarlo."
+            help="Los límites del plan (diario y por minuto) se aplican al total del cliente, sumando todas sus claves. Este límite, opcional, restringe además solo esta clave y no puede superar el del plan."
           />
           {isAdmin && buzonesCliente.isError && (
             <AvisoError
               onRetry={() => void buzonesCliente.refetch()}
               retrying={buzonesCliente.isFetching}
             >
-              No se pudieron leer los buzones del cliente.
+              No se han podido leer los buzones del cliente.
             </AvisoError>
           )}
           {error && <AvisoError>{error}</AvisoError>}
@@ -655,11 +689,17 @@ export default function ApiKeys({ user }: { user: User }) {
         </form>
       </Dialogo>
 
-      {/* La clave, una sola vez */}
+      {/* La clave, una sola vez: no se cierra sin confirmar que se ha guardado. */}
       <Dialogo
         open={revealedKey !== null}
         onClose={() => setRevealedKey(null)}
         title="Clave de API creada"
+        confirmarCierre={{ pregunta: '¿Ha guardado la clave?', detalle: 'No se podrá volver a ver.' }}
+        pie={
+          <Button variant="tinta" onClick={() => setRevealedKey(null)}>
+            Ya la he guardado
+          </Button>
+        }
       >
         {revealedKey && (
           <div className="flex flex-col gap-4">
@@ -670,11 +710,6 @@ export default function ApiKeys({ user }: { user: User }) {
             <Muestra rotulo="Clave de API" copiar={revealedKey}>
               <code className="valor block break-all text-sm text-tinta">{revealedKey}</code>
             </Muestra>
-            <div className="flex justify-end">
-              <Button variant="tinta" onClick={() => setRevealedKey(null)}>
-                Ya la he guardado
-              </Button>
-            </div>
           </div>
         )}
       </Dialogo>

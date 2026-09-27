@@ -19,7 +19,7 @@ import { formatDate, plural } from '../../lib/format';
 /** La severidad es el veredicto del hallazgo, no una etiqueta decorativa. */
 const severidad: Record<Alert['severity'], { veredicto: Veredicto; etiqueta: string; peso: number }> = {
   critical: { veredicto: 'fuera', etiqueta: 'Crítico', peso: 0 },
-  warning: { veredicto: 'vigilar', etiqueta: 'Aviso', peso: 1 },
+  warning: { veredicto: 'vigilar', etiqueta: 'Advertencia', peso: 1 },
   info: { veredicto: 'sin-dato', etiqueta: 'Información', peso: 2 },
 };
 
@@ -36,6 +36,9 @@ function ordenar(lista: Alert[]): Alert[] {
 
 /** Rejilla común de la tabla de hallazgos: veredicto · hallazgo · registro. */
 const rejilla = 'sm:grid-cols-[8.5rem_minmax(0,1fr)_12rem]';
+
+/** Nombre visible de cada canal (el servidor los identifica en minúsculas). */
+const NOMBRE_CANAL: Record<string, string> = { webhook: 'Webhook', discord: 'Discord', telegram: 'Telegram' };
 
 function mensajeDe(err: unknown, porDefecto: string): string {
   return err instanceof ApiError ? err.message : porDefecto;
@@ -62,7 +65,7 @@ export default function Avisos() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['alerts'] });
     },
-    onError: (err) => toast('error', mensajeDe(err, 'No se pudo descartar el aviso.')),
+    onError: (err) => toast('error', mensajeDe(err, 'No se ha podido descartar el aviso.')),
   });
 
   const list = ordenar(alerts.data?.alerts ?? []);
@@ -101,7 +104,7 @@ export default function Avisos() {
           ) : !alerts.data ? (
             <div className="p-4">
               <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
-                No se pudieron leer los avisos. Compruebe que el servidor de Mailway sigue en
+                No se han podido leer los avisos. Compruebe que el servidor de Mailway sigue en
                 marcha.
               </AvisoError>
             </div>
@@ -116,7 +119,7 @@ export default function Avisos() {
               {alerts.isRefetchError && (
                 <div className="px-4 pt-4">
                   <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
-                    No se pudo actualizar la lista. Se muestra la última lectura.
+                    No se ha podido actualizar la lista. Se muestra la última lectura.
                   </AvisoError>
                 </div>
               )}
@@ -236,7 +239,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
         opciones?.clearTelegramToken ? 'Token de Telegram eliminado.' : 'Canales guardados.',
       );
     },
-    onError: (err) => onToast('error', mensajeDe(err, 'No se pudieron guardar los canales.')),
+    onError: (err) => onToast('error', mensajeDe(err, 'No se han podido guardar los canales.')),
   });
 
   const test = useMutation({
@@ -252,11 +255,11 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       } else {
         onToast(
           'error',
-          `No se pudo entregar por: ${(res.failures || []).join(', ')}. Revise la URL o el token.`,
+          `No se ha podido entregar por: ${(res.failures || []).join(', ')}. Revise la URL o el token.`,
         );
       }
     },
-    onError: (err) => onToast('error', mensajeDe(err, 'No se pudo enviar el aviso de prueba.')),
+    onError: (err) => onToast('error', mensajeDe(err, 'No se ha podido enviar el aviso de prueba.')),
   });
 
   const configured = channels.data?.configured ?? [];
@@ -268,7 +271,9 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       actions={
         channels.data ? (
           configured.length > 0 ? (
-            <MarcaFondo veredicto="normal">{configured.join(' · ')}</MarcaFondo>
+            <MarcaFondo veredicto="normal">
+              {configured.map((c) => NOMBRE_CANAL[c] ?? c).join(' · ')}
+            </MarcaFondo>
           ) : (
             <MarcaFondo veredicto="vigilar">Sin canales</MarcaFondo>
           )
@@ -279,16 +284,17 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
         <Midiendo label="Leyendo los canales de aviso…" />
       ) : !channels.data ? (
         <AvisoError onRetry={() => void channels.refetch()} retrying={channels.isFetching}>
-          No se pudieron leer los canales de aviso.
+          No se han podido leer los canales de aviso.
         </AvisoError>
       ) : (
         <>
           <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
             Complete los canales que utilice. Si no configura ninguno, los avisos solo aparecerán
-            en esta página y no se enterará hasta que entre en el panel. El aviso de prueba se
-            envía por los canales ya guardados.
+            en esta página y no recibirá ninguna notificación hasta que acceda al panel. El aviso
+            de prueba se envía por los canales ya guardados.
           </p>
           <form
+            noValidate
             onSubmit={(e) => {
               e.preventDefault();
               save.mutate({});

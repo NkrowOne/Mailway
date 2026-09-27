@@ -187,14 +187,12 @@ export function formatoBytes(bytes: number): string {
   return `${texto} ${unidades[i]}`;
 }
 
-/** Fecha y hora larga para textos dirigidos al titular («30 de septiembre, 10:15»). */
+/** Fecha y hora larga para textos dirigidos al titular («30 de septiembre a las 10:15»). */
 export function fechaLarga(ts: number): string {
-  return new Date(ts).toLocaleString('es-ES', {
-    day: 'numeric',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const fecha = new Date(ts);
+  const dia = fecha.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+  const hora = fecha.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return `${dia} a las ${hora}`;
 }
 
 /**

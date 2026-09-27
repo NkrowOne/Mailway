@@ -1,20 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type User } from '../lib/api';
+import { api, ApiError, esCredencialIncorrecta, TEXTO_CREDENCIALES_INCORRECTAS, type User } from '../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import { AvisoError } from '../ui/kit';
 
-/**
- * Dirección con la que se abrió la aplicación. Se captura al cargar el módulo,
- * antes de que el enrutador redirija a /login y la pierda: así, quien abre un
- * enlace guardado sin sesión vuelve a él tras entrar.
- */
-const enlaceDeArranque =
-  typeof window !== 'undefined'
-    ? `${window.location.pathname}${window.location.search}${window.location.hash}`
-    : '/';
 
 /**
  * Solo rutas internas del panel: nada de `//otro-sitio` ni URL absolutas, que
@@ -35,7 +26,7 @@ interface EstadoAcceso {
   salida?: boolean;
 }
 
-function destinoTrasEntrar(search: string, state: unknown): string {
+function destinoTrasEntrar(search: string, state: unknown, enlaceDeArranque: string): string {
   const estado = (state ?? {}) as EstadoAcceso;
   const desdeEstado =
     typeof estado.from === 'string'
@@ -55,7 +46,14 @@ function destinoTrasEntrar(search: string, state: unknown): string {
  * Portada del parte: la mesa clara y, encima, la hoja con su membrete.
  * Sin fondos decorativos: aquí solo se identifica el laboratorio y se entra.
  */
-export default function Login({ brand }: { brand: string }) {
+export default function Login({
+  brand,
+  enlaceDeArranque = '/',
+}: {
+  brand: string;
+  /** Dirección con la que se abrió la aplicación (ver lib/arranque.ts). */
+  enlaceDeArranque?: string;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -71,17 +69,24 @@ export default function Login({ brand }: { brand: string }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!email.trim() || !password) {
+      setError('Indique el correo electrónico y la contraseña.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       const res = await api.post<{ user?: User }>('/api/auth/login', { email, password });
-      const destino = destinoTrasEntrar(location.search, location.state);
+      const destino = destinoTrasEntrar(location.search, location.state, enlaceDeArranque);
       // Caché limpia: si antes hubo otra sesión en esta pestaña (caducada, o
       // de otra persona), sus datos no deben asomar en la cuenta nueva. Se
       // conserva el estado público de la instalación para no recargarlo.
       const setup = queryClient.getQueryData(['setup']);
       queryClient.clear();
       if (setup) queryClient.setQueryData(['setup'], setup);
+      // Sin sesión el estado de la instalación llega recortado (solo la
+      // marca); con la sesión recién abierta se vuelve a leer completo.
+      void queryClient.invalidateQueries({ queryKey: ['setup'] });
       if (res?.user) {
         queryClient.setQueryData(['me'], { user: res.user });
       } else {
@@ -93,9 +98,11 @@ export default function Login({ brand }: { brand: string }) {
       navigate(destino, { replace: true });
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? err.message
-          : 'No se pudo iniciar sesión. Compruebe la conexión e inténtelo de nuevo.',
+        esCredencialIncorrecta(err)
+          ? TEXTO_CREDENCIALES_INCORRECTAS
+          : err instanceof ApiError
+            ? err.message
+            : 'No se ha podido iniciar sesión. Compruebe la conexión e inténtelo de nuevo.',
       );
       setBusy(false);
     }
@@ -118,7 +125,7 @@ export default function Login({ brand }: { brand: string }) {
             </div>
           </header>
 
-          <form onSubmit={submit} className="flex flex-col gap-4 px-5 py-5">
+          <form onSubmit={submit} noValidate className="flex flex-col gap-4 px-5 py-5">
             <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">
               Acceso al panel
             </h1>
@@ -132,23 +139,27 @@ export default function Login({ brand }: { brand: string }) {
               type="email"
               autoComplete="username"
               autoFocus
-              required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setError('');
+                setEmail(e.target.value);
+              }}
               placeholder="nombre@empresa.com"
             />
             <Input
               label="Contraseña"
               type="password"
               autoComplete="current-password"
-              required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setError('');
+                setPassword(e.target.value);
+              }}
               placeholder="••••••••••"
             />
             {error && <AvisoError>{error}</AvisoError>}
             <Button type="submit" variant="tinta" busy={busy} className="w-full">
-              Entrar
+              Iniciar sesión
             </Button>
           </form>
         </section>
@@ -160,7 +171,7 @@ export default function Login({ brand }: { brand: string }) {
               to="/mi-buzon"
               className="text-laboratorio underline underline-offset-2 hover:text-tinta"
             >
-              Acceda a Mi buzón
+              Acceda a «Mi buzón»
             </Link>{' '}
             para configurar sus dispositivos o cambiar la contraseña.
           </p>

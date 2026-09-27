@@ -15,57 +15,8 @@ import {
 } from '../../ui/kit';
 import { estiloBoton } from '../../ui/Button';
 import { formatDate } from '../../lib/format';
-
-const auditLabels: Record<string, string> = {
-  'auth.login': 'Inicio de sesión',
-  'auth.password_changed': 'Contraseña de acceso cambiada',
-  'client.created': 'Cliente creado',
-  'client.updated': 'Cliente actualizado',
-  'client.deleted': 'Cliente eliminado',
-  'client.user_created': 'Usuario de panel creado',
-  'client.user_updated': 'Usuario de panel actualizado',
-  'client.user_deleted': 'Usuario de panel eliminado',
-  'client.external_linked': 'Cliente vinculado a una integración',
-  'client.external_unlinked': 'Cliente desvinculado de una integración',
-  'domain.created': 'Dominio dado de alta',
-  'domain.verified': 'Verificación de DNS',
-  'domain.deleted': 'Dominio eliminado',
-  'domain.dkim_regenerated': 'Claves DKIM regeneradas',
-  'domain.zonefile_downloaded': 'Fichero de zona descargado',
-  'mailbox.created': 'Buzón creado',
-  'mailbox.bulk_created': 'Alta masiva de buzones',
-  'mailbox.updated': 'Buzón actualizado',
-  'mailbox.deleted': 'Buzón eliminado',
-  'mailbox.password_reset': 'Contraseña restablecida',
-  'mailbox.app_password_created': 'Contraseña de aplicación creada',
-  'mailbox.app_password_revoked': 'Contraseña de aplicación revocada',
-  'mailbox.setup_link_created': 'Enlace de configuración creado',
-  'mailbox.setup_link_revoked': 'Enlace de configuración revocado',
-  'alias.created': 'Alias creado',
-  'alias.updated': 'Alias actualizado',
-  'alias.deleted': 'Alias eliminado',
-  'apikey.created': 'Clave de API creada',
-  'apikey.revoked': 'Clave de API revocada',
-  'token.created': 'Token de gestión creado',
-  'token.revoked': 'Token de gestión revocado',
-  'cloudflare.account_connected': 'Cuenta de Cloudflare conectada',
-  'cloudflare.account_removed': 'Cuenta de Cloudflare retirada',
-  'cloudflare.dns_applied': 'DNS aplicado en Cloudflare',
-  'plan.created': 'Plan creado',
-  'plan.updated': 'Plan actualizado',
-  'plan.deleted': 'Plan eliminado',
-  'portal.login': 'Acceso a Mi buzón',
-  'portal.password_changed': 'Contraseña cambiada desde Mi buzón',
-  'webmail.password_changed': 'Contraseña cambiada desde el webmail',
-  'alert.dismissed': 'Aviso descartado',
-  'notify.channels_updated': 'Canales de aviso actualizados',
-  'notify.test_sent': 'Aviso de prueba enviado',
-  'settings.engine_updated': 'Ajustes del motor actualizados',
-  'settings.instance_updated': 'Ajustes de la instancia actualizados',
-  'whitelabel.domain_created': 'Dominio de marca blanca',
-  'whitelabel.domain_verified': 'Marca blanca verificada',
-  'whitelabel.domain_deleted': 'Dominio de marca blanca eliminado',
-};
+import { medicionCompleta, TEXTO_MEDICION_INCOMPLETA } from '../../lib/entregabilidad';
+import { autorAnotacion, detalleAnotacion, etiquetaAccion } from '../../lib/tokens';
 
 /** Atajos a las altas y conexiones más frecuentes, sin buscarlas en el índice. */
 const accesosRapidos: { to: string; label: string }[] = [
@@ -121,16 +72,17 @@ export default function PanelAdmin() {
       <>
         <Membrete title="Parte de la instancia" />
         <AvisoError onRetry={() => void dashboard.refetch()} retrying={dashboard.isFetching}>
-          No se pudo leer el parte. Compruebe que el servicio está en marcha y vuelva a intentarlo.
+          No se ha podido leer el parte. Compruebe que el servicio está en marcha y vuelva a intentarlo.
         </AvisoError>
       </>
     );
   }
 
   const { totals, messages, engine, queue, instance } = dashboard.data;
-  // Sin respuesta de salud no hay veredicto de reputación: se dice «sin dato»,
-  // nunca «en orden».
-  const score = health.isError ? undefined : health.data?.score;
+  // Sin respuesta de salud, o con una medición a medias (DNS sin respuesta),
+  // no hay veredicto de reputación: se dice «sin dato», nunca «en orden».
+  const completa = health.data ? medicionCompleta(health.data) : false;
+  const score = health.isError || !completa ? undefined : health.data?.score;
   const criticos = (health.data?.recommendations ?? []).filter((r) => r.severity === 'critical');
 
   const constantes: Constante[] = [
@@ -178,8 +130,10 @@ export default function PanelAdmin() {
       veredicto:
         score === undefined ? 'sin-dato' : score >= 80 ? 'normal' : score >= 50 ? 'vigilar' : 'fuera',
       nota: health.isError
-        ? 'No se pudo consultar el PTR, el registro A ni las listas negras. Repita la medición desde Entregabilidad.'
-        : undefined,
+        ? 'No se ha podido consultar el PTR, el registro A ni las listas negras. Repita la medición desde Entregabilidad.'
+        : health.data && !completa
+          ? TEXTO_MEDICION_INCOMPLETA
+          : undefined,
     },
   ];
 
@@ -214,7 +168,7 @@ export default function PanelAdmin() {
                 ? 'Requiere atención'
                 : veredictoGlobal === 'vigilar'
                   ? 'Con avisos'
-                  : 'Sin datos'}
+                  : 'Sin dato'}
           </MarcaFondo>
         }
       />
@@ -225,7 +179,7 @@ export default function PanelAdmin() {
           onRetry={() => void dashboard.refetch()}
           retrying={dashboard.isFetching}
         >
-          No se pudo actualizar el parte. Se muestran los valores medidos a las{' '}
+          No se ha podido actualizar el parte. Se muestran los valores medidos a las{' '}
           {formatDate(dashboard.dataUpdatedAt)}.
         </AvisoError>
       )}
@@ -275,9 +229,16 @@ export default function PanelAdmin() {
           ) : health.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
-                No se pudo comprobar la entregabilidad del servidor. Sin esta medición no hay
+                No se ha podido comprobar la entregabilidad del servidor. Sin esta medición no hay
                 veredicto sobre el PTR, el registro A ni las listas negras.
               </AvisoError>
+            </div>
+          ) : criticos.length === 0 && !completa ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-5">
+              <Marca veredicto="sin-dato">Sin dato</Marca>
+              <span className="text-base text-tinta-2">
+                No se ha podido completar la comprobación del PTR, el registro A y las listas negras.
+              </span>
             </div>
           ) : criticos.length === 0 ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-5">
@@ -331,7 +292,7 @@ export default function PanelAdmin() {
         ) : audit.isError ? (
           <div className="p-4">
             <AvisoError onRetry={() => void audit.refetch()} retrying={audit.isFetching}>
-              No se pudo leer la actividad reciente.
+              No se ha podido leer la actividad reciente.
             </AvisoError>
           </div>
         ) : entradas.length === 0 ? (
@@ -348,18 +309,21 @@ export default function PanelAdmin() {
         ) : (
           <ul>
             {entradas.slice(0, 8).map((entry) => {
-              const detalle = Object.entries(entry.detail)
-                .filter(([k]) => k !== 'id')
-                .map(([, v]) => String(v))
-                .filter((v) => v && v.length < 48)
-                .join(' · ');
+              // Las mismas etiquetas y el mismo detalle que «Actividad»: nada de
+              // códigos de acción, identificadores internos ni marcas de tiempo.
+              const detalle = detalleAnotacion(entry.detail).join(' · ');
+              const autor = autorAnotacion(entry);
               return (
                 <li
                   key={entry.id}
                   className="regla-fila flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2 last:border-b-0"
                 >
-                  <span className="text-base text-tinta">
-                    {auditLabels[entry.action] || entry.action}
+                  <span className="min-w-0 text-base text-tinta [overflow-wrap:anywhere]">
+                    {etiquetaAccion(entry.action)}
+                    {/* El autor, salvo si ya figura en el detalle (inicio de sesión). */}
+                    {autor.texto !== 'Sistema' && !detalle.includes(autor.texto) && (
+                      <span className="text-sm text-tinta-3"> · {autor.texto}</span>
+                    )}
                   </span>
                   {/* En móvil el detalle baja a su propia línea: encajonado junto
                       a la fecha quedaba en una columna de pocas letras. */}

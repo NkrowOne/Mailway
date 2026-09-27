@@ -1,28 +1,39 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, type SetupStatus, type User } from './lib/api';
-import { AppShell } from './shell/AppShell';
+// Se lee aquí, en el paquete principal, para capturar la dirección de arranque
+// antes de cualquier redirección (la pantalla de acceso se descarga después).
+import { enlaceDeArranque } from './lib/arranque';
 import { Midiendo } from './ui/kit';
-import Login from './pages/Login';
-import Setup from './pages/Setup';
-import PanelAdmin from './pages/admin/PanelAdmin';
-import Clientes from './pages/admin/Clientes';
-import ClienteDetalle from './pages/admin/ClienteDetalle';
-import Entregabilidad from './pages/admin/Entregabilidad';
-import Ajustes from './pages/admin/Ajustes';
-import Avisos from './pages/admin/Avisos';
-import MarcaBlanca from './pages/MarcaBlanca';
-import InicioCliente from './pages/InicioCliente';
-import Dominios from './pages/Dominios';
-import DominioDetalle from './pages/DominioDetalle';
-import Buzones from './pages/Buzones';
-import Alias from './pages/Alias';
-import ApiKeys from './pages/ApiKeys';
-import Actividad from './pages/Actividad';
-import Cuenta from './pages/Cuenta';
-import Conexiones from './pages/Conexiones';
-import Planes from './pages/admin/Planes';
-import PortalApp from './pages/portal/PortalApp';
+
+/*
+  Cada área se descarga cuando se visita. El titular que abre su enlace de
+  configuración en el móvil solo baja el portal, no el panel de
+  administración entero; y quien administra no baja el portal.
+*/
+const PortalApp = lazy(() => import('./pages/portal/PortalApp'));
+// El marco del panel (índice, iconos) tampoco lo necesita el titular del buzón.
+const AppShell = lazy(() => import('./shell/AppShell').then((m) => ({ default: m.AppShell })));
+const Login = lazy(() => import('./pages/Login'));
+const Setup = lazy(() => import('./pages/Setup'));
+const PanelAdmin = lazy(() => import('./pages/admin/PanelAdmin'));
+const Clientes = lazy(() => import('./pages/admin/Clientes'));
+const ClienteDetalle = lazy(() => import('./pages/admin/ClienteDetalle'));
+const Entregabilidad = lazy(() => import('./pages/admin/Entregabilidad'));
+const Ajustes = lazy(() => import('./pages/admin/Ajustes'));
+const Avisos = lazy(() => import('./pages/admin/Avisos'));
+const Planes = lazy(() => import('./pages/admin/Planes'));
+const MarcaBlanca = lazy(() => import('./pages/MarcaBlanca'));
+const InicioCliente = lazy(() => import('./pages/InicioCliente'));
+const Dominios = lazy(() => import('./pages/Dominios'));
+const DominioDetalle = lazy(() => import('./pages/DominioDetalle'));
+const Buzones = lazy(() => import('./pages/Buzones'));
+const Alias = lazy(() => import('./pages/Alias'));
+const ApiKeys = lazy(() => import('./pages/ApiKeys'));
+const Actividad = lazy(() => import('./pages/Actividad'));
+const Cuenta = lazy(() => import('./pages/Cuenta'));
+const Conexiones = lazy(() => import('./pages/Conexiones'));
 
 /**
  * Las páginas del titular del buzón (enlace de configuración y «Mi buzón»)
@@ -33,9 +44,34 @@ export function esRutaPortal(pathname: string): boolean {
   return pathname.startsWith('/conectar/') || pathname === '/mi-buzon' || pathname.startsWith('/mi-buzon/');
 }
 
+/** Mientras llega el código de una vista, el instrumento de carga del sistema. */
+function Cargando({ pantalla = false, children }: { pantalla?: boolean; children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        pantalla ? (
+          <div className="grid min-h-screen place-items-center">
+            <Midiendo label="Cargando…" />
+          </div>
+        ) : (
+          <Midiendo label="Cargando…" />
+        )
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
 export default function App() {
   const location = useLocation();
-  if (esRutaPortal(location.pathname)) return <PortalApp />;
+  if (esRutaPortal(location.pathname)) {
+    return (
+      <Cargando pantalla>
+        <PortalApp />
+      </Cargando>
+    );
+  }
   return <PanelApp />;
 }
 
@@ -55,7 +91,7 @@ function PanelApp() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Midiendo label="Preparando el informe…" />
+        <Midiendo label="Cargando…" />
       </div>
     );
   }
@@ -64,9 +100,9 @@ function PanelApp() {
     return (
       <div className="grid min-h-screen place-items-center px-6 text-center">
         <div>
-          <p className="text-lg font-semibold">No se pudo contactar con el servidor de Mailway.</p>
+          <p className="text-lg font-semibold">No se ha podido contactar con el servidor de Mailway.</p>
           <p className="mt-1 text-sm text-tinta-2">
-            Comprueba que el servicio está en marcha y recarga la página.
+            Compruebe que el servicio está en marcha y vuelva a cargar la página.
           </p>
         </div>
       </div>
@@ -75,65 +111,79 @@ function PanelApp() {
 
   const user = me.data?.user ?? null;
   const status = setup.data!;
+  // Sin sesión, el estado llega recortado: la marca es lo único seguro.
+  const marca = status.instance?.brandName || 'Mailway';
   const needsSetup = !status.setupComplete;
 
   // Si el administrador ya existe pero no hay sesión (caducó, otro
   // navegador…), el asistente no puede continuar: primero hay que entrar.
   if (needsSetup && status.hasAdmin && !user) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login brand={status.instance.brandName} />} />
-        <Route path="*" element={<Navigate to={irALogin} replace />} />
-      </Routes>
+      <Cargando pantalla>
+        <Routes>
+          <Route path="/login" element={<Login brand={marca} enlaceDeArranque={enlaceDeArranque} />} />
+          <Route path="*" element={<Navigate to={irALogin} replace />} />
+        </Routes>
+      </Cargando>
     );
   }
 
   if (needsSetup) {
     return (
-      <Routes>
-        <Route path="/setup" element={<Setup status={status} user={user} />} />
-        <Route path="*" element={<Navigate to="/setup" replace />} />
-      </Routes>
+      <Cargando pantalla>
+        <Routes>
+          <Route path="/setup" element={<Setup status={status} user={user} />} />
+          <Route path="*" element={<Navigate to="/setup" replace />} />
+        </Routes>
+      </Cargando>
     );
   }
 
   if (!user) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login brand={status.instance.brandName} />} />
-        <Route path="*" element={<Navigate to={irALogin} replace />} />
-      </Routes>
+      <Cargando pantalla>
+        <Routes>
+          <Route path="/login" element={<Login brand={marca} enlaceDeArranque={enlaceDeArranque} />} />
+          <Route path="*" element={<Navigate to={irALogin} replace />} />
+        </Routes>
+      </Cargando>
     );
   }
 
   const isAdmin = user.role === 'admin';
   return (
-    <AppShell user={user} brand={status.instance.brandName}>
-      <Routes>
-        {isAdmin ? (
-          <>
-            <Route path="/" element={<PanelAdmin />} />
-            <Route path="/clientes" element={<Clientes />} />
-            <Route path="/clientes/:id" element={<ClienteDetalle />} />
-            <Route path="/entregabilidad" element={<Entregabilidad />} />
-            <Route path="/avisos" element={<Avisos />} />
-            <Route path="/planes" element={<Planes />} />
-            <Route path="/ajustes" element={<Ajustes />} />
-          </>
-        ) : (
-          <Route path="/" element={<InicioCliente />} />
-        )}
-        <Route path="/dominios" element={<Dominios isAdmin={isAdmin} />} />
-        <Route path="/dominios/:id" element={<DominioDetalle />} />
-        <Route path="/buzones" element={<Buzones />} />
-        <Route path="/alias" element={<Alias />} />
-        <Route path="/marca-blanca" element={<MarcaBlanca />} />
-        <Route path="/api-envio" element={<ApiKeys user={user} />} />
-        <Route path="/actividad" element={<Actividad />} />
-        <Route path="/cuenta" element={<Cuenta />} />
-        <Route path="/conexiones" element={<Conexiones isAdmin={isAdmin} />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AppShell>
+    <Cargando pantalla>
+      <AppShell user={user} brand={marca}>
+        {/* Dentro del marco: al cambiar de vista, la navegación sigue en su
+            sitio mientras llega el código de la nueva. */}
+        <Cargando>
+          <Routes>
+            {isAdmin ? (
+              <>
+                <Route path="/" element={<PanelAdmin />} />
+                <Route path="/clientes" element={<Clientes />} />
+                <Route path="/clientes/:id" element={<ClienteDetalle />} />
+                <Route path="/entregabilidad" element={<Entregabilidad />} />
+                <Route path="/avisos" element={<Avisos />} />
+                <Route path="/planes" element={<Planes />} />
+                <Route path="/ajustes" element={<Ajustes />} />
+              </>
+            ) : (
+              <Route path="/" element={<InicioCliente />} />
+            )}
+            <Route path="/dominios" element={<Dominios isAdmin={isAdmin} />} />
+            <Route path="/dominios/:id" element={<DominioDetalle />} />
+            <Route path="/buzones" element={<Buzones />} />
+            <Route path="/alias" element={<Alias />} />
+            <Route path="/marca-blanca" element={<MarcaBlanca />} />
+            <Route path="/api-envio" element={<ApiKeys user={user} />} />
+            <Route path="/actividad" element={<Actividad />} />
+            <Route path="/cuenta" element={<Cuenta />} />
+            <Route path="/conexiones" element={<Conexiones isAdmin={isAdmin} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Cargando>
+      </AppShell>
+    </Cargando>
   );
 }

@@ -108,8 +108,8 @@ const ETIQUETAS: Record<string, string> = {
   'settings.instance_updated': 'Ajustes de identidad actualizados',
   'settings.engine_updated': 'Ajustes del motor actualizados',
   // Motor de correo
-  'engine.recommended_applied': 'Ajustes recomendados del motor aplicados',
-  'engine.acme_configured': 'Certificado automático del motor configurado',
+  'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',
+  'engine.acme_configured': 'Emisión del certificado configurada',
   'engine.certificate_reloaded': 'Certificado del motor recargado',
   // Planes y clientes
   'plan.created': 'Plan creado',
@@ -117,6 +117,8 @@ const ETIQUETAS: Record<string, string> = {
   'plan.deleted': 'Plan eliminado',
   'client.created': 'Cliente creado',
   'client.updated': 'Cliente actualizado',
+  'client.suspended': 'Cliente suspendido',
+  'client.resumed': 'Cliente reactivado',
   'client.deleted': 'Cliente eliminado',
   'client.external_linked': 'Cliente vinculado a una integración',
   'client.external_unlinked': 'Cliente desvinculado de la integración',
@@ -126,9 +128,11 @@ const ETIQUETAS: Record<string, string> = {
   // Dominios
   'domain.created': 'Dominio dado de alta',
   'domain.verified': 'Verificación de DNS',
+  'domain.ownership_verified': 'Propiedad del dominio comprobada',
   'domain.dkim_regenerated': 'DKIM regenerado',
   'domain.zonefile_downloaded': 'Fichero de zona descargado',
   'domain.deleted': 'Dominio eliminado',
+  'domain.delete_partial': 'Eliminación del dominio incompleta',
   // Buzones y alias
   'mailbox.created': 'Buzón creado',
   'mailbox.bulk_created': 'Alta masiva de buzones',
@@ -142,10 +146,12 @@ const ETIQUETAS: Record<string, string> = {
   'alias.created': 'Alias creado',
   'alias.updated': 'Alias actualizado',
   'alias.deleted': 'Alias eliminado',
-  // Portal del titular y webmail
+  // Portal del titular, webmail y autoconfiguración
   'portal.login': 'Acceso a «Mi buzón»',
   'portal.password_changed': 'Contraseña cambiada desde «Mi buzón»',
   'webmail.password_changed': 'Contraseña cambiada desde el webmail',
+  'autoconfig.hosts_checked': 'Comprobación de los nombres de autoconfiguración',
+  'autoconfig.profile_downloaded': 'Perfil de configuración descargado',
   // Automatización e integraciones
   'apikey.created': 'Clave de API creada',
   'apikey.revoked': 'Clave de API revocada',
@@ -153,7 +159,9 @@ const ETIQUETAS: Record<string, string> = {
   'token.revoked': 'Token de gestión revocado',
   'cloudflare.account_connected': 'Cuenta de Cloudflare conectada',
   'cloudflare.account_removed': 'Cuenta de Cloudflare retirada',
+  'cloudflare.account_updated': 'Cuenta de Cloudflare actualizada',
   'cloudflare.dns_applied': 'Registros DNS aplicados en Cloudflare',
+  'cloudflare.instance_dns_applied': 'Registros DNS de la instancia aplicados en Cloudflare',
   // Marca blanca
   'whitelabel.domain_created': 'Dominio de marca blanca dado de alta',
   'whitelabel.domain_verified': 'Dominio de marca blanca verificado',
@@ -191,6 +199,8 @@ const AREAS: Record<string, string> = {
 const PALABRAS: Record<string, string> = {
   created: 'creado',
   deleted: 'eliminado',
+  delete: 'eliminación',
+  partial: 'incompleta',
   updated: 'actualizado',
   revoked: 'revocado',
   verified: 'verificado',
@@ -202,8 +212,11 @@ const PALABRAS: Record<string, string> = {
   disconnected: 'desconectado',
   enabled: 'activado',
   disabled: 'desactivado',
+  suspended: 'suspendido',
+  resumed: 'reactivado',
   reset: 'restablecido',
   sent: 'enviado',
+  checked: 'comprobado',
   downloaded: 'descargado',
   dismissed: 'descartado',
   configured: 'configurado',
@@ -214,13 +227,15 @@ const PALABRAS: Record<string, string> = {
   login: 'inicio de sesión',
   logout: 'cierre de sesión',
   password: 'contraseña',
-  host: 'host',
-  hosts: 'hosts',
+  profile: 'perfil',
+  host: 'nombre',
+  hosts: 'nombres',
   domain: 'dominio',
   link: 'enlace',
   account: 'cuenta',
   settings: 'ajustes',
   certificate: 'certificado',
+  ownership: 'propiedad',
   user: 'usuario',
   dns: 'DNS',
 };
@@ -228,7 +243,7 @@ const PALABRAS: Record<string, string> = {
 /**
  * Etiqueta de una acción. Las que el servidor añada en el futuro no deben
  * mostrarse como un código crudo: se nombran por su área y se traducen las
- * palabras conocidas («autoconfig.host_added» → «Autoconfiguración: host añadido»).
+ * palabras conocidas («autoconfig.host_added» → «Autoconfiguración: nombre añadido»).
  */
 export function etiquetaAccion(action: string): string {
   const conocida = ETIQUETAS[action];
@@ -251,22 +266,122 @@ export function tokenDeAnotacion(detail: Record<string, unknown>): string | null
   return via.slice('token:'.length) || null;
 }
 
-/** Claves internas del detalle que no aportan nada a quien lee el registro. */
-const CLAVES_OCULTAS = new Set(['id', 'clientId', 'userId', 'tokenId', 'via']);
+/**
+ * Autor legible de una anotación. Las acciones del titular del buzón («Mi
+ * buzón», webmail) no tienen usuario de panel: no las hizo el «Sistema», sino
+ * la persona que usa el buzón.
+ */
+export function autorAnotacion(anotacion: {
+  action: string;
+  detail: Record<string, unknown>;
+  actor?: { name: string; email: string | null; role: string } | null;
+}): {
+  texto: string;
+  correo: string | null;
+  titular: string | null;
+} {
+  const { actor, action, detail } = anotacion;
+  if (actor) {
+    if (actor.email) return { texto: actor.email, correo: actor.email, titular: actor.name };
+    return {
+      texto: actor.role === 'admin' ? 'Administración del servicio' : actor.name,
+      correo: null,
+      titular: null,
+    };
+  }
+  const delTitular =
+    action.startsWith('portal.') || action.startsWith('webmail.') || detail.via === 'portal';
+  return { texto: delTitular ? 'Titular del buzón' : 'Sistema', correo: null, titular: null };
+}
 
-/** Rótulo antepuesto a algunos valores para que se entiendan fuera de contexto. */
+/** Claves internas del detalle que no aportan nada a quien lee el registro. */
+const CLAVES_OCULTAS = new Set(['id', 'via', 'planFrom', 'planTo', 'replaceConflicts', 'trustedNetworks']);
+
+/** Identificadores internos («mbx_73296258819c51d3», «cli_…»): nunca se enseñan. */
+const ID_INTERNO = /^[a-z]{2,6}_[0-9a-f]{8,}$/i;
+
+function esClaveOculta(clave: string): boolean {
+  // clientId, mailboxId, linkId, appPasswordId, whitelabelDomainId…
+  return CLAVES_OCULTAS.has(clave) || /Id$/.test(clave);
+}
+
+/** Rótulo antepuesto a algunos valores de texto para que se entiendan fuera de contexto. */
 const ROTULOS_DETALLE: Record<string, string> = {
   sender: 'remite',
   externalRef: 'referencia',
   previous: 'antes',
   prefix: 'prefijo',
-  owner: 'titular',
+  owner: 'propietario',
   nivel: 'nivel',
   kind: 'tipo',
-  mailboxes: 'buzones',
   expiresAt: 'caduca',
-  count: 'total',
   status: 'estado',
+  zone: 'zona',
+  contact: 'contacto',
+  url: 'dirección',
+  hostname: 'nombre',
+  displayName: 'nombre visible',
+};
+
+/** Recuentos: el número va con su unidad («2 destinos», «1 fallido»). */
+const RECUENTOS: Record<string, [string, string]> = {
+  destinations: ['destino', 'destinos'],
+  external: ['externo', 'externos'],
+  count: ['creado', 'creados'],
+  failed: ['fallido', 'fallidos'],
+  mailboxes: ['buzón', 'buzones'],
+  applied: ['registro aplicado', 'registros aplicados'],
+  errors: ['error', 'errores'],
+  zones: ['zona', 'zonas'],
+  checked: ['nombre comprobado', 'nombres comprobados'],
+  ok: ['apunta aquí', 'apuntan aquí'],
+  pending: ['sin DNS', 'sin DNS'],
+  unknown: ['sin dato', 'sin dato'],
+  aliasesUpdated: ['alias actualizado', 'alias actualizados'],
+  aliasesDeleted: ['alias eliminado', 'alias eliminados'],
+  removed: ['elemento eliminado', 'elementos eliminados'],
+  apiKeys: ['clave de API afectada', 'claves de API afectadas'],
+};
+
+/** Recuentos que solo informan cuando no son cero (un «0 errores» sobra). */
+const SOLO_SI_HAY = new Set([
+  'external',
+  'failed',
+  'errors',
+  'aliasesUpdated',
+  'aliasesDeleted',
+  'unknown',
+  'pending',
+  'apiKeys',
+]);
+
+/** Valores sí/no con significado propio: se nombran solo cuando aportan algo. */
+const BOOLEANOS: Record<string, [string | null, string | null]> = {
+  hasPassword: ['con contraseña', 'sin contraseña'],
+  generated: ['contraseña generada', 'contraseña indicada'],
+  passwordReset: ['contraseña restablecida', null],
+  disabled: ['deshabilitado', 'habilitado'],
+  recommendedApplied: ['ajustes recomendados aplicados', null],
+  ownershipVerified: ['propiedad comprobada', null],
+};
+
+/** Listas de valores cuyo significado depende de la clave. */
+const LISTAS: Record<string, string> = {
+  failed: 'con error',
+  removed: 'eliminados',
+  zones: 'zonas',
+  configured: 'canales',
+  failures: 'sin entregar',
+  fields: 'cambios',
+  emails: '',
+  destinations: '',
+};
+
+const CAMPOS_CLIENTE: Record<string, string> = {
+  name: 'nombre',
+  contactEmail: 'correo de contacto',
+  planId: 'plan',
+  notes: 'notas',
 };
 
 const ESTADOS: Record<string, string> = {
@@ -277,25 +392,71 @@ const ESTADOS: Record<string, string> = {
   suspended: 'suspendido',
 };
 
+const TIPOS: Record<string, string> = {
+  webmail: 'webmail',
+  panel: 'panel',
+  stalwart: 'Stalwart',
+  demo: 'demostración',
+};
+
+const CANALES: Record<string, string> = { webhook: 'webhook', discord: 'Discord', telegram: 'Telegram' };
+
+/** Horas de validez de un enlace, en días cuando son exactos («7 días»). */
+function validez(horas: number): string {
+  if (horas % 24 === 0) {
+    const dias = horas / 24;
+    return `validez ${dias} ${dias === 1 ? 'día' : 'días'}`;
+  }
+  return `validez ${horas} ${horas === 1 ? 'hora' : 'horas'}`;
+}
+
+function recuento(n: number, [uno, varios]: [string, string]): string {
+  return `${n} ${n === 1 ? uno : varios}`;
+}
+
 /**
  * Detalle legible de una anotación: los valores útiles (dirección, dominio,
- * nombre…) en el orden en que se anotaron, sin ids internos ni estructuras.
+ * nombre…) en el orden en que se anotaron, sin ids internos ni estructuras, y
+ * cada número con su unidad para que se entienda fuera de contexto.
  */
 export function detalleAnotacion(detail: Record<string, unknown>): string[] {
   const partes: string[] = [];
   for (const [clave, valor] of Object.entries(detail)) {
-    if (CLAVES_OCULTAS.has(clave) || valor === null || valor === undefined || valor === '') continue;
+    if (esClaveOculta(clave) || valor === null || valor === undefined || valor === '') continue;
     let texto: string | null = null;
-    if (clave === 'expiresAt' && typeof valor === 'number') texto = formatDay(valor);
-    else if (clave === 'status' && typeof valor === 'string') texto = ESTADOS[valor] ?? valor;
-    else if (typeof valor === 'string' || typeof valor === 'number') texto = String(valor);
-    else if (Array.isArray(valor)) {
-      const simples = valor.filter((v) => typeof v === 'string' || typeof v === 'number');
-      if (simples.length) texto = simples.join(', ');
+    if (typeof valor === 'boolean') {
+      const [si, no] = BOOLEANOS[clave] ?? [null, null];
+      texto = valor ? si : no;
+    } else if (typeof valor === 'number') {
+      if (clave === 'expiresAt') texto = `caduca ${formatDay(valor)}`;
+      else if (clave === 'ttlHours') texto = validez(valor);
+      else if (clave === 'quotaMb') texto = `cuota ${valor >= 1024 ? `${Math.round((valor / 1024) * 10) / 10} GB` : `${valor} MB`}`;
+      else if (RECUENTOS[clave]) texto = SOLO_SI_HAY.has(clave) && valor === 0 ? null : recuento(valor, RECUENTOS[clave]);
+      // Un número sin unidad conocida no se entiende fuera de contexto.
+      else texto = null;
+    } else if (typeof valor === 'string') {
+      if (ID_INTERNO.test(valor)) continue;
+      if (clave === 'status') texto = ESTADOS[valor] ?? valor;
+      else if (clave === 'kind') texto = TIPOS[valor] ?? valor;
+      else if (clave === 'scope') texto = valor === 'instance' ? 'instancia' : null;
+      else texto = valor;
+      const rotulo = ROTULOS_DETALLE[clave];
+      if (texto && rotulo && clave !== 'expiresAt') texto = `${rotulo} ${texto}`;
+    } else if (Array.isArray(valor)) {
+      const simples = valor
+        .filter((v): v is string | number => typeof v === 'string' || typeof v === 'number')
+        .map((v) => String(v))
+        .filter((v) => !ID_INTERNO.test(v))
+        .map((v) => (clave === 'fields' ? (CAMPOS_CLIENTE[v] ?? v) : clave === 'configured' ? (CANALES[v] ?? v) : v));
+      if (simples.length) {
+        const rotulo = LISTAS[clave];
+        texto = rotulo ? `${rotulo}: ${simples.join(', ')}` : simples.join(', ');
+      } else if (clave === 'configured') {
+        texto = 'sin canales';
+      }
     }
-    if (!texto || texto.length > 120) continue;
-    const rotulo = ROTULOS_DETALLE[clave];
-    partes.push(rotulo ? `${rotulo} ${texto}` : texto);
+    if (!texto || texto.length > 160) continue;
+    partes.push(texto);
   }
   return partes;
 }

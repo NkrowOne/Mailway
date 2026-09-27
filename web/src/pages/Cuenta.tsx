@@ -48,7 +48,7 @@ export default function Cuenta() {
       setError(
         err instanceof ApiError
           ? err.message
-          : 'No se pudo cambiar la contraseña. Compruebe la conexión e inténtelo de nuevo.',
+          : 'No se ha podido cambiar la contraseña. Compruebe la conexión e inténtelo de nuevo.',
       );
     } finally {
       setBusy(false);
@@ -67,7 +67,7 @@ export default function Cuenta() {
                 {user.email}
               </FilaDato>
               <FilaDato rotulo="Perfil">
-                {user.role === 'admin' ? 'Responsable de la instancia' : 'Usuario de cliente'}
+                {user.role === 'admin' ? 'Administrador del servicio' : 'Usuario de cliente'}
               </FilaDato>
             </dl>
           </Hoja>

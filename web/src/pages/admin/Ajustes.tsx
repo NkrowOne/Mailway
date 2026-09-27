@@ -16,7 +16,7 @@ import {
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Hoja, Marca, MarcaFondo, Membrete, Midiendo, Muestra } from '../../ui/kit';
+import { AvisoError, Hoja, Marca, MarcaFondo, Membrete, Midiendo, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 
 interface SettingsResponse {
@@ -58,26 +58,46 @@ export default function Ajustes() {
     return (
       <>
         <Membrete title="Ajustes" meta={META} />
-        <Hoja title="Ajustes">
-          <FalloLectura texto="No se han podido cargar los ajustes. Compruebe que el servidor de Mailway sigue en marcha y vuelva a intentarlo." />
-          <Button variant="perfil" className="mt-3" onClick={() => void settings.refetch()}>
-            Reintentar
-          </Button>
-        </Hoja>
+        <AvisoError onRetry={() => void settings.refetch()} retrying={settings.isFetching}>
+          No se han podido cargar los ajustes. Compruebe que el servidor de Mailway sigue en marcha y vuelva a
+          intentarlo.
+        </AvisoError>
       </>
     );
   }
 
   // Cambiar el nombre del servidor o la IP cambia los registros y las rutas:
-  // todo lo que depende de ellos se vuelve a leer.
-  const refrescar = () => void queryClient.invalidateQueries();
+  // se vuelve a leer lo que depende de ellos, y nada más. Invalidar toda la
+  // caché reponía también el formulario de la otra hoja y borraba en silencio
+  // lo que se estuviera escribiendo en ella.
+  const refrescarIdentidad = () => {
+    for (const clave of [
+      ['settings'],
+      ['setup'],
+      ['admin-dashboard'],
+      ['server-health'],
+      ['autoconfig-status'],
+      ['whitelabel-setup'],
+      ['domains'],
+      ['domain'],
+      ['conexion'],
+      ['integrations-info'],
+    ]) {
+      void queryClient.invalidateQueries({ queryKey: clave });
+    }
+  };
+  const refrescarMotor = () => {
+    for (const clave of [['settings'], ['setup'], ['admin-dashboard'], ['engine-status']]) {
+      void queryClient.invalidateQueries({ queryKey: clave });
+    }
+  };
 
   return (
     <>
       <Membrete title="Ajustes" meta={META} />
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <HojaIdentidad initial={settings.data.instance} onSaved={refrescar} />
-        <HojaMotor data={settings.data} onSaved={refrescar} toast={toast} />
+        <HojaIdentidad initial={settings.data.instance} onSaved={refrescarIdentidad} />
+        <HojaMotor data={settings.data} onSaved={refrescarMotor} toast={toast} />
         {/* Hoja propia del área del motor; si no tiene nada que mostrar, no ocupa sitio. */}
         <div className="min-w-0 empty:hidden lg:col-span-2">
           <HojaServidorCorreo />
@@ -86,18 +106,6 @@ export default function Ajustes() {
         <HojaTraefik />
       </div>
     </>
-  );
-}
-
-/** Fallo de lectura: nombra el problema y la solución. */
-function FalloLectura({ texto }: { texto: string }) {
-  return (
-    <p
-      role="alert"
-      className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-    >
-      {texto}
-    </p>
   );
 }
 
@@ -119,14 +127,19 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
   const propuesta = !initial.panelUrl && typeof window !== 'undefined' ? window.location.origin : '';
   const [form, setForm] = useState<InstanceSettings>({ ...initial, panelUrl: initial.panelUrl || propuesta });
   const [error, setError] = useState('');
+  // Con cambios sin guardar, una relectura de los ajustes (al guardar el
+  // motor, por ejemplo) no debe pisar lo que se está escribiendo.
+  const [modificado, setModificado] = useState(false);
   useEffect(() => {
+    if (modificado) return;
     setForm({ ...initial, panelUrl: initial.panelUrl || propuesta });
-  }, [initial, propuesta]);
+  }, [initial, propuesta, modificado]);
 
   const save = useMutation({
     mutationFn: () => api.put('/api/settings/instance', form),
     onSuccess: () => {
       setError('');
+      setModificado(false);
       toast('ok', 'Se han guardado los ajustes del servidor.');
       onSaved();
     },
@@ -137,6 +150,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
     mutationFn: () => api.get<{ ip: string }>('/api/setup/detect-ip'),
     onSuccess: (data) => {
       if (data.ip) {
+        setModificado(true);
         setForm((f) => ({ ...f, publicIp: data.ip }));
         toast('ok', `IP pública detectada: ${data.ip}. Guarde los cambios para aplicarla.`);
       } else {
@@ -148,21 +162,27 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!form.brandName.trim()) {
+      setError('Indique el nombre del servicio.');
+      return;
+    }
     save.mutate();
   }
 
-  const set = (campo: keyof InstanceSettings) => (e: { target: { value: string } }) =>
+  const set = (campo: keyof InstanceSettings) => (e: { target: { value: string } }) => {
+    setError('');
+    setModificado(true);
     setForm((f) => ({ ...f, [campo]: e.target.value }));
+  };
 
   return (
     <Hoja title="Identidad del servidor" className="min-w-0">
-      <form onSubmit={submit} className="flex flex-col gap-4">
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
         <Input
           label="Nombre del servicio"
           value={form.brandName}
           onChange={set('brandName')}
           help="Aparece en el panel, en los perfiles de configuración y en los avisos."
-          required
         />
         <Input
           label="URL pública del panel"
@@ -213,7 +233,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           placeholder="https://webmail.suempresa.com"
           help="Si se deja vacía, el panel no muestra enlaces al webmail. Los clientes con dominio propio de webmail ven el suyo."
         />
-        {error && <FalloLectura texto={error} />}
+        {error && <AvisoError>{error}</AvisoError>}
         {/* Única acción principal de la vista: el resto de hojas usan filete. */}
         <Button type="submit" variant="tinta" busy={save.isPending} className="self-start">
           Guardar cambios
@@ -242,6 +262,24 @@ function HojaMotor({
   const [smtpHost, setSmtpHost] = useState(engine?.smtpHost ?? 'mailway-mail');
   const [smtpPort, setSmtpPort] = useState(String(engine?.smtpPort ?? 587));
   const [testResult, setTestResult] = useState<null | { ok: boolean; detail?: string }>(null);
+  const [intentado, setIntentado] = useState(false);
+
+  // Cambiar el destino (URL, usuario o servidor SMTP) sin volver a escribir
+  // la contraseña reenviaría la guardada a otro servidor: el servidor lo
+  // rechaza (engine_password_required) y aquí se avisa antes de enviar.
+  const destinoCambia =
+    kind === 'stalwart' &&
+    engine?.kind === 'stalwart' &&
+    (url.trim().replace(/\/+$/, '').toLowerCase() !== engine.url.trim().replace(/\/+$/, '').toLowerCase() ||
+      adminUser !== engine.adminUser ||
+      smtpHost.trim().toLowerCase() !== engine.smtpHost.trim().toLowerCase());
+  const faltaContrasena = kind === 'stalwart' && !adminPassword && (destinoCambia || !engine?.hasPassword);
+  const errorContrasena =
+    intentado && faltaContrasena
+      ? destinoCambia
+        ? 'Para cambiar la URL, el usuario o el servidor SMTP del motor, indique también la contraseña.'
+        : 'Indique la contraseña del administrador del motor.'
+      : undefined;
 
   const payload = () => ({
     kind,
@@ -291,8 +329,15 @@ function HojaMotor({
       }
     >
       <form
+        noValidate
         onSubmit={(e) => {
           e.preventDefault();
+          setIntentado(true);
+          if (kind === 'stalwart' && (!url.trim() || !adminUser.trim() || !smtpHost.trim())) {
+            toast('error', 'Indique la URL de la API de gestión, el usuario administrador y el host SMTP.');
+            return;
+          }
+          if (faltaContrasena) return;
           save.mutate();
         }}
         className="flex flex-col gap-4"
@@ -311,7 +356,6 @@ function HojaMotor({
             <Input
               label="URL de la API de gestión"
               mono
-              required
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="http://mailway-mail:8080"
@@ -319,7 +363,6 @@ function HojaMotor({
             <div className="grid gap-3 sm:grid-cols-2">
               <Input
                 label="Usuario administrador"
-                required
                 value={adminUser}
                 onChange={(e) => setAdminUser(e.target.value)}
               />
@@ -328,21 +371,26 @@ function HojaMotor({
                 type="password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
-                placeholder={engine?.hasPassword ? '(sin cambios)' : ''}
-                help={engine?.hasPassword ? 'Déjela vacía para conservar la actual.' : undefined}
+                placeholder={engine?.hasPassword && !destinoCambia ? '(sin cambios)' : ''}
+                error={errorContrasena}
+                help={
+                  engine?.hasPassword
+                    ? destinoCambia
+                      ? 'Obligatoria: ha cambiado la URL, el usuario o el servidor SMTP.'
+                      : 'Déjela vacía para conservar la actual. Es obligatoria si cambia la URL, el usuario o el servidor SMTP.'
+                    : undefined
+                }
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Input
                 label="Host SMTP (envíos por API)"
                 mono
-                required
                 value={smtpHost}
                 onChange={(e) => setSmtpHost(e.target.value)}
               />
               <Input
                 label="Puerto SMTP"
-                required
                 inputMode="numeric"
                 value={smtpPort}
                 onChange={(e) => setSmtpPort(e.target.value)}
@@ -375,6 +423,10 @@ function HojaMotor({
             Guardar motor
           </Button>
         </div>
+        <p className="text-sm text-tinta-3">
+          Probar y guardar la conexión con el motor requiere una sesión iniciada en el panel: no es posible
+          hacerlo con un token de gestión.
+        </p>
       </form>
     </Hoja>
   );
@@ -389,7 +441,7 @@ const ORDEN: Record<string, number> = { pending: 0, unknown: 1, ok: 2 };
 function CeldaHost({ uso, host }: { uso: UsoHost; host: EstadoHostAutoconfig | undefined }) {
   return (
     <span className="shrink-0 sm:basis-32">
-      <span className="rotulo mr-1.5 sm:hidden">{uso}</span>
+      <span className="rotulo mr-1.5 sm:hidden">{usoHost[uso]}</span>
       {host ? (
         <span title={host.detail}>
           <Marca veredicto={veredictoHost[host.state]}>{etiquetaHost[host.state]}</Marca>
@@ -441,10 +493,10 @@ function HojaAutoconfiguracion() {
   if (status.isError || !status.data) {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
-        <FalloLectura texto="No se ha podido leer el estado de la autoconfiguración. Vuelva a cargar la página; si el problema continúa, revise el registro del servidor." />
-        <Button variant="perfil" className="mt-3" onClick={() => void status.refetch()}>
-          Reintentar
-        </Button>
+        <AvisoError onRetry={() => void status.refetch()} retrying={status.isFetching}>
+          No se ha podido leer el estado de la autoconfiguración. Si el problema continúa, revise el registro
+          del servidor.
+        </AvisoError>
       </Hoja>
     );
   }
@@ -518,7 +570,7 @@ function HojaAutoconfiguracion() {
         <span className="rotulo min-w-0 flex-1">Dominio</span>
         {COLUMNAS.map((c) => (
           <span key={c} className="rotulo shrink-0 basis-32">
-            {c}
+            {usoHost[c]}
           </span>
         ))}
       </div>
@@ -605,10 +657,10 @@ function HojaTraefik() {
   if (setup.isError || !setup.data) {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
-        <FalloLectura texto="No se ha podido cargar la configuración de Traefik. Vuelva a cargar la página; si el problema continúa, revise el registro del servidor." />
-        <Button variant="perfil" className="mt-3" onClick={() => void setup.refetch()}>
-          Reintentar
-        </Button>
+        <AvisoError onRetry={() => void setup.refetch()} retrying={setup.isFetching}>
+          No se ha podido cargar la configuración de Traefik. Si el problema continúa, revise el registro del
+          servidor.
+        </AvisoError>
       </Hoja>
     );
   }
@@ -616,13 +668,9 @@ function HojaTraefik() {
   const s = setup.data;
   // Bajo Skyway el puente es lo normal: el bloque manual queda plegado.
   const mostrarManual = manual ?? !s.underSkyway;
+  // El token es un secreto: va aparte, enmascarado, con «Mostrar» y «Copiar».
   const parametros: { rotulo: string; valor: string; aviso?: string; vigilar?: boolean }[] = [
     { rotulo: 'URL que sondea Traefik', valor: s.providerEndpoint },
-    {
-      rotulo: 'Token (X-Mailway-Token)',
-      valor: s.token,
-      aviso: s.tokenFromEnv ? 'Fijado por la variable MAILWAY_TRAEFIK_TOKEN.' : undefined,
-    },
     { rotulo: 'Emisor de certificados', valor: s.certResolver },
     { rotulo: 'Destino del webmail', valor: s.webmailBackend },
     {
@@ -689,6 +737,8 @@ function HojaTraefik() {
           )}
         </div>
 
+        <TokenTraefik token={s.token} desdeEntorno={s.tokenFromEnv} />
+
         <div>
           <div className="regla-cabecera hidden items-baseline gap-x-4 pb-1.5 sm:flex">
             <span className="rotulo min-w-0 flex-1 basis-40">Parámetro de esta instancia</span>
@@ -714,5 +764,31 @@ function HojaTraefik() {
         </p>
       </div>
     </Hoja>
+  );
+}
+
+/**
+ * Token con el que Traefik se identifica ante Mailway. Es un secreto: se
+ * muestra enmascarado y solo se revela a petición (la pantalla de ajustes se
+ * comparte o se proyecta), y se copia sin necesidad de revelarlo.
+ */
+function TokenTraefik({ token, desdeEntorno }: { token: string; desdeEntorno?: boolean }) {
+  const [visible, setVisible] = useState(false);
+  const enmascarado = token ? `••••••••${token.slice(-3)}` : '—';
+  return (
+    <Muestra rotulo="Token (X-Mailway-Token)" copiar={token}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <code className="valor min-w-0 flex-1 break-all text-sm text-tinta">{visible ? token : enmascarado}</code>
+        <Button
+          variant="plano"
+          className="!h-6 px-1.5 text-sm"
+          aria-pressed={visible}
+          onClick={() => setVisible((v) => !v)}
+        >
+          {visible ? 'Ocultar' : 'Mostrar'}
+        </Button>
+      </div>
+      {desdeEntorno && <p className="mt-1 text-sm text-tinta-3">Fijado por la variable MAILWAY_TRAEFIK_TOKEN.</p>}
+    </Muestra>
   );
 }

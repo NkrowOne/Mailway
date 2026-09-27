@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { api, ApiError, type Client, type User } from '../lib/api';
 import { formatDate, plural } from '../lib/format';
 import {
+  autorAnotacion,
   detalleAnotacion,
   etiquetaAccion,
   tokenDeAnotacion,
@@ -11,13 +12,10 @@ import {
 } from '../lib/tokens';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Field';
-import { Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
+import { AvisoError, Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
 
 /** Anotaciones por página: suficiente para una jornada sin cargar el registro entero. */
 const POR_PAGINA = 50;
-
-const bandaError =
-  'border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera';
 
 function mensajeDe(err: unknown, porDefecto: string): string {
   return err instanceof ApiError ? err.message : porDefecto;
@@ -77,36 +75,38 @@ export default function Actividad() {
         }
       />
 
-      {isAdmin && (
-        <div className="mb-4 max-w-xs">
-          <Select
-            label="Cliente"
-            value={clienteFiltro}
-            onChange={(e) => setClienteFiltro(e.target.value)}
-            disabled={clientes.isPending}
-          >
-            <option value="">Todos los clientes y la instancia</option>
-            {(clientes.data?.clients ?? []).map((cliente) => (
-              <option key={cliente.id} value={cliente.id}>
-                {cliente.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-      )}
-
-      <Hoja flush>
+      {/* El filtro va en la cabecera de la hoja que filtra, no suelto sobre la mesa. */}
+      <Hoja
+        title="Registro"
+        actions={
+          isAdmin ? (
+            <div className="w-full min-w-[14rem] sm:w-72">
+              <Select
+                label="Cliente"
+                value={clienteFiltro}
+                onChange={(e) => setClienteFiltro(e.target.value)}
+                disabled={clientes.isPending}
+              >
+                <option value="">Todos los clientes y la instancia</option>
+                {(clientes.data?.clients ?? []).map((cliente) => (
+                  <option key={cliente.id} value={cliente.id}>
+                    {cliente.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : undefined
+        }
+        flush
+      >
         {registro.isPending ? (
           <Midiendo label="Leyendo el registro de actividad…" />
         ) : errorInicial ? (
-          <div className="flex flex-col items-start gap-3 px-4 py-4">
-            <p role="alert" className={`${bandaError} w-full`}>
+          <div className="px-4 py-4">
+            <AvisoError onRetry={() => void registro.refetch()} retrying={registro.isFetching}>
               No se ha podido leer el registro de actividad.{' '}
               {mensajeDe(registro.error, 'Compruebe la conexión con el servidor.')}
-            </p>
-            <Button variant="perfil" busy={registro.isFetching} onClick={() => registro.refetch()}>
-              Reintentar
-            </Button>
+            </AvisoError>
           </div>
         ) : anotaciones.length === 0 ? (
           <Vacio title="No hay actividad registrada">
@@ -133,10 +133,10 @@ export default function Actividad() {
             {(registro.hasNextPage || registro.isFetchNextPageError) && (
               <div className="flex flex-col items-start gap-3 border-t border-regla px-4 py-3">
                 {registro.isFetchNextPageError && (
-                  <p role="alert" className={`${bandaError} w-full`}>
+                  <AvisoError className="w-full">
                     No se han podido leer más anotaciones.{' '}
                     {mensajeDe(registro.error, 'Vuelva a intentarlo.')}
-                  </p>
+                  </AvisoError>
                 )}
                 <Button
                   variant="perfil"
@@ -163,7 +163,7 @@ function FilaActividad({
 }) {
   const detalle = detalleAnotacion(anotacion.detail).join(' · ');
   const token = tokenDeAnotacion(anotacion.detail);
-  const actor = anotacion.actor;
+  const autor = autorAnotacion(anotacion);
   return (
     <li
       className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-0.5 px-4 py-2
@@ -173,25 +173,22 @@ function FilaActividad({
       {/* La acción identifica la anotación: nunca truncada. */}
       <div className="min-w-0 grow basis-40">
         <p className="break-words text-base text-tinta">{etiquetaAccion(anotacion.action)}</p>
-        {detalle && <p className="valor break-all text-sm text-tinta-3">{detalle}</p>}
+        {/* Corte solo donde hace falta: «break-all» partía «talleres-rui/z.es». */}
+        {detalle && <p className="valor text-sm text-tinta-3 [overflow-wrap:anywhere]">{detalle}</p>}
         {token && (
           <p className="text-sm text-tinta-2">
             mediante el token <span className="valor">«{token}»</span>
           </p>
         )}
       </div>
-      <span className="min-w-0 basis-full break-words text-sm text-tinta-2 sm:shrink-0 sm:basis-44">
+      <span className="min-w-0 basis-full text-sm text-tinta-2 [overflow-wrap:anywhere] sm:shrink-0 sm:basis-44">
         <span className="rotulo mr-1.5 sm:hidden">Autor</span>
-        {actor ? (
-          actor.email ? (
-            <span className="valor break-all" title={actor.name}>
-              {actor.email}
-            </span>
-          ) : (
-            <span>{actor.role === 'admin' ? 'Administración del servicio' : actor.name}</span>
-          )
+        {autor.correo ? (
+          <span className="valor [overflow-wrap:anywhere]" title={autor.titular ?? undefined}>
+            {autor.correo}
+          </span>
         ) : (
-          <span className="text-tinta-3">Sistema</span>
+          <span className={autor.texto === 'Sistema' ? 'text-tinta-3' : undefined}>{autor.texto}</span>
         )}
       </span>
       {verCliente && (

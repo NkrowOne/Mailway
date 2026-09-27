@@ -212,6 +212,31 @@ interface Campos {
   apiPerMinuteLimit: string;
 }
 
+/**
+ * Rango admitido de cada límite: el mismo que valida el servidor. Se
+ * comprueba al guardar con mensajes propios en el campo; los min/max nativos
+ * mostraban un globo del navegador, a veces en otro idioma, y ocultaban estos.
+ */
+const RANGOS: Record<Exclude<keyof Campos, 'name' | 'notes'>, { min: number; max: number }> = {
+  maxDomains: { min: 1, max: 1000 },
+  maxMailboxes: { min: 1, max: 100000 },
+  maxAliases: { min: 0, max: 100000 },
+  mailboxQuotaMb: { min: 64, max: 1048576 },
+  apiDailyLimit: { min: 0, max: 10000000 },
+  apiPerMinuteLimit: { min: 1, max: 100000 },
+};
+
+function errorLimite(clave: keyof typeof RANGOS, valor: string): string | undefined {
+  const { min, max } = RANGOS[clave];
+  const n = Number(valor);
+  if (valor.trim() === '' || !Number.isInteger(n)) return 'Indique un número entero.';
+  if (n < min || n > max) {
+    const formato = (x: number) => x.toLocaleString('es-ES');
+    return `Indique un valor entre ${formato(min)} y ${formato(max)}.`;
+  }
+  return undefined;
+}
+
 const porDefecto: Campos = {
   name: '',
   notes: '',
@@ -242,8 +267,13 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
       : porDefecto,
   );
   const [error, setError] = useState('');
-  const set = (clave: keyof Campos) => (e: { target: { value: string } }) =>
+  const [intentado, setIntentado] = useState(false);
+  const set = (clave: keyof Campos) => (e: { target: { value: string } }) => {
+    setError('');
     setCampos((prev) => ({ ...prev, [clave]: e.target.value }));
+  };
+  // Los errores de cada campo se muestran tras el primer intento de guardar.
+  const errorCampo = (clave: keyof typeof RANGOS) => (intentado ? errorLimite(clave, campos[clave]) : undefined);
   const n = (clave: keyof Campos) => Number(campos[clave]);
 
   // Clientes del plan que quedarían por encima de los nuevos límites: se
@@ -285,16 +315,18 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const numericos: (keyof Campos)[] = [
-      'maxDomains',
-      'maxMailboxes',
-      'maxAliases',
-      'mailboxQuotaMb',
-      'apiDailyLimit',
-      'apiPerMinuteLimit',
-    ];
-    if (numericos.some((k) => campos[k].trim() === '' || !Number.isInteger(n(k)))) {
-      setError('Todos los límites deben ser números enteros.');
+    setIntentado(true);
+    if (campos.name.trim().length < 2) {
+      setError('El nombre del plan debe tener al menos 2 caracteres.');
+      return;
+    }
+    const conError = (Object.keys(RANGOS) as (keyof typeof RANGOS)[]).filter((k) => errorLimite(k, campos[k]));
+    if (conError.length > 0) {
+      setError(
+        conError.length === 1
+          ? 'Revise el límite marcado.'
+          : `Revise los ${conError.length} límites marcados.`,
+      );
       return;
     }
     setError('');
@@ -305,19 +337,24 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
 
   return (
     <Dialogo open onClose={onClose} title={plan ? 'Editar plan' : 'Crear plan'}>
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <Input label="Nombre" required minLength={2} maxLength={60} value={campos.name} onChange={set('name')} placeholder="Profesional" />
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <Input
+          label="Nombre"
+          maxLength={60}
+          value={campos.name}
+          onChange={set('name')}
+          placeholder="Profesional"
+          error={intentado && campos.name.trim().length < 2 ? 'Indique un nombre de al menos 2 caracteres.' : undefined}
+        />
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="Dominios"
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={1}
-            max={1000}
             value={campos.maxDomains}
             onChange={set('maxDomains')}
+            error={errorCampo('maxDomains')}
             help="Máximo de dominios de correo."
           />
           <Input
@@ -325,11 +362,9 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={1}
-            max={100000}
             value={campos.maxMailboxes}
             onChange={set('maxMailboxes')}
+            error={errorCampo('maxMailboxes')}
             help="Máximo de buzones entre todos sus dominios."
           />
           <Input
@@ -337,11 +372,9 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={0}
-            max={100000}
             value={campos.maxAliases}
             onChange={set('maxAliases')}
+            error={errorCampo('maxAliases')}
             help="0 = el cliente no puede crear alias."
           />
           <Input
@@ -349,12 +382,10 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={64}
-            max={1048576}
             step={1}
             value={campos.mailboxQuotaMb}
             onChange={set('mailboxQuotaMb')}
+            error={errorCampo('mailboxQuotaMb')}
             help={
               Number.isInteger(cuota) && cuota >= 64
                 ? `Equivale a ${formatQuota(cuota)}. Máximo por buzón; los existentes conservan la suya.`
@@ -366,11 +397,9 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={0}
-            max={10000000}
             value={campos.apiDailyLimit}
             onChange={set('apiDailyLimit')}
+            error={errorCampo('apiDailyLimit')}
             help="Por cliente y día. 0 = sin límite diario."
           />
           <Input
@@ -378,20 +407,18 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             type="number"
             inputMode="numeric"
             mono
-            required
-            min={1}
-            max={100000}
             value={campos.apiPerMinuteLimit}
             onChange={set('apiPerMinuteLimit')}
+            error={errorCampo('apiPerMinuteLimit')}
             help="Protege la reputación del servidor ante ráfagas."
           />
         </div>
         <Textarea label="Notas (opcional)" maxLength={500} value={campos.notes} onChange={set('notes')} placeholder="Para quién es este plan" />
         {excedidos.length > 0 && (
           <BandaAviso>
-            {excedidos.length === 1 ? '1 cliente supera' : `${excedidos.length} clientes superan`} los nuevos
-            límites ({excedidos.map((c) => c.name).join(', ')}). Conservarán lo que ya tienen, pero no podrán crear
-            más dominios, buzones o alias hasta estar por debajo del límite.
+            {excedidos.length === 1
+              ? `1 cliente supera los nuevos límites (${excedidos[0]!.name}). Conservará lo que ya tiene, pero no podrá crear más dominios, buzones o alias hasta estar por debajo del límite.`
+              : `${excedidos.length} clientes superan los nuevos límites (${excedidos.map((c) => c.name).join(', ')}). Conservarán lo que ya tienen, pero no podrán crear más dominios, buzones o alias hasta estar por debajo del límite.`}
           </BandaAviso>
         )}
         {plan && (plan.clientCount ?? 0) > 0 && (

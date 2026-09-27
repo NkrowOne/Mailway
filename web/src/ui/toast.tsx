@@ -75,7 +75,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           >
             <div className="min-w-0 flex-1">
               <span className={`rotulo ${toast.tone === 'ok' ? 'text-normal' : 'text-fuera'}`}>
-                {toast.tone === 'ok' ? 'Hecho' : 'No se pudo'}
+                {toast.tone === 'ok' ? 'Hecho' : 'No se ha podido'}
               </span>
               <p className="mt-0.5 [overflow-wrap:anywhere]">{toast.text}</p>
             </div>

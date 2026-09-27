@@ -14,7 +14,7 @@ import {
 } from '../lib/motor';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Hoja, Marca, Midiendo, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, Hoja, Marca, Midiendo, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -47,7 +47,7 @@ export function HojaServidorCorreo() {
       }
       refrescar();
     },
-    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudieron aplicar los ajustes.'),
+    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se han podido aplicar los ajustes.'),
   });
 
   const recargar = useMutation({
@@ -56,7 +56,7 @@ export function HojaServidorCorreo() {
       queryClient.setQueryData<EngineStatus>(['engine-status'], (prev) => (prev ? { ...prev, tls: res.tls } : prev));
       toast('ok', 'Certificado recargado en el motor.');
     },
-    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudo recargar el certificado.'),
+    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se ha podido recargar el certificado.'),
   });
 
   if (estado.isPending) {
@@ -74,7 +74,7 @@ export function HojaServidorCorreo() {
           texto={
             estado.error instanceof ApiError
               ? estado.error.message
-              : 'No se pudo leer el estado del servidor de correo. Compruebe que Mailway sigue en marcha.'
+              : 'No se ha podido leer el estado del servidor de correo. Compruebe que Mailway sigue en marcha.'
           }
         />
         <Button variant="perfil" className="mt-3" onClick={() => void estado.refetch()}>
@@ -109,7 +109,7 @@ export function HojaServidorCorreo() {
     >
       {data.engine.error && (
         <div className="px-4 pt-4">
-          <BandaError texto={`No se pudo leer la configuración del motor: ${data.engine.error}`} />
+          <BandaError texto={`No se ha podido leer la configuración del motor: ${data.engine.error}`} />
         </div>
       )}
 
@@ -215,7 +215,7 @@ function construirFilas(data: EngineStatus): Fila[] {
   const veredicto = veredictoTls(tls);
   let notaTls: ReactNode;
   if (tls.error) {
-    notaTls = `No se pudo conectar al puerto ${tls.port} de ${tls.host || 'el servidor'}: ${tls.error}`;
+    notaTls = `No se ha podido conectar al puerto ${tls.port} de ${tls.host || 'el servidor'}: ${tls.error}`;
   } else {
     const caducidad =
       tls.validTo && tls.daysLeft !== null
@@ -339,8 +339,14 @@ function EmisionCertificado({
     },
   });
 
+  const [errorContacto, setErrorContacto] = useState('');
+
   function enviar(e: FormEvent) {
     e.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contacto.trim())) {
+      setErrorContacto('Indique un correo de contacto válido.');
+      return;
+    }
     emitir.mutate();
   }
 
@@ -371,8 +377,8 @@ function EmisionCertificado({
         <BandaError
           texto={
             cuentas.error instanceof ApiError
-              ? `No se pudieron leer las cuentas de Cloudflare: ${cuentas.error.message}`
-              : 'No se pudieron leer las cuentas de Cloudflare.'
+              ? `No se han podido leer las cuentas de Cloudflare: ${cuentas.error.message}`
+              : 'No se han podido leer las cuentas de Cloudflare.'
           }
         />
       ) : instancia.length === 0 ? (
@@ -384,7 +390,7 @@ function EmisionCertificado({
           con permisos de Zona: Lectura y DNS: Edición sobre la zona de {estado.hostname.expected}.
         </p>
       ) : (
-        <form onSubmit={enviar} className="flex flex-col gap-3">
+        <form onSubmit={enviar} noValidate className="flex flex-col gap-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <Select label="Cuenta de Cloudflare" value={cuentaElegida} onChange={(e) => setCuentaId(e.target.value)}>
               {instancia.map((c) => (
@@ -396,15 +402,18 @@ function EmisionCertificado({
             <Input
               label="Correo de contacto"
               type="email"
-              required
               value={contacto}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setErrorContacto('');
+                setEmail(e.target.value);
+              }}
+              error={errorContacto || undefined}
               help="Let’s Encrypt avisa a esta dirección si una renovación falla."
             />
           </div>
           {emitir.isError && (
             <BandaError
-              texto={emitir.error instanceof ApiError ? emitir.error.message : 'No se pudo solicitar el certificado.'}
+              texto={emitir.error instanceof ApiError ? emitir.error.message : 'No se ha podido solicitar el certificado.'}
             />
           )}
           <div className="flex flex-wrap gap-2">
@@ -423,11 +432,7 @@ function EmisionCertificado({
   );
 }
 
-/** Error en línea: nombra el problema, sin filete lateral de color. */
-export function BandaError({ texto }: { texto: string }) {
-  return (
-    <p role="alert" className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2 text-sm text-fuera">
-      {texto}
-    </p>
-  );
+/** Error en línea: la banda de error común del kit, con el texto indicado. */
+export function BandaError({ texto, onRetry }: { texto: string; onRetry?: () => void }) {
+  return <AvisoError onRetry={onRetry}>{texto}</AvisoError>;
 }

@@ -10,7 +10,7 @@ import {
 } from '../../lib/portal';
 import { QR } from '../../components/QR';
 import { Button } from '../../ui/Button';
-import { Hoja, Midiendo, Muestra } from '../../ui/kit';
+import { Dialogo, Hoja, Midiendo, Muestra } from '../../ui/kit';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import {
   AvisoError,
@@ -41,10 +41,12 @@ export default function ConectarPagina() {
     staleTime: Infinity,
   });
   const [confirmado, setConfirmado] = useState(false);
+  const [preguntando, setPreguntando] = useState(false);
   const hecho = useMutation({
     mutationFn: () => api.post<{ ok: boolean }>(`/api/public/setup/${encodeURIComponent(token)}/done`),
     onSuccess: () => {
       setConfirmado(true);
+      setPreguntando(false);
       // La contraseña ya no está en el servidor: tampoco debe quedar en pantalla.
       queryClient.setQueryData<SetupPublico>(clave, (prev) =>
         prev ? { ...prev, password: undefined, hasPassword: false } : prev,
@@ -87,9 +89,9 @@ export default function ConectarPagina() {
             </Button>
           )}
           <Nota>
-            Si ya tiene la contraseña de su buzón, también puede entrar en{' '}
+            Si ya tiene la contraseña de su buzón, también puede acceder a{' '}
             <a href="/mi-buzon" className="text-laboratorio underline hover:text-tinta">
-              Mi buzón
+              «Mi buzón»
             </a>{' '}
             para configurar sus dispositivos.
           </Nota>
@@ -122,30 +124,26 @@ export default function ConectarPagina() {
           <div className="flex flex-col gap-3">
             <ContrasenaRevelable password={datos.password} />
             <Nota>
-              Necesitará esta contraseña si configura el correo a mano. Por seguridad, se eliminará de este enlace
-              cuando pulse «Ya lo he configurado» o cuando el enlace caduque; si desea conservarla, guárdela en un
-              lugar seguro.
+              Necesitará esta contraseña si configura el correo manualmente. Por seguridad, se eliminará de este
+              enlace cuando indique que ha terminado (al final de esta página) o cuando el enlace caduque; si desea
+              conservarla, guárdela en un lugar seguro.
             </Nota>
-            {hecho.isError && (
-              <AvisoError>{mensajeError(hecho.error, 'No se ha podido registrar la configuración.')}</AvisoError>
-            )}
-            <Button
-              variant="perfil"
-              className={`${TACTIL} self-stretch sm:self-start`}
-              busy={hecho.isPending}
-              onClick={() => hecho.mutate()}
-            >
-              Ya lo he configurado
-            </Button>
           </div>
         </Hoja>
+      ) : confirmado ? (
+        <AvisoHecho>
+          Se ha eliminado la contraseña de este enlace. Puede seguir consultando las instrucciones para otros
+          dispositivos.
+        </AvisoHecho>
       ) : (
-        confirmado && (
-          <AvisoHecho>
-            Se ha eliminado la contraseña de este enlace. Puede seguir consultando las instrucciones para otros
-            dispositivos.
-          </AvisoHecho>
-        )
+        // Sin contraseña (el enlace no la incluía, o el titular ya la cambió):
+        // se dice cuál usar en lugar de dejar el campo en blanco sin explicación.
+        <Hoja title="Contraseña del buzón">
+          <Nota>
+            Este enlace no incluye la contraseña del buzón. Utilice la contraseña actual de su buzón; si no la
+            conoce, solicítela a la persona que administra su correo.
+          </Nota>
+        </Hoja>
       )}
 
       <Hoja title="Elija su dispositivo">
@@ -191,10 +189,53 @@ export default function ConectarPagina() {
             perder el móvil no obligue a cambiar la de todos los demás.
           </p>
           <a href={datos.portalUrl || '/mi-buzon'} className={`${claseEnlaceBoton('perfil')} self-stretch sm:self-start`}>
-            Entrar en Mi buzón
+            Acceder a «Mi buzón»
           </a>
         </div>
       </Hoja>
+
+      {/* Al final, cuando ya se han seguido las instrucciones: pulsarlo antes
+          de configurar dejaba al titular sin la contraseña a mitad de camino. */}
+      {datos.password && (
+        <Hoja title="¿Ha terminado?">
+          <div className="flex flex-col gap-3">
+            <p className="max-w-[70ch] text-base text-tinta-2">
+              Cuando el correo funcione en sus dispositivos, indíquelo para eliminar la contraseña de este enlace.
+              Las instrucciones seguirán disponibles.
+            </p>
+            <Button
+              variant="perfil"
+              className={`${TACTIL} self-stretch sm:self-start`}
+              onClick={() => {
+                hecho.reset();
+                setPreguntando(true);
+              }}
+            >
+              Ya lo he configurado
+            </Button>
+          </div>
+        </Hoja>
+      )}
+
+      <Dialogo open={preguntando} onClose={() => setPreguntando(false)} title="Eliminar la contraseña del enlace">
+        <div className="flex flex-col gap-4">
+          <p className="text-base text-tinta-2">
+            Se eliminará la contraseña de este enlace. Asegúrese de que el correo funciona en su dispositivo o de
+            haberla guardado. ¿Desea continuar?
+          </p>
+          {hecho.isError && (
+            <AvisoError>{mensajeError(hecho.error, 'No se ha podido registrar la configuración.')}</AvisoError>
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="plano" className={TACTIL} onClick={() => setPreguntando(false)}>
+              Cancelar
+            </Button>
+            <Button variant="peligro" className={TACTIL} busy={hecho.isPending} onClick={() => hecho.mutate()}>
+              Eliminar la contraseña
+            </Button>
+          </div>
+        </div>
+      </Dialogo>
     </MarcoPortal>
   );
 }

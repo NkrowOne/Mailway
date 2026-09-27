@@ -12,6 +12,7 @@ import {
 } from '../../lib/api';
 import { formatDate, formatDay, plural } from '../../lib/format';
 import {
+  esCorreoValido,
   formatBytes,
   formatQuota,
   mensajeDe,
@@ -20,11 +21,20 @@ import {
   type ClientUser,
   type SuspensionResult,
 } from '../../lib/gestion';
+import { lecturaDominio } from '../../lib/cloudflare';
+import { pesoVeredicto } from '../../lib/dominios';
 import { Button } from '../../ui/Button';
 import { Input, Select, Textarea } from '../../ui/Field';
-import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio } from '../../ui/kit';
+import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio, type ConfirmarCierre } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from '../../components/gestion/comun';
+import { useDireccionPanel } from '../../components/gestion/consultas';
+
+/** Pregunta antes de cerrar un diálogo con una contraseña recién generada. */
+const CONFIRMAR_CONTRASENA: ConfirmarCierre = {
+  pregunta: '¿Ha guardado la contraseña?',
+  detalle: 'No se podrá volver a ver.',
+};
 
 interface Respuesta {
   client: Client & { plan?: Plan; usage?: ClientUsage; users?: ClientUser[] };
@@ -89,7 +99,10 @@ export default function ClienteDetalle() {
   const plan = client.data.plan ?? data.plan;
   const usage = client.data.usage ?? data.usage;
   const users = client.data.users ?? data.users ?? [];
-  const domainList = domains.data?.domains ?? [];
+  // Mismo veredicto y orden que en «Dominios»: lo pendiente, primero.
+  const domainList = [...(domains.data?.domains ?? [])].sort(
+    (a, b) => pesoVeredicto[lecturaDominio(a).veredicto] - pesoVeredicto[lecturaDominio(b).veredicto],
+  );
   const mailboxList = mailboxes.data?.mailboxes ?? [];
   const activos = mailboxList.filter((m) => m.status === 'active').length;
 
@@ -183,7 +196,7 @@ export default function ClienteDetalle() {
               >
                 {(plans.data?.plans ?? (plan ? [plan] : [])).map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {p.maxMailboxes} buzones, {formatQuota(p.mailboxQuotaMb)} por buzón
+                    {p.name} — {plural(p.maxMailboxes, 'buzón', 'buzones')}, {formatQuota(p.mailboxQuotaMb)} por buzón
                   </option>
                 ))}
               </Select>
@@ -262,13 +275,7 @@ export default function ClienteDetalle() {
                       {domain.domain}
                     </span>
                     <span className="shrink-0">
-                      {domain.status === 'active' ? (
-                        <MarcaFondo veredicto="normal">En reparto</MarcaFondo>
-                      ) : (
-                        <MarcaFondo veredicto={domain.lastCheckedAt ? 'fuera' : 'sin-dato'}>
-                          {domain.lastCheckedAt ? 'DNS pendiente' : 'Sin medir'}
-                        </MarcaFondo>
-                      )}
+                      <MarcaFondo veredicto={lecturaDominio(domain).veredicto}>{lecturaDominio(domain).etiqueta}</MarcaFondo>
                     </span>
                   </Link>
                 </li>
@@ -297,7 +304,11 @@ export default function ClienteDetalle() {
               <BandaError onRetry={() => void mailboxes.refetch()}>No se han podido cargar los buzones.</BandaError>
             </div>
           ) : mailboxList.length === 0 ? (
-            <Vacio title="Sin buzones">Los buzones se crean en «Buzones», una vez añadido un dominio.</Vacio>
+            <Vacio title="Sin buzones">
+              {domainList.length > 0
+                ? 'Todavía no hay buzones. Créelos desde «Buzones».'
+                : 'Los buzones se crean en «Buzones», una vez añadido un dominio.'}
+            </Vacio>
           ) : (
             <ul>
               {mailboxList.slice(0, BUZONES_EN_FICHA).map((m) => {
@@ -427,25 +438,48 @@ function EditarDatos({ client, onClose }: { client: Client; onClose: () => void 
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (name.trim().length < 2) {
+      setError('El nombre del cliente debe tener al menos 2 caracteres.');
+      return;
+    }
+    if (contactEmail.trim() && !esCorreoValido(contactEmail)) {
+      setError('El correo de contacto no es una dirección válida.');
+      return;
+    }
+    setError('');
     save.mutate();
   }
 
   return (
     <Dialogo open onClose={onClose} title="Editar datos del cliente">
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <Input label="Nombre" required minLength={2} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <Input
+          label="Nombre"
+          maxLength={80}
+          value={name}
+          onChange={(e) => {
+            setError('');
+            setName(e.target.value);
+          }}
+        />
         <Input
           label="Correo de contacto"
           type="email"
           value={contactEmail}
-          onChange={(e) => setContactEmail(e.target.value)}
+          onChange={(e) => {
+            setError('');
+            setContactEmail(e.target.value);
+          }}
           help="Opcional. Se usa para comunicaciones con el cliente."
         />
         <Textarea
           label="Notas internas"
           maxLength={1000}
           value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          onChange={(e) => {
+            setError('');
+            setNotes(e.target.value);
+          }}
           help="Solo las ve el administrador."
         />
         {error && <BandaError>{error}</BandaError>}
@@ -495,7 +529,7 @@ function CambiarPlan({
     { concepto: 'Alias', uso: String(usage.aliases), antes: String(actual.maxAliases), despues: String(nuevo.maxAliases), fuera: usage.aliases > nuevo.maxAliases },
     {
       concepto: 'Cuota por buzón',
-      uso: llenos > 0 ? `${llenos} no caben` : '—',
+      uso: llenos > 0 ? `${llenos === 1 ? '1 buzón supera' : `${llenos} buzones superan`} la cuota` : '—',
       antes: formatQuota(actual.mailboxQuotaMb),
       despues: formatQuota(nuevo.mailboxQuotaMb),
       fuera: llenos > 0,
@@ -578,15 +612,16 @@ function CambiarPlan({
 
 /* -------------------------------- Usuarios -------------------------------- */
 
-function CredencialUsuario({ email, password }: { email: string; password: string }) {
+function CredencialUsuario({ clientId, email, password }: { clientId: string; email: string; password: string }) {
+  const panel = useDireccionPanel({ clientId });
   return (
     <>
       <BandaAviso>
         La contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entréguela por un canal
         seguro; el usuario podrá cambiarla desde «Mi cuenta».
       </BandaAviso>
-      <Muestra rotulo="Dirección del panel" copiar={window.location.origin}>
-        <p className="valor break-all text-base text-tinta">{window.location.origin}</p>
+      <Muestra rotulo="Dirección del panel" copiar={panel}>
+        <p className="valor break-all text-base text-tinta">{panel}</p>
       </Muestra>
       <Muestra rotulo="Usuario" copiar={email}>
         <p className="valor break-all text-base text-tinta">{email}</p>
@@ -629,6 +664,14 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (name.trim().length < 2) {
+      setError('El nombre debe tener al menos 2 caracteres.');
+      return;
+    }
+    if (!esCorreoValido(email)) {
+      setError('Indique un correo válido: será el usuario con el que entrará en el panel.');
+      return;
+    }
     if (modo === 'propia' && password.length < 10) {
       setError('La contraseña debe tener al menos 10 caracteres.');
       return;
@@ -637,51 +680,67 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
     create.mutate();
   }
 
+  function limpiar<T>(set: (v: T) => void) {
+    return (v: T) => {
+      setError('');
+      set(v);
+    };
+  }
+
   return (
-    <Dialogo open onClose={onClose} title={creado ? 'Usuario creado' : 'Añadir usuario del panel'}>
+    <Dialogo
+      open
+      onClose={onClose}
+      title={creado ? 'Usuario creado' : 'Añadir usuario del panel'}
+      confirmarCierre={creado ? CONFIRMAR_CONTRASENA : null}
+      pie={
+        creado ? (
+          <Button variant="tinta" onClick={onClose}>
+            Ya he guardado la contraseña
+          </Button>
+        ) : undefined
+      }
+    >
       {creado ? (
         <div className="flex flex-col gap-4">
-          <CredencialUsuario email={creado.email} password={creado.password} />
-          <Botonera>
-            <Button variant="tinta" onClick={onClose}>
-              Ya he guardado la contraseña
-            </Button>
-          </Botonera>
+          <CredencialUsuario clientId={clientId} email={creado.email} password={creado.password} />
         </div>
       ) : (
-        <form onSubmit={submit} className="flex flex-col gap-4">
+        <form onSubmit={submit} noValidate className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
             Este usuario entrará en el panel de {clientName} y podrá gestionar sus dominios, buzones, alias y
             claves de API, dentro de los límites del plan.
           </p>
-          <Input label="Nombre" required minLength={2} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+          <Input label="Nombre" maxLength={80} value={name} onChange={(e) => limpiar(setName)(e.target.value)} />
           <Input
             label="Correo (será su usuario)"
             type="email"
-            required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => limpiar(setEmail)(e.target.value)}
           />
           <fieldset className="flex flex-col gap-2.5">
             <legend className="rotulo mb-2">Contraseña</legend>
             <Opcion
               name="usuario-modo"
               checked={modo === 'generar'}
-              onChange={() => setModo('generar')}
+              onChange={() => limpiar(setModo)('generar')}
               label="Generar una contraseña segura"
               help="Se mostrará una sola vez."
             />
-            <Opcion name="usuario-modo" checked={modo === 'propia'} onChange={() => setModo('propia')} label="Escribir una contraseña" />
+            <Opcion
+              name="usuario-modo"
+              checked={modo === 'propia'}
+              onChange={() => limpiar(setModo)('propia')}
+              label="Escribir una contraseña"
+            />
           </fieldset>
           {modo === 'propia' && (
             <Input
               label="Contraseña"
               type="password"
               autoComplete="new-password"
-              required
-              minLength={10}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => limpiar(setPassword)(e.target.value)}
               help="Mínimo 10 caracteres."
             />
           )}
@@ -744,6 +803,14 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
     setError('');
   }
 
+  function abrir(cual: 'restablecer' | 'eliminar') {
+    // Cada apertura empieza limpia: sin el error ni el estado de la anterior.
+    setError('');
+    reset.reset();
+    remove.reset();
+    setDialogo(cual);
+  }
+
   return (
     <li className="regla-fila flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 last:border-b-0">
       {/* Nombre y correo identifican la fila: nunca se recortan. */}
@@ -758,26 +825,33 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        <Button variant="plano" className="px-2" onClick={() => setDialogo('restablecer')}>
+        <Button variant="plano" className="px-2" onClick={() => abrir('restablecer')}>
           Restablecer contraseña
         </Button>
         <Button variant="plano" className="px-2" busy={toggle.isPending} onClick={() => toggle.mutate()}>
           {user.disabled ? 'Habilitar' : 'Deshabilitar'}
         </Button>
-        <Button variant="peligro" className="px-2" onClick={() => setDialogo('eliminar')}>
+        <Button variant="peligro" className="px-2" onClick={() => abrir('eliminar')}>
           Eliminar
         </Button>
       </div>
 
-      <Dialogo open={dialogo === 'restablecer'} onClose={cerrar} title="Restablecer contraseña del usuario">
+      <Dialogo
+        open={dialogo === 'restablecer'}
+        onClose={cerrar}
+        title={nueva ? 'Contraseña restablecida' : 'Restablecer contraseña del usuario'}
+        confirmarCierre={nueva ? CONFIRMAR_CONTRASENA : null}
+        pie={
+          nueva ? (
+            <Button variant="tinta" onClick={cerrar}>
+              Ya he guardado la contraseña
+            </Button>
+          ) : undefined
+        }
+      >
         {nueva ? (
           <div className="flex flex-col gap-4">
-            <CredencialUsuario email={user.email} password={nueva} />
-            <Botonera>
-              <Button variant="tinta" onClick={cerrar}>
-                Ya he guardado la contraseña
-              </Button>
-            </Botonera>
+            <CredencialUsuario clientId={clientId} email={user.email} password={nueva} />
           </div>
         ) : (
           <div className="flex flex-col gap-4">
@@ -925,7 +999,10 @@ function EliminarCliente({ client, onClose }: { client: Client; onClose: () => v
           label="Escriba el nombre del cliente para confirmar"
           autoComplete="off"
           value={confirmacion}
-          onChange={(e) => setConfirmacion(e.target.value)}
+          onChange={(e) => {
+            setError('');
+            setConfirmacion(e.target.value);
+          }}
           placeholder={client.name}
         />
         {error && <BandaError>{error}</BandaError>}

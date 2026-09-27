@@ -287,7 +287,7 @@ export function AppShell({
         'error',
         err instanceof ApiError
           ? err.message
-          : 'No se pudo cerrar la sesión. Compruebe la conexión e inténtelo de nuevo.',
+          : 'No se ha podido cerrar la sesión. Compruebe la conexión e inténtelo de nuevo.',
       );
       return;
     }
@@ -382,7 +382,7 @@ export function AppShell({
             <p className="truncate text-sm font-medium text-tinta" title={user.email}>
               {user.name || user.email}
             </p>
-            <p className="rotulo">{esAdmin ? 'Responsable' : 'Cliente'}</p>
+            <p className="rotulo">{esAdmin ? 'Administrador' : 'Cliente'}</p>
           </div>
           <button
             type="button"
@@ -464,11 +464,20 @@ export function AppShell({
           ref={mainRef}
           id="contenido"
           tabIndex={-1}
-          className="min-w-0 flex-1 px-4 py-5 focus:outline-none sm:px-6 sm:py-7"
+          className="min-w-0 flex-1 px-4 pb-5 pt-0 focus:outline-none sm:px-6 sm:pb-7 lg:pt-7"
         >
           {/* La clave remonta la vista con un fundido corto: la página nueva
-              entra sin saltos en lugar de sustituir a la anterior de golpe. */}
-          <div key={location.pathname} className="vista-entrada mx-auto max-w-6xl">
+              entra sin saltos en lugar de sustituir a la anterior de golpe.
+              Por debajo de lg, el membrete de la vista continúa la barra
+              móvil a sangre (Regla de la Banda Continua): sin mesa entre las
+              dos regiones de identidad. Lo que no es un membrete conserva
+              su aire superior. */}
+          <div
+            key={location.pathname}
+            className="vista-entrada mx-auto max-w-6xl
+              [&>.campo-lab:first-child]:-mx-4 sm:[&>.campo-lab:first-child]:-mx-6 lg:[&>.campo-lab:first-child]:mx-0
+              [&>:first-child:not(.campo-lab)]:mt-5 sm:[&>:first-child:not(.campo-lab)]:mt-7 lg:[&>:first-child:not(.campo-lab)]:mt-0"
+          >
             {children}
           </div>
         </main>

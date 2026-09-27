@@ -36,6 +36,16 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   return data as T;
 }
 
+/**
+ * Credenciales rechazadas. El panel y «Mi buzón» muestran el mismo texto, sea
+ * cual sea la redacción de cada ruta del servidor.
+ */
+export function esCredencialIncorrecta(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'bad_credentials';
+}
+
+export const TEXTO_CREDENCIALES_INCORRECTAS = 'El correo electrónico o la contraseña no son correctos.';
+
 export const api = {
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: unknown) => request<T>('POST', url, body),
@@ -126,6 +136,15 @@ export interface DomainRecord {
   /** Zona de Cloudflare donde Mailway gestiona su DNS, si la hay. */
   cloudflare?: { accountId: string; zoneId: string } | null;
   dnsAppliedAt?: number | null;
+  /**
+   * Cuándo se comprobó que el cliente controla el dominio (registro TXT).
+   * null = pendiente: el servidor rechaza buzones y alias con 409
+   * `domain_ownership_pending`. Sin el campo (servidor anterior), se da por
+   * comprobada.
+   */
+  ownershipVerifiedAt?: number | null;
+  /** Registro TXT que demuestra la propiedad del dominio. */
+  ownershipRecord?: { type: 'TXT'; name: string; content: string };
   createdAt: number;
 }
 
@@ -214,19 +233,28 @@ export interface ServerHealth {
   checkedAt: number;
 }
 
+/**
+ * GET /api/setup/status. Con la instalación terminada y sin sesión, el
+ * servidor solo devuelve `setupComplete`, `hasAdmin`, `requiresSetupToken` y
+ * la marca: el resto de campos es opcional y cada vista debe tolerar que falte.
+ */
 export interface SetupStatus {
   setupComplete: boolean;
   hasAdmin: boolean;
-  engineConfigured: boolean;
-  demoMode: boolean;
-  engineDefaults: {
+  /** El instalador fijó un token que exige el alta del administrador. */
+  requiresSetupToken?: boolean;
+  /** Hay un motor definido en el entorno que se puede conectar con un clic. */
+  engineFromEnv?: boolean;
+  engineConfigured?: boolean;
+  demoMode?: boolean;
+  engineDefaults?: {
     url: string;
     adminUser: string;
     hasPassword: boolean;
     smtpHost: string;
     smtpPort: number;
   };
-  instance: InstanceSettings;
+  instance: Partial<InstanceSettings> & { brandName: string };
 }
 
 export interface InstanceSettings {
