@@ -259,6 +259,34 @@ test('usuarios del cliente: restablecer con contraseña generada, deshabilitar y
   assert.equal(again.statusCode, 404);
 });
 
+test('las notas internas del cliente solo las ve el administrador', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const nota = 'Descuento pactado del 20 %; moroso en 2025';
+  const edit = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/clients/${cliente.clientId}`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { notes: nota },
+  });
+  assert.equal(edit.statusCode, 200, edit.body);
+
+  const propio = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/clients/${cliente.clientId}`,
+    headers: { cookie: cliente.userCookie! },
+  });
+  assert.equal(propio.statusCode, 200);
+  assert.ok(!propio.body.includes(nota));
+  assert.equal('notes' in (propio.json() as { client: object }).client, false);
+
+  const admin = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/clients/${cliente.clientId}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal((admin.json() as { client: { notes: string } }).client.notes, nota);
+});
+
 test('un usuario de cliente solo ve su propio cliente', async () => {
   const mine = await createClient(ctx, { withUser: true });
   const other = await createClient(ctx);

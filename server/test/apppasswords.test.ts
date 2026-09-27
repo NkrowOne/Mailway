@@ -115,3 +115,36 @@ test('un usuario de otro cliente no puede ver, crear ni revocar', async () => {
   const anonymous = await ctx.app.inject({ method: 'GET', url: base });
   assert.equal(anonymous.statusCode, 401);
 });
+
+test('un cliente o un buzón suspendidos no crean contraseñas de aplicación', async () => {
+  const { clientId, userCookie } = await createClient(ctx, { withUser: true });
+  const { domainId } = await createDomain(ctx, clientId);
+  const { mailboxId } = await createMailbox(ctx, domainId, 'suspensiones');
+  const base = `/api/mailboxes/${mailboxId}/app-passwords`;
+
+  db.prepare('UPDATE clients SET suspended = 1 WHERE id = ?').run(clientId);
+  try {
+    for (const cookie of [userCookie!, ctx.adminCookie]) {
+      const res = await call(cookie, 'POST', base, { name: 'Móvil' });
+      assert.equal(res.statusCode, 400, res.body);
+      assert.equal(res.json().code, 'client_suspended');
+    }
+  } finally {
+    db.prepare('UPDATE clients SET suspended = 0 WHERE id = ?').run(clientId);
+  }
+
+  db.prepare("UPDATE mailboxes SET status = 'suspended' WHERE id = ?").run(mailboxId);
+  try {
+    const res = await call(ctx.adminCookie, 'POST', base, { name: 'Móvil' });
+    assert.equal(res.statusCode, 400, res.body);
+    assert.equal(res.json().code, 'mailbox_suspended');
+  } finally {
+    db.prepare("UPDATE mailboxes SET status = 'active' WHERE id = ?").run(mailboxId);
+  }
+
+  const activas = db
+    .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ?')
+    .get(mailboxId) as { c: number };
+  assert.equal(activas.c, 0);
+  assert.equal((await call(userCookie!, 'POST', base, { name: 'Móvil' })).statusCode, 200, 'reactivado, funciona');
+});

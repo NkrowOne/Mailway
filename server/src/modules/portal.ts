@@ -44,10 +44,14 @@ const SESION_HORAS = 12;
 const VENTANA_INTENTOS_MS = 15 * 60_000;
 const MAX_FALLOS_POR_BUZON = 5;
 const MAX_FALLOS_POR_IP = 20;
+/**
+ * Contraseñas que no coinciden al crear un enlace con contraseña. Sin tope,
+ * la ruta (400 «no coincide» frente a 200) serviría para probar contraseñas
+ * del buzón sin límite desde el panel o con un token.
+ */
+const MAX_FALLOS_ENLACE = 5;
 
 const MIN_CONTRASENA = 10;
-/** Tope de contraseñas de aplicación activas: una por dispositivo basta y sobra. */
-const MAX_CONTRASENAS_APP = 20;
 
 /** Los enlaces caducados se conservan un mes (para el historial) y luego se borran. */
 const RETENCION_ENLACES_MS = 30 * 24 * 3600_000;
@@ -249,10 +253,15 @@ function contarFallos(clave: string): number {
   ).c;
 }
 
-function comprobarLimite(email: string, ip: string | null): void {
+/** Retira los fallos del portal ya fuera de su ventana (claves «buzon…»). */
+function purgarFallos(): void {
   db.prepare("DELETE FROM login_attempts WHERE attempted_at < ? AND ip LIKE 'buzon%'").run(
     now() - VENTANA_INTENTOS_MS,
   );
+}
+
+function comprobarLimite(email: string, ip: string | null): void {
+  purgarFallos();
   const porBuzon = contarFallos(`buzon:${email}`);
   const porIp = ip === null ? 0 : contarFallos(`buzon-ip:${ip}`);
   if (porBuzon >= MAX_FALLOS_POR_BUZON || porIp >= MAX_FALLOS_POR_IP) {
@@ -550,14 +559,35 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         );
       }
       // Se comprueba antes de guardarla: un enlace con una contraseña que no
-      // funciona es peor que uno sin contraseña.
+      // funciona es peor que uno sin contraseña. Los fallos cuentan (por
+      // buzón) para que la comprobación no sirva de oráculo de contraseñas.
+      purgarFallos();
+      const claveFallos = `buzon-enlace:${titular.id}`;
+      if (contarFallos(claveFallos) >= MAX_FALLOS_ENLACE) {
+        throw tooMany(
+          'Se han indicado demasiadas contraseñas que no coinciden con la del buzón. Espere 15 minutos o cree el enlace sin la contraseña.',
+        );
+      }
       const ok = await getEngine().verifyCredentials(titular.email, body.password);
-      if (ok === false) {
+      if (ok === null) {
+        // Sin comprobarla no se guarda: podría no ser la del buzón.
+        throw new HttpError(
+          503,
+          'No se ha podido comprobar la contraseña con el servidor de correo, así que no se ha incluido en el enlace. Vuelva a intentarlo en unos minutos o cree el enlace sin la contraseña.',
+          'engine_unreachable',
+        );
+      }
+      if (!ok) {
+        db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)').run(claveFallos, now());
         throw badRequest(
           'La contraseña indicada no es la del buzón. Compruebe que es la última que se ha generado.',
           'password_mismatch',
         );
       }
+      // Una contraseña de aplicación también «vale», pero el enlace es para
+      // la principal: con otra, el titular configuraría su móvil con una
+      // credencial que alguien puede revocar sin avisarle.
+      if (esContrasenaDeAplicacion(titular.id, body.password)) throw contrasenaDeAplicacion();
       passwordEnc = encryptSecret(body.password);
     }
 
@@ -769,19 +799,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
   app.post('/api/portal/app-passwords', async (req, reply) => {
     const { titular } = sesionBuzon(req);
     const body = appPasswordSchema.parse(req.body);
-    const activas = (
-      db
-        .prepare(
-          'SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL',
-        )
-        .get(titular.id) as { c: number }
-    ).c;
-    if (activas >= MAX_CONTRASENAS_APP) {
-      throw badRequest(
-        `Se ha alcanzado el máximo de ${MAX_CONTRASENAS_APP} contraseñas de aplicación activas. Revoque las que ya no utilice.`,
-        'app_password_limit',
-      );
-    }
+    // El máximo de activas (el mismo que en el panel, 409) lo aplica createAppPassword.
     const created = await createAppPassword(titular.id, body.name, null);
     auditTitular(req, titular.clientId, 'mailbox.app_password_created', {
       email: titular.email,

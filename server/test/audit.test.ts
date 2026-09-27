@@ -65,6 +65,38 @@ test('cada cliente ve lo que el administrador hizo por él, y solo eso', async (
   assert.ok(admin.entries.every((e) => e.clientName !== null));
 });
 
+test('un cliente no ve la IP de la administración, pero sí la de sus usuarios', async () => {
+  const a = await createClient(ctx, { withUser: true });
+  // El administrador actúa desde su IP; el usuario del cliente, desde otra.
+  const dominio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: `ip-admin-${Date.now()}.test`, clientId: a.clientId },
+    remoteAddress: '198.51.100.7',
+  });
+  assert.equal(dominio.statusCode, 200, dominio.body);
+  const propio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/auth/password',
+    headers: { cookie: a.userCookie! },
+    payload: { currentPassword: 'clave-cliente-segura', newPassword: 'clave-cliente-segura-2' },
+    remoteAddress: '203.0.113.44',
+  });
+  assert.equal(propio.statusCode, 200, propio.body);
+
+  const deCliente = await ctx.app.inject({ method: 'GET', url: '/api/audit', headers: { cookie: a.userCookie! } });
+  assert.equal(deCliente.statusCode, 200);
+  assert.ok(!deCliente.body.includes('198.51.100.7'), 'la IP del administrador no llega al cliente');
+  const entradas = (deCliente.json() as { entries: (Entry & { ip: string })[] }).entries;
+  assert.equal(entradas.find((e) => e.action === 'domain.created')?.ip, '');
+  assert.equal(entradas.find((e) => e.action === 'auth.password_changed')?.ip, '203.0.113.44');
+
+  const deAdmin = await leer(`/api/audit?clientId=${a.clientId}`, { cookie: ctx.adminCookie });
+  const alta = deAdmin.entries.find((e) => e.action === 'domain.created') as (Entry & { ip: string }) | undefined;
+  assert.equal(alta?.ip, '198.51.100.7', 'el administrador sí la ve');
+});
+
 test('paginación con ?limit y ?before sin repetir ni saltar anotaciones', async () => {
   for (let i = 0; i < 5; i += 1) await createClient(ctx);
   const completo = await leer('/api/audit?limit=500', { cookie: ctx.adminCookie });

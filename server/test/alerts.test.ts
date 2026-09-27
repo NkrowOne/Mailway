@@ -38,6 +38,16 @@ test('tras resolverse, el mismo problema puede volver a avisar', () => {
   assert.equal(listAlerts({ includeResolved: true }).length, 2, 'queda el histórico');
 });
 
+test('un fallo al guardar que no es la deduplicación no se oculta', () => {
+  // Cliente inexistente: la clave foránea rechaza el INSERT. Antes se tomaba
+  // por «ya había una abierta» y el aviso se perdía sin rastro.
+  assert.throws(
+    () => fireAlert({ ...base, dedupeKey: 'cliente_fantasma', clientId: 'cli_no_existe' }),
+    (err: { code?: string }) => String(err.code).startsWith('SQLITE_CONSTRAINT'),
+  );
+  assert.equal(listAlerts({}).length, 0);
+});
+
 test('claves distintas conviven como alertas independientes', () => {
   fireAlert({ ...base, dedupeKey: 'engine_down' });
   fireAlert({ ...base, type: 'webmail_down', dedupeKey: 'webmail_down' });

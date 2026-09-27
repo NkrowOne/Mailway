@@ -106,11 +106,17 @@ export async function createClient(
   return { clientId, planId, userCookie: cookieFrom(login), userEmail: email };
 }
 
-/** Da de alta un dominio del cliente (en modo demostración no toca ningún motor). */
+/**
+ * Da de alta un dominio del cliente (en modo demostración no toca ningún
+ * motor). Sin red no se puede demostrar la propiedad por DNS, así que, salvo
+ * que se pida lo contrario, se marca como comprobada directamente en la base:
+ * la mayoría de las pruebas necesitan crear buzones y alias en él.
+ */
 export async function createDomain(
   ctx: TestContext,
   clientId: string,
   domain = `dominio${++seq}.test`,
+  opts: { ownershipVerified?: boolean } = {},
 ): Promise<{ domainId: string; domain: string }> {
   const res = await ctx.app.inject({
     method: 'POST',
@@ -119,7 +125,14 @@ export async function createDomain(
     payload: { domain, clientId },
   });
   if (res.statusCode !== 200) throw new Error(`No se pudo crear el dominio: ${res.body}`);
-  return { domainId: (res.json() as { domain: { id: string } }).domain.id, domain };
+  const domainId = (res.json() as { domain: { id: string } }).domain.id;
+  setDomainOwnership(domainId, opts.ownershipVerified ?? true);
+  return { domainId, domain };
+}
+
+/** Fija (o retira) la propiedad comprobada de un dominio directamente en la base. */
+export function setDomainOwnership(domainId: string, verified: boolean): void {
+  db.prepare('UPDATE domains SET owner_verified_at = ? WHERE id = ?').run(verified ? Date.now() : null, domainId);
 }
 
 /** Crea un buzón y devuelve su id, dirección y contraseña generada. */

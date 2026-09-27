@@ -37,3 +37,14 @@ export function tooMany(message: string, code = 'rate_limited'): HttpError {
 export function upstream(message: string, code = 'engine_error'): HttpError {
   return new HttpError(502, message, code);
 }
+
+/**
+ * ¿Es un choque con un índice único de SQLite? Pasa cuando dos peticiones
+ * crean a la vez el mismo recurso (doble clic, reintento de una integración):
+ * la segunda debe recibir un 409, no un 500, y nunca deshacer en el motor lo
+ * que ha creado la primera.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
+}
