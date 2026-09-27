@@ -7,12 +7,11 @@ import {
   type Client,
   type ClientDomain,
   type DnsInstruction,
-  type DomainRecord,
   type User,
   type WhitelabelStatus,
 } from '../lib/api';
 import { formatDate } from '../lib/format';
-import { nombreVisible } from '../lib/cloudflare';
+import { nombreVisible, type DominioCorreo } from '../lib/cloudflare';
 import {
   cuentaCloudflarePara,
   MAX_DOMINIOS_PROPIOS,
@@ -58,8 +57,13 @@ function listaNatural(items: string[]): string {
   return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
 }
 
-/** Dominio de correo que ya demostró que el cliente controla su DNS. */
-function verificado(d: DomainRecord): boolean {
+/**
+ * Dominio de correo con la propiedad comprobada: el servidor solo admite
+ * dominios propios que cuelguen de uno así, porque demuestra que el cliente
+ * controla su DNS. Con un servidor anterior sin ese dato, vale estar activo.
+ */
+function verificado(d: DominioCorreo): boolean {
+  if (d.ownershipVerifiedAt !== undefined) return d.ownershipVerifiedAt !== null;
   return d.status === 'active' || d.verifiedAt !== null;
 }
 
@@ -115,8 +119,8 @@ export default function MarcaBlanca() {
         title="Marca blanca"
         meta={
           isAdmin || !me.isSuccess
-            ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo verificado del cliente.'
-            : 'Su webmail en su propio dominio, con certificado. El nombre debe ser un subdominio de uno de sus dominios de correo verificados.'
+            ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo del cliente con la propiedad comprobada.'
+            : 'Su webmail en su propio dominio, con certificado. El nombre debe ser un subdominio de uno de sus dominios de correo con la propiedad comprobada.'
         }
         actions={
           <Button variant="campo" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
@@ -166,7 +170,7 @@ export default function MarcaBlanca() {
           >
             Por omisión, el webmail se abre en la dirección general del servidor. Con un dominio
             propio —por ejemplo <span className="valor">webmail.suempresa.com</span>, si{' '}
-            <span className="valor">suempresa.com</span> es un dominio de correo verificado— se abre
+            <span className="valor">suempresa.com</span> es un dominio de correo con la propiedad comprobada— se abre
             {isAdmin
               ? ` con la marca del cliente. Máximo ${MAX_DOMINIOS_PROPIOS} por cliente.`
               : ` con su marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}
@@ -258,7 +262,7 @@ function DialogoAlta({
   const dominiosCorreo = useQuery({
     queryKey: ['domains', 'cliente', isAdmin ? clientId : 'propio'],
     queryFn: () =>
-      api.get<{ domains: DomainRecord[] }>(
+      api.get<{ domains: DominioCorreo[] }>(
         isAdmin ? `/api/domains?clientId=${encodeURIComponent(clientId)}` : '/api/domains',
       ),
     enabled: open && (!isAdmin || Boolean(clientId)),
@@ -324,13 +328,13 @@ function DialogoAlta({
           <div className="flex flex-col gap-2 text-base text-tinta-2">
             <p>
               {pendientes.length > 0
-                ? `${isAdmin ? 'El cliente todavía no tiene' : 'Todavía no tiene'} ningún dominio de correo verificado (${listaNatural(
+                ? `${isAdmin ? 'El cliente todavía no tiene' : 'Todavía no tiene'} ningún dominio de correo con la propiedad comprobada (${listaNatural(
                     pendientes.map(nombreVisible),
-                  )} ${pendientes.length === 1 ? 'está pendiente' : 'están pendientes'} de DNS).`
+                  )} ${pendientes.length === 1 ? 'está pendiente' : 'están pendientes'}).`
                 : isAdmin
                   ? 'El cliente todavía no tiene dominios de correo.'
                   : 'Todavía no tiene dominios de correo.'}{' '}
-              El dominio propio debe ser un subdominio de un dominio de correo verificado: así se
+              El dominio propio debe ser un subdominio de un dominio de correo con la propiedad comprobada: así se
               garantiza que {isAdmin ? 'el cliente controla' : 'usted controla'} su DNS.
             </p>
             <Link to="/dominios" className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta">
@@ -363,7 +367,7 @@ function DialogoAlta({
               </span>
             </Muestra>
             <p className="text-sm text-tinta-2">
-              Solo se admiten subdominios de los dominios de correo verificados
+              Solo se admiten subdominios de los dominios de correo con la propiedad comprobada
               {isAdmin ? ` del cliente, hasta ${MAX_DOMINIOS_PROPIOS} por cliente.` : `, hasta ${MAX_DOMINIOS_PROPIOS}.`} Los nombres autoconfig, autodiscover y mta-sts están
               reservados para la configuración automática de los programas de correo. Después se
               indicará el registro DNS que hay que crear.

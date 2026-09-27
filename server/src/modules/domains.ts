@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { withLock } from '../core/locks';
 import { randomId } from '../core/crypto';
-import { badRequest, conflict, HttpError, notFound } from '../core/errors';
+import { badRequest, conflict, HttpError, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
 import type { EngineDnsRecord } from '../engine/types';
 import { resolveAlert } from './alerts';
@@ -203,7 +203,7 @@ export function assertDomainOwnership(domainId: string): void {
   if (!row) throw notFound('Dominio no encontrado.');
   if (row.owner_verified_at) return;
   throw conflict(
-    `Antes de crear buzones o alias en ${domainToUnicode(row.domain) || row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación y pulse «Verificar».`,
+    `Antes de crear buzones o alias en ${domainToUnicode(row.domain) || row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación que se indica en la ficha del dominio y pulse «Verificar» en esa misma ficha.`,
     'domain_ownership_pending',
   );
 }
@@ -314,16 +314,6 @@ export async function refreshDomainDns(domainId: string): Promise<DomainRecord> 
   return getDomain(domainId);
 }
 
-/** El INSERT chocó con el índice único del nombre del dominio. */
-function esDominioDuplicado(err: unknown): boolean {
-  const e = err as { code?: string; message?: string };
-  return (
-    typeof e?.code === 'string' &&
-    e.code.startsWith('SQLITE_CONSTRAINT') &&
-    /domains\.domain/.test(String(e.message || ''))
-  );
-}
-
 function requireDomainAccess(req: Parameters<typeof requireAuth>[0], domainId: string): {
   user: AuthedUser;
   domain: DomainRecord;
@@ -371,7 +361,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     // del mismo dominio (de clientes distintos) acabarían con una borrando
     // en el motor el dominio que la otra acababa de crear.
     const id = await withLock('altas:dominios', async () => {
-      assertWithinLimit(clientId, 'domains');
+      assertWithinLimit(clientId, 'domains', 1, user.role === 'admin');
       const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
       if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
 
@@ -383,7 +373,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.ensureDkim(domain, 'mail');
       } catch (err) {
         // El dominio queda creado; el DKIM se puede regenerar desde el panel.
-        req.log.warn({ err, domain }, 'No se pudo generar DKIM al crear el dominio');
+        req.log.warn({ err, domain }, 'No se ha podido generar el DKIM al crear el dominio');
       }
 
       const nuevoId = randomId('dom');
@@ -396,7 +386,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         // Si el dominio ya existe en la base (otra alta lo guardó entre la
         // comprobación y el INSERT), el dominio del motor es el de esa alta:
         // borrarlo dejaría sin correo un dominio que el panel muestra activo.
-        if (esDominioDuplicado(err)) {
+        if (isUniqueViolation(err)) {
           throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
         }
         // Cualquier otro fallo (p. ej. el cliente se borró en paralelo): se
@@ -621,7 +611,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const fallidos: string[] = [];
 
     const externos = await retirarReenviosAlDominio(id, domain.domain, (err, email) =>
-      req.log.warn({ err, email }, 'No se pudo actualizar en el motor un alias que reenviaba al dominio'),
+      req.log.warn({ err, email }, 'No se ha podido actualizar en el motor un alias que reenviaba al dominio'),
     );
     fallidos.push(...externos.fallidos);
 
@@ -634,7 +624,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.deleteAlias(email);
         db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
       } catch (err) {
-        req.log.warn({ err, email }, 'No se pudo borrar el alias en el motor');
+        req.log.warn({ err, email }, 'No se ha podido borrar el alias en el motor');
         fallidos.push(email);
       }
     }
@@ -654,7 +644,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.deleteMailbox(email);
         db.prepare('DELETE FROM mailboxes WHERE id = ?').run(mailbox.id);
       } catch (err) {
-        req.log.warn({ err, email }, 'No se pudo borrar el buzón en el motor');
+        req.log.warn({ err, email }, 'No se ha podido borrar el buzón en el motor');
         fallidos.push(email);
       }
     }

@@ -182,7 +182,16 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
         }
       />
 
-      {limitePropio && clientePropio && (
+      {clientePropio?.suspended && (
+        <div className="mb-4">
+          <BandaAviso titulo="Servicio suspendido">
+            Mientras el servicio esté suspendido no se pueden añadir dominios. Póngase en contacto con el
+            administrador.
+          </BandaAviso>
+        </div>
+      )}
+
+      {limitePropio && clientePropio && !clientePropio.suspended && (
         <div className="mb-4">
           <BandaAviso titulo="Límite del plan">
             Se ha alcanzado el máximo de dominios del plan ({plural(clientePropio.plan.maxDomains, 'dominio', 'dominios')}).

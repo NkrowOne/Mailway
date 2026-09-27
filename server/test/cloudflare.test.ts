@@ -708,7 +708,7 @@ test('plan y aplicación de un dominio: registros sin proxy, marcados y en un so
 
   const cuenta = await conectar(cliente.userCookie!, TOKEN_USUARIO);
   assert.equal(cuenta.statusCode, 200);
-  const { domainId } = await createDomain(ctx, cliente.clientId, 'aplicar.es');
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'aplicar.es', { ownershipVerified: false });
 
   const planRes = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: cliente.userCookie! } });
   assert.equal(planRes.statusCode, 200, planRes.body);
@@ -1032,7 +1032,7 @@ test('una zona pendiente de activación no prueba la propiedad del dominio', asy
   const z = cf.zona('pendiente.es', 'acc1', 'pending');
   cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
   await conectar(cliente.userCookie!, TOKEN_USUARIO);
-  const { domainId } = await createDomain(ctx, cliente.clientId, 'pendiente.es');
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'pendiente.es', { ownershipVerified: false });
 
   const res = await ctx.app.inject({
     method: 'POST',

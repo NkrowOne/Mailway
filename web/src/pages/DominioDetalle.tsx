@@ -157,10 +157,18 @@ export default function DominioDetalle() {
       ...CONSULTAS_DEL_DOMINIO.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
     ]);
 
+  // La confirmación admite el nombre legible (con «ñ» o acentos) o el
+  // técnico; al servidor siempre se envía el técnico, que es el que compara.
+  const nombreTecnico = domain.data?.domain.domain ?? '';
+  const escrito = confirmText.trim().toLowerCase();
+  const confirmado =
+    Boolean(nombreTecnico) &&
+    (escrito === nombreTecnico || (domain.data ? escrito === nombreVisible(domain.data.domain).toLowerCase() : false));
+
   const remove = useMutation({
     mutationFn: () =>
       api.delete<{ ok: boolean; apiKeysRevoked?: number }>(
-        `/api/domains/${id}?confirm=${encodeURIComponent(confirmText.trim().toLowerCase())}`,
+        `/api/domains/${id}?confirm=${encodeURIComponent(nombreTecnico)}`,
       ),
     onSuccess: async (data) => {
       queryClient.removeQueries({ queryKey: ['domain', id] });
@@ -414,11 +422,11 @@ export default function DominioDetalle() {
             DNS no se modifican.
           </p>
           <Input
-            label={`Escriba ${record.domain} para confirmar`}
+            label={`Escriba ${visible} para confirmar`}
             mono
             value={confirmText}
             onChange={(e) => setConfirmText(e.target.value)}
-            placeholder={record.domain}
+            placeholder={visible}
           />
           {remove.isError && (
             <AvisoError>
@@ -431,7 +439,7 @@ export default function DominioDetalle() {
             </Button>
             <Button
               variant="peligro"
-              disabled={confirmText.trim().toLowerCase() !== record.domain}
+              disabled={!confirmado}
               busy={remove.isPending}
               onClick={() => remove.mutate()}
             >

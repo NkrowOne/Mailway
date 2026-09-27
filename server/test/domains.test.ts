@@ -25,13 +25,11 @@ before(async () => {
 
 /**
  * Dominio con la propiedad ya comprobada. Sin red, la comprobación real
- * nunca la da por buena: se fija en la base, como haría una medición con el
- * MX o el TXT de verificación publicados.
+ * nunca la da por buena: createDomain la fija en la base, como haría una
+ * medición con el MX o el TXT de verificación publicados.
  */
-async function dominioPropio(clientId: string, nombre: string): Promise<{ domainId: string; domain: string }> {
-  const creado = await createDomain(ctx, clientId, nombre);
-  db.prepare('UPDATE domains SET owner_verified_at = ? WHERE id = ?').run(Date.now(), creado.domainId);
-  return creado;
+function dominioPropio(clientId: string, nombre: string): Promise<{ domainId: string; domain: string }> {
+  return createDomain(ctx, clientId, nombre, { ownershipVerified: true });
 }
 
 /* ----------------------------- Nombre del dominio ------------------------- */

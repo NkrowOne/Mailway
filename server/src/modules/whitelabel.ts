@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { domainToUnicode } from 'node:url';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
@@ -120,8 +121,8 @@ function hostOf(url: string): string {
  * MISMO cliente ya verificado. Traefik enruta cualquier host que se le
  * publique: sin esta regla, un cliente podría dar de alta el nombre de otra
  * aplicación servida en este servidor (su DNS ya apunta aquí, así que la
- * comprobación pasaría) y quedarse con su tráfico. Que el dominio de correo
- * esté verificado demuestra que el cliente controla su DNS.
+ * comprobación pasaría) y quedarse con su tráfico. Que la propiedad del
+ * dominio de correo esté comprobada demuestra que el cliente controla su DNS.
  */
 export function assertHostnameAllowed(clientId: string, hostname: string): void {
   const firstLabel = hostname.split('.')[0]!;
@@ -150,8 +151,8 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   }
 
   const domains = db
-    .prepare('SELECT domain, status, verified_at FROM domains WHERE client_id = ?')
-    .all(clientId) as { domain: string; status: string; verified_at: number | null }[];
+    .prepare('SELECT domain, owner_verified_at FROM domains WHERE client_id = ?')
+    .all(clientId) as { domain: string; owner_verified_at: number | null }[];
   // El más específico primero, por si el cliente tiene a la vez un dominio y un subdominio suyo.
   const parent = domains
     .filter((d) => hostname.endsWith(`.${d.domain}`))
@@ -167,9 +168,12 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
       'hostname_not_owned',
     );
   }
-  if (parent.status !== 'active' && parent.verified_at === null) {
+  // Lo que cuenta es la PROPIEDAD comprobada (MX a este servidor o TXT de
+  // verificación), no que el dominio esté activo: es lo que demuestra que el
+  // cliente controla el DNS del que cuelga el nombre.
+  if (parent.owner_verified_at === null) {
     throw badRequest(
-      `El dominio de correo ${parent.domain} todavía no está verificado. Complete primero su configuración DNS en «Dominios».`,
+      `Todavía no se ha comprobado la propiedad del dominio de correo ${domainToUnicode(parent.domain) || parent.domain}. Compruébela primero en su ficha, en «Dominios».`,
       'domain_not_verified',
     );
   }
