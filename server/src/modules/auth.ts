@@ -397,7 +397,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const valid = row && !row.disabled && verifyPassword(body.password, row.password_hash);
     if (!valid) {
       recordLoginAttempt(req.ip || '', email);
-      throw unauthorized('Correo electrónico o contraseña incorrectos.', 'bad_credentials');
+      throw unauthorized('El correo electrónico o la contraseña no son correctos.', 'bad_credentials');
     }
     // Las sesiones caducadas solo se borraban al volver a usarse; el inicio de
     // sesión es un buen momento para retirar las que nadie va a reutilizar.

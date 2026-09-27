@@ -373,7 +373,8 @@ fondo tenue de la misma familia y, en una fila de medición, su tinte de fila.
 - **Ámbar vigilar** (`vigilar` / `vigilar-fondo`): «Vigilar». Zona de aviso previo: escala al
   80 % o más, cola de salida ≥ 20 mensajes, puntuación de entregabilidad entre 50 y 79, dominios
   verificados incompletos, envíos fallidos en 24 h. 4.9:1 sobre hoja.
-- **Carmín fuera de rango** (`fuera` / `fuera-fondo`): «Fuera de rango». Escala agotada (≥ 100 %),
+- **Carmín fuera de rango** (`fuera` / `fuera-fondo`): «Fuera de rango». Escala superada (o agotada con
+  `limiteEsFuera`),
   cola ≥ 50, puntuación < 50, PTR o registro A que no cuadran, IP listada en una DNSBL, cliente
   suspendido, recuento de avisos abiertos en la navegación, banda de error de página, botón
   destructivo y filete superior del aviso fallido. 6.1:1 sobre hoja.
@@ -718,8 +719,10 @@ veredicto es la última celda de una fila larga (clientes, listas negras, buzone
 
 Medición con escala para uso frente a límite de plan. Etiqueta a la izquierda, `usado/máximo` a la derecha
 en `.valor` (el denominador en `tinta-3`), y debajo un carril de 6px sobre `hoja-3` con relleno del color
-del veredicto: en rango por debajo del 80 %, vigilar a partir del 80 %, fuera de rango al alcanzar el
-límite. Una marca de referencia de 1px al 80 % avisa antes de agotarlo. El relleno anima solo su anchura
+del veredicto: en rango por debajo del 80 %, vigilar a partir del 80 % y también al 100 % (el plan está
+lleno, no incumplido), y fuera de rango solo si se supera. Con `limiteEsFuera` alcanzar el máximo ya es
+fuera de rango: se usa donde llegar al límite corta el servicio (envíos diarios de una clave, espacio de un
+buzón). Una marca de referencia de 1px al 80 % avisa antes de agotarlo. El relleno anima solo su anchura
 (500ms). Expone `role="meter"` con sus valores.
 
 ### `Muestra`
@@ -746,6 +749,12 @@ para instrucciones largas o listas de varias columnas. Al abrir enfoca el elemen
 primer campo o el cuerpo; al cerrar devuelve el foco a quien lo abrió. Mientras está abierto, la página no se
 desplaza (`useBloqueoDesplazamiento`, un contador compartido con el cajón móvil). Es también la única
 superficie donde conviven una acción principal y una secundaria.
+
+Dos props para los secretos que se muestran una sola vez (contraseñas, claves, tokens):
+`confirmarCierre` hace que Escape y el aspa pregunten «¿Ha guardado la contraseña? No se podrá volver a ver.»
+(«Volver» / «Cerrar sin guardar») y que el clic en el velo no cierre; `pie` fija una botonera al pie del
+diálogo para que la acción «Ya la he guardado» se vea en móvil sin desplazar. Si el título cambia (el
+diálogo pasa a otra vista), el foco vuelve al contenido.
 
 ### Estados — `Vacio`, `Midiendo`, error
 

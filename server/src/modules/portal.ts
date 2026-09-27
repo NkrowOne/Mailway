@@ -84,7 +84,7 @@ function sinComprobacion(): HttpError {
 
 function credencialesIncorrectas(): HttpError {
   // Mismo mensaje exista o no el buzón: no se revela qué direcciones hay.
-  return unauthorized('La dirección o la contraseña no son correctas.', 'bad_credentials');
+  return unauthorized('La dirección de correo o la contraseña no son correctas.', 'bad_credentials');
 }
 
 function contrasenaDeAplicacion(): HttpError {
