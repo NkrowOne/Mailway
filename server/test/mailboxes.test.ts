@@ -8,6 +8,7 @@ import {
   createClient,
   createDomain,
   createMailbox,
+  setDomainOwnership,
   type TestContext,
 } from './helpers';
 
@@ -363,4 +364,144 @@ test('un usuario de cliente solo lista sus buzones', async () => {
     .mailboxes as MailboxView[];
   assert.ok(list.length >= 1);
   assert.ok(list.every((m) => m.clientId === mine.clientId));
+});
+
+/* ------------------------- Propiedad del dominio -------------------------- */
+
+test('sin propiedad comprobada del dominio no se crean buzones (uno o en lote) ni alias', async () => {
+  const { clientId } = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, clientId, undefined, { ownershipVerified: false });
+
+  const uno = await asAdmin('POST', '/api/mailboxes', { domainId, localPart: 'ana' });
+  assert.equal(uno.statusCode, 409, uno.body);
+  assert.equal(uno.json().code, 'domain_ownership_pending');
+  assert.match(uno.json().error, /registro TXT de verificación/);
+
+  // La revisión del alta masiva lo avisa antes de que nadie prepare el lote.
+  const entries = [{ localPart: 'ana' }, { localPart: 'bea' }, { localPart: '-mal' }];
+  const revision = await asAdmin('POST', '/api/mailboxes/bulk', { domainId, entries, dryRun: true });
+  assert.equal(revision.statusCode, 200, revision.body);
+  const cuerpo = revision.json() as {
+    ownershipPending: boolean;
+    ownershipError: string | null;
+    valid: number;
+    results: { ok: boolean; error?: string }[];
+  };
+  assert.equal(cuerpo.ownershipPending, true);
+  assert.match(cuerpo.ownershipError ?? '', /comprobar que el dominio es suyo/);
+  assert.equal(cuerpo.valid, 0);
+  assert.ok(cuerpo.results.every((r) => !r.ok && r.error));
+
+  const lote = await asAdmin('POST', '/api/mailboxes/bulk', { domainId, entries });
+  assert.equal(lote.statusCode, 409, lote.body);
+  assert.equal(lote.json().code, 'domain_ownership_pending');
+
+  const alias = await asAdmin('POST', '/api/aliases', { domainId, localPart: 'ventas', destinations: ['x@fuera.test'] });
+  assert.equal(alias.statusCode, 409, alias.body);
+  assert.equal(alias.json().code, 'domain_ownership_pending');
+
+  const filas = db.prepare('SELECT COUNT(*) AS c FROM mailboxes WHERE domain_id = ?').get(domainId) as { c: number };
+  assert.equal(filas.c, 0);
+
+  // Con la propiedad comprobada, las mismas altas funcionan.
+  setDomainOwnership(domainId, true);
+  assert.equal((await asAdmin('POST', '/api/mailboxes', { domainId, localPart: 'ana' })).statusCode, 200);
+  const revisionOk = await asAdmin('POST', '/api/mailboxes/bulk', { domainId, entries, dryRun: true });
+  assert.equal(revisionOk.json().ownershipPending, false);
+  assert.equal(revisionOk.json().ownershipError, null);
+  assert.equal(revisionOk.json().valid, 1, 'solo «bea»: «ana» ya existe y «-mal» no es válido');
+  const aliasOk = await asAdmin('POST', '/api/aliases', { domainId, localPart: 'ventas', destinations: ['x@fuera.test'] });
+  assert.equal(aliasOk.statusCode, 200, aliasOk.body);
+});
+
+/* ------------------------- Altas simultáneas (A1) -------------------------- */
+
+test('si otra petición registra el mismo buzón durante el alta, se responde 409 sin borrarlo del motor', async () => {
+  const { clientId } = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, clientId);
+  const engine = getEngine();
+  const crear = engine.createMailbox.bind(engine);
+  const borrar = engine.deleteMailbox.bind(engine);
+  const borrados: string[] = [];
+  engine.createMailbox = async (input) => {
+    await crear(input);
+    // La «otra» petición registra la misma dirección mientras esta espera al motor.
+    db.prepare(
+      `INSERT INTO mailboxes (id, domain_id, local_part, display_name, quota_mb, created_at)
+       VALUES (?, ?, 'carrera', '', 1024, ?)`,
+    ).run(`mbx_carrera_${Date.now()}`, domainId, Date.now());
+  };
+  engine.deleteMailbox = async (email: string) => {
+    borrados.push(email);
+    return borrar(email);
+  };
+  try {
+    const res = await asAdmin('POST', '/api/mailboxes', { domainId, localPart: 'carrera' });
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'mailbox_exists');
+    assert.deepEqual(borrados, [], 'el principal del motor es de la otra petición y no se toca');
+  } finally {
+    engine.createMailbox = crear;
+    engine.deleteMailbox = borrar;
+  }
+});
+
+test('si otra petición registra el mismo alias durante el alta, se responde 409 sin borrar la lista', async () => {
+  const { clientId } = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, clientId);
+  const engine = getEngine();
+  const upsert = engine.upsertAlias.bind(engine);
+  const borrarAlias = engine.deleteAlias.bind(engine);
+  const borrados: string[] = [];
+  engine.upsertAlias = async (alias: string, internos: string[], externos?: string[]) => {
+    await upsert(alias, internos, externos);
+    db.prepare(
+      `INSERT INTO aliases (id, domain_id, local_part, destinations_json, created_at)
+       VALUES (?, ?, 'carrera', '[]', ?)`,
+    ).run(`als_carrera_${Date.now()}`, domainId, Date.now());
+  };
+  engine.deleteAlias = async (alias: string) => {
+    borrados.push(alias);
+    return borrarAlias(alias);
+  };
+  try {
+    const res = await asAdmin('POST', '/api/aliases', {
+      domainId,
+      localPart: 'carrera',
+      destinations: ['x@fuera.test'],
+    });
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'alias_exists');
+    assert.deepEqual(borrados, []);
+  } finally {
+    engine.upsertAlias = upsert;
+    engine.deleteAlias = borrarAlias;
+  }
+});
+
+test('al llegar al máximo del plan, el administrador lo amplía y el cliente lo solicita', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const plan = await asAdmin('POST', '/api/plans', {
+    name: `Un buzón ${Date.now()}`,
+    maxDomains: 1,
+    maxMailboxes: 1,
+    maxAliases: 1,
+    mailboxQuotaMb: 1024,
+    apiDailyLimit: 10,
+    apiPerMinuteLimit: 5,
+  });
+  assert.equal(plan.statusCode, 200, plan.body);
+  await asAdmin('PATCH', `/api/clients/${cliente.clientId}`, { planId: plan.json().plan.id });
+  const { domainId } = await createDomain(ctx, cliente.clientId);
+  await createMailbox(ctx, domainId, 'primero');
+
+  const admin = await asAdmin('POST', '/api/mailboxes', { domainId, localPart: 'segundo' });
+  assert.equal(admin.statusCode, 400);
+  assert.equal(admin.json().code, 'plan_limit_reached');
+  assert.match(admin.json().error, /Amplíe el plan del cliente en su ficha\./);
+  assert.doesNotMatch(admin.json().error, /Solicite/);
+
+  const propio = await asCookie(cliente.userCookie!, 'POST', '/api/mailboxes', { domainId, localPart: 'segundo' });
+  assert.equal(propio.statusCode, 400);
+  assert.match(propio.json().error, /Solicite una ampliación del plan\./);
 });

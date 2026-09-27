@@ -3,11 +3,12 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
 import { lookupA, lookupPtr } from '../core/dns';
-import { badRequest, forbidden } from '../core/errors';
+import { db, now } from '../core/db';
+import { badRequest, forbidden, tooMany } from '../core/errors';
 import { buildEngine, engineConfigured } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
-import { countUsers, createUser, createSession, requireAdmin } from './auth';
+import { countUsers, createUser, createSession, requireAdmin, requireAdminSession } from './auth';
 import { ensureDefaultPlans } from './clients';
 import { applyRecommendedEngineSettings } from './engineops';
 import {
@@ -20,15 +21,39 @@ import {
 } from './settings';
 
 const adminSchema = z.object({
-  email: z.string().email('Introduzca un correo válido.'),
-  name: z.string().trim().min(2, 'Escriba su nombre.').max(80),
-  password: z.string().min(10, 'La contraseña debe tener al menos 10 caracteres.'),
+  email: z.string().trim().toLowerCase().max(254).email('Introduzca un correo válido.'),
+  name: z.string().trim().min(2, 'Escriba su nombre.').max(80, 'El nombre no puede superar los 80 caracteres.'),
+  password: z
+    .string()
+    .min(10, 'La contraseña debe tener al menos 10 caracteres.')
+    .max(200, 'La contraseña no puede superar los 200 caracteres.'),
   setupToken: z.string().trim().max(200).optional(),
 });
 
+const ENGINE_URL_HELP = 'La URL del motor no es válida (ej.: http://mailway-mail:8080).';
+
+/**
+ * URL de la API de gestión del motor: solo http(s) y sin credenciales
+ * incrustadas (la contraseña viaja aparte, por Basic, y nunca en la URL, que
+ * acaba en registros y mensajes de error).
+ */
+const engineUrlSchema = z
+  .string()
+  .trim()
+  .max(500, ENGINE_URL_HELP)
+  .url(ENGINE_URL_HELP)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  }, 'La URL del motor debe empezar por http:// o https:// y no puede incluir usuario ni contraseña (ej.: http://mailway-mail:8080).');
+
 const engineSchema = z.object({
   kind: z.enum(['stalwart', 'demo']),
-  url: z.string().url('La URL del motor no es válida (ej.: http://mailway-mail:8080).').or(z.literal('')),
+  url: engineUrlSchema.or(z.literal('')),
   adminUser: z.string().trim().max(60),
   adminPassword: z.string().max(200),
   smtpHost: z.string().trim().max(200),
@@ -39,18 +64,91 @@ const engineSchema = z.object({
 /** Conectar el motor que definió el instalador sin que su contraseña pase por el navegador. */
 const engineFromEnvSchema = z.object({ useEnvDefaults: z.literal(true) });
 
+/**
+ * URL http(s). z.string().url() acepta cualquier esquema, y estas direcciones
+ * acaban como enlaces en el panel y en «Mi buzón»: un «javascript:» sería un
+ * enlace que ejecuta código en la sesión de quien lo pulsa.
+ */
+function httpUrl(message: string) {
+  return z
+    .string()
+    .trim()
+    .max(500, message)
+    .url(message)
+    .refine((value) => /^https?:\/\//i.test(value), message);
+}
+
+/** Nombre de host DNS (se escribe tal cual en la configuración del motor). */
+const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
+
 const instanceSchema = z.object({
   brandName: z.string().trim().min(1).max(60).optional(),
-  mailHostname: z.string().trim().max(200).optional(),
+  mailHostname: z
+    .string()
+    .trim()
+    .max(253)
+    .refine(
+      (value) => value === '' || HOSTNAME_RE.test(value.replace(/\.$/, '')),
+      'El nombre del servidor de correo no es válido (ej.: mail.miempresa.com).',
+    )
+    .optional(),
   publicIp: z
     .string()
     .trim()
     .regex(/^$|^(\d{1,3}\.){3}\d{1,3}$/, 'La IP debe tener formato IPv4, ej.: 203.0.113.10')
     .optional(),
-  webmailUrl: z.string().url('La URL del webmail no es válida (ej.: https://webmail.miempresa.com).').or(z.literal('')).optional(),
-  panelUrl: z.string().url('La URL del panel no es válida (ej.: https://panel.miempresa.com).').or(z.literal('')).optional(),
+  webmailUrl: httpUrl('La URL del webmail no es válida (ej.: https://webmail.miempresa.com).').or(z.literal('')).optional(),
+  panelUrl: httpUrl('La URL del panel no es válida (ej.: https://panel.miempresa.com).').or(z.literal('')).optional(),
   systemFrom: z.string().email().or(z.literal('')).optional(),
 });
+
+/**
+ * Intentos fallidos del token de puesta en marcha por IP. El token del
+ * instalador tiene 128 bits, pero un operador puede fijar uno corto a mano:
+ * sin tope se podría probar sin fin mientras nadie ha reclamado la instancia.
+ */
+const SETUP_WINDOW_MS = 15 * 60_000;
+const SETUP_MAX_FAILURES = 10;
+
+function setupFailures(ip: string): number {
+  db.prepare("DELETE FROM login_attempts WHERE attempted_at < ? AND ip LIKE 'setup%'").run(now() - SETUP_WINDOW_MS);
+  return (
+    db
+      .prepare('SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ? AND attempted_at >= ?')
+      .get(`setup:${ip}`, now() - SETUP_WINDOW_MS) as { c: number }
+  ).c;
+}
+
+/** URL sin barras finales, para comparar la guardada con la recibida. */
+function sameEngineUrl(a: string, b: string): boolean {
+  return a.trim().replace(/\/+$/, '').toLowerCase() === b.trim().replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * Completa la contraseña del motor con la guardada SOLO si el destino no
+ * cambia. Si cambian la URL, el usuario o el servidor SMTP, reutilizarla
+ * mandaría la contraseña guardada (o las credenciales SMTP de las claves de
+ * API) a un servidor que quien pide el cambio podría controlar: en ese caso
+ * hay que volver a escribirla.
+ */
+function withStoredPassword(body: EngineSettings): EngineSettings {
+  if (body.kind !== 'stalwart' || body.adminPassword) return body;
+  const current = getEngineSettings();
+  const sameTarget =
+    current !== null &&
+    current.kind === 'stalwart' &&
+    Boolean(current.adminPassword) &&
+    sameEngineUrl(current.url, body.url) &&
+    current.adminUser === body.adminUser &&
+    current.smtpHost.trim().toLowerCase() === body.smtpHost.trim().toLowerCase();
+  if (!sameTarget) {
+    throw badRequest(
+      'Para cambiar la URL, el usuario o el servidor SMTP del motor, indique también la contraseña del administrador del motor.',
+      'engine_password_required',
+    );
+  }
+  return { ...body, adminPassword: current!.adminPassword };
+}
 
 /** Comparación en tiempo constante: el hash iguala longitudes antes de comparar. */
 function sameSecret(given: string, expected: string): boolean {
@@ -136,11 +234,25 @@ function hostOfUrl(url: string): string | null {
 }
 
 export function registerSetupRoutes(app: FastifyInstance): void {
-  /** Estado del asistente: la web decide qué paso mostrar. */
-  app.get('/api/setup/status', async () => {
+  /**
+   * Estado del asistente: la web decide qué paso mostrar. Con la puesta en
+   * marcha terminada, quien no es administrador (la pantalla de inicio de
+   * sesión, el portal del titular, cualquiera en Internet) solo recibe lo
+   * que esas pantallas usan: ni la IP pública ni los nombres internos.
+   */
+  app.get('/api/setup/status', async (req) => {
+    const setupComplete = isSetupComplete();
+    if (setupComplete && req.user?.role !== 'admin') {
+      return {
+        setupComplete,
+        hasAdmin: countUsers() > 0,
+        requiresSetupToken: Boolean(config.setupToken),
+        instance: { brandName: getInstanceSettings().brandName },
+      };
+    }
     const fromEnv = engineFromEnv();
     return {
-      setupComplete: isSetupComplete(),
+      setupComplete,
       hasAdmin: countUsers() > 0,
       engineConfigured: engineConfigured(),
       demoMode: config.demoMode,
@@ -167,11 +279,18 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       throw forbidden('Ya existe un administrador. Inicie sesión con esa cuenta.', 'admin_exists');
     }
     const body = adminSchema.parse(req.body);
-    if (config.setupToken && !sameSecret(body.setupToken ?? '', config.setupToken)) {
-      throw forbidden(
-        'El token de puesta en marcha no es correcto. Lo muestra el instalador al terminar y está en la variable MAILWAY_SETUP_TOKEN del panel.',
-        'setup_token_invalid',
-      );
+    if (config.setupToken) {
+      const ip = req.ip || '';
+      if (setupFailures(ip) >= SETUP_MAX_FAILURES) {
+        throw tooMany('Se han producido demasiados intentos con un token incorrecto. Espere 15 minutos antes de volver a intentarlo.');
+      }
+      if (!sameSecret(body.setupToken ?? '', config.setupToken)) {
+        db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)').run(`setup:${ip}`, now());
+        throw forbidden(
+          'El token de puesta en marcha no es correcto. Lo muestra el instalador al terminar y está en la variable MAILWAY_SETUP_TOKEN del panel.',
+          'setup_token_invalid',
+        );
+      }
     }
     const user = createUser({ email: body.email, name: body.name, password: body.password, role: 'admin' });
     ensureDefaultPlans();
@@ -187,7 +306,8 @@ export function registerSetupRoutes(app: FastifyInstance): void {
    * contraseña salga nunca del servidor.
    */
   app.post('/api/setup/engine', async (req) => {
-    requireAdmin(req);
+    // Con sesión del panel: conectar un motor manda credenciales a una URL.
+    requireAdminSession(req);
     let settings: EngineSettings;
     let fromEnv = false;
     if (engineFromEnvSchema.safeParse(req.body).success) {
@@ -344,15 +464,17 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     return { instance };
   });
 
+  /*
+   * Cambiar o probar el motor exige la sesión del panel (no un token de
+   * gestión) y, si cambia el destino, la contraseña: si no, un token filtrado
+   * bastaba para que el panel enviara la contraseña guardada del motor, por
+   * Basic, a una URL cualquiera.
+   */
   app.put('/api/settings/engine', async (req) => {
-    requireAdmin(req);
-    const body = engineSchema.parse(req.body);
+    requireAdminSession(req);
+    const body = withStoredPassword(engineSchema.parse(req.body));
     if (body.kind === 'stalwart') {
-      // Si no se envía contraseña nueva, se conserva la actual.
-      if (!body.adminPassword) {
-        const current = getEngineSettings();
-        if (current?.adminPassword) body.adminPassword = current.adminPassword;
-      }
+      if (!body.url) throw badRequest('Indique la URL de la API de gestión de Stalwart.', 'engine_url_required');
       const result = await testEngine(body);
       if (!result.ok) {
         throw badRequest(
@@ -362,16 +484,15 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       }
     }
     setEngineSettings(body);
-    audit(req, 'settings.engine_updated', { kind: body.kind });
+    audit(req, 'settings.engine_updated', { kind: body.kind, url: body.url, smtpHost: body.smtpHost });
     return { ok: true };
   });
 
   app.post('/api/settings/engine/test', async (req) => {
-    requireAdmin(req);
-    const body = engineSchema.parse(req.body);
-    if (body.kind === 'stalwart' && !body.adminPassword) {
-      const current = getEngineSettings();
-      if (current?.adminPassword) body.adminPassword = current.adminPassword;
+    requireAdminSession(req);
+    const body = withStoredPassword(engineSchema.parse(req.body));
+    if (body.kind === 'stalwart' && !body.url) {
+      throw badRequest('Indique la URL de la API de gestión de Stalwart.', 'engine_url_required');
     }
     return await testEngine(body);
   });

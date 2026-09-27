@@ -106,13 +106,17 @@ function toEntry(row: AuditRow, viewerIsAdmin: boolean): AuditEntry {
       role: row.actor_role,
     };
   }
+  // Lo mismo con la IP: un cliente ve las de sus propios usuarios y las de
+  // los titulares de sus buzones (sin usuario de panel), pero no la de la
+  // administración ni la de un usuario que ya no existe (podía serlo).
+  const showIp = viewerIsAdmin || row.actor_role === 'client' || row.user_id === null;
   return {
     id: row.id,
     userId: row.user_id,
     clientId: row.client_id,
     action: row.action,
     detail,
-    ip: row.ip,
+    ip: showIp ? row.ip : '',
     createdAt: row.created_at,
     actor,
     clientName: row.client_name,

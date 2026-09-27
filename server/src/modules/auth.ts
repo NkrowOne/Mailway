@@ -268,6 +268,20 @@ export function requireSession(req: FastifyRequest): AuthedUser {
   return user;
 }
 
+/**
+ * Administrador con sesión del panel. Para lo que mueve secretos de la
+ * instancia hacia fuera (la contraseña del motor, el servidor SMTP que recibe
+ * las credenciales de las claves de API): un token de gestión filtrado no
+ * debe bastar para redirigirlos a otro servidor.
+ */
+export function requireAdminSession(req: FastifyRequest): AuthedUser {
+  const user = requireSession(req);
+  if (user.role !== 'admin') {
+    throw forbidden('Esta operación está reservada al administrador de la instancia.');
+  }
+  return user;
+}
+
 /** Exige rol de administrador de la instancia. */
 export function requireAdmin(req: FastifyRequest): AuthedUser {
   const user = requireAuth(req);
@@ -299,7 +313,12 @@ export function requireClientAccess(req: FastifyRequest, clientId: string): Auth
  */
 function checkLoginRate(ip: string, email: string): void {
   const since = now() - ATTEMPT_WINDOW_MS;
-  db.prepare('DELETE FROM login_attempts WHERE attempted_at < ?').run(since);
+  // Solo se purgan las claves de este inicio de sesión: el portal del titular
+  // («buzon…») y la puesta en marcha («setup…») cuentan en la misma tabla con
+  // ventanas propias, y borrarlas aquí acortaría su bloqueo.
+  db.prepare(
+    "DELETE FROM login_attempts WHERE attempted_at < ? AND ip NOT LIKE 'buzon%' AND ip NOT LIKE 'setup%'",
+  ).run(since);
   const emailKey = `email:${email}`;
   const ipCount = (
     db

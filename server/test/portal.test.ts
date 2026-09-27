@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
 import { getEngine } from '../src/engine';
+import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
 import {
   adminContext,
   cookieFrom,
@@ -180,6 +181,74 @@ test('enlace con contraseña: se entrega en la página y en el perfil hasta marc
     headers: { cookie: ctx.adminCookie },
   });
   assert.equal((lista.json() as { links: { hasPassword: boolean }[] }).links[0]!.hasPassword, false);
+});
+
+test('incluir la contraseña no sirve de oráculo: 5 fallos por buzón bloquean 15 minutos', async () => {
+  const b = await buzonDePrueba();
+  for (let i = 0; i < 5; i += 1) {
+    const mala = await crearEnlace(b.mailboxId, { includePassword: true, password: `no-es-la-buena-${i}` });
+    assert.equal(mala.statusCode, 400, mala.body);
+    assert.equal(mala.json().code, 'password_mismatch');
+  }
+  // Bloqueado incluso con la contraseña correcta: así no se distingue nada.
+  const bloqueado = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+  assert.equal(bloqueado.statusCode, 429, bloqueado.body);
+  assert.equal(bloqueado.json().code, 'rate_limited');
+  assert.match(bloqueado.json().error, /cree el enlace sin la contraseña/);
+
+  // El enlace sin contraseña sigue disponible y otro buzón no se ve afectado.
+  assert.equal((await crearEnlace(b.mailboxId)).statusCode, 200);
+  const otro = await buzonDePrueba();
+  const bueno = await crearEnlace(otro.mailboxId, { includePassword: true, password: otro.password });
+  assert.equal(bueno.statusCode, 200, bueno.body);
+
+  // Iniciar sesión en el panel no acorta la ventana de 15 minutos del portal.
+  const hace12min = Date.now() - 12 * 60_000;
+  db.prepare('UPDATE login_attempts SET attempted_at = ? WHERE ip = ?').run(hace12min, `buzon-enlace:${b.mailboxId}`);
+  const panel = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { email: 'nadie@mailway.test', password: 'contraseña-cualquiera' },
+    remoteAddress: nuevaIp(),
+  });
+  assert.equal(panel.statusCode, 401);
+  const quedan = db
+    .prepare('SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ?')
+    .get(`buzon-enlace:${b.mailboxId}`) as { c: number };
+  assert.equal(quedan.c, 5, 'los fallos del portal siguen contando');
+  assert.equal((await crearEnlace(b.mailboxId, { includePassword: true, password: b.password })).statusCode, 429);
+});
+
+test('sin respuesta del motor, la contraseña no se guarda en el enlace (503)', async () => {
+  const b = await buzonDePrueba();
+  const engine = getEngine();
+  const original = engine.verifyCredentials.bind(engine);
+  engine.verifyCredentials = async () => null;
+  try {
+    const res = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+    assert.equal(res.statusCode, 503, res.body);
+    assert.equal(res.json().code, 'engine_unreachable');
+  } finally {
+    engine.verifyCredentials = original;
+  }
+  const enlaces = db.prepare('SELECT COUNT(*) AS c FROM setup_links WHERE mailbox_id = ?').get(b.mailboxId) as {
+    c: number;
+  };
+  assert.equal(enlaces.c, 0, 'no se crea ningún enlace');
+});
+
+test('el enlace no admite una contraseña de aplicación en lugar de la principal', async () => {
+  const b = await buzonDePrueba();
+  const app = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${b.mailboxId}/app-passwords`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Móvil' },
+  });
+  assert.equal(app.statusCode, 200, app.body);
+  const res = await crearEnlace(b.mailboxId, { includePassword: true, password: app.json().password });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().code, 'app_password_not_allowed');
 });
 
 test('un enlace caducado da 404 y su contraseña se borra aunque nadie lo abra', async () => {
@@ -526,6 +595,35 @@ test('contraseñas de aplicación desde el portal: listar, crear y revocar', asy
 
   const sinSesion = await ctx.app.inject({ method: 'GET', url: '/api/portal/app-passwords' });
   assert.equal(sinSesion.statusCode, 401);
+});
+
+test('el máximo de contraseñas de aplicación es el mismo en el portal y en el panel (409)', async () => {
+  const b = await buzonDePrueba();
+  const cookie = await sesionPortal(b.email, b.password);
+  const insertar = db.prepare(
+    `INSERT INTO app_passwords (id, mailbox_id, name, stored_secret, created_by, created_at)
+     VALUES (?, ?, ?, ?, NULL, ?)`,
+  );
+  for (let i = 0; i < MAX_ACTIVE_APP_PASSWORDS; i += 1) {
+    insertar.run(`app_limite_${b.mailboxId}_${i}`, b.mailboxId, `Equipo ${i}`, '$app$x$y', Date.now());
+  }
+  const portal = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/portal/app-passwords',
+    headers: { cookie },
+    payload: { name: 'Uno más' },
+  });
+  assert.equal(portal.statusCode, 409, portal.body);
+  assert.equal(portal.json().code, 'app_password_limit');
+  const panel = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${b.mailboxId}/app-passwords`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Uno más' },
+  });
+  assert.equal(panel.statusCode, 409, panel.body);
+  assert.equal(panel.json().code, 'app_password_limit');
+  assert.equal(panel.json().error, portal.json().error);
 });
 
 /* ------------------------------ Webmail ------------------------------------ */

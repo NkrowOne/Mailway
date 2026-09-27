@@ -119,6 +119,31 @@ function toClient(row: ClientRow): Client {
   };
 }
 
+/**
+ * El cliente tal y como lo puede ver quien pregunta. Las notas son internas
+ * de la administración (acuerdos, incidencias, precios): un usuario del
+ * propio cliente no debe leerlas.
+ */
+export function clientForViewer(client: Client, viewerIsAdmin: boolean): Client | Omit<Client, 'notes'> {
+  if (viewerIsAdmin) return client;
+  const { notes: _notas, ...visible } = client;
+  return visible;
+}
+
+/**
+ * Un cliente suspendido no crea nada: ni recursos del plan ni credenciales
+ * nuevas (claves de API, contraseñas de aplicación) que seguirían vivas al
+ * reactivarlo sin que nadie las hubiera pedido con el cliente en regla.
+ */
+export function assertClientActive(clientId: string): void {
+  if (getClient(clientId).suspended) {
+    throw badRequest(
+      'Este cliente está suspendido. No es posible crear recursos ni credenciales hasta que se reactive.',
+      'client_suspended',
+    );
+  }
+}
+
 export function getClient(id: string): Client {
   const row = db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as ClientRow | undefined;
   if (!row) throw notFound('Cliente no encontrado.');
@@ -548,14 +573,14 @@ export function registerClientRoutes(app: FastifyInstance): void {
 
   app.get('/api/clients/:id', async (req) => {
     const { id } = req.params as { id: string };
-    requireClientAccess(req, id);
+    const user = requireClientAccess(req, id);
     const client = getClient(id);
     const plan = getPlan(client.planId);
     const usage = getClientUsage(id);
     const users = listClientUsers(id);
     // La forma histórica anida plan/uso/usuarios en `client`; el contrato de
     // integraciones los espera también en la raíz. Se sirven ambas.
-    return { client: { ...client, plan, usage, users }, plan, usage, users };
+    return { client: { ...clientForViewer(client, user.role === 'admin'), plan, usage, users }, plan, usage, users };
   });
 
   app.patch('/api/clients/:id', async (req) => {
@@ -708,14 +733,10 @@ export function assertWithinLimit(
   clientId: string,
   resource: 'domains' | 'mailboxes' | 'aliases',
   adding = 1,
+  viewerIsAdmin = false,
 ): void {
+  assertClientActive(clientId);
   const client = getClient(clientId);
-  if (client.suspended) {
-    throw badRequest(
-      'Este cliente está suspendido. No es posible crear recursos hasta que se reactive.',
-      'client_suspended',
-    );
-  }
   const plan = getPlan(client.planId);
   const usage = getClientUsage(clientId);
   const limits: Record<typeof resource, { used: number; max: number; label: string }> = {
@@ -728,7 +749,10 @@ export function assertWithinLimit(
     const remaining = Math.max(0, limit.max - limit.used);
     throw badRequest(
       adding === 1
-        ? `Se ha alcanzado el máximo de ${limit.label} del plan «${plan.name}» (${limit.max}). Solicite una ampliación del plan.`
+        ? // El administrador no tiene a quién pedir la ampliación: la hace él.
+          `Se ha alcanzado el máximo de ${limit.label} del plan «${plan.name}» (${limit.max}). ${
+            viewerIsAdmin ? 'Amplíe el plan del cliente en su ficha.' : 'Solicite una ampliación del plan.'
+          }`
         : `El plan «${plan.name}» permite ${limit.max} ${limit.label} y ya hay ${limit.used}: no es posible crear ${adding} más (quedan ${remaining}). No se ha creado ninguno.`,
       'plan_limit_reached',
     );

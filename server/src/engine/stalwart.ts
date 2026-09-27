@@ -66,16 +66,22 @@ export class StalwartEngine implements MailEngine {
       // cuerpo no JSON: se conserva el texto para el mensaje de error
     }
     if (!res.ok) {
+      if (res.status === 404) {
+        // En 0.15 «no existe» llega con HTTP 200 y { error: "notFound" }. Un
+        // 404 de verdad es una RUTA desconocida (URL del motor mal puesta, un
+        // proxy con otro prefijo o un motor sin esta API): si se tomara por
+        // «no existe», los borrados «tendrían éxito» sin hacer nada y los
+        // principales seguirían recibiendo correo y aceptando contraseñas.
+        throw new HttpError(
+          502,
+          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revise la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart 0.15.`,
+          'engine_error',
+        );
+      }
       // Errores en formato RFC 7807 (application/problem+json)
       const problem = parsed as { detail?: string; title?: string } | null;
       const detail = problem?.detail || problem?.title || text.slice(0, 300) || res.statusText;
-      // El 404 se marca aparte para que los borrados puedan ser idempotentes
-      // (borrar un principal que ya no existe no debe ser un error fatal).
-      throw new HttpError(
-        502,
-        `El motor de correo respondió ${res.status}: ${detail}`,
-        res.status === 404 ? 'engine_not_found' : 'engine_error',
-      );
+      throw new HttpError(502, `El motor de correo respondió ${res.status}: ${detail}`, 'engine_error');
     }
     // Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y un cuerpo
     // { error: "notFound" | "fieldAlreadyExists" | "other" | … } sin "data".
@@ -249,30 +255,50 @@ export class StalwartEngine implements MailEngine {
   ): Promise<void> {
     // Un alias es un principal de tipo "list": los miembros (buzones de la
     // instancia) y los miembros externos (direcciones de fuera) reciben el
-    // correo. Se recrea entero para no dejar miembros antiguos.
-    await this.deleteAlias(alias).catch(() => undefined);
-    await this.request('POST', '/api/principal', {
-      type: 'list',
-      name: alias,
-      description: 'Alias gestionado por Mailway',
-      quota: 0,
-      secrets: [],
-      emails: [alias],
-      urls: [],
-      memberOf: [],
-      roles: [],
-      lists: [],
-      members: destinations,
-      enabledPermissions: [],
-      disabledPermissions: [],
-      externalMembers: externalDestinations,
-    });
+    // correo. Si ya existe, se sustituyen los miembros con UN solo PATCH:
+    // Stalwart valida los miembros antes de escribir, así que si alguno no
+    // existe la lista se queda como estaba. Borrar y recrear dejaba el alias
+    // fuera del motor (y el correo rebotando) cuando la creación fallaba.
+    const members: PrincipalUpdate[] = [
+      { action: 'set', field: 'members', value: destinations },
+      { action: 'set', field: 'externalMembers', value: externalDestinations },
+    ];
+    try {
+      await this.updatePrincipal(alias, members);
+      return;
+    } catch (err) {
+      // Solo «la lista no existe» lleva a crearla; un miembro inexistente es
+      // un error de verdad y se propaga sin tocar nada.
+      if (!isNotFoundOf(err, alias)) throw err;
+    }
+    try {
+      await this.request('POST', '/api/principal', {
+        type: 'list',
+        name: alias,
+        description: 'Alias gestionado por Mailway',
+        quota: 0,
+        secrets: [],
+        emails: [alias],
+        urls: [],
+        memberOf: [],
+        roles: [],
+        lists: [],
+        members: destinations,
+        enabledPermissions: [],
+        disabledPermissions: [],
+        externalMembers: externalDestinations,
+      });
+    } catch (err) {
+      // Otra petición la creó entre el PATCH y el POST: se actualiza la suya.
+      if (!(err instanceof HttpError) || err.code !== 'engine_exists') throw err;
+      await this.updatePrincipal(alias, members);
+    }
   }
 
   async verifyCredentials(email: string, password: string): Promise<boolean | null> {
-    let data: { secrets?: string[] | string; roles?: string[] } | null;
+    let data: { type?: string; secrets?: string[] | string; roles?: string[] } | null;
     try {
-      data = await this.request<{ secrets?: string[] | string; roles?: string[] }>(
+      data = await this.request<{ type?: string; secrets?: string[] | string; roles?: string[] }>(
         'GET',
         `/api/principal/${encodeURIComponent(email)}`,
       );
@@ -280,8 +306,12 @@ export class StalwartEngine implements MailEngine {
       if (err instanceof HttpError && err.code === 'engine_not_found') return false;
       return null;
     }
+    // Solo un buzón (principal individual) puede autenticarse.
+    if (data?.type !== undefined && data.type !== 'individual') return false;
     // Sin el rol "user" la cuenta está suspendida y el motor la rechazaría.
-    if (Array.isArray(data?.roles) && !data!.roles.includes('user')) return false;
+    // Ojo: Stalwart omite los campos vacíos, así que un buzón suspendido
+    // (roles: []) llega SIN la clave «roles»: su ausencia también es suspensión.
+    if (!Array.isArray(data?.roles) || !data.roles.includes('user')) return false;
     const raw = data?.secrets;
     const secrets = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : [];
     for (const secret of secrets) {
@@ -382,7 +412,10 @@ export class StalwartEngine implements MailEngine {
     await this.request('PATCH', `/api/principal/${encodeURIComponent(name)}`, updates);
   }
 
-  /** Borrado idempotente: si el principal ya no existe (404), es un éxito. */
+  /**
+   * Borrado idempotente: si el principal ya no existe ({ error: "notFound" }),
+   * es un éxito. Un HTTP 404 (ruta desconocida) NO lo es: llega como engine_error.
+   */
   private async deletePrincipal(name: string): Promise<void> {
     try {
       await this.request('DELETE', `/api/principal/${encodeURIComponent(name)}`);
@@ -399,6 +432,28 @@ interface PrincipalUpdate {
   value: unknown;
 }
 
+/**
+ * Error de gestión del motor. Conserva el elemento al que se refiere un
+ * «notFound»: en un PATCH distingue «la lista no existe» de «uno de sus
+ * miembros no existe», que exigen reacciones opuestas.
+ */
+class EngineProblem extends HttpError {
+  readonly item: string | null;
+
+  constructor(status: number, message: string, code: string, item: string | null) {
+    super(status, message, code);
+    this.item = item;
+  }
+}
+
+/** ¿Es un «notFound» del propio principal `name` (y no de otro elemento)? */
+function isNotFoundOf(err: unknown, name: string): boolean {
+  if (!(err instanceof HttpError) || err.code !== 'engine_not_found') return false;
+  const item = err instanceof EngineProblem ? err.item : null;
+  // Sin elemento en la respuesta no se puede saber: se trata como error.
+  return item !== null && item.toLowerCase() === name.toLowerCase();
+}
+
 /** Traduce un error de gestión de Stalwart (llega con HTTP 200) a HttpError. */
 function engineProblem(problem: {
   error?: unknown;
@@ -410,8 +465,13 @@ function engineProblem(problem: {
 }): HttpError {
   const kind = String(problem.error);
   if (kind === 'notFound') {
-    const item = typeof problem.item === 'string' ? ` (${problem.item})` : '';
-    return new HttpError(502, `El motor de correo no encuentra el elemento${item}.`, 'engine_not_found');
+    const item = typeof problem.item === 'string' ? problem.item : null;
+    return new EngineProblem(
+      502,
+      `El motor de correo no encuentra el elemento${item ? ` (${item})` : ''}.`,
+      'engine_not_found',
+      item,
+    );
   }
   if (kind === 'fieldAlreadyExists') {
     const value = typeof problem.value === 'string' ? ` «${problem.value}»` : '';
