@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, type ClientDashboard, type DomainRecord } from '../lib/api';
+import { api, type ClientDashboard } from '../lib/api';
 import { plural } from '../lib/format';
+import { lecturaDominio } from '../lib/cloudflare';
+import { pesoVeredicto } from '../lib/dominios';
+import { useDireccionPanel, useUsuario } from '../components/gestion/consultas';
 import { estiloBoton } from '../ui/Button';
 import {
   AvisoError,
@@ -12,7 +15,6 @@ import {
   MarcaFondo,
   Membrete,
   Midiendo,
-  type Veredicto,
 } from '../ui/kit';
 
 interface Paso {
@@ -29,13 +31,6 @@ interface Paso {
 /** Enlace dentro de la pista de un paso: por encima del enlace que ocupa la fila. */
 const enlacePista = 'relative z-10 text-laboratorio underline underline-offset-2 hover:text-tinta';
 
-const estadoDominio: Record<DomainRecord['status'], { veredicto: Veredicto; texto: string }> = {
-  error: { veredicto: 'fuera', texto: 'Error' },
-  pending_dns: { veredicto: 'vigilar', texto: 'DNS pendiente' },
-  active: { veredicto: 'normal', texto: 'Verificado' },
-};
-
-const pesoDominio: Record<DomainRecord['status'], number> = { error: 0, pending_dns: 1, active: 2 };
 
 /**
  * El parte del cliente. Arriba, la puesta en marcha como lista de pasos
@@ -47,6 +42,10 @@ export default function InicioCliente() {
     queryKey: ['client-dashboard'],
     queryFn: () => api.get<ClientDashboard>('/api/dashboard/client'),
   });
+  const user = useUsuario();
+  // La dirección que se da a los titulares: la pública del panel (o la de
+  // marca blanca del cliente), no la que muestre ahora el navegador.
+  const panel = useDireccionPanel({ user });
 
   if (isPending) return <Midiendo label="Leyendo el estado de su correo…" />;
   // Si una relectura falla pero ya hubo datos, se siguen mostrando.
@@ -55,7 +54,7 @@ export default function InicioCliente() {
       <>
         <Membrete title="Resumen" />
         <AvisoError onRetry={() => void refetch()} retrying={isFetching}>
-          No se pudo cargar el resumen de su correo. Compruebe la conexión y vuelva a intentarlo.
+          No se ha podido cargar el resumen de su correo. Compruebe la conexión y vuelva a intentarlo.
         </AvisoError>
       </>
     );
@@ -65,7 +64,7 @@ export default function InicioCliente() {
   // El paso del DNS lleva al dominio que falta por verificar, no al primero
   // de la lista (que puede estar ya verificado).
   const porVerificar = domains.find((d) => d.status !== 'active') ?? domains[0];
-  const portal = `${window.location.origin}/mi-buzon`;
+  const portal = `${panel}/mi-buzon`;
 
   const pasos: Paso[] = [
     {
@@ -109,7 +108,7 @@ export default function InicioCliente() {
       to: '/buzones',
       hint: (
         <>
-          Envíe a cada persona el enlace de configuración de su buzón desde Buzones, o indíquele
+          Envíe a cada persona el enlace de configuración de su buzón desde «Buzones», o indíquele
           que acceda a <span className="valor text-sm text-tinta">{portal}</span> con su dirección
           y contraseña: el móvil y el ordenador se configuran solos.
         </>
@@ -128,8 +127,10 @@ export default function InicioCliente() {
   const obligatorios = pasos.filter((p) => p.obligatorio);
   const hechos = obligatorios.filter((p) => p.done).length;
   const siguiente = obligatorios.find((p) => !p.done);
+  // Mismo veredicto que en «Dominios»: un dominio pendiente no se ve ámbar
+  // aquí y carmín allí, y sin lectura del DNS no se afirma que esté mal.
   const dominiosOrdenados = [...domains].sort(
-    (a, b) => pesoDominio[a.status] - pesoDominio[b.status],
+    (a, b) => pesoVeredicto[lecturaDominio(a).veredicto] - pesoVeredicto[lecturaDominio(b).veredicto],
   );
 
   return (
@@ -260,7 +261,7 @@ export default function InicioCliente() {
         <Hoja title="Sus dominios" meta="Pendientes primero" className="mt-4" flush>
           <ul>
             {dominiosOrdenados.map((domain) => {
-              const estado = estadoDominio[domain.status] ?? estadoDominio.pending_dns;
+              const estado = lecturaDominio(domain);
               return (
                 <li key={domain.id} className="regla-fila last:border-b-0">
                   <Link
@@ -275,7 +276,7 @@ export default function InicioCliente() {
                       }`}
                   >
                     <span className="valor min-w-0 break-all text-base text-tinta">{domain.domain}</span>
-                    <MarcaFondo veredicto={estado.veredicto}>{estado.texto}</MarcaFondo>
+                    <MarcaFondo veredicto={estado.veredicto}>{estado.etiqueta}</MarcaFondo>
                   </Link>
                 </li>
               );

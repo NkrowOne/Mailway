@@ -1,6 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type SetupStatus } from '../../lib/api';
+import {
+  api,
+  ApiError,
+  esCredencialIncorrecta,
+  TEXTO_CREDENCIALES_INCORRECTAS,
+  type SetupStatus,
+} from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import {
   formatoBytes,
@@ -81,6 +87,10 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
 
   async function entrar(e: FormEvent) {
     e.preventDefault();
+    if (!email.trim() || !password) {
+      setError('Indique la dirección de correo y la contraseña del buzón.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -88,7 +98,11 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
       setPassword('');
       await queryClient.invalidateQueries({ queryKey: ['portal-me'] });
     } catch (err) {
-      setError(mensajeError(err, 'No se ha podido iniciar sesión.'));
+      setError(
+        esCredencialIncorrecta(err)
+          ? TEXTO_CREDENCIALES_INCORRECTAS
+          : mensajeError(err, 'No se ha podido iniciar sesión.'),
+      );
     } finally {
       setBusy(false);
     }
@@ -110,7 +124,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
             </div>
           </header>
 
-          <form onSubmit={entrar} className="flex flex-col gap-4 px-5 py-5">
+          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 py-5">
             <div>
               <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">Mi buzón</h1>
               <p className="mt-1 text-base text-tinta-2">
@@ -125,9 +139,11 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
               inputMode="email"
               autoCapitalize="none"
               spellCheck={false}
-              required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setError('');
+                setEmail(e.target.value);
+              }}
               placeholder="nombre@empresa.com"
               className={TACTIL}
             />
@@ -135,14 +151,16 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
               label="Contraseña"
               type="password"
               autoComplete="current-password"
-              required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setError('');
+                setPassword(e.target.value);
+              }}
               className={TACTIL}
             />
             {error && <AvisoError>{error}</AvisoError>}
             <Button type="submit" variant="tinta" busy={busy} className={`w-full ${TACTIL}`}>
-              Entrar
+              Iniciar sesión
             </Button>
           </form>
         </section>
@@ -246,7 +264,8 @@ function HojaEspacio({ me }: { me: PortalMe }) {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <Escala label="Correo guardado" usado={usado} maximo={maximo} unidad={enGb ? 'GB' : 'MB'} />
+          {/* Lleno, el buzón deja de recibir correo: aquí el límite sí es fuera de rango. */}
+          <Escala label="Correo guardado" usado={usado} maximo={maximo} unidad={enGb ? 'GB' : 'MB'} limiteEsFuera />
           <Nota>
             {me.usedBytes !== null && `Ocupa ${formatoBytes(me.usedBytes)}. `}
             Si se acerca al límite, elimine mensajes antiguos o con adjuntos grandes y vacíe la papelera.
@@ -265,6 +284,7 @@ function HojaContrasenasAplicacion() {
   const [nombre, setNombre] = useState('');
   const [nueva, setNueva] = useState<{ nombre: string; password: string } | null>(null);
   const [aRevocar, setARevocar] = useState<ContrasenaAplicacion | null>(null);
+  const [verRevocadas, setVerRevocadas] = useState(false);
 
   const lista = useQuery({
     queryKey: ['portal-app-passwords'],
@@ -296,7 +316,11 @@ function HojaContrasenasAplicacion() {
     crear.mutate(nombre);
   }
 
-  const apps = lista.data?.appPasswords ?? [];
+  const todas = lista.data?.appPasswords ?? [];
+  // Las revocadas se conservan como referencia, plegadas: la lista crecía sin
+  // límite y enterraba las que siguen en uso.
+  const revocadas = todas.filter((app) => app.revokedAt).length;
+  const apps = verRevocadas ? todas : todas.filter((app) => !app.revokedAt);
 
   return (
     <Hoja title="Contraseñas de aplicación" flush>
@@ -330,7 +354,10 @@ function HojaContrasenasAplicacion() {
                 placeholder="Por ejemplo: Móvil personal"
                 maxLength={60}
                 value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
+                onChange={(e) => {
+                  crear.reset();
+                  setNombre(e.target.value);
+                }}
                 className={TACTIL}
               />
             </div>
@@ -356,12 +383,16 @@ function HojaContrasenasAplicacion() {
         <div className="px-4 pb-4">
           <AvisoError>{mensajeError(lista.error, 'No se han podido cargar las contraseñas de aplicación.')}</AvisoError>
         </div>
-      ) : apps.length === 0 ? (
+      ) : todas.length === 0 ? (
         <div className="border-t border-regla">
           <Vacio title="Aún no hay contraseñas de aplicación">
             Cree la primera para el dispositivo que vaya a configurar.
           </Vacio>
         </div>
+      ) : apps.length === 0 ? (
+        <p className="border-t border-regla px-4 py-4 text-base text-tinta-2">
+          No hay contraseñas de aplicación activas.
+        </p>
       ) : (
         <div className="border-t border-regla">
           <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 sm:flex">
@@ -396,6 +427,18 @@ function HojaContrasenasAplicacion() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {revocadas > 0 && (
+        <div className="border-t border-regla px-4 py-2.5">
+          <Button
+            variant="plano"
+            className={TACTIL}
+            aria-expanded={verRevocadas}
+            onClick={() => setVerRevocadas((v) => !v)}
+          >
+            {verRevocadas ? 'Ocultar las revocadas' : `Mostrar las revocadas (${revocadas})`}
+          </Button>
         </div>
       )}
 
@@ -450,6 +493,7 @@ function HojaCambioContrasena() {
   function enviar(e: FormEvent) {
     e.preventDefault();
     // Las comprobaciones evidentes se hacen aquí para no gastar intentos.
+    if (!actual) return setError('Indique la contraseña actual.');
     if (nueva.length < 10) return setError('La nueva contraseña debe tener al menos 10 caracteres.');
     if (nueva !== repetida) return setError('Las dos contraseñas nuevas no coinciden.');
     if (nueva === actual) return setError('La nueva contraseña debe ser distinta de la actual.');
@@ -459,7 +503,7 @@ function HojaCambioContrasena() {
 
   return (
     <Hoja title="Cambiar la contraseña">
-      <form onSubmit={enviar} className="flex flex-col gap-4">
+      <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
         <Nota>
           Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzca en ellos
           la nueva. Los que utilizan una contraseña de aplicación no se ven afectados.
@@ -468,9 +512,11 @@ function HojaCambioContrasena() {
           label="Contraseña actual"
           type="password"
           autoComplete="current-password"
-          required
           value={actual}
-          onChange={(e) => setActual(e.target.value)}
+          onChange={(e) => {
+            setError('');
+            setActual(e.target.value);
+          }}
           className={TACTIL}
         />
         <div className="grid gap-4 sm:grid-cols-2">
@@ -478,20 +524,23 @@ function HojaCambioContrasena() {
             label="Nueva contraseña"
             type="password"
             autoComplete="new-password"
-            required
-            minLength={10}
             help="Al menos 10 caracteres."
             value={nueva}
-            onChange={(e) => setNueva(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setNueva(e.target.value);
+            }}
             className={TACTIL}
           />
           <Input
             label="Repetir la nueva contraseña"
             type="password"
             autoComplete="new-password"
-            required
             value={repetida}
-            onChange={(e) => setRepetida(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setRepetida(e.target.value);
+            }}
             className={TACTIL}
           />
         </div>

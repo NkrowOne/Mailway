@@ -11,14 +11,12 @@ import {
 } from '../../lib/tokens';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Dialogo, Hoja, MarcaFondo, Midiendo, Muestra, Vacio, type Veredicto } from '../../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Midiendo, Muestra, Vacio, type Veredicto } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
+import { useDireccionPanel } from '../gestion/consultas';
 
 /** Fuera de rango primero: un token caducado rompe una integración y se lee antes. */
 const PESO: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
-
-const bandaError =
-  'border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera';
 
 /**
  * Tokens de gestión: credenciales para que Skyway, un script o la CI
@@ -74,7 +72,11 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
   });
 
   function abrirAlta() {
+    // Cada alta empieza de cero: sin el nombre ni el error de la anterior.
     setErrorAlta('');
+    setNombre('');
+    setCaducidad('365');
+    crear.reset();
     setCrearAbierto(true);
   }
 
@@ -94,7 +96,9 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
     .map((t) => ({ token: t, ...veredictoToken(t, ahora) }))
     .sort((a, b) => PESO[a.veredicto] - PESO[b.veredicto] || b.token.createdAt - a.token.createdAt);
   const revocados = lista.filter((t) => t.status === 'revoked');
-  const origen = typeof window !== 'undefined' ? window.location.origin : '';
+  // Lo que se configura en Skyway es la dirección pública del panel, no la
+  // IP o la URL interna por la que se esté entrando ahora.
+  const origen = useDireccionPanel();
 
   return (
     <>
@@ -140,14 +144,11 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         {tokens.isPending ? (
           <Midiendo label="Leyendo los tokens de gestión…" />
         ) : tokens.isError ? (
-          <div className="flex flex-col items-start gap-3 px-4 py-4">
-            <p role="alert" className={`${bandaError} w-full`}>
+          <div className="px-4 py-4">
+            <AvisoError onRetry={() => void tokens.refetch()} retrying={tokens.isFetching}>
               No se han podido leer los tokens de gestión.{' '}
               {tokens.error instanceof ApiError ? tokens.error.message : 'Compruebe la conexión con el servidor.'}
-            </p>
-            <Button variant="perfil" busy={tokens.isFetching} onClick={() => tokens.refetch()}>
-              Reintentar
-            </Button>
+            </AvisoError>
           </div>
         ) : vigentes.length === 0 && revocados.length === 0 ? (
           <Vacio title="No hay tokens de gestión">
@@ -213,13 +214,15 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Alta */}
       <Dialogo open={crearAbierto} onClose={() => setCrearAbierto(false)} title="Crear token de gestión">
-        <form onSubmit={enviarAlta} className="flex flex-col gap-4">
+        <form onSubmit={enviarAlta} noValidate className="flex flex-col gap-4">
           <Input
             label="Nombre"
-            required
             maxLength={60}
             value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
+            onChange={(e) => {
+              setErrorAlta('');
+              setNombre(e.target.value);
+            }}
             placeholder="Skyway producción"
             help="Sirve para reconocerlo después. Se recomienda un token por integración o entorno."
           />
@@ -240,11 +243,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
               ? 'El token tendrá permisos de administrador sobre toda la instancia. Guárdelo como cualquier otra contraseña.'
               : 'El token tendrá los mismos permisos que su usuario, limitados a su cuenta.'}
           </p>
-          {errorAlta && (
-            <p role="alert" className={bandaError}>
-              {errorAlta}
-            </p>
-          )}
+          {errorAlta && <AvisoError>{errorAlta}</AvisoError>}
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="plano" onClick={() => setCrearAbierto(false)}>
               Cancelar
@@ -256,11 +255,19 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         </form>
       </Dialogo>
 
-      {/* El token, una sola vez */}
-      <Dialogo open={creado !== null} onClose={() => setCreado(null)} title="Token de gestión creado">
-        {creado && (
-          <TokenRecienCreado creado={creado} origen={origen} isAdmin={isAdmin} onCerrar={() => setCreado(null)} />
-        )}
+      {/* El token, una sola vez: no se cierra sin confirmar que se ha guardado. */}
+      <Dialogo
+        open={creado !== null}
+        onClose={() => setCreado(null)}
+        title="Token de gestión creado"
+        confirmarCierre={{ pregunta: '¿Ha guardado el token?', detalle: 'No se podrá volver a ver.' }}
+        pie={
+          <Button variant="tinta" onClick={() => setCreado(null)}>
+            Ya lo he guardado
+          </Button>
+        }
+      >
+        {creado && <TokenRecienCreado creado={creado} origen={origen} isAdmin={isAdmin} />}
       </Dialogo>
 
       {/* Revocar */}
@@ -373,12 +380,10 @@ function TokenRecienCreado({
   creado,
   origen,
   isAdmin,
-  onCerrar,
 }: {
   creado: TokenCreado;
   origen: string;
   isAdmin: boolean;
-  onCerrar: () => void;
 }) {
   const curl = `curl -H "Authorization: Bearer ${creado.token}" \\\n  ${origen}/api/integrations/info`;
   return (
@@ -414,12 +419,6 @@ function TokenRecienCreado({
       <Muestra rotulo="Comprobación desde la línea de comandos" copiar={curl}>
         <pre className="valor whitespace-pre-wrap break-all text-sm leading-relaxed text-tinta">{curl}</pre>
       </Muestra>
-
-      <div className="flex justify-end">
-        <Button variant="tinta" onClick={onCerrar}>
-          Aceptar
-        </Button>
-      </div>
     </div>
   );
 }

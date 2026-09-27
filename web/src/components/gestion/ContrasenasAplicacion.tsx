@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { formatDate } from '../../lib/format';
+import { formatDate, plural } from '../../lib/format';
 import { mensajeDe, type AppPasswordInfo } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
@@ -14,14 +14,30 @@ import { BandaError } from './comun';
  * revocan una a una sin cambiar la contraseña principal, de modo que perder un
  * móvil no obliga a reconfigurar todo lo demás.
  */
-export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string; email: string }) {
+export function ContrasenasAplicacion({
+  mailboxId,
+  email,
+  onPendiente,
+}: {
+  mailboxId: string;
+  email: string;
+  /** Avisa de que hay una contraseña recién creada sin confirmar (la ficha no se cierra sin preguntar). */
+  onPendiente?: (pendiente: boolean) => void;
+}) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [nueva, setNueva] = useState<{ name: string; password: string } | null>(null);
   const [aRevocar, setARevocar] = useState<string | null>(null);
+  const [verRevocadas, setVerRevocadas] = useState(false);
   const key = ['app-passwords', mailboxId];
+
+  useEffect(() => {
+    onPendiente?.(nueva !== null);
+  }, [nueva, onPendiente]);
+  // Al salir de la vista ya no hay nada pendiente que proteger.
+  useEffect(() => () => onPendiente?.(false), [onPendiente]);
 
   const list = useQuery({
     queryKey: key,
@@ -54,11 +70,19 @@ export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string;
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!name.trim()) {
+      setError('Indique el nombre del dispositivo o la aplicación.');
+      return;
+    }
     create.mutate();
   }
 
   const items = list.data?.appPasswords ?? [];
   const activas = items.filter((i) => !i.revokedAt).length;
+  // Las revocadas no caducan nunca de la lista: se pliegan para que las
+  // activas, que son las que importan, no queden enterradas.
+  const revocadas = items.filter((i) => i.revokedAt).length;
+  const visibles = verRevocadas ? items : items.filter((i) => !i.revokedAt);
 
   return (
     <div className="flex flex-col gap-4">
@@ -87,14 +111,16 @@ export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string;
         </div>
       )}
 
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
+      <form onSubmit={submit} noValidate className="flex flex-wrap items-end gap-2">
         <div className="min-w-[12rem] flex-1">
           <Input
             label="Nombre del dispositivo o aplicación"
-            required
             maxLength={60}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setName(e.target.value);
+            }}
             placeholder="Móvil de Ana"
           />
         </div>
@@ -107,7 +133,7 @@ export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string;
       <div className="border border-regla">
         <div className="regla-cabecera flex items-baseline justify-between gap-3 px-3 py-2">
           <span className="rotulo">Contraseñas creadas</span>
-          {list.isSuccess && <span className="rotulo">{activas} activas</span>}
+          {list.isSuccess && <span className="rotulo">{plural(activas, 'activa', 'activas')}</span>}
         </div>
         {list.isPending ? (
           <Midiendo label="Consultando las contraseñas de aplicación…" />
@@ -121,7 +147,10 @@ export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string;
           <p className="px-3 py-4 text-sm text-tinta-3">Este buzón no tiene contraseñas de aplicación.</p>
         ) : (
           <ul className="max-h-72 overflow-y-auto">
-            {items.map((item) => (
+            {visibles.length === 0 && (
+              <li className="px-3 py-3 text-sm text-tinta-3">No hay contraseñas de aplicación activas.</li>
+            )}
+            {visibles.map((item) => (
               <li key={item.id} className="regla-fila flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 last:border-b-0">
                 <div className="min-w-0 grow basis-full sm:basis-0">
                   <p className="break-words text-base text-tinta">{item.name}</p>
@@ -158,6 +187,13 @@ export function ContrasenasAplicacion({ mailboxId, email }: { mailboxId: string;
               </li>
             ))}
           </ul>
+        )}
+        {revocadas > 0 && (
+          <div className="border-t border-regla px-3 py-2">
+            <Button variant="plano" className="px-2" aria-expanded={verRevocadas} onClick={() => setVerRevocadas((v) => !v)}>
+              {verRevocadas ? 'Ocultar las revocadas' : `Mostrar las revocadas (${revocadas})`}
+            </Button>
+          </div>
         )}
       </div>
     </div>

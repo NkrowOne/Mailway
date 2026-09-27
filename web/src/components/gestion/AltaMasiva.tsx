@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { api, type DomainRecord } from '../../lib/api';
 import { plural } from '../../lib/format';
 import {
@@ -11,9 +12,17 @@ import {
   type BulkResponse,
 } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
-import { Select, Textarea } from '../../ui/Field';
+import { Textarea } from '../../ui/Field';
 import { BotonCopiar, Dialogo, Escala, MarcaFondo } from '../../ui/kit';
-import { BandaAviso, BandaError, Botonera } from './comun';
+import { esPropiedadPendiente } from '../../lib/dominios';
+import {
+  BandaAviso,
+  BandaError,
+  Botonera,
+  dominioInicialDisponible,
+  SelectorDominio,
+  type MotivoBloqueoDominio,
+} from './comun';
 
 const MAX_LOTE = 100;
 
@@ -34,6 +43,7 @@ export function AltaMasiva({
   resultado,
   onResultado,
   etiquetaDominio,
+  motivoBloqueo,
 }: {
   open: boolean;
   onClose: () => void;
@@ -42,9 +52,10 @@ export function AltaMasiva({
   resultado: { dominio: string; respuesta: BulkResponse } | null;
   onResultado: (r: { dominio: string; respuesta: BulkResponse } | null) => void;
   etiquetaDominio: (d: DomainRecord) => string;
+  motivoBloqueo?: MotivoBloqueoDominio;
 }) {
   const queryClient = useQueryClient();
-  const [domainId, setDomainId] = useState(dominioInicial || domains[0]?.id || '');
+  const [domainId, setDomainId] = useState(() => dominioInicialDisponible(domains, dominioInicial, motivoBloqueo));
   const [texto, setTexto] = useState('');
   const [revision, setRevision] = useState<BulkPreview | null>(null);
   const [error, setError] = useState('');
@@ -78,10 +89,14 @@ export function AltaMasiva({
         entries: enviadas.map((l) => ({ localPart: l.localPart, displayName: l.displayName })),
       }),
     onSuccess: (data) => {
-      setRevision({ ...data, results: [...data.results, ...rechazadas] });
+      // «Fuera de rango primero»: las líneas que no se crearán encabezan la revisión.
+      setRevision({ ...data, results: ordenarPorVeredicto([...data.results, ...rechazadas]) });
       setError('');
     },
-    onError: (err) => setError(mensajeDe(err, 'No se ha podido revisar la lista.')),
+    onError: (err) => {
+      if (esPropiedadPendiente(err)) void queryClient.invalidateQueries({ queryKey: ['domains'] });
+      setError(mensajeDe(err, 'No se ha podido revisar la lista.'));
+    },
   });
 
   const crear = useMutation({
@@ -102,24 +117,34 @@ export function AltaMasiva({
         queryClient.invalidateQueries({ queryKey: ['mailboxes'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
     },
     onError: (err) => setError(mensajeDe(err, 'No se han podido crear los buzones.')),
   });
 
   const titulo = resultado ? 'Buzones creados' : revision ? 'Revisar el alta masiva' : 'Alta masiva de buzones';
+  const conCredenciales = Boolean(resultado?.respuesta.results.some((r) => r.ok && r.password));
+
+  // Cerrar con credenciales sin confirmar no las pierde (la página conserva el
+  // resultado y ofrece volver a verlas), así que no se pregunta; pero la
+  // confirmación va fija al pie para que en el móvil no quede tras la lista.
+  const pie = resultado ? (
+    <Button
+      variant="tinta"
+      onClick={() => {
+        onResultado(null);
+        onClose();
+      }}
+    >
+      {conCredenciales ? 'He guardado las credenciales' : 'Cerrar'}
+    </Button>
+  ) : undefined;
 
   return (
-    <Dialogo open={open} onClose={onClose} title={titulo}>
+    <Dialogo open={open} onClose={onClose} title={titulo} pie={pie}>
       {resultado ? (
-        <Resultado
-          dominio={resultado.dominio}
-          respuesta={resultado.respuesta}
-          onHecho={() => {
-            onResultado(null);
-            onClose();
-          }}
-        />
+        <Resultado dominio={resultado.dominio} respuesta={resultado.respuesta} />
       ) : revision ? (
         <div className="flex flex-col gap-4">
           <Escala
@@ -127,7 +152,21 @@ export function AltaMasiva({
             usado={revision.capacity.used + revision.valid}
             maximo={revision.capacity.max}
           />
-          {revision.exceedsPlan && (
+          {revision.ownershipPending && (
+            <BandaError>
+              {revision.ownershipError ||
+                'Falta comprobar la propiedad del dominio: no se creará ningún buzón hasta completarla.'}{' '}
+              {dominio && (
+                <Link
+                  to={`/dominios/${dominio.id}`}
+                  className="underline underline-offset-2 hover:text-tinta"
+                >
+                  Abrir la ficha del dominio
+                </Link>
+              )}
+            </BandaError>
+          )}
+          {revision.exceedsPlan && !revision.ownershipPending && (
             <BandaError>
               El plan permite crear {revision.capacity.remaining} buzones más y la lista contiene{' '}
               {revision.valid} válidos. Reduzca la lista o amplíe el plan del cliente; no se creará ninguno
@@ -166,9 +205,14 @@ export function AltaMasiva({
         </div>
       ) : (
         <form
+          noValidate
           className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!domainId) {
+              setError('Seleccione un dominio que admita buzones.');
+              return;
+            }
             if (lineas.length === 0) {
               setError('Escriba al menos una dirección.');
               return;
@@ -184,19 +228,26 @@ export function AltaMasiva({
             revisar.mutate();
           }}
         >
-          <Select label="Dominio" required value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-            {domains.map((d) => (
-              <option key={d.id} value={d.id}>
-                {etiquetaDominio(d)}
-              </option>
-            ))}
-          </Select>
+          <SelectorDominio
+            domains={domains}
+            value={domainId}
+            onChange={(id) => {
+              setError('');
+              setDomainId(id);
+            }}
+            etiquetaDominio={etiquetaDominio}
+            motivoBloqueo={motivoBloqueo}
+            uso="buzones"
+          />
           <Textarea
             label="Direcciones, una por línea"
             rows={8}
             className="valor text-sm"
             value={texto}
-            onChange={(e) => setTexto(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setTexto(e.target.value);
+            }}
             placeholder={'ana\nluis, Luis Martín\nsoporte, Atención al cliente'}
             help={`Escriba el nombre del buzón o «nombre, Nombre visible». También se admite la dirección completa y lo pegado desde una hoja de cálculo. Máximo ${MAX_LOTE} por lote.`}
           />
@@ -241,7 +292,12 @@ export function AltaMasiva({
   );
 }
 
-function Resultado({ dominio, respuesta, onHecho }: { dominio: string; respuesta: BulkResponse; onHecho: () => void }) {
+/** Las líneas que no se crearán, primero; después, las válidas en su orden. */
+function ordenarPorVeredicto<T extends { ok: boolean }>(filas: T[]): T[] {
+  return [...filas.filter((f) => !f.ok), ...filas.filter((f) => f.ok)];
+}
+
+function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkResponse }) {
   const creados = respuesta.results.filter((r) => r.ok && r.password);
   const fallidos = respuesta.results.filter((r) => !r.ok);
   const filas = creados.map((r) => ({ email: r.email, displayName: r.displayName, password: r.password! }));
@@ -261,7 +317,7 @@ function Resultado({ dominio, respuesta, onHecho }: { dominio: string; respuesta
           </BandaAviso>
           <div className="flex flex-wrap gap-2">
             <Button
-              variant="tinta"
+              variant="perfil"
               onClick={() =>
                 descargarTexto(
                   `credenciales-${dominio || 'buzones'}-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -302,11 +358,6 @@ function Resultado({ dominio, respuesta, onHecho }: { dominio: string; respuesta
           ))}
         </div>
       )}
-      <Botonera>
-        <Button variant={creados.length > 0 ? 'perfil' : 'tinta'} onClick={onHecho}>
-          {creados.length > 0 ? 'He guardado las credenciales' : 'Cerrar'}
-        </Button>
-      </Botonera>
     </div>
   );
 }

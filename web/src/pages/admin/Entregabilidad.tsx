@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ServerHealth } from '../../lib/api';
 import { formatDate } from '../../lib/format';
+import { medicionCompleta, TEXTO_MEDICION_INCOMPLETA } from '../../lib/entregabilidad';
 import { Button, estiloBoton } from '../../ui/Button';
 import {
   AvisoError,
@@ -82,7 +83,7 @@ export default function Entregabilidad() {
       <>
         {membrete}
         <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
-          No se pudo ejecutar la comprobación de entregabilidad. Vuelva a intentarlo en unos
+          No se ha podido ejecutar la comprobación de entregabilidad. Vuelva a intentarlo en unos
           segundos.
         </AvisoError>
       </>
@@ -90,8 +91,16 @@ export default function Entregabilidad() {
   }
 
   const data = health.data;
-  const veredictoGlobal: Veredicto =
-    data.score >= 80 ? 'normal' : data.score >= 50 ? 'vigilar' : 'fuera';
+  // Con el PTR, el registro A o alguna lista sin respuesta, la puntuación se
+  // calcularía sobre datos que faltan: no se muestra ni se califica.
+  const completa = medicionCompleta(data);
+  const veredictoGlobal: Veredicto = !completa
+    ? 'sin-dato'
+    : data.score >= 80
+      ? 'normal'
+      : data.score >= 50
+        ? 'vigilar'
+        : 'fuera';
   const listas = [...data.dnsbl].sort(
     (a, b) => pesoVeredicto[estadoLista[a.status]] - pesoVeredicto[estadoLista[b.status]],
   );
@@ -111,7 +120,7 @@ export default function Entregabilidad() {
           onRetry={() => void health.refetch()}
           retrying={health.isFetching}
         >
-          La nueva medición falló. Se muestran los resultados de las{' '}
+          No se ha podido completar la nueva medición. Se muestran los resultados de las{' '}
           {formatDate(data.checkedAt || health.dataUpdatedAt)}.
         </AvisoError>
       )}
@@ -126,17 +135,21 @@ export default function Entregabilidad() {
                   ? 'text-normal'
                   : veredictoGlobal === 'vigilar'
                     ? 'text-vigilar'
-                    : 'text-fuera'
+                    : veredictoGlobal === 'fuera'
+                      ? 'text-fuera'
+                      : 'text-tinta-3'
               }`}
             >
-              {data.score}
+              {completa ? data.score : '—'}
             </span>
             <div className="min-w-0 pb-0.5">
               <p className="rotulo">Puntuación · referencia ≥ 80</p>
               <p className="text-base text-tinta-2">
-                {data.score >= 80
-                  ? 'Buena posición para entregar en Gmail y Outlook.'
-                  : 'Corrija lo que está fuera de rango antes de enviar en volumen.'}
+                {!completa
+                  ? TEXTO_MEDICION_INCOMPLETA
+                  : data.score >= 80
+                    ? 'Buena posición para entregar en Gmail y Outlook.'
+                    : 'Corrija lo que está fuera de rango antes de enviar en volumen.'}
               </p>
             </div>
           </div>
@@ -263,7 +276,12 @@ export default function Entregabilidad() {
         </div>
 
         <Hoja title="Plan de acción" meta="En orden de urgencia" flush>
-          {acciones.length === 0 ? (
+          {acciones.length === 0 && !completa ? (
+            <Vacio title="Comprobación incompleta">
+              No se ha podido consultar todo lo necesario para proponer un plan de acción. Vuelva a
+              medir en unos minutos.
+            </Vacio>
+          ) : acciones.length === 0 ? (
             <Vacio title="Sin acciones pendientes">
               No hay nada que corregir en la identidad del servidor.
             </Vacio>

@@ -5,7 +5,7 @@ import { formatDay } from '../../lib/format';
 import { formatBytes, formatQuota, mensajeDe, veredictoUso } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
-import { Dialogo, MarcaFondo, Muestra } from '../../ui/kit';
+import { Dialogo, MarcaFondo, Muestra, type ConfirmarCierre } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { ConectarBuzon } from '../ConectarBuzon';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from './comun';
@@ -22,6 +22,7 @@ export type VistaFicha =
   | 'eliminar';
 
 const titulos: Record<VistaFicha, string> = {
+  // El resumen lleva por título la dirección (ver abajo): orienta más que «Buzón».
   resumen: 'Buzón',
   credenciales: 'Credenciales del buzón',
   conectar: 'Conectar dispositivos',
@@ -61,20 +62,46 @@ export function FichaBuzon({
 }) {
   const [vista, setVista] = useState<VistaFicha>(vistaInicial);
   const [password, setPassword] = useState<string | undefined>(passwordInicial);
+  // Contraseña de aplicación recién creada y aún sin confirmar.
+  const [appPendiente, setAppPendiente] = useState(false);
 
   const volver = () => setVista('resumen');
+  // Mientras la contraseña recién generada no se confirme como guardada, la
+  // ficha no se cierra sin preguntar y «Volver» regresa a las credenciales.
+  const contrasenaPendiente = password !== undefined;
+  const confirmarCierre: ConfirmarCierre | null = contrasenaPendiente
+    ? { pregunta: '¿Ha guardado la contraseña?', detalle: 'No se podrá volver a ver.' }
+    : appPendiente && vista === 'aplicaciones'
+      ? { pregunta: '¿Ha introducido la contraseña de aplicación?', detalle: 'No se podrá volver a ver.' }
+      : null;
+  const titulo = vista === 'resumen' && mailbox ? mailbox.email : titulos[vista];
+
+  const pie =
+    mailbox && vista === 'credenciales' ? (
+      <Button
+        variant="tinta"
+        onClick={() => {
+          setPassword(undefined);
+          volver();
+        }}
+      >
+        {password ? 'Ya he guardado la contraseña' : 'Continuar'}
+      </Button>
+    ) : undefined;
 
   return (
-    <Dialogo open={mailbox !== null} onClose={onClose} title={titulos[vista]}>
+    <Dialogo open={mailbox !== null} onClose={onClose} title={titulo} confirmarCierre={confirmarCierre} pie={pie}>
       {mailbox && (
         <div className="flex flex-col gap-4">
           {vista !== 'resumen' && vista !== 'credenciales' && (
             <button
               type="button"
-              onClick={volver}
+              onClick={() => (contrasenaPendiente && vista === 'conectar' ? setVista('credenciales') : volver())}
               className="self-start text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta"
             >
-              Volver a la ficha de {mailbox.email}
+              {contrasenaPendiente && vista === 'conectar'
+                ? 'Volver a las credenciales'
+                : `Volver a la ficha de ${mailbox.email}`}
             </button>
           )}
 
@@ -82,14 +109,7 @@ export function FichaBuzon({
             <Resumen mailbox={mailbox} clienteSuspendido={clienteSuspendido} onVista={setVista} />
           )}
           {vista === 'credenciales' && (
-            <Credenciales
-              mailbox={mailbox}
-              password={password}
-              onHecho={() => {
-                setPassword(undefined);
-                volver();
-              }}
-            />
+            <Credenciales mailbox={mailbox} password={password} onConectar={() => setVista('conectar')} />
           )}
           {vista === 'conectar' && (
             <ConectarBuzon mailboxId={mailbox.id} email={mailbox.email} passwordRecienGenerada={password} />
@@ -105,7 +125,9 @@ export function FichaBuzon({
               onHecho={volver}
             />
           )}
-          {vista === 'aplicaciones' && <ContrasenasAplicacion mailboxId={mailbox.id} email={mailbox.email} />}
+          {vista === 'aplicaciones' && (
+            <ContrasenasAplicacion mailboxId={mailbox.id} email={mailbox.email} onPendiente={setAppPendiente} />
+          )}
           {vista === 'estado' && (
             <Estado mailbox={mailbox} clienteSuspendido={clienteSuspendido} onHecho={volver} />
           )}
@@ -163,7 +185,7 @@ function Resumen({
       </div>
       {veredicto === 'fuera' && (
         <BandaError>
-          El buzón ha alcanzado su cuota y deja de recibir correo. Amplíe la cuota o pida al titular que
+          El buzón ha alcanzado su cuota y deja de recibir correo. Amplíe la cuota o solicite al titular que
           libere espacio.
         </BandaError>
       )}
@@ -238,14 +260,20 @@ function Accion({
 
 /* ------------------------------ Credenciales ------------------------------ */
 
+/**
+ * Credenciales recién generadas: lo primero son las muestras y, fija al pie
+ * del diálogo, la confirmación de que se han guardado. Conectar dispositivos
+ * es una vista aparte: incrustada aquí empujaba la confirmación a tres
+ * pantallas de distancia en el móvil y el gesto natural era cerrar con el aspa.
+ */
 function Credenciales({
   mailbox,
   password,
-  onHecho,
+  onConectar,
 }: {
   mailbox: Mailbox;
   password?: string;
-  onHecho: () => void;
+  onConectar: () => void;
 }) {
   return (
     <>
@@ -267,15 +295,16 @@ function Credenciales({
           El buzón <span className="valor break-all">{mailbox.email}</span> está listo.
         </p>
       )}
-      <div className="border-t border-regla pt-4">
-        <p className="rotulo mb-2">Conectar dispositivos</p>
-        <ConectarBuzon mailboxId={mailbox.id} email={mailbox.email} passwordRecienGenerada={password} />
-      </div>
-      <Botonera>
-        <Button variant="tinta" onClick={onHecho}>
-          {password ? 'Ya he guardado la contraseña' : 'Continuar'}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla pt-4">
+        <p className="min-w-0 flex-1 basis-56 text-sm text-tinta-2">
+          {password
+            ? 'Para que el titular configure el móvil o el ordenador sin escribir la contraseña, cree un enlace de configuración que la incluya.'
+            : 'Datos de conexión, perfiles de configuración y enlace para el titular.'}
+        </p>
+        <Button variant="perfil" onClick={onConectar}>
+          {password ? 'Crear enlace de configuración' : 'Conectar dispositivos'}
         </Button>
-      </Botonera>
+      </div>
     </>
   );
 }
@@ -290,7 +319,7 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
   const [error, setError] = useState('');
 
   const quotaMb = Number(quota);
-  const quotaValida = Number.isInteger(quotaMb) && quotaMb >= 64;
+  const quotaValida = quota.trim() !== '' && Number.isInteger(quotaMb) && quotaMb >= 64;
   const excedePlan = planQuotaMb !== undefined && quotaValida && quotaMb > planQuotaMb;
   const bajoUso =
     quotaValida && mailbox.usedBytes !== null && mailbox.usedBytes > quotaMb * 1024 * 1024;
@@ -320,16 +349,26 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
       setError('La cuota debe ser un número entero de MB, como mínimo 64.');
       return;
     }
+    if (excedePlan) {
+      setError(`La cuota supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indique un valor igual o inferior.`);
+      return;
+    }
+    setError('');
     save.mutate();
   }
 
+  // Sin validación nativa: el globo del navegador (en su idioma) tapaba los
+  // mensajes del panel y bloqueaba el envío sin explicar por qué.
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
       <Input
         label="Nombre visible"
         maxLength={80}
         value={displayName}
-        onChange={(e) => setDisplayName(e.target.value)}
+        onChange={(e) => {
+          setError('');
+          setDisplayName(e.target.value);
+        }}
         placeholder="Equipo de soporte"
         help="Es el nombre que ven los destinatarios junto a la dirección."
       />
@@ -337,18 +376,23 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
         label="Cuota (MB)"
         type="number"
         inputMode="numeric"
-        min={64}
-        max={planQuotaMb}
         step={1}
         mono
         value={quota}
-        onChange={(e) => setQuota(e.target.value)}
+        onChange={(e) => {
+          setError('');
+          setQuota(e.target.value);
+        }}
         help={
           planQuotaMb !== undefined
             ? `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}. Máximo del plan: ${formatQuota(planQuotaMb)} (${planQuotaMb} MB).`
             : `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}.`
         }
-        error={excedePlan ? `Supera el máximo del plan; se guardará ${formatQuota(planQuotaMb!)}.` : undefined}
+        error={
+          excedePlan
+            ? `Supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indique un valor igual o inferior.`
+            : undefined
+        }
       />
       {bajoUso && (
         <BandaAviso>
@@ -381,6 +425,7 @@ function Restablecer({
   onHecho: () => void;
 }) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [modo, setModo] = useState<'generar' | 'propia'>('generar');
   const [propia, setPropia] = useState('');
   const [repetida, setRepetida] = useState('');
@@ -392,6 +437,9 @@ function Restablecer({
         password: modo === 'propia' ? propia : undefined,
       }),
     onSuccess: (data) => {
+      // El servidor retira la contraseña anterior de los enlaces de
+      // configuración: la lista de enlaces ya no debe decir «Con contraseña».
+      void queryClient.invalidateQueries({ queryKey: ['setup-links', mailbox.id] });
       if (data.password) {
         onGenerada(data.password);
       } else {
@@ -419,7 +467,7 @@ function Restablecer({
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
       <BandaAviso>
         Al restablecer la contraseña, los programas y dispositivos configurados con la actual (correo del
         móvil, Outlook, Thunderbird) dejarán de conectarse hasta que se introduzca la nueva. Las contraseñas
@@ -430,14 +478,20 @@ function Restablecer({
         <Opcion
           name={`modo-${mailbox.id}`}
           checked={modo === 'generar'}
-          onChange={() => setModo('generar')}
+          onChange={() => {
+            setError('');
+            setModo('generar');
+          }}
           label="Generar una contraseña segura"
           help="Se mostrará una sola vez al terminar."
         />
         <Opcion
           name={`modo-${mailbox.id}`}
           checked={modo === 'propia'}
-          onChange={() => setModo('propia')}
+          onChange={() => {
+            setError('');
+            setModo('propia');
+          }}
           label="Escribir una contraseña"
           help="Mínimo 10 caracteres."
         />
@@ -448,19 +502,21 @@ function Restablecer({
             label="Contraseña"
             type="password"
             autoComplete="new-password"
-            minLength={10}
-            required
             value={propia}
-            onChange={(e) => setPropia(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setPropia(e.target.value);
+            }}
           />
           <Input
             label="Repetir contraseña"
             type="password"
             autoComplete="new-password"
-            minLength={10}
-            required
             value={repetida}
-            onChange={(e) => setRepetida(e.target.value)}
+            onChange={(e) => {
+              setError('');
+              setRepetida(e.target.value);
+            }}
           />
         </div>
       )}
@@ -570,6 +626,7 @@ function Eliminar({
         queryClient.invalidateQueries({ queryKey: ['aliases'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       toast('ok', `Buzón ${mailbox.email} eliminado.`);
       onHecho();
@@ -606,7 +663,10 @@ function Eliminar({
         mono
         autoComplete="off"
         value={confirmacion}
-        onChange={(e) => setConfirmacion(e.target.value)}
+        onChange={(e) => {
+          setError('');
+          setConfirmacion(e.target.value);
+        }}
         placeholder={mailbox.email}
       />
       {error && <BandaError>{error}</BandaError>}

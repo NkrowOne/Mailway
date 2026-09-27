@@ -7,8 +7,10 @@ import { HojaTokens } from '../components/conexiones/HojaTokens';
  * gestión para Skyway, scripts o agentes. Cada hoja es autónoma.
  */
 export default function Conexiones({ isAdmin }: { isAdmin: boolean }) {
+  // El membrete ya trae su separación inferior: dentro del contenedor con
+  // «gap» sumaba el doble de mesa que en el resto de vistas.
   return (
-    <div className="flex flex-col gap-6">
+    <>
       <Membrete
         title="Conexiones"
         meta={
@@ -17,8 +19,10 @@ export default function Conexiones({ isAdmin }: { isAdmin: boolean }) {
             : 'Cloudflare para configurar el DNS de sus dominios sin copiar registros, y tokens para automatizar la gestión.'
         }
       />
-      <HojaCloudflare isAdmin={isAdmin} />
-      <HojaTokens isAdmin={isAdmin} />
-    </div>
+      <div className="flex flex-col gap-4">
+        <HojaCloudflare isAdmin={isAdmin} />
+        <HojaTokens isAdmin={isAdmin} />
+      </div>
+    </>
   );
 }

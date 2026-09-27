@@ -17,8 +17,17 @@ import { Input, Select } from '../ui/Field';
 import { Hoja, Marca, Membrete, Midiendo, Muestra } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
-/** Campos del estado que añadió el instalador (token y motor del entorno). */
-type EstadoPuesta = SetupStatus & { requiresSetupToken?: boolean; engineFromEnv?: boolean };
+/**
+ * Valores por defecto del motor si el estado no los trae: con la instalación
+ * ya terminada y sin sesión, el servidor solo devuelve lo imprescindible.
+ */
+const MOTOR_POR_DEFECTO = {
+  url: '',
+  adminUser: '',
+  hasPassword: false,
+  smtpHost: '',
+  smtpPort: 587,
+};
 
 interface ResultadoRecomendados {
   applied: boolean;
@@ -39,7 +48,8 @@ interface ResultadoRecomendados {
  * entorno se conecta solo, y la identidad llega prerrellenada.
  */
 export default function Setup({ status, user }: { status: SetupStatus; user: User | null }) {
-  const estado = status as EstadoPuesta;
+  const estado = status;
+  const motorPorDefecto = status.engineDefaults ?? MOTOR_POR_DEFECTO;
   const queryClient = useQueryClient();
   const toast = useToast();
   const initialStep = !status.hasAdmin || !user ? 0 : !status.engineConfigured ? 1 : 2;
@@ -59,18 +69,18 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
   // Paso 2: motor
   const motorDelEntorno = Boolean(estado.engineFromEnv) && !status.demoMode;
   const [engineKind, setEngineKind] = useState<'stalwart' | 'demo'>(status.demoMode ? 'demo' : 'stalwart');
-  const [engineUrl, setEngineUrl] = useState(status.engineDefaults.url || 'http://mailway-mail:8080');
-  const [engineUser, setEngineUser] = useState(status.engineDefaults.adminUser || 'admin');
+  const [engineUrl, setEngineUrl] = useState(motorPorDefecto.url || 'http://mailway-mail:8080');
+  const [engineUser, setEngineUser] = useState(motorPorDefecto.adminUser || 'admin');
   const [enginePassword, setEnginePassword] = useState('');
-  const [smtpHost, setSmtpHost] = useState(status.engineDefaults.smtpHost || 'mailway-mail');
-  const [smtpPort, setSmtpPort] = useState(String(status.engineDefaults.smtpPort || 587));
+  const [smtpHost, setSmtpHost] = useState(motorPorDefecto.smtpHost || 'mailway-mail');
+  const [smtpPort, setSmtpPort] = useState(String(motorPorDefecto.smtpPort || 587));
   const [formularioManual, setFormularioManual] = useState(!motorDelEntorno);
 
   // Paso 3: identidad, con propuestas deducidas de la dirección del panel.
   const sugerencias = sugerir(status);
   const [brandName, setBrandName] = useState(status.instance.brandName);
   const [mailHostname, setMailHostname] = useState(sugerencias.mailHostname);
-  const [publicIp, setPublicIp] = useState(status.instance.publicIp);
+  const [publicIp, setPublicIp] = useState(status.instance.publicIp ?? '');
   const [panelUrl, setPanelUrl] = useState(sugerencias.panelUrl);
   const [webmailUrl, setWebmailUrl] = useState(sugerencias.webmailUrl);
   const [detectando, setDetectando] = useState(false);
@@ -81,7 +91,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo completar la operación. Vuelva a intentarlo.');
+      setError(err instanceof ApiError ? err.message : 'No se ha podido completar la operación. Vuelva a intentarlo.');
     } finally {
       setBusy(false);
     }
@@ -101,6 +111,24 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
   function submitAdmin(e: FormEvent) {
     e.preventDefault();
+    // Validación propia (el formulario es noValidate): el globo del navegador
+    // sale en su idioma y tapa los mensajes del asistente.
+    if (estado.requiresSetupToken && !setupToken.trim()) {
+      setError('Indique el token de puesta en marcha que mostró el instalador.');
+      return;
+    }
+    if (adminName.trim().length < 2) {
+      setError('El nombre debe tener al menos 2 caracteres.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail.trim())) {
+      setError('Indique un correo electrónico válido.');
+      return;
+    }
+    if (adminPassword.length < 10) {
+      setError('La contraseña debe tener al menos 10 caracteres.');
+      return;
+    }
     void run(async () => {
       await api.post('/api/setup/admin', {
         name: adminName,
@@ -161,10 +189,10 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
       if (ip) {
         setPublicIp(ip);
       } else {
-        toast('error', 'No se pudo detectar la IP automáticamente. Escríbala a mano.');
+        toast('error', 'No se ha podido detectar la IP automáticamente. Escríbala manualmente.');
       }
     } catch {
-      toast('error', 'No se pudo detectar la IP automáticamente. Escríbala a mano.');
+      toast('error', 'No se ha podido detectar la IP automáticamente. Escríbala manualmente.');
     } finally {
       setDetectando(false);
     }
@@ -273,7 +301,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
           <Hoja title={apartados[step]!.titulo}>
             {step === 0 && (
-              <form onSubmit={submitAdmin} className="flex flex-col gap-4">
+              <form onSubmit={submitAdmin} noValidate className="flex flex-col gap-4">
                 <p className="text-base text-tinta-2">
                   Esta cuenta controla toda la instancia: clientes, dominios y ajustes. No es la cuenta
                   del motor de correo.
@@ -334,9 +362,9 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                 {motorDelEntorno && (
                   <div className="flex flex-col gap-3">
                     <Muestra rotulo="Motor configurado en el servidor">
-                      <p className="valor break-all text-sm text-tinta">{status.engineDefaults.url}</p>
+                      <p className="valor break-all text-sm text-tinta">{motorPorDefecto.url}</p>
                       <p className="mt-1 text-sm text-tinta-3">
-                        Usuario {status.engineDefaults.adminUser || 'admin'}. La contraseña está en el
+                        Usuario {motorPorDefecto.adminUser || 'admin'}. La contraseña está en el
                         entorno del panel y no sale del servidor.
                       </p>
                     </Muestra>
@@ -346,7 +374,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                         texto={
                           conectarEntorno.error instanceof ApiError
                             ? conectarEntorno.error.message
-                            : 'No se pudo conectar con el motor configurado en el servidor.'
+                            : 'No se ha podido conectar con el motor configurado en el servidor.'
                         }
                       />
                     )}
@@ -359,7 +387,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                         </Button>
                         {!formularioManual && (
                           <Button variant="plano" onClick={() => setFormularioManual(true)}>
-                            Indicar los datos a mano
+                            Indicar los datos manualmente
                           </Button>
                         )}
                       </div>
@@ -368,7 +396,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                 )}
 
                 {formularioManual && (
-                  <form onSubmit={submitEngine} className="flex flex-col gap-4">
+                  <form onSubmit={submitEngine} noValidate className="flex flex-col gap-4">
                     {motorDelEntorno && <h3 className="rotulo">Datos del motor</h3>}
                     <Select
                       label="Motor"
@@ -446,7 +474,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
             )}
 
             {step === 2 && (
-              <form onSubmit={submitInstance} className="flex flex-col gap-4">
+              <form onSubmit={submitInstance} noValidate className="flex flex-col gap-4">
                 <p className="text-base text-tinta-2">
                   Estos datos alimentan las recomendaciones de DNS, la entregabilidad y los datos de
                   conexión de los buzones. Se pueden cambiar después en Ajustes.
@@ -534,12 +562,13 @@ function sugerir(status: SetupStatus): { mailHostname: string; panelUrl: string;
   } catch {
     base = '';
   }
-  if (!base && status.instance.mailHostname.startsWith('mail.')) {
-    base = status.instance.mailHostname.slice('mail.'.length);
+  const guardado = status.instance.mailHostname ?? '';
+  if (!base && guardado.startsWith('mail.')) {
+    base = guardado.slice('mail.'.length);
   }
   return {
     panelUrl,
-    mailHostname: status.instance.mailHostname || (base ? `mail.${base}` : ''),
+    mailHostname: guardado || (base ? `mail.${base}` : ''),
     webmailUrl: status.instance.webmailUrl || (base ? `https://webmail.${base}` : ''),
   };
 }
@@ -577,7 +606,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       else toast('ok', `Nombre del servidor ${res.hostname} aplicado en el motor.`);
       void queryClient.invalidateQueries({ queryKey: ['engine-status'] });
     },
-    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudieron aplicar los ajustes.'),
+    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se han podido aplicar los ajustes.'),
   });
 
   const filas: Fila[] = [];
@@ -620,7 +649,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
           r.status === 'ok'
             ? undefined
             : r.status === 'unknown'
-              ? 'No se pudo consultar el DNS desde el servidor.'
+              ? 'No se ha podido consultar el DNS desde el servidor.'
               : r.status === 'missing'
                 ? `${textoDns[r.status]}: cree un registro A hacia ${r.expected ?? 'la IP del servidor'}.`
                 : `${textoDns[r.status]}: apunta a ${(r.found ?? []).join(', ')} en lugar de ${r.expected}.`,
@@ -666,7 +695,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       )}
 
       {fallo && (
-        <BandaError texto="Parte de la comprobación no se pudo completar. Puede repetirla o continuar y revisarla en Ajustes." />
+        <BandaError texto="Parte de la comprobación no se ha podido completar. Puede repetirla o continuar y revisarla en Ajustes." />
       )}
 
       {!cargando && (

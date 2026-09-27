@@ -148,6 +148,14 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
                 </option>
               ))}
             </Select>
+            {!passwordRecienGenerada && (
+              // La contraseña no se guarda en claro: solo se puede incluir la
+              // que se acaba de generar. Se dice, en lugar de ocultar la opción.
+              <p className="text-sm text-tinta-3">
+                Para incluir la contraseña en el enlace, restablézcala desde la ficha del buzón: solo se puede
+                incluir justo después de generarla.
+              </p>
+            )}
             {passwordRecienGenerada && (
               <label className="flex items-start gap-2.5 text-base text-tinta">
                 <input
@@ -234,7 +242,12 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
                       Creado el <span className="valor text-sm">{formatDate(enlace.createdAt)}</span>
                     </p>
                     <p className="text-sm text-tinta-3">
-                      {estado === 'activo' ? 'Caduca' : 'Caducaba'} el {formatDate(enlace.expiresAt)} ·{' '}
+                      {estado === 'activo'
+                        ? `Caduca el ${formatDate(enlace.expiresAt)}`
+                        : estado === 'revocado'
+                          ? `Revocado el ${formatDate(enlace.revokedAt)}`
+                          : `Caducó el ${formatDate(enlace.expiresAt)}`}{' '}
+                      ·{' '}
                       {enlace.lastOpenedAt ? `Abierto el ${formatDate(enlace.lastOpenedAt)}` : 'Sin abrir'}
                       {enlace.hasPassword && ' · Con contraseña'}
                     </p>

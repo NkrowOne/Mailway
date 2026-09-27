@@ -224,20 +224,29 @@ export function CabeceraMedidas({
 /**
  * Medición con escala: uso frente al límite del plan. La marca de referencia
  * al 80 % avisa antes de agotarlo, como el límite superior de un rango.
+ *
+ * Alcanzar el cupo del plan no es un fallo (un plan de 1 dominio con 1
+ * dominio está bien): se vigila, y fuera de rango queda para lo que lo
+ * supera. Donde llegar al límite sí rechaza algo (los envíos diarios de una
+ * clave), `limiteEsFuera` lo califica como fuera de rango.
  */
 export function Escala({
   label,
   usado,
   maximo,
   unidad = '',
+  limiteEsFuera = false,
 }: {
   label: string;
   usado: number;
   maximo: number;
   unidad?: string;
+  limiteEsFuera?: boolean;
 }) {
   const ratio = maximo > 0 ? Math.min(1, usado / maximo) : 0;
-  const veredicto: Veredicto = ratio >= 1 ? 'fuera' : ratio >= 0.8 ? 'vigilar' : 'normal';
+  const bruto = maximo > 0 ? usado / maximo : 0;
+  const veredicto: Veredicto =
+    bruto > 1 || (limiteEsFuera && bruto >= 1) ? 'fuera' : bruto >= 0.8 ? 'vigilar' : 'normal';
   const relleno = { normal: 'bg-normal', vigilar: 'bg-vigilar', fuera: 'bg-fuera', 'sin-dato': 'bg-tinta-3' }[
     veredicto
   ];
@@ -438,7 +447,7 @@ export function BotonCopiar({
             </>
           )}
         </svg>
-        {estado === 'copiado' ? 'Copiado' : estado === 'fallo' ? 'No se pudo copiar' : label}
+        {estado === 'copiado' ? 'Copiado' : estado === 'fallo' ? 'No se ha podido copiar' : label}
       </button>
       {/* El cambio de rótulo de un botón no siempre se anuncia: la región sí. */}
       <span className="sr-only" role="status">
@@ -446,8 +455,8 @@ export function BotonCopiar({
           ? 'Copiado al portapapeles.'
           : estado === 'fallo'
             ? seleccionado
-              ? 'No se pudo copiar. El texto queda seleccionado: pulse Ctrl+C para copiarlo.'
-              : 'No se pudo copiar. Seleccione el texto y cópielo manualmente.'
+              ? 'No se ha podido copiar. El texto queda seleccionado: pulse Ctrl+C para copiarlo.'
+              : 'No se ha podido copiar. Seleccione el texto y cópielo manualmente.'
             : ''}
       </span>
     </>
@@ -481,27 +490,66 @@ export function useBloqueoDesplazamiento(activo: boolean): void {
 const CAMPOS_ENFOCABLES =
   'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])';
 
+/**
+ * Pregunta que se hace antes de cerrar un diálogo que muestra un secreto de
+ * una sola vez (contraseña, clave, token): cerrar sin haberlo guardado obliga
+ * a generar otro.
+ */
+export interface ConfirmarCierre {
+  /** «¿Ha guardado la contraseña?» */
+  pregunta: string;
+  /** «No se podrá volver a ver.» */
+  detalle: string;
+}
+
+/**
+ * showModal enfoca el primer elemento enfocable, que es el aspa de cerrar: se
+ * prefiere el campo marcado, el primer campo o el cuerpo para que se lea.
+ */
+function enfocarContenido(dialog: HTMLDialogElement, cuerpo: HTMLElement | null) {
+  const destino =
+    dialog.querySelector<HTMLElement>('[data-autofocus]') ??
+    cuerpo?.querySelector<HTMLElement>(CAMPOS_ENFOCABLES) ??
+    cuerpo;
+  destino?.focus({ preventScroll: true });
+}
+
 export function Dialogo({
   open,
   onClose,
   title,
   children,
+  pie,
+  confirmarCierre,
   ancho = 'normal',
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /**
+   * Botonera fija al pie del diálogo: en el móvil, con un contenido largo, la
+   * acción de cierre sigue a la vista sin desplazarse hasta el final.
+   */
+  pie?: ReactNode;
+  /**
+   * Si se indica, Escape y el aspa piden confirmación y el clic en el velo se
+   * ignora: el diálogo contiene un secreto que no se podrá volver a ver.
+   */
+  confirmarCierre?: ConfirmarCierre | null;
   /** `amplio` (720 px) para instrucciones largas o listas con varias columnas. */
   ancho?: 'normal' | 'amplio';
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const cuerpoRef = useRef<HTMLDivElement>(null);
+  const volverRef = useRef<HTMLButtonElement>(null);
   const tituloId = useId();
+  const [confirmando, setConfirmando] = useState(false);
   // Estado vivo para los manejadores nativos: el evento `close` llega después
   // del render y no debe leer un `open` o un `onClose` antiguos.
   const abiertoRef = useRef(open);
   const onCloseRef = useRef(onClose);
+  const protegidoRef = useRef(Boolean(confirmarCierre));
   const pulsadoEnVelo = useRef(false);
   // El `close` que provoca el propio efecto (el padre ya cerró, o React
   // desmonta/remonta en modo estricto) no es una petición de cierre del usuario.
@@ -510,23 +558,29 @@ export function Dialogo({
   useEffect(() => {
     abiertoRef.current = open;
     onCloseRef.current = onClose;
+    protegidoRef.current = Boolean(confirmarCierre);
   });
 
+  // Sin secreto pendiente no hay nada que confirmar.
+  const confirmacionVisible = confirmando && Boolean(confirmarCierre) && open;
+
   useBloqueoDesplazamiento(open);
+
+  /** Escape o aspa: cierra, o pregunta antes si hay un secreto sin guardar. */
+  function pedirCierre() {
+    if (protegidoRef.current) setConfirmando(true);
+    else onCloseRef.current();
+  }
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog || !open) return;
     const previo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!dialog.open) dialog.showModal();
-    // showModal enfoca el primer elemento enfocable, que es el aspa de cerrar:
-    // se prefiere el primer campo, o el cuerpo para que se lea el contenido.
-    const destino =
-      dialog.querySelector<HTMLElement>('[data-autofocus]') ??
-      cuerpoRef.current?.querySelector<HTMLElement>(CAMPOS_ENFOCABLES) ??
-      cuerpoRef.current;
-    destino?.focus({ preventScroll: true });
+    enfocarContenido(dialog, cuerpoRef.current);
     return () => {
+      // Al reabrir se empieza siempre por el contenido, no por la pregunta.
+      setConfirmando(false);
       if (dialog.open) {
         cierreInterno.current = true;
         dialog.close();
@@ -537,6 +591,21 @@ export function Dialogo({
     };
   }, [open]);
 
+  // Cambio de vista dentro del mismo diálogo (del formulario al resultado, de
+  // la ficha a una acción): el foco se quedaba en el <body> y el lector de
+  // pantalla no anunciaba nada. Se vuelve a colocar al principio del contenido.
+  const tituloPrevio = useRef(title);
+  useEffect(() => {
+    if (tituloPrevio.current === title) return;
+    tituloPrevio.current = title;
+    const dialog = ref.current;
+    if (dialog?.open) enfocarContenido(dialog, cuerpoRef.current);
+  }, [title]);
+
+  useEffect(() => {
+    if (confirmacionVisible) volverRef.current?.focus({ preventScroll: true });
+  }, [confirmacionVisible]);
+
   return (
     <dialog
       ref={ref}
@@ -545,14 +614,25 @@ export function Dialogo({
         // Escape: decide el padre (cambia su estado) y el efecto cierra el
         // <dialog>. Si el navegador ignora el preventDefault, onClose lo cubre.
         e.preventDefault();
-        onCloseRef.current();
+        if (confirmacionVisible) setConfirmando(false);
+        else pedirCierre();
       }}
       onClose={() => {
         if (cierreInterno.current) {
           cierreInterno.current = false;
           return;
         }
-        if (abiertoRef.current) onCloseRef.current();
+        if (!abiertoRef.current) return;
+        // Chrome cierra el diálogo aunque se cancele el Escape si se repite
+        // sin interacción entre medias. Con un secreto pendiente se vuelve a
+        // abrir y se pregunta, en lugar de perderlo.
+        if (protegidoRef.current) {
+          const dialog = ref.current;
+          if (dialog && !dialog.open) dialog.showModal();
+          setConfirmando(true);
+          return;
+        }
+        onCloseRef.current();
       }}
       onMouseDown={(e) => {
         pulsadoEnVelo.current = e.target === ref.current;
@@ -560,7 +640,11 @@ export function Dialogo({
       onClick={(e) => {
         // Solo cierra un clic que empieza y acaba en el velo: arrastrar una
         // selección desde un campo hasta fuera no debe perder el formulario.
-        if (e.target === ref.current && pulsadoEnVelo.current) onCloseRef.current();
+        // Con un secreto pendiente el velo no cierra: un toque accidental en
+        // el móvil lo perdería.
+        if (e.target === ref.current && pulsadoEnVelo.current && !protegidoRef.current) {
+          onCloseRef.current();
+        }
         pulsadoEnVelo.current = false;
       }}
       className={`${ancho === 'amplio' ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(520px,calc(100vw-32px))]'}
@@ -576,7 +660,7 @@ export function Dialogo({
         </h2>
         <button
           type="button"
-          onClick={() => onCloseRef.current()}
+          onClick={pedirCierre}
           aria-label="Cerrar"
           className="flex h-7 w-7 shrink-0 items-center justify-center text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
         >
@@ -585,9 +669,59 @@ export function Dialogo({
           </svg>
         </button>
       </div>
-      <div ref={cuerpoRef} tabIndex={-1} className="p-5 focus-visible:outline-none">
+      {confirmacionVisible && confirmarCierre && (
+        <div
+          role="alertdialog"
+          aria-labelledby={`${tituloId}-pregunta`}
+          aria-describedby={`${tituloId}-detalle`}
+          className="flex flex-col gap-4 p-5"
+        >
+          <div className="border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
+            <p id={`${tituloId}-pregunta`} className="text-base font-semibold text-tinta">
+              {confirmarCierre.pregunta}
+            </p>
+            <p id={`${tituloId}-detalle`} className="mt-0.5 text-base text-tinta-2">
+              {confirmarCierre.detalle}
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="peligro"
+              onClick={() => {
+                setConfirmando(false);
+                onCloseRef.current();
+              }}
+            >
+              Cerrar sin guardar
+            </Button>
+            <Button
+              ref={volverRef}
+              variant="tinta"
+              onClick={() => {
+                setConfirmando(false);
+                if (ref.current) enfocarContenido(ref.current, cuerpoRef.current);
+              }}
+            >
+              Volver
+            </Button>
+          </div>
+        </div>
+      )}
+      {/* El contenido sigue montado mientras se pregunta: al volver, el
+          secreto y el estado de la vista están donde estaban. */}
+      <div
+        ref={cuerpoRef}
+        tabIndex={-1}
+        hidden={confirmacionVisible}
+        className="p-5 focus-visible:outline-none"
+      >
         {children}
       </div>
+      {pie && !confirmacionVisible && (
+        <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-regla bg-hoja px-5 py-3">
+          {pie}
+        </div>
+      )}
     </dialog>
   );
 }

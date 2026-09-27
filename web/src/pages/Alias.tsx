@@ -3,13 +3,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alias as AliasType, type DomainRecord, type Mailbox } from '../lib/api';
 import { plural } from '../lib/format';
-import { esCorreoValido, mensajeDe } from '../lib/gestion';
+import { errorNombreBuzon, esCorreoValido, mensajeDe } from '../lib/gestion';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import { Dialogo, Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
-import { BandaAviso, BandaError, Botonera, Casilla } from '../components/gestion/comun';
-import { useClientes, useUsuario } from '../components/gestion/consultas';
+import {
+  BandaAviso,
+  BandaError,
+  Botonera,
+  Casilla,
+  dominioInicialDisponible,
+  SelectorDominio,
+  type MotivoBloqueoDominio,
+} from '../components/gestion/comun';
+import { useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
+import { esPropiedadPendiente } from '../lib/dominios';
 
 const MAX_DESTINOS = 20;
 
@@ -52,6 +61,7 @@ export default function Alias() {
         queryClient.invalidateQueries({ queryKey: ['aliases'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       setToDelete(null);
       toast('ok', 'Alias eliminado.');
@@ -123,7 +133,7 @@ export default function Alias() {
 
       {cargando ? (
         <Hoja flush>
-          <Midiendo label="Midiendo alias…" />
+          <Midiendo label="Cargando los alias…" />
         </Hoja>
       ) : error ? (
         <BandaError
@@ -267,12 +277,14 @@ export default function Alias() {
           key={editor.modo === 'editar' ? editor.alias.id : 'nuevo'}
           editor={editor}
           domains={filtroCliente ? domainList.filter((d) => d.clientId === filtroCliente) : domainList}
+          todosLosDominios={domainList}
           mailboxes={mailboxes.data?.mailboxes ?? []}
           mailboxesError={mailboxes.isError}
           etiquetaDominio={(d) => {
             const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
             return cliente ? `${d.domain} · ${cliente}` : d.domain;
           }}
+          motivoBloqueo={(d) => bloqueoAlias(clientes.get(d.clientId))}
           onClose={() => setEditor(null)}
         />
       )}
@@ -299,27 +311,42 @@ export default function Alias() {
   );
 }
 
+/** Motivo por el que un cliente no admite alias nuevos, o null. */
+function bloqueoAlias(cliente: FichaCliente | undefined): string | null {
+  if (!cliente) return null;
+  if (cliente.suspended) return 'Cliente suspendido';
+  if (cliente.usage.aliases >= cliente.plan.maxAliases) return 'Límite de alias del plan alcanzado';
+  return null;
+}
+
 /* -------------------------- Crear / editar alias -------------------------- */
 
 function FormularioAlias({
   editor,
   domains,
+  todosLosDominios,
   mailboxes,
   mailboxesError,
   etiquetaDominio,
+  motivoBloqueo,
   onClose,
 }: {
   editor: Editor;
   domains: DomainRecord[];
+  /** Todos los dominios visibles (también de otros clientes), para reconocer destinos internos. */
+  todosLosDominios: DomainRecord[];
   mailboxes: Mailbox[];
   mailboxesError: boolean;
   etiquetaDominio: (d: DomainRecord) => string;
+  motivoBloqueo: MotivoBloqueoDominio;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const editando = editor.modo === 'editar' ? editor.alias : null;
-  const [domainId, setDomainId] = useState(editando?.domainId ?? domains[0]?.id ?? '');
+  const [domainId, setDomainId] = useState(
+    () => editando?.domainId ?? dominioInicialDisponible(domains, undefined, motivoBloqueo),
+  );
   const [localPart, setLocalPart] = useState('');
   const [error, setError] = useState('');
   const [buscar, setBuscar] = useState('');
@@ -341,7 +368,8 @@ function FormularioAlias({
     ? candidatos.filter((m) => m.email.includes(texto) || m.displayName.toLowerCase().includes(texto))
     : candidatos;
   const email = editando ? editando.email : `${localPart.trim().toLowerCase()}@${dominio?.domain ?? ''}`;
-  const dominiosPropios = new Set(domains.map((d) => d.domain.toLowerCase()));
+  const dominiosInstancia = new Set(todosLosDominios.map((d) => d.domain.toLowerCase()));
+  const correosCandidatos = new Set(candidatos.map((m) => m.email.toLowerCase()));
 
   const save = useMutation({
     mutationFn: () => {
@@ -355,15 +383,30 @@ function FormularioAlias({
         queryClient.invalidateQueries({ queryKey: ['aliases'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       toast('ok', editando ? `Alias ${editando.email} actualizado.` : `Alias ${email} creado.`);
       onClose();
     },
-    onError: (err) => setError(mensajeDe(err, 'No se ha podido guardar el alias.')),
+    onError: (err) => {
+      if (esPropiedadPendiente(err)) void queryClient.invalidateQueries({ queryKey: ['domains'] });
+      setError(mensajeDe(err, 'No se ha podido guardar el alias.'));
+    },
   });
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!editando) {
+      if (!domainId) {
+        setError('Seleccione un dominio que admita alias.');
+        return;
+      }
+      const errorNombre = errorNombreBuzon(localPart.trim().toLowerCase());
+      if (errorNombre) {
+        setError(`Nombre del alias: ${errorNombre}`);
+        return;
+      }
+    }
     const limpios = externos.map((x) => x.trim().toLowerCase()).filter(Boolean);
     if (internos.size + limpios.length === 0) {
       setError('Seleccione al menos un buzón o añada una dirección externa.');
@@ -378,9 +421,15 @@ function FormularioAlias({
       setError(`${invalida} no es una dirección de correo válida.`);
       return;
     }
-    const propia = limpios.find((x) => dominiosPropios.has(x.split('@')[1] ?? ''));
+    const propia = limpios.find((x) => dominiosInstancia.has(x.split('@')[1] ?? ''));
     if (propia) {
-      setError(`${propia} es de un dominio de esta plataforma: selecciónela en la lista de buzones.`);
+      // Solo se puede indicar «selecciónela en la lista» si está en la lista:
+      // un buzón de otro cliente no se ofrece y el servidor lo rechazaría.
+      setError(
+        correosCandidatos.has(propia)
+          ? `${propia} es de un dominio de esta plataforma: selecciónela en la lista de buzones.`
+          : `${propia} pertenece a otro cliente de esta plataforma y no puede usarse como destino.`,
+      );
       return;
     }
     setError('');
@@ -388,6 +437,7 @@ function FormularioAlias({
   }
 
   function alternar(correo: string, marcado: boolean) {
+    setError('');
     setInternos((prev) => {
       const next = new Set(prev);
       if (marcado) next.add(correo);
@@ -398,36 +448,35 @@ function FormularioAlias({
 
   return (
     <Dialogo open onClose={onClose} title={editando ? 'Editar alias' : 'Crear alias'}>
-      <form onSubmit={submit} className="flex flex-col gap-4">
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
         {editando ? (
           <p className="valor break-all text-base text-tinta">{editando.email}</p>
         ) : (
           <>
-            <Select
-              label="Dominio"
-              required
+            <SelectorDominio
+              domains={domains}
               value={domainId}
-              onChange={(e) => {
-                setDomainId(e.target.value);
+              onChange={(id) => {
+                setError('');
+                setDomainId(id);
                 // Los buzones elegidos son del cliente del dominio anterior.
                 setInternos(new Set());
               }}
-            >
-              {domains.map((domain) => (
-                <option key={domain.id} value={domain.id}>
-                  {etiquetaDominio(domain)}
-                </option>
-              ))}
-            </Select>
+              etiquetaDominio={etiquetaDominio}
+              motivoBloqueo={motivoBloqueo}
+              uso="alias"
+            />
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[10rem] flex-1">
                 <Input
                   label="Nombre del alias"
-                  required
                   mono
                   autoComplete="off"
                   value={localPart}
-                  onChange={(e) => setLocalPart(e.target.value)}
+                  onChange={(e) => {
+                    setError('');
+                    setLocalPart(e.target.value);
+                  }}
                   placeholder="ventas"
                 />
               </div>
@@ -480,7 +529,10 @@ function FormularioAlias({
                   type="email"
                   mono
                   value={valor}
-                  onChange={(e) => setExternos(externos.map((x, j) => (j === i ? e.target.value : x)))}
+                  onChange={(e) => {
+                    setError('');
+                    setExternos(externos.map((x, j) => (j === i ? e.target.value : x)));
+                  }}
                   placeholder="nombre@proveedor.com"
                 />
               </div>
@@ -488,7 +540,10 @@ function FormularioAlias({
                 type="button"
                 variant="plano"
                 aria-label={`Quitar la dirección externa ${i + 1}`}
-                onClick={() => setExternos(externos.filter((_, j) => j !== i))}
+                onClick={() => {
+                  setError('');
+                  setExternos(externos.filter((_, j) => j !== i));
+                }}
               >
                 Quitar
               </Button>

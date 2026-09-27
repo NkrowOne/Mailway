@@ -56,6 +56,10 @@ export interface BulkPreview {
   capacity: BulkCapacity;
   valid: number;
   exceedsPlan: boolean;
+  /** El dominio no tiene la propiedad comprobada: no se creará ningún buzón. */
+  ownershipPending?: boolean;
+  /** Motivo, listo para mostrar, cuando falta comprobar la propiedad. */
+  ownershipError?: string | null;
   results: BulkEntryResult[];
 }
 
@@ -181,7 +185,7 @@ function campoCsv(value: string): string {
  * él, Excel lee mal las tildes y mete todo en una columna).
  */
 export function csvCredenciales(filas: { email: string; displayName: string; password: string }[]): string {
-  const cabecera = ['direccion', 'nombre_visible', 'contrasena'];
+  const cabecera = ['dirección', 'nombre_visible', 'contraseña'];
   const lineas = filas.map((f) => [f.email, f.displayName, f.password].map(campoCsv).join(';'));
   return `﻿${[cabecera.join(';'), ...lineas].join('\r\n')}\r\n`;
 }

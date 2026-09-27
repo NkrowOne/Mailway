@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { copiarTexto } from '../../lib/portal';
+import { AvisoError as AvisoErrorKit } from '../../ui/kit';
 
 /*
   Piezas comunes de las páginas del titular del buzón. Mismo mundo que el
@@ -92,16 +93,12 @@ export function PaginaEstado({ children }: { children: ReactNode }) {
   );
 }
 
-/** Banda de error de la vista: nombra el problema y, si lo hay, el arreglo. */
+/**
+ * Banda de error de la vista: nombra el problema y, si lo hay, el arreglo. Es
+ * la misma banda que el panel (una sola en toda la aplicación).
+ */
 export function AvisoError({ children }: { children: ReactNode }) {
-  return (
-    <div
-      role="alert"
-      className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-    >
-      {children}
-    </div>
-  );
+  return <AvisoErrorKit>{children}</AvisoErrorKit>;
 }
 
 /** Confirmación de una acción completada, sobre el fondo de conformidad. */
@@ -117,18 +114,23 @@ export function AvisoHecho({ children }: { children: ReactNode }) {
 }
 
 /**
- * Botón de copiar de tamaño táctil. A diferencia del del kit, solo dice
- * «Copiado» si la copia ha funcionado; si no, pide copiarlo a mano.
+ * Botón de copiar de tamaño táctil. Solo dice «Copiado» si la copia ha
+ * funcionado; si no, pide copiarlo manualmente.
  */
 export function BotonCopiarTactil({ texto, rotulo = 'Copiar' }: { texto: string; rotulo?: string }) {
   const [estado, setEstado] = useState<'reposo' | 'ok' | 'fallo'>('reposo');
+  // Si se sale de la vista antes de que venza, el temporizador no debe
+  // actualizar un componente ya desmontado.
+  const temporizador = useRef<number>();
+  useEffect(() => () => window.clearTimeout(temporizador.current), []);
   return (
     <button
       type="button"
       onClick={async () => {
         const ok = await copiarTexto(texto);
         setEstado(ok ? 'ok' : 'fallo');
-        setTimeout(() => setEstado('reposo'), 2000);
+        window.clearTimeout(temporizador.current);
+        temporizador.current = window.setTimeout(() => setEstado('reposo'), 2000);
       }}
       className={`inline-flex h-7 ${TACTIL} shrink-0 items-center gap-1.5 border px-3 font-estrecha text-micro
         font-semibold uppercase tracking-[0.08em] transition-colors duration-100 active:translate-y-px sm:px-2
@@ -156,7 +158,7 @@ export function BotonCopiarTactil({ texto, rotulo = 'Copiar' }: { texto: string;
         )}
       </svg>
       <span aria-live="polite">
-        {estado === 'ok' ? 'Copiado' : estado === 'fallo' ? 'Cópielo a mano' : rotulo}
+        {estado === 'ok' ? 'Copiado' : estado === 'fallo' ? 'Cópielo manualmente' : rotulo}
       </span>
     </button>
   );

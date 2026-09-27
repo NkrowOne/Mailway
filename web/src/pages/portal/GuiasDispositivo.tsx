@@ -102,8 +102,10 @@ export function GuiasDispositivo(props: GuiasDispositivoProps) {
                 }`}
             >
               {NOMBRES[d]}
+              {/* «Recomendado»: en Linux o Windows lo detectado es un programa
+                  (Thunderbird, Outlook), no «este dispositivo». */}
               {d === detectado && d !== 'otros' && (
-                <span className="rotulo mt-0.5 text-[10px] leading-3">Este dispositivo</span>
+                <span className="rotulo mt-0.5 text-micro leading-3">Recomendado</span>
               )}
             </button>
           );
