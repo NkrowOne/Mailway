@@ -618,7 +618,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
       `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     ).run(id, clientId, hostname, body.kind, now());
-    audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind });
+    audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind }, clientId);
 
     // Primera comprobación inmediata: si el DNS ya estaba puesto, el usuario
     // ve el progreso sin tener que pulsar nada.
@@ -636,7 +636,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     requireDomainAccess(req, id);
     const domain = await refreshClientDomain(id);
-    audit(req, 'whitelabel.domain_verified', { id, status: domain.status });
+    audit(req, 'whitelabel.domain_verified', { id, status: domain.status }, domain.clientId);
     return { domain, instructions: dnsInstructions(domain.hostname) };
   });
 
@@ -644,7 +644,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const domain = requireDomainAccess(req, id);
     db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
-    audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname });
+    audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname }, domain.clientId);
     // Traefik dejará de enrutarlo en su siguiente sondeo (unos segundos).
     return { ok: true };
   });

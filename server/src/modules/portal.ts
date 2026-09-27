@@ -576,7 +576,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       linkId,
       hasPassword: passwordEnc !== null,
       ttlHours: body.ttlHours,
-    });
+    }, titular.clientId);
     // El token en claro solo existe en esta respuesta; en la base, su hash.
     return {
       link: {
@@ -617,7 +617,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     db.prepare(
       'UPDATE setup_links SET revoked_at = COALESCE(revoked_at, ?), password_enc = NULL WHERE id = ?',
     ).run(now(), linkId);
-    audit(req, 'mailbox.setup_link_revoked', { mailboxId: titular.id, email: titular.email, linkId });
+    audit(req, 'mailbox.setup_link_revoked', { mailboxId: titular.id, email: titular.email, linkId }, titular.clientId);
     return { ok: true };
   });
 

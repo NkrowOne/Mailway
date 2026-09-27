@@ -536,7 +536,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
         : null;
     })();
 
-    audit(req, 'client.created', { id, name: body.name });
+    audit(req, 'client.created', { id, name: body.name }, id);
     if (created) audit(req, 'client.user_created', { clientId: id, email: created.email });
     return {
       client: { ...getClient(id), plan: getPlan(body.planId), usage: getClientUsage(id) },
@@ -599,7 +599,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
           name: current.name,
           mailboxes: suspension.updated,
           failed: suspension.failed.map((f) => f.email),
-        });
+        }, id);
       }
     }
 
@@ -611,7 +611,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
         id,
         fields: changed,
         ...(changed.includes('planId') ? { planFrom: current.planId, planTo: body.planId } : {}),
-      });
+      }, id);
     }
 
     const updated = getClient(id);

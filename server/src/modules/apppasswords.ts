@@ -158,7 +158,7 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
 
   app.post('/api/mailboxes/:id/app-passwords', async (req) => {
     const { id } = req.params as { id: string };
-    const { user, mailbox } = requireMailboxAccess(req, id);
+    const { user, mailbox, domain } = requireMailboxAccess(req, id);
     const body = createSchema.parse(req.body ?? {});
     const active = (
       db
@@ -177,16 +177,16 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
       email: mailbox.email,
       appPasswordId: result.appPassword.id,
       name: result.appPassword.name,
-    });
+    }, domain.clientId);
     // La contraseña en claro viaja solo en esta respuesta.
     return result;
   });
 
   app.delete('/api/mailboxes/:id/app-passwords/:appId', async (req) => {
     const { id, appId } = req.params as { id: string; appId: string };
-    const { mailbox } = requireMailboxAccess(req, id);
+    const { mailbox, domain } = requireMailboxAccess(req, id);
     await revokeAppPassword(id, appId);
-    audit(req, 'mailbox.app_password_revoked', { mailboxId: id, email: mailbox.email, appPasswordId: appId });
+    audit(req, 'mailbox.app_password_revoked', { mailboxId: id, email: mailbox.email, appPasswordId: appId }, domain.clientId);
     return { ok: true };
   });
 }

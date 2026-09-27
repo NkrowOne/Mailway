@@ -634,7 +634,7 @@ export function registerAutoconfigRoutes(app: FastifyInstance): void {
       );
     }
     const email = `${row.local_part}@${row.domain}`;
-    audit(req, 'autoconfig.profile_downloaded', { mailboxId: row.id, email });
+    audit(req, 'autoconfig.profile_downloaded', { mailboxId: row.id, email }, row.client_id);
     reply
       .type(MOBILECONFIG_CONTENT_TYPE)
       .header('Content-Disposition', `attachment; filename="${mobileconfigFilename(email)}"`)

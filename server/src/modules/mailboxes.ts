@@ -8,6 +8,7 @@ import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
 import { getDomain, type DomainRecord } from './domains';
+import { alCambiarContrasenaBuzon } from './portal';
 
 export interface Mailbox {
   id: string;
@@ -446,7 +447,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       password: body.password,
       quotaMb: body.quotaMb,
     });
-    audit(req, 'mailbox.created', { id: mailbox.id, email: mailbox.email });
+    audit(req, 'mailbox.created', { id: mailbox.id, email: mailbox.email }, domain.clientId);
     // La contraseña solo se devuelve en esta respuesta; no se guarda en claro.
     return { mailbox, password: body.password ? undefined : password };
   });
@@ -617,25 +618,28 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     if (patch.displayName !== undefined) changes.displayName = patch.displayName;
     if (patch.quotaBytes !== undefined) changes.quotaMb = quotaMb;
     if (patch.suspended !== undefined) changes.status = body.status;
-    audit(req, 'mailbox.updated', { id, email: mailbox.email, ...changes });
+    audit(req, 'mailbox.updated', { id, email: mailbox.email, ...changes }, domain.clientId);
     return { mailbox: getMailbox(id) };
   });
 
   /** Restablece la contraseña: genera una nueva o aplica la indicada. */
   app.post('/api/mailboxes/:id/password', async (req) => {
     const { id } = req.params as { id: string };
-    const { mailbox } = requireMailboxAccess(req, id);
+    const { mailbox, domain } = requireMailboxAccess(req, id);
     const body = z.object({ password: passwordSchema.optional() }).parse(req.body ?? {});
     const password = body.password || generateMailboxPassword();
     // El motor conserva las contraseñas de aplicación: solo cambia la principal.
     await getEngine().setMailboxPassword(mailbox.email, password);
-    audit(req, 'mailbox.password_reset', { id, email: mailbox.email, generated: !body.password });
+    // La contraseña anterior deja de valer: se borra de los enlaces de
+    // configuración que la llevaban y se cierran las sesiones de «Mi buzón».
+    alCambiarContrasenaBuzon(id);
+    audit(req, 'mailbox.password_reset', { id, email: mailbox.email, generated: !body.password }, domain.clientId);
     return { password: body.password ? undefined : password, ok: true };
   });
 
   app.delete('/api/mailboxes/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const { mailbox } = requireMailboxAccess(req, id);
+    const { mailbox, domain } = requireMailboxAccess(req, id);
     const keyCount = (
       db
         .prepare('SELECT COUNT(*) AS c FROM api_keys WHERE sender_mailbox_id = ? AND revoked_at IS NULL')
@@ -682,7 +686,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
 
     await engine.deleteMailbox(mailbox.email);
     db.prepare('DELETE FROM mailboxes WHERE id = ?').run(id);
-    audit(req, 'mailbox.deleted', { id, email: mailbox.email, aliasesUpdated, aliasesDeleted });
+    audit(req, 'mailbox.deleted', { id, email: mailbox.email, aliasesUpdated, aliasesDeleted }, domain.clientId);
     return { ok: true, aliasesUpdated, aliasesDeleted };
   });
 
@@ -743,7 +747,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       await getEngine().deleteAlias(email).catch(() => undefined);
       throw err;
     }
-    audit(req, 'alias.created', { id, email, destinations: all.length, external: external.length });
+    audit(req, 'alias.created', { id, email, destinations: all.length, external: external.length }, domain.clientId);
     return { ok: true, id, alias: toAlias(getAliasRow(id)) };
   });
 
@@ -756,7 +760,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const { all, internal, external } = classifyDestinations(row.client_id, email, body.destinations);
     await getEngine().upsertAlias(email, internal, external);
     db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(all), id);
-    audit(req, 'alias.updated', { id, email, destinations: all.length, external: external.length });
+    audit(req, 'alias.updated', { id, email, destinations: all.length, external: external.length }, row.client_id);
     return { alias: toAlias(getAliasRow(id)) };
   });
 
@@ -767,7 +771,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const email = `${row.local_part}@${row.domain}`;
     await getEngine().deleteAlias(email);
     db.prepare('DELETE FROM aliases WHERE id = ?').run(id);
-    audit(req, 'alias.deleted', { id, email });
+    audit(req, 'alias.deleted', { id, email }, row.client_id);
     return { ok: true };
   });
 }
