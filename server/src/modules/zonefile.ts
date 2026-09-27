@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { config } from '../config';
 import type { EngineDnsRecord } from '../engine/types';
 import { normalizarTxt, trocearTxt as trocear } from '../core/cloudflare';
 
@@ -94,7 +96,52 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
   return out;
 }
 
-export type CategoriaRegistro = 'obligatorio' | 'autoconfiguracion' | 'endurecimiento';
+/* ------------------------- Verificación de propiedad ---------------------- */
+
+/** Prefijo del nombre del TXT de verificación (`_mailway.<dominio>`). */
+const PREFIJO_PROPIEDAD = '_mailway.';
+
+/**
+ * Token de verificación de propiedad de un dominio (ya en ASCII). Derivado
+ * del secreto de la instancia: es estable, no hay que guardarlo y nadie
+ * puede calcularlo desde fuera para «demostrar» un dominio ajeno.
+ */
+export function tokenPropiedad(domain: string): string {
+  return crypto.createHmac('sha256', config.secret).update(`propiedad:${domain}`).digest('hex').slice(0, 32);
+}
+
+/**
+ * TXT que demuestra que quien da de alta el dominio controla su DNS sin
+ * tocar el MX: permite preparar los buzones antes de trasladar el correo
+ * desde otro proveedor.
+ */
+export function registroPropiedad(domain: string): EngineDnsRecord {
+  const limpio = sinPunto(domain).toLowerCase();
+  return {
+    type: 'TXT',
+    name: `${PREFIJO_PROPIEDAD}${limpio}`,
+    content: `mailway-verificacion=${tokenPropiedad(limpio)}`,
+  };
+}
+
+export function esRegistroPropiedad(record: EngineDnsRecord): boolean {
+  return record.type.toUpperCase() === 'TXT' && sinPunto(record.name).toLowerCase().startsWith(PREFIJO_PROPIEDAD);
+}
+
+/**
+ * Registros que se publican para un dominio: los del motor (ya
+ * seleccionados) más el TXT de verificación de propiedad. Lo usan la tabla
+ * de registros, el fichero de zona y Cloudflare, para que los tres pidan
+ * exactamente lo mismo. La comprobación DNS del dominio usa la selección del
+ * motor y mide la propiedad aparte (domains.ts): el TXT deja de importar en
+ * cuanto la propiedad queda probada y no debe contar como registro pendiente.
+ */
+export function registrosDelDominio(domain: string, records: EngineDnsRecord[]): EngineDnsRecord[] {
+  const seleccion = seleccionarRegistros(domain, records).filter((r) => !esRegistroPropiedad(r));
+  return [...seleccion, registroPropiedad(domain)];
+}
+
+export type CategoriaRegistro = 'obligatorio' | 'autoconfiguracion' | 'verificacion' | 'endurecimiento';
 
 /** true si el registro es imprescindible para que el correo funcione. */
 export function esObligatorio(record: EngineDnsRecord): boolean {
@@ -116,8 +163,13 @@ function esEndurecimiento(record: EngineDnsRecord): boolean {
   return name.startsWith('_mta-sts.') || name.startsWith('mta-sts.') || name.startsWith('_smtp._tls.');
 }
 
+/**
+ * El TXT de propiedad va con lo recomendado: quien apunta el MX aquí ya
+ * demuestra la propiedad, así que «solo lo obligatorio» no lo necesita.
+ */
 export function categoriaDe(record: EngineDnsRecord): CategoriaRegistro {
   if (esObligatorio(record)) return 'obligatorio';
+  if (esRegistroPropiedad(record)) return 'verificacion';
   if (esEndurecimiento(record)) return 'endurecimiento';
   const type = record.type.toUpperCase();
   if (type === 'SRV' || type === 'CNAME' || type === 'A' || type === 'AAAA') return 'autoconfiguracion';
@@ -139,7 +191,7 @@ export const NIVELES: { id: NivelZona; titulo: string; descripcion: string }[] =
     id: 'recomendados',
     titulo: 'Recomendado',
     descripcion:
-      'Lo obligatorio más la autoconfiguración: los programas de correo y el móvil se configuran al introducir la dirección.',
+      'Lo obligatorio más la autoconfiguración (los programas de correo y el móvil se configuran al introducir la dirección) y el registro de verificación de la propiedad del dominio.',
   },
   {
     id: 'completo',
@@ -198,7 +250,7 @@ export interface OpcionesZona {
 
 export function generarZona(opts: OpcionesZona): string {
   const ttl = opts.ttl ?? 3600;
-  const seleccion = filtrarPorNivel(seleccionarRegistros(opts.domain, opts.records), opts.nivel);
+  const seleccion = filtrarPorNivel(registrosDelDominio(opts.domain, opts.records), opts.nivel);
   const nivelInfo = NIVELES.find((n) => n.id === opts.nivel)!;
   const incluyeMtaSts = seleccion.some((r) => r.name.includes('_mta-sts'));
 
@@ -221,6 +273,14 @@ export function generarZona(opts: OpcionesZona): string {
     ';    un SPF, quedarán dos y ninguno será válido: conserve solo uno y',
     ';    combine en una única línea v=spf1 los mecanismos necesarios.',
   ];
+
+  if (seleccion.some(esRegistroPropiedad)) {
+    cabecera.push(
+      ';',
+      ';  El TXT ' + PREFIJO_PROPIEDAD + opts.domain + ' demuestra que el dominio es suyo.',
+      ';    Permite crear buzones y alias antes de apuntar el MX a este servidor.',
+    );
+  }
 
   if (incluyeMtaSts) {
     cabecera.push(

@@ -2,8 +2,9 @@ import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
+import { fireAlert } from '../src/modules/alerts';
 import { setInstanceSettings } from '../src/modules/settings';
-import { adminContext, createClient, createDomain, type TestContext } from './helpers';
+import { adminContext, createClient, createDomain, setDomainOwnership, type TestContext } from './helpers';
 
 /**
  * Rutas de marca blanca: la regla de propiedad del nombre (subdominio de un
@@ -36,8 +37,8 @@ before(async () => {
   db.prepare('UPDATE plans SET max_domains = 10 WHERE id = ?').run(clientA.planId);
   verify((await createDomain(ctx, clientA.clientId, 'empresa-a.test')).domainId);
   verify((await createDomain(ctx, clientB.clientId, 'empresa-b.test')).domainId);
-  // Dominio del cliente A todavía sin verificar.
-  await createDomain(ctx, clientA.clientId, 'sin-verificar-a.test');
+  // Dominio del cliente A con la propiedad todavía sin comprobar.
+  await createDomain(ctx, clientA.clientId, 'sin-verificar-a.test', { ownershipVerified: false });
 });
 
 beforeEach(() => {
@@ -71,10 +72,25 @@ test('el propio dominio de correo (sin subdominio) no vale', async () => {
   assert.equal((res.json() as { code: string }).code, 'hostname_not_owned');
 });
 
-test('el dominio de correo tiene que estar verificado', async () => {
+test('la propiedad del dominio de correo tiene que estar comprobada', async () => {
   const res = await crear(clientA.userCookie!, { hostname: 'webmail.sin-verificar-a.test' });
   assert.equal(res.statusCode, 400);
   assert.equal((res.json() as { code: string }).code, 'domain_not_verified');
+  assert.match((res.json() as { error: string }).error, /propiedad/);
+});
+
+test('cuenta la propiedad, no que el dominio esté activo', async () => {
+  const activo = await createDomain(ctx, clientA.clientId, 'activo-sin-propiedad-a.test', { ownershipVerified: false });
+  verify(activo.domainId);
+  const rechazado = await crear(clientA.userCookie!, { hostname: 'webmail.activo-sin-propiedad-a.test' });
+  assert.equal(rechazado.statusCode, 400);
+  assert.equal((rechazado.json() as { code: string }).code, 'domain_not_verified');
+
+  // Con la propiedad comprobada basta, aunque el resto del DNS siga pendiente.
+  const pendiente = await createDomain(ctx, clientA.clientId, 'pendiente-con-propiedad-a.test', { ownershipVerified: false });
+  setDomainOwnership(pendiente.domainId, true);
+  const aceptado = await crear(clientA.userCookie!, { hostname: 'webmail.pendiente-con-propiedad-a.test' });
+  assert.equal(aceptado.statusCode, 200, aceptado.body);
 });
 
 test('los nombres de autoconfiguración están reservados', async () => {
@@ -116,6 +132,31 @@ test('el administrador tiene que indicar el cliente y se le aplica la misma regl
 
   const inexistente = await crear(ctx.adminCookie, { hostname: 'webmail.empresa-b.test', clientId: 'cli_no' });
   assert.equal(inexistente.statusCode, 404);
+});
+
+test('eliminar un dominio propio cierra su alerta abierta', async () => {
+  const res = await crear(clientA.userCookie!, { hostname: 'caido.empresa-a.test' });
+  assert.equal(res.statusCode, 200, res.body);
+  const id = (res.json() as { domain: { id: string } }).domain.id;
+  fireAlert({
+    severity: 'critical',
+    type: 'whitelabel_broken',
+    dedupeKey: `whitelabel:${id}`,
+    clientId: clientA.clientId,
+    title: 'Prueba',
+    message: 'Prueba',
+    quiet: true,
+  });
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/whitelabel/domains/${id}`,
+    headers: { cookie: clientA.userCookie! },
+  });
+  assert.equal(borrar.statusCode, 200);
+  const abiertas = db
+    .prepare('SELECT COUNT(*) AS c FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL')
+    .get(`whitelabel:${id}`) as { c: number };
+  assert.equal(abiertas.c, 0);
 });
 
 test('un cliente no puede crear dominios para otro indicando su clientId', async () => {

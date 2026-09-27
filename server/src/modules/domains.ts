@@ -1,18 +1,18 @@
-import crypto from 'node:crypto';
 import { domainToASCII, domainToUnicode } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { config } from '../config';
 import { db, now } from '../core/db';
 import { withLock } from '../core/locks';
 import { randomId } from '../core/crypto';
-import { badRequest, conflict, HttpError, notFound } from '../core/errors';
+import { badRequest, conflict, HttpError, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
+import type { EngineDnsRecord } from '../engine/types';
+import { resolveAlert } from './alerts';
 import { audit } from './audit';
 import { refreshAutoconfigForDomain } from './autoconfig';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit } from './clients';
-import { aplicarDnsDominio } from './cloudflare';
+import { aplicarDnsDominio, permiteInstancia } from './cloudflare';
 import { checkDomainDns, type DomainDnsReport } from './deliverability';
 import {
   categoriaDe,
@@ -20,11 +20,20 @@ import {
   evaluarConflicto,
   generarZona,
   nombreFichero,
-  seleccionarRegistros,
+  registroPropiedad,
+  registrosDelDominio,
+  tokenPropiedad,
   type NivelZona,
 } from './zonefile';
-import { lookupMx, lookupTxt } from '../core/dns';
+import { lookupMx, lookupTxt, type MxRecord } from '../core/dns';
 import { getInstanceSettings } from './settings';
+
+/** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
+export interface OwnershipRecord {
+  type: 'TXT';
+  name: string;
+  content: string;
+}
 
 export interface DomainRecord {
   id: string;
@@ -43,6 +52,14 @@ export interface DomainRecord {
   cloudflare: { accountId: string; zoneId: string } | null;
   /** Última vez que Mailway aplicó su DNS en Cloudflare. */
   dnsAppliedAt: number | null;
+  /**
+   * Cuándo quedó probado que el dominio es de su cliente (MX a este
+   * servidor o TXT de verificación). null = pendiente: no se pueden crear
+   * buzones ni alias. Una vez fijado no se borra.
+   */
+  ownershipVerifiedAt: number | null;
+  /** TXT que prueba la propiedad sin cambiar el MX. */
+  ownershipRecord: OwnershipRecord;
 }
 
 interface DomainRow {
@@ -58,6 +75,7 @@ interface DomainRow {
   cloudflare_account_id: string | null;
   cloudflare_zone_id: string | null;
   dns_applied_at: number | null;
+  owner_verified_at: number | null;
 }
 
 function toDomain(row: DomainRow): DomainRecord {
@@ -83,6 +101,8 @@ function toDomain(row: DomainRow): DomainRecord {
         ? { accountId: row.cloudflare_account_id, zoneId: row.cloudflare_zone_id }
         : null,
     dnsAppliedAt: row.dns_applied_at ?? null,
+    ownershipVerifiedAt: row.owner_verified_at ?? null,
+    ownershipRecord: ownershipRecord(row.domain),
   };
 }
 
@@ -91,21 +111,82 @@ function toDomain(row: DomainRow): DomainRecord {
 /**
  * Token de verificación de propiedad de un dominio. Derivado del secreto de
  * la instancia: es estable (no hay que guardarlo) e imposible de adivinar.
+ * Vive en zonefile.ts porque el TXT forma parte de la selección común de
+ * registros (tabla, fichero de zona y Cloudflare).
  */
 export function ownershipToken(domain: string): string {
-  return crypto.createHmac('sha256', config.secret).update(`propiedad:${domain}`).digest('hex').slice(0, 32);
+  return tokenPropiedad(domain);
 }
 
 /**
  * Registro TXT que demuestra la propiedad sin tocar el MX (útil para
  * preparar los buzones antes de migrar el correo de otro proveedor).
  */
-export function ownershipRecord(domain: string): { type: 'TXT'; name: string; content: string } {
-  return {
-    type: 'TXT',
-    name: `_mailway.${domain}`,
-    content: `mailway-verificacion=${ownershipToken(domain)}`,
-  };
+export function ownershipRecord(domain: string): OwnershipRecord {
+  const r = registroPropiedad(domain);
+  return { type: 'TXT', name: r.name, content: r.content };
+}
+
+function sinPuntoFinal(valor: string): string {
+  return valor.trim().replace(/\.$/, '').toLowerCase();
+}
+
+/** Quita comillas y espacios de un TXT para comparar solo su texto. */
+function textoTxt(valor: string): string {
+  return valor.replace(/"\s*"/g, '').replace(/["\s]/g, '').toLowerCase();
+}
+
+/**
+ * ¿Demuestra el DNS público que el dominio es de quien lo dio de alta?
+ * - Sí, si algún MX apunta a este servidor (cualquier prioridad: controlar
+ *   el MX es controlar el dominio).
+ * - Sí, si el TXT de verificación contiene el token.
+ * - null si alguna de las dos consultas no se pudo hacer y la otra no lo
+ *   prueba: un corte de red no es un «no».
+ * Función pura para poder probar la regla sin red.
+ */
+export function evaluarPropiedad(input: {
+  mx: MxRecord[] | null;
+  txt: string[] | null;
+  /** Nombres de este servidor de correo (el de Ajustes y el MX que propone el motor). */
+  hosts: string[];
+  /** Contenido esperado del TXT (`mailway-verificacion=…`). */
+  esperado: string;
+}): boolean | null {
+  const hosts = new Set(input.hosts.map(sinPuntoFinal).filter(Boolean));
+  if (input.mx?.some((r) => hosts.has(sinPuntoFinal(r.exchange)))) return true;
+  const esperado = textoTxt(input.esperado);
+  if (esperado && input.txt?.some((t) => textoTxt(t).includes(esperado))) return true;
+  if (input.mx === null || input.txt === null) return null;
+  return false;
+}
+
+/**
+ * Nombres de este servidor de correo: el de Ajustes y el destino MX que
+ * propone el motor. Se descartan los que caen dentro del propio dominio
+ * (mail.<dominio>): quien controla el dominio controla ese nombre, así que
+ * apuntar el MX ahí no demuestra nada.
+ */
+function hostsDelServidor(domain: string, records: EngineDnsRecord[]): string[] {
+  const deAjustes = getInstanceSettings().mailHostname;
+  const delMotor = records
+    .filter((r) => r.type.toUpperCase() === 'MX')
+    .map((r) => r.content.trim().split(/\s+/).slice(-1)[0] || '');
+  const dominio = sinPuntoFinal(domain);
+  return [deAjustes, ...delMotor]
+    .map(sinPuntoFinal)
+    .filter((h) => h && h !== dominio && !h.endsWith(`.${dominio}`));
+}
+
+/**
+ * Deja constancia de que la propiedad quedó probada. Nunca se borra: un MX
+ * que se mueve después (migración, avería) no convierte el dominio en ajeno.
+ */
+export function marcarPropiedadComprobada(domainId: string): void {
+  db.prepare('UPDATE domains SET owner_verified_at = COALESCE(owner_verified_at, ?) WHERE id = ?').run(
+    now(),
+    domainId,
+  );
 }
 
 /**
@@ -122,7 +203,7 @@ export function assertDomainOwnership(domainId: string): void {
   if (!row) throw notFound('Dominio no encontrado.');
   if (row.owner_verified_at) return;
   throw conflict(
-    `Antes de crear buzones o alias en ${row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación y pulse «Verificar».`,
+    `Antes de crear buzones o alias en ${domainToUnicode(row.domain) || row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación que se indica en la ficha del dominio y pulse «Verificar» en esa misma ficha.`,
     'domain_ownership_pending',
   );
 }
@@ -170,12 +251,35 @@ export function normalizeDomain(input: string): string {
   return ascii;
 }
 
-/** Lanza la verificación DNS y persiste el resultado y el estado del dominio. */
+/**
+ * Comprueba la propiedad de un dominio que aún no la tiene probada: el MX
+ * (cualquier prioridad) y el TXT de verificación. Solo se consulta mientras
+ * esté pendiente, así que los dominios ya probados no pagan estas consultas.
+ */
+async function comprobarPropiedad(domain: DomainRecord, records: EngineDnsRecord[]): Promise<boolean | null> {
+  const [mx, txt] = await Promise.all([lookupMx(domain.domain), lookupTxt(domain.ownershipRecord.name)]);
+  return evaluarPropiedad({
+    mx,
+    txt,
+    hosts: hostsDelServidor(domain.domain, records),
+    esperado: domain.ownershipRecord.content,
+  });
+}
+
+/**
+ * Lanza la verificación DNS y persiste el resultado y el estado del dominio.
+ * La usan la ficha («Medir el DNS ahora»), el vigilante y Cloudflare, así
+ * que es también donde se prueba la propiedad del dominio.
+ */
 export async function refreshDomainDns(domainId: string): Promise<DomainRecord> {
   const domain = getDomain(domainId);
   const engine = getEngine();
   const records = await engine.getDnsRecords(domain.domain);
   const report = await checkDomainDns(domain.domain, records);
+  if (domain.ownershipVerifiedAt === null) {
+    const propiedad = await comprobarPropiedad(domain, records).catch(() => null);
+    if (propiedad === true) marcarPropiedadComprobada(domainId);
+  }
 
   // Un check 'unknown' significa "no se pudo consultar el DNS" (fallo de red),
   // que es distinto de "el registro no existe" ('missing'/'mismatch'). Solo se
@@ -257,9 +361,9 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     // del mismo dominio (de clientes distintos) acabarían con una borrando
     // en el motor el dominio que la otra acababa de crear.
     const id = await withLock('altas:dominios', async () => {
-      assertWithinLimit(clientId, 'domains');
+      assertWithinLimit(clientId, 'domains', 1, user.role === 'admin');
       const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
-      if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.');
+      if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
 
       const engine = getEngine();
       // El motor adopta un dominio que ya existiera allí (p. ej. huérfano de un
@@ -269,7 +373,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.ensureDkim(domain, 'mail');
       } catch (err) {
         // El dominio queda creado; el DKIM se puede regenerar desde el panel.
-        req.log.warn({ err, domain }, 'No se pudo generar DKIM al crear el dominio');
+        req.log.warn({ err, domain }, 'No se ha podido generar el DKIM al crear el dominio');
       }
 
       const nuevoId = randomId('dom');
@@ -279,36 +383,53 @@ export function registerDomainRoutes(app: FastifyInstance): void {
            VALUES (?, ?, ?, ?, ?)`,
         ).run(nuevoId, clientId, domain, 'mail', now());
       } catch (err) {
-        // Se deshace el dominio en el motor para no dejarlo huérfano si el
-        // INSERT falla (p. ej. el cliente se borró en paralelo).
+        // Si el dominio ya existe en la base (otra alta lo guardó entre la
+        // comprobación y el INSERT), el dominio del motor es el de esa alta:
+        // borrarlo dejaría sin correo un dominio que el panel muestra activo.
+        if (isUniqueViolation(err)) {
+          throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
+        }
+        // Cualquier otro fallo (p. ej. el cliente se borró en paralelo): se
+        // deshace el dominio en el motor para no dejarlo huérfano.
         await engine.deleteDomain(domain).catch(() => undefined);
         throw err;
       }
       return nuevoId;
     });
-    audit(req, 'domain.created', { id, domain, clientId });
+    audit(req, 'domain.created', { id, domain, clientId }, clientId);
 
     // DNS automático: si una cuenta de Cloudflare accesible contiene la zona,
     // se aplican los registros sin reemplazar nada que ya exista. Un fallo
     // aquí no deshace el alta: el dominio existe y el DNS se puede aplicar
-    // después desde su ficha.
+    // después desde su ficha. `?soloCliente=1` limita las cuentas a las del
+    // cliente, como en la ficha (lo envía Skyway para usuarios que no son
+    // administradores).
     let cloudflare: ResultadoAutoDns | null = null;
     let cloudflareReason: string | undefined;
     if (body.autoDns) {
       try {
-        const r = await aplicarDnsDominio(id, user, { replaceConflicts: false, includeRecommended: true });
+        const r = await aplicarDnsDominio(id, user, {
+          replaceConflicts: false,
+          includeRecommended: true,
+          permitirInstancia: permiteInstancia(user, req.query),
+        });
         if ('unavailable' in r) {
           cloudflareReason = r.unavailable;
         } else {
           cloudflare = { applied: r.applied, errors: r.errors, skipped: r.skipped };
-          audit(req, 'cloudflare.dns_applied', {
-            domainId: id,
-            domain,
-            zone: r.zone.name,
-            applied: r.applied.length,
-            errors: r.errors.length,
-            replaceConflicts: false,
-          });
+          audit(
+            req,
+            'cloudflare.dns_applied',
+            {
+              domainId: id,
+              domain,
+              zone: r.zone.name,
+              applied: r.applied.length,
+              errors: r.errors.length,
+              replaceConflicts: false,
+            },
+            clientId,
+          );
         }
       } catch (err) {
         cloudflare = {
@@ -351,13 +472,14 @@ export function registerDomainRoutes(app: FastifyInstance): void {
    * Registros DNS que hay que crear (tabla para copiar y pegar, o para que
    * una integración los cree). Pasan por la misma selección que la
    * comprobación y Cloudflare: sin SRV de puertos cerrados, sin TLSA y sin
-   * nombres de otras zonas.
+   * nombres de otras zonas; al final va el TXT de verificación de la
+   * propiedad (categoría «verificacion»).
    */
   app.get('/api/domains/:id/dns', async (req) => {
     const { id } = req.params as { id: string };
     const { domain } = requireDomainAccess(req, id);
     const engine = getEngine();
-    const records = seleccionarRegistros(domain.domain, await engine.getDnsRecords(domain.domain)).map(
+    const records = registrosDelDominio(domain.domain, await engine.getDnsRecords(domain.domain)).map(
       (r) => ({ ...r, required: esObligatorio(r), category: categoriaDe(r) }),
     );
     return { records };
@@ -417,12 +539,17 @@ export function registerDomainRoutes(app: FastifyInstance): void {
    */
   app.post('/api/domains/:id/verify', async (req) => {
     const { id } = req.params as { id: string };
-    requireDomainAccess(req, id);
-    const antes = getDomain(id).status;
+    const { domain: antes } = requireDomainAccess(req, id);
     const domain = await refreshDomainDns(id);
     const auto = (req.query as { auto?: string }).auto === '1';
-    if (!auto || domain.status !== antes) {
-      audit(req, 'domain.verified', { id, status: domain.status }, domain.clientId);
+    const propiedadNueva = antes.ownershipVerifiedAt === null && domain.ownershipVerifiedAt !== null;
+    if (!auto || domain.status !== antes.status || propiedadNueva) {
+      audit(
+        req,
+        'domain.verified',
+        { id, status: domain.status, ...(propiedadNueva ? { ownershipVerified: true } : {}) },
+        domain.clientId,
+      );
     }
     return { domain };
   });
@@ -440,10 +567,17 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   /**
    * Borrado completo: buzones, alias y dominio, en el motor y en Mailway.
    *
-   * Cada buzón se borra primero en el motor y, si se consigue, en la base de
-   * datos; así, si el motor falla a mitad, el panel refleja exactamente lo
-   * que queda y un segundo intento completa el trabajo. El dominio solo se
-   * borra cuando ya no le queda nada.
+   * Orden: primero los alias de OTROS dominios que reenvían a buzones de
+   * este (en el motor, los miembros de una lista deben existir), después los
+   * alias propios, luego los buzones y, al final, el dominio. Cada elemento
+   * se borra primero en el motor y, si se consigue, en la base de datos; así,
+   * si el motor falla a mitad, el panel refleja exactamente lo que queda y un
+   * segundo intento completa el trabajo.
+   *
+   * Las claves de API cuyo remitente es un buzón del dominio dejan de
+   * funcionar con él (se eliminan en cascada): se cuentan en la
+   * confirmación, en la respuesta y en la auditoría para que no desaparezcan
+   * en silencio.
    */
   app.delete('/api/domains/:id', async (req) => {
     const { id } = req.params as { id: string };
@@ -451,29 +585,35 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const mailboxCount = (
       db.prepare('SELECT COUNT(*) AS c FROM mailboxes WHERE domain_id = ?').get(id) as { c: number }
     ).c;
+    const apiKeys = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM api_keys k JOIN mailboxes m ON m.id = k.sender_mailbox_id
+           WHERE m.domain_id = ? AND k.revoked_at IS NULL`,
+        )
+        .get(id) as { c: number }
+    ).c;
     const confirm = (req.query as { confirm?: string }).confirm === domain.domain;
     if (mailboxCount > 0 && !confirm) {
+      const buzones = mailboxCount === 1 ? '1 buzón' : `${mailboxCount} buzones`;
+      const claves =
+        apiKeys === 0
+          ? ''
+          : apiKeys === 1
+            ? ' y 1 clave de API que envía desde sus buzones (dejará de funcionar)'
+            : ` y ${apiKeys} claves de API que envían desde sus buzones (dejarán de funcionar)`;
       throw conflict(
-        `Este dominio tiene ${mailboxCount} buzón(es) con su correo. Para eliminarlo todo definitivamente, confirme escribiendo el nombre del dominio.`,
+        `Este dominio tiene ${buzones} con su correo${claves}. Para eliminarlo todo definitivamente, confirme escribiendo el nombre del dominio.`,
         'needs_confirmation',
       );
     }
     const engine = getEngine();
     const fallidos: string[] = [];
 
-    const mailboxes = db
-      .prepare('SELECT id, local_part FROM mailboxes WHERE domain_id = ?')
-      .all(id) as { id: string; local_part: string }[];
-    for (const mailbox of mailboxes) {
-      const email = `${mailbox.local_part}@${domain.domain}`;
-      try {
-        await engine.deleteMailbox(email);
-        db.prepare('DELETE FROM mailboxes WHERE id = ?').run(mailbox.id);
-      } catch (err) {
-        req.log.warn({ err, email }, 'No se pudo borrar el buzón en el motor');
-        fallidos.push(email);
-      }
-    }
+    const externos = await retirarReenviosAlDominio(id, domain.domain, (err, email) =>
+      req.log.warn({ err, email }, 'No se ha podido actualizar en el motor un alias que reenviaba al dominio'),
+    );
+    fallidos.push(...externos.fallidos);
 
     const aliases = db
       .prepare('SELECT id, local_part FROM aliases WHERE domain_id = ?')
@@ -484,24 +624,158 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.deleteAlias(email);
         db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
       } catch (err) {
-        req.log.warn({ err, email }, 'No se pudo borrar el alias en el motor');
+        req.log.warn({ err, email }, 'No se ha podido borrar el alias en el motor');
         fallidos.push(email);
       }
     }
 
-    const borrados = mailboxes.length + aliases.length - fallidos.length;
+    // Si un alias de otro dominio no se pudo actualizar, los buzones a los
+    // que reenvía se conservan: borrarlos dejaría la lista del motor con un
+    // miembro inexistente. El reintento lo completa.
+    const mailboxes = externos.fallidos.length > 0
+      ? []
+      : (db.prepare('SELECT id, local_part FROM mailboxes WHERE domain_id = ?').all(id) as {
+          id: string;
+          local_part: string;
+        }[]);
+    for (const mailbox of mailboxes) {
+      const email = `${mailbox.local_part}@${domain.domain}`;
+      try {
+        await engine.deleteMailbox(email);
+        db.prepare('DELETE FROM mailboxes WHERE id = ?').run(mailbox.id);
+      } catch (err) {
+        req.log.warn({ err, email }, 'No se ha podido borrar el buzón en el motor');
+        fallidos.push(email);
+      }
+    }
+
     if (fallidos.length > 0) {
-      audit(req, 'domain.delete_partial', { id, domain: domain.domain, removed: borrados, failed: fallidos }, domain.clientId);
+      const fallidosPropios = fallidos.length - externos.fallidos.length;
+      audit(
+        req,
+        'domain.delete_partial',
+        {
+          id,
+          domain: domain.domain,
+          removed: mailboxes.length + aliases.length - fallidosPropios,
+          failed: fallidos,
+          aliasesUpdated: externos.actualizados,
+          aliasesDeleted: externos.eliminados,
+        },
+        domain.clientId,
+      );
       throw new HttpError(
         502,
-        `No se han podido eliminar del servidor de correo: ${fallidos.join(', ')}. El resto se ha eliminado. Vuelva a intentarlo para completar la eliminación del dominio.`,
+        `No se han podido modificar en el servidor de correo: ${fallidos.join(', ')}. El resto se ha completado. Vuelva a intentarlo para terminar la eliminación del dominio.`,
         'partial_delete',
       );
     }
 
     await engine.deleteDomain(domain.domain);
     db.prepare('DELETE FROM domains WHERE id = ?').run(id);
-    audit(req, 'domain.deleted', { id, domain: domain.domain, mailboxes: mailboxCount }, domain.clientId);
-    return { ok: true };
+    // El vigilante ya no volverá a mirar este dominio: su alerta quedaría
+    // abierta para siempre en el panel del administrador y del cliente.
+    resolveAlert(`domain_dns:${id}`);
+    audit(
+      req,
+      'domain.deleted',
+      {
+        id,
+        domain: domain.domain,
+        mailboxes: mailboxCount,
+        apiKeys,
+        aliasesUpdated: externos.actualizados,
+        aliasesDeleted: externos.eliminados,
+      },
+      domain.clientId,
+    );
+    return {
+      ok: true,
+      apiKeysRevoked: apiKeys,
+      aliasesUpdated: externos.actualizados,
+      aliasesDeleted: externos.eliminados,
+    };
   });
+}
+
+/* ------------------- Alias de otros dominios al borrar ------------------- */
+
+interface AliasAjeno {
+  id: string;
+  local_part: string;
+  destinations_json: string;
+  domain: string;
+}
+
+function destinosDe(json: string): string[] {
+  try {
+    const valor = JSON.parse(json) as unknown;
+    return Array.isArray(valor) ? valor.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** true si la dirección es un buzón de esta instancia (destino interno de un alias). */
+function esBuzonDeLaInstancia(email: string): boolean {
+  const at = email.lastIndexOf('@');
+  if (at < 1) return false;
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+         WHERE d.domain = ? AND m.local_part = ?`,
+      )
+      .get(email.slice(at + 1).toLowerCase(), email.slice(0, at).toLowerCase()),
+  );
+}
+
+/**
+ * Quita de los alias de OTROS dominios (de cualquier cliente: versiones
+ * anteriores admitían destinos de otros clientes) los destinos que son
+ * direcciones del dominio que se borra. Un alias que se queda sin destinos
+ * no entrega a nadie y se elimina. Mismo criterio que el borrado de un
+ * buzón suelto; cada alias se guarda en la base justo después de cambiarlo
+ * en el motor para que ambos coincidan aunque algo falle a mitad.
+ */
+async function retirarReenviosAlDominio(
+  domainId: string,
+  domain: string,
+  onError: (err: unknown, email: string) => void,
+): Promise<{ actualizados: string[]; eliminados: string[]; fallidos: string[] }> {
+  const engine = getEngine();
+  const sufijo = `@${domain.toLowerCase()}`;
+  const candidatos = db
+    .prepare(
+      `SELECT a.id, a.local_part, a.destinations_json, d.domain
+       FROM aliases a JOIN domains d ON d.id = a.domain_id
+       WHERE a.domain_id != ? AND lower(a.destinations_json) LIKE ?`,
+    )
+    .all(domainId, `%${sufijo}"%`) as AliasAjeno[];
+  const actualizados: string[] = [];
+  const eliminados: string[] = [];
+  const fallidos: string[] = [];
+  for (const alias of candidatos) {
+    const destinos = destinosDe(alias.destinations_json);
+    const restantes = destinos.filter((d) => !d.toLowerCase().endsWith(sufijo));
+    if (restantes.length === destinos.length) continue;
+    const email = `${alias.local_part}@${alias.domain}`;
+    try {
+      if (restantes.length === 0) {
+        await engine.deleteAlias(email);
+        db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
+        eliminados.push(email);
+      } else {
+        const internos = restantes.filter(esBuzonDeLaInstancia);
+        const externos = restantes.filter((d) => !internos.includes(d));
+        await engine.upsertAlias(email, internos, externos);
+        db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(restantes), alias.id);
+        actualizados.push(email);
+      }
+    } catch (err) {
+      onError(err, email);
+      fallidos.push(email);
+    }
+  }
+  return { actualizados, eliminados, fallidos };
 }

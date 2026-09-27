@@ -167,6 +167,44 @@ function classifyRecord(record: EngineDnsRecord, domain: string): {
   };
 }
 
+/**
+ * Veredicto del MX: ¿apunta aquí y nadie se le adelanta? Los servidores de
+ * origen entregan al MX de menor número (mayor preferencia) y reparten entre
+ * los empatados, así que un MX de otro proveedor con prioridad menor o igual
+ * que la nuestra se queda con buena parte del correo aunque el nuestro
+ * exista. Uno con prioridad mayor es un respaldo y no impide recibir aquí.
+ * El plan de Cloudflare aplica el mismo criterio.
+ */
+export function veredictoMx(
+  found: { priority: number; exchange: string }[],
+  expectedHost: string,
+): { propio: boolean; ajenosPorDelante: string[] } {
+  const esperado = normalizeValue(expectedHost);
+  const propios = found.filter((r) => normalizeValue(r.exchange) === esperado);
+  if (propios.length === 0) return { propio: false, ajenosPorDelante: [] };
+  const mejor = Math.min(...propios.map((r) => r.priority));
+  const ajenosPorDelante = found
+    .filter((r) => normalizeValue(r.exchange) !== esperado && r.priority <= mejor)
+    .map((r) => normalizeValue(r.exchange));
+  return { propio: true, ajenosPorDelante };
+}
+
+/**
+ * IPs de `name` si todas apuntan a donde apuntaría el CNAME esperado (la IP
+ * del destino o la IP pública del servidor); [] si no; null si no se pudo
+ * consultar.
+ */
+async function aEquivalente(name: string, destino: string): Promise<string[] | null> {
+  const ips = await lookupA(name);
+  if (ips === null) return null;
+  if (ips.length === 0) return [];
+  const { publicIp } = getInstanceSettings();
+  const delDestino = await lookupA(normalizeValue(destino));
+  const validas = new Set([...(delDestino ?? []), ...(publicIp ? [publicIp.trim()] : [])]);
+  if (validas.size === 0) return delDestino === null ? null : [];
+  return ips.every((ip) => validas.has(ip)) ? ips : [];
+}
+
 async function checkRecord(record: EngineDnsRecord, domain: string): Promise<DnsCheck> {
   const meta = classifyRecord(record, domain);
   const name = record.name.replace(/\.$/, '');
@@ -186,8 +224,16 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = found.map((r) => `${r.priority} ${r.exchange}`).join(', ');
     const expectedHost = normalizeValue(record.content.split(/\s+/).slice(-1)[0] || '');
-    const ok = found.some((r) => normalizeValue(r.exchange) === expectedHost);
-    return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
+    const veredicto = veredictoMx(found, expectedHost);
+    if (veredicto.ajenosPorDelante.length > 0) {
+      return {
+        ...base,
+        found: foundText,
+        status: 'mismatch',
+        help: `Además de este servidor, el dominio tiene MX de otro proveedor con la misma o mayor preferencia (${veredicto.ajenosPorDelante.join(', ')}): buena parte del correo entrante llegará allí. Elimine esos registros MX para que todo el correo llegue a este servidor.`,
+      };
+    }
+    return { ...base, found: foundText, status: veredicto.propio ? 'ok' : 'mismatch' };
   }
 
   if (record.type === 'TXT') {
@@ -231,7 +277,15 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
   if (record.type === 'CNAME') {
     const found = await lookupCname(name);
     if (found === null) return { ...base, found: null, status: 'unknown' };
-    if (found.length === 0) return { ...base, found: '', status: 'missing' };
+    if (found.length === 0) {
+      // Un registro A a la IP del servidor equivale al CNAME (el plan de
+      // Cloudflare ya lo conserva así); sin esto la ficha lo daría por
+      // pendiente para siempre.
+      const equivalente = await aEquivalente(name, record.content);
+      if (equivalente === null) return { ...base, found: null, status: 'unknown' };
+      if (equivalente.length > 0) return { ...base, found: `A ${equivalente.join(', ')}`, status: 'ok' };
+      return { ...base, found: '', status: 'missing' };
+    }
     const ok = found.some((c) => normalizeValue(c) === normalizeValue(record.content));
     return { ...base, found: found.join(', '), status: ok ? 'ok' : 'mismatch' };
   }

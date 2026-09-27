@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Client } from '../../lib/api';
 import {
   URL_CREAR_TOKEN,
+  invalidarTrasCambioDeCuenta,
   type CuentaCloudflare,
   type PlanInstancia,
   type ResultadoAplicacion,
 } from '../../lib/cloudflare';
-import { formatDate } from '../../lib/format';
+import { formatDate, plural } from '../../lib/format';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Dialogo, Hoja, MarcaFondo, Midiendo, Vacio } from '../../ui/kit';
@@ -49,8 +50,11 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
     onSuccess: (data) => {
       queryClient.setQueryData(['cloudflare-accounts'], data);
       const conError = data.accounts.filter((a) => a.lastError).length;
-      if (conError > 0) toast('error', `${conError} cuenta(s) con error. Revise el detalle en la lista.`);
-      else toast('ok', 'Cuentas comprobadas.');
+      if (conError > 0) {
+        toast('error', `${plural(conError, 'cuenta con error', 'cuentas con error')}. Revise el detalle en la lista.`);
+      } else {
+        toast('ok', 'Cuentas comprobadas.');
+      }
     },
     onError: (err) => toast('error', mensaje(err, 'No se han podido comprobar las cuentas.')),
   });
@@ -59,13 +63,18 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
     mutationFn: (id: string) => api.delete(`/api/cloudflare/accounts/${id}`),
     onSuccess: async () => {
       setABorrar(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['cloudflare-accounts'] }),
-        queryClient.invalidateQueries({ queryKey: ['domains'] }),
-      ]);
+      // Los dominios que la usaban pierden su asociación: sus fichas y sus
+      // planes de Cloudflare también se vuelven a leer.
+      await invalidarTrasCambioDeCuenta(queryClient);
       toast('ok', 'Cuenta de Cloudflare eliminada.');
     },
   });
+
+  function pedirBorrado(cuenta: CuentaCloudflare) {
+    // Un error de un intento anterior no debe aparecer al abrir otra vez.
+    borrar.reset();
+    setABorrar(cuenta);
+  }
 
   const lista = cuentas.data?.accounts ?? [];
   const nombreCliente = new Map((clientes.data?.clients ?? []).map((c) => [c.id, c.name]));
@@ -85,21 +94,24 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
         }
         flush
       >
-        <p className="regla-fila max-w-[80ch] px-4 py-3 text-base text-tinta-2">
-          Conecte una cuenta de Cloudflare para que Mailway cree y corrija los registros DNS de
-          correo de {isAdmin ? 'los dominios' : 'sus dominios'} con un clic. Antes de aplicar se
-          muestran todos los cambios, los registros de correo nunca se activan con el proxy de
-          Cloudflare y lo que ya existe (otros proveedores, un SPF propio, un DMARC) no se modifica
-          sin su confirmación.
-        </p>
+        {/* El filete va en el contenedor y la medida en el párrafo: juntos en el
+            mismo elemento, la regla se cortaba a 80 caracteres. */}
+        <div className="regla-fila px-4 py-3">
+          <p className="max-w-[80ch] text-base text-tinta-2">
+            Conecte una cuenta de Cloudflare para que Mailway cree y corrija los registros DNS de
+            correo de {isAdmin ? 'los dominios' : 'sus dominios'} con un clic. Antes de aplicar se
+            muestran todos los cambios, los registros de correo nunca se activan con el proxy de
+            Cloudflare y lo que ya existe (otros proveedores, un SPF propio, un DMARC) no se modifica
+            sin su confirmación.
+          </p>
+        </div>
 
         {cuentas.isPending ? (
           <Midiendo label="Consultando las cuentas de Cloudflare…" />
         ) : cuentas.isError ? (
           <div className="px-4 py-3">
-            <BandaError>
-              {mensaje(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')} Recargue
-              la página para repetir la consulta.
+            <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
+              {mensaje(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
             </BandaError>
           </div>
         ) : lista.length === 0 ? (
@@ -153,7 +165,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
                       </MarcaFondo>
                     </span>
                     <span className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
-                      <Button variant="plano" onClick={() => setABorrar(cuenta)}>
+                      <Button variant="plano" onClick={() => pedirBorrado(cuenta)}>
                         Eliminar
                       </Button>
                     </span>
@@ -255,7 +267,9 @@ function FormularioConexion({
       // El token no se conserva en la página más de lo imprescindible.
       setToken('');
       setEtiqueta('');
-      await queryClient.invalidateQueries({ queryKey: ['cloudflare-accounts'] });
+      // Con una cuenta nueva, las fichas de los dominios pueden ofrecer ya la
+      // configuración automática.
+      await invalidarTrasCambioDeCuenta(queryClient);
       const zonas = data.account.zonesTotal ?? data.account.zones?.length ?? 0;
       toast('ok', `Cuenta conectada: ${zonas === 1 ? '1 zona disponible' : `${zonas} zonas disponibles`}.`);
       onConectada();

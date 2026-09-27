@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { MarcaFondo } from '../../ui/kit';
+import { estiloBoton } from '../../ui/Button';
+import { AvisoError, MarcaFondo } from '../../ui/kit';
 import {
   nombreCorto,
   ordenarCambios,
@@ -15,20 +16,30 @@ import {
   dominio y la hoja de Conexiones.
 */
 
-/** Enlace con el aspecto del botón secundario (un <a> nunca envuelve un <button>). */
-export const claseEnlacePerfil =
-  'inline-flex h-8 items-center justify-center gap-2 border border-regla-fuerte px-3 text-base ' +
-  'text-tinta transition-colors duration-100 hover:bg-hoja-3 active:translate-y-px';
+/**
+ * Enlace con el aspecto del botón secundario (un <a> nunca envuelve un
+ * <button>). Sale de estiloBoton para no desincronizarse del kit.
+ */
+export const claseEnlacePerfil = estiloBoton('perfil');
 
-/** Banda de error en línea: nombra el problema y, si puede, el arreglo. */
-export function BandaError({ children }: { children: ReactNode }) {
+/**
+ * Banda de error en línea: nombra el problema y, si puede, el arreglo. Es la
+ * del kit (AvisoError), para que todos los errores se vean igual; con
+ * `onRetry` ofrece «Reintentar».
+ */
+export function BandaError({
+  children,
+  onRetry,
+  retrying,
+}: {
+  children: ReactNode;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
   return (
-    <div
-      role="alert"
-      className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-    >
+    <AvisoError onRetry={onRetry} retrying={retrying}>
       {children}
-    </div>
+    </AvisoError>
   );
 }
 

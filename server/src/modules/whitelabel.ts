@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { domainToUnicode } from 'node:url';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
@@ -6,6 +7,7 @@ import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
 import { dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
+import { resolveAlert } from './alerts';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import {
@@ -119,8 +121,8 @@ function hostOf(url: string): string {
  * MISMO cliente ya verificado. Traefik enruta cualquier host que se le
  * publique: sin esta regla, un cliente podría dar de alta el nombre de otra
  * aplicación servida en este servidor (su DNS ya apunta aquí, así que la
- * comprobación pasaría) y quedarse con su tráfico. Que el dominio de correo
- * esté verificado demuestra que el cliente controla su DNS.
+ * comprobación pasaría) y quedarse con su tráfico. Que la propiedad del
+ * dominio de correo esté comprobada demuestra que el cliente controla su DNS.
  */
 export function assertHostnameAllowed(clientId: string, hostname: string): void {
   const firstLabel = hostname.split('.')[0]!;
@@ -149,8 +151,8 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   }
 
   const domains = db
-    .prepare('SELECT domain, status, verified_at FROM domains WHERE client_id = ?')
-    .all(clientId) as { domain: string; status: string; verified_at: number | null }[];
+    .prepare('SELECT domain, owner_verified_at FROM domains WHERE client_id = ?')
+    .all(clientId) as { domain: string; owner_verified_at: number | null }[];
   // El más específico primero, por si el cliente tiene a la vez un dominio y un subdominio suyo.
   const parent = domains
     .filter((d) => hostname.endsWith(`.${d.domain}`))
@@ -166,9 +168,12 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
       'hostname_not_owned',
     );
   }
-  if (parent.status !== 'active' && parent.verified_at === null) {
+  // Lo que cuenta es la PROPIEDAD comprobada (MX a este servidor o TXT de
+  // verificación), no que el dominio esté activo: es lo que demuestra que el
+  // cliente controla el DNS del que cuelga el nombre.
+  if (parent.owner_verified_at === null) {
     throw badRequest(
-      `El dominio de correo ${parent.domain} todavía no está verificado. Complete primero su configuración DNS en «Dominios».`,
+      `Todavía no se ha comprobado la propiedad del dominio de correo ${domainToUnicode(parent.domain) || parent.domain}. Compruébela primero en su ficha, en «Dominios».`,
       'domain_not_verified',
     );
   }
@@ -349,19 +354,38 @@ async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: stri
 }
 
 /**
+ * Fallos seguidos que hacen falta para degradar un dominio ACTIVO. Uno solo
+ * puede ser transitorio (un NXDOMAIN en caché negativa durante un cambio de
+ * servidores de nombres, un HTTPS que tarda más de 8 s): degradarlo a la
+ * primera lo sacaría de Traefik y abriría una alerta crítica que se cerraría
+ * sola en la vuelta siguiente.
+ */
+export const FALLOS_PARA_DEGRADAR = 2;
+
+/**
+ * Fallos seguidos de cada dominio activo. En memoria: tras un reinicio, como
+ * mucho hace falta una comprobación más para degradarlo.
+ */
+const fallosSeguidos = new Map<string, number>();
+
+/**
  * Siguiente estado de un dominio propio según lo averiguado. Un DNS no
  * concluyente (corte de red, resolutor lento) NO cambia nada: si degradara el
  * dominio, saldría de la configuración de Traefik y el webmail del cliente
- * devolvería 404 por un fallo que no es suyo.
+ * devolvería 404 por un fallo que no es suyo. Un dominio activo tampoco se
+ * degrada por un único fallo (véase FALLOS_PARA_DEGRADAR): `fallos` es el
+ * número de fallos seguidos, contando este.
  */
 export function nextClientDomainStatus(
   previous: DomainStatus,
   dns: DnsCheckResult['status'],
   httpsOk: boolean,
+  fallos = FALLOS_PARA_DEGRADAR,
 ): DomainStatus {
   if (dns === 'unknown') return previous;
-  if (dns === 'failed') return 'pending_dns';
-  return httpsOk ? 'active' : 'issuing';
+  const siguiente: DomainStatus = dns === 'failed' ? 'pending_dns' : httpsOk ? 'active' : 'issuing';
+  if (previous === 'active' && siguiente !== 'active' && fallos < FALLOS_PARA_DEGRADAR) return 'active';
+  return siguiente;
 }
 
 /**
@@ -383,8 +407,19 @@ export function applyClientDomainCheck(
     );
     return getClientDomain(id);
   }
-  const status = nextClientDomainStatus(domain.status, dns.status, https?.ok ?? false);
-  const detail = dns.status === 'ok' ? (https?.detail ?? dns.detail) : dns.detail;
+  const funciona = dns.status === 'ok' && (https?.ok ?? false);
+  const fallos = funciona ? 0 : (fallosSeguidos.get(id) ?? 0) + 1;
+  if (fallos === 0 || domain.status !== 'active') fallosSeguidos.delete(id);
+  else fallosSeguidos.set(id, fallos);
+  const status = nextClientDomainStatus(domain.status, dns.status, https?.ok ?? false, fallos);
+  if (status !== 'active') fallosSeguidos.delete(id);
+  const medido = dns.status === 'ok' ? (https?.detail ?? dns.detail) : dns.detail;
+  // Activo pese al fallo (periodo de gracia): se dice, para que el detalle
+  // no contradiga en silencio el estado «En servicio».
+  const detail =
+    status === 'active' && !funciona
+      ? `${medido} Se volverá a comprobar antes de considerarlo fuera de servicio.`
+      : medido;
   const row = db
     .prepare(
       `UPDATE client_domains SET status = ?, detail = ?, last_checked_at = ?,
@@ -644,6 +679,9 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const domain = requireDomainAccess(req, id);
     db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
+    fallosSeguidos.delete(id);
+    // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
+    resolveAlert(`whitelabel:${id}`);
     audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname }, domain.clientId);
     // Traefik dejará de enrutarlo en su siguiente sondeo (unos segundos).
     return { ok: true };

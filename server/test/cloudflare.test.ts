@@ -9,6 +9,7 @@ import {
 } from '../src/core/cloudflare';
 import {
   construirLote,
+  deseadosDeInstancia,
   ejecutarPlan,
   fusionarSpf,
   planificar,
@@ -707,7 +708,7 @@ test('plan y aplicación de un dominio: registros sin proxy, marcados y en un so
 
   const cuenta = await conectar(cliente.userCookie!, TOKEN_USUARIO);
   assert.equal(cuenta.statusCode, 200);
-  const { domainId } = await createDomain(ctx, cliente.clientId, 'aplicar.es');
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'aplicar.es', { ownershipVerified: false });
 
   const planRes = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: cliente.userCookie! } });
   assert.equal(planRes.statusCode, 200, planRes.body);
@@ -735,14 +736,24 @@ test('plan y aplicación de un dominio: registros sin proxy, marcados y en un so
   });
   assert.equal(res.statusCode, 200, res.body);
   const cuerpo = res.json() as {
-    applied: { action: string }[];
+    applied: { action: string; type: string; name: string }[];
     errors: unknown[];
-    domain: { cloudflare: { zoneId: string } | null; dnsAppliedAt: number | null };
+    domain: {
+      cloudflare: { zoneId: string } | null;
+      dnsAppliedAt: number | null;
+      ownershipVerifiedAt: number | null;
+      ownershipRecord: { name: string; content: string };
+    };
   };
   assert.equal(cuerpo.errors.length, 0);
-  assert.equal(cuerpo.applied.length, 3);
+  // MX, SPF (fusión), DKIM y el TXT de verificación de la propiedad.
+  assert.equal(cuerpo.applied.length, 4);
+  assert.ok(cuerpo.applied.some((a) => a.type === 'TXT' && a.name === '_mailway.aplicar.es'));
   assert.equal(cuerpo.domain.cloudflare?.zoneId, z.id);
   assert.ok(cuerpo.domain.dnsAppliedAt);
+  assert.ok(cuerpo.domain.ownershipVerifiedAt, 'escribir en una zona activa prueba la propiedad');
+  const verificacion = cf.enZona(z.id).find((r) => r.name === '_mailway.aplicar.es')!;
+  assert.equal(normalizarTxt(verificacion.content), cuerpo.domain.ownershipRecord.content);
   assert.equal(cf.llamadas.filter((l) => l.path.endsWith('/batch')).length, 1, 'un único lote');
 
   const registros = cf.enZona(z.id);
@@ -959,4 +970,230 @@ test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async
     payload: {},
   });
   assert.equal(ajeno.statusCode, 403);
+});
+
+/* -------------------- soloCliente (Skyway con token de admin) ------------- */
+
+test('soloCliente=1: el administrador no usa las cuentas de la instancia', async () => {
+  const cliente = await createClient(ctx);
+  const z = cf.zona('solo-cliente.es');
+  const TOKEN_INSTANCIA = 'cfut_solocliente0123456789abcdefghijklm';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'solo-cliente.es');
+
+  const limitado = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/domains/${domainId}/cloudflare?soloCliente=1`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(limitado.statusCode, 200);
+  assert.equal((limitado.json() as { available: boolean }).available, false);
+
+  cf.llamadas = [];
+  const aplicar = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply?soloCliente=1`,
+    headers: { cookie: ctx.adminCookie },
+    payload: {},
+  });
+  assert.equal(aplicar.statusCode, 400);
+  assert.equal((aplicar.json() as { code: string }).code, 'cloudflare_unavailable');
+  assert.equal(cf.llamadas.filter((l) => l.method !== 'GET').length, 0, 'nunca se escribe en la zona');
+
+  // El alta con DNS automático respeta lo mismo.
+  const otro = await createClient(ctx);
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains?soloCliente=1',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'sub.solo-cliente.es', clientId: otro.clientId, autoDns: true },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  assert.equal((alta.json() as { cloudflare: unknown }).cloudflare, null);
+
+  // Sin el parámetro, el administrador sí puede usarla.
+  const normal = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/domains/${domainId}/cloudflare`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal((normal.json() as { available: boolean }).available, true);
+
+  const id = (cuenta.json() as { account: { id: string } }).account.id;
+  await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
+});
+
+/* ------------------------ Propiedad y zona pendiente ---------------------- */
+
+test('una zona pendiente de activación no prueba la propiedad del dominio', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('pendiente.es', 'acc1', 'pending');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'pendiente.es', { ownershipVerified: false });
+
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply`,
+    headers: { cookie: cliente.userCookie! },
+    payload: {},
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const cuerpo = res.json() as { applied: unknown[]; domain: { ownershipVerifiedAt: number | null } };
+  assert.ok(cuerpo.applied.length > 0);
+  assert.equal(cuerpo.domain.ownershipVerifiedAt, null, 'cualquiera puede añadir un dominio ajeno como zona pendiente');
+});
+
+/* ---------------------- Recuperación: un lote por cambio ------------------ */
+
+test('si el lote falla, cada cambio va en su propio lote y la zona nunca se queda sin MX', async () => {
+  const z = cf.zona(APEX);
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: APEX, content: 'smtp.google.com', priority: 1 });
+  const existentes = cf.enZona(z.id).map((r) =>
+    existente({ id: r.id, type: r.type, name: r.name, content: r.content, priority: r.priority }),
+  );
+  const cambios = planificar([mx, spf], existentes, { apex: APEX });
+  assert.equal(cambios[0]!.action, 'conflict');
+
+  // El lote completo falla por un registro; después, el alta del MX nuevo
+  // también falla. Antes se borraba el MX de Google en una llamada suelta y
+  // la zona se quedaba sin ninguno.
+  const lotes: { deletes?: unknown[]; posts?: { type: string }[] }[] = [];
+  const falso = cf.fetch;
+  const rechazo = () =>
+    new Response(
+      JSON.stringify({
+        success: false,
+        errors: [{ code: 1004, message: 'DNS Validation Error', error_chain: [{ code: 9005, message: 'Bad content' }] }],
+        messages: [],
+        result: null,
+      }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.endsWith('/batch') && init.body) {
+      const cuerpo = JSON.parse(String(init.body)) as { deletes?: unknown[]; posts?: { type: string }[] };
+      lotes.push(cuerpo);
+      if (lotes.length === 1 || (cuerpo.posts ?? []).some((p) => p.type === 'MX')) return rechazo();
+    }
+    return falso(input, init);
+  }) as typeof fetch;
+  try {
+    const r = await ejecutarPlan(new CloudflareClient(TOKEN_USUARIO), z.id, cambios, { replaceConflicts: true });
+    assert.deepEqual(r.errors.map((e) => e.type), ['MX']);
+    assert.deepEqual(r.applied.map((a) => a.type), ['TXT'], 'el SPF sí se aplica');
+  } finally {
+    globalThis.fetch = falso as typeof fetch;
+  }
+  const mxs = cf.enZona(z.id).filter((r) => r.type === 'MX');
+  assert.deepEqual(mxs.map((r) => r.content), ['smtp.google.com'], 'el borrado del MX ajeno se deshace con su lote');
+  assert.equal(lotes.length, 3, 'un lote completo y uno por cambio');
+  assert.ok(lotes[1]!.deletes?.length, 'el reemplazo del MX va entero en un lote');
+});
+
+test('los borrados compartidos solo van en el primer lote que los consigue', async () => {
+  const z = cf.zona(APEX);
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  // Un CNAME en el vértice de un subdominio impide el MX y el SPF a la vez.
+  const sub = `envios.${APEX}`;
+  cf.registro(z.id, { type: 'CNAME', name: sub, content: 'marketing.otro.com' });
+  const existentes = cf.enZona(z.id).map((r) => existente({ id: r.id, type: r.type, name: r.name, content: r.content }));
+  const cambios = planificar(
+    [
+      { ...mx, name: sub },
+      { ...spf, name: sub },
+    ],
+    existentes,
+    { apex: APEX },
+  );
+  assert.deepEqual(cambios.map((c) => c.action), ['conflict', 'conflict']);
+
+  const falso = cf.fetch;
+  let primero = true;
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.endsWith('/batch') && primero) {
+      primero = false;
+      return new Response(
+        JSON.stringify({ success: false, errors: [{ code: 1004, message: 'DNS Validation Error' }], messages: [], result: null }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return falso(input, init);
+  }) as typeof fetch;
+  try {
+    const r = await ejecutarPlan(new CloudflareClient(TOKEN_USUARIO), z.id, cambios, { replaceConflicts: true });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.applied.length, 2);
+  } finally {
+    globalThis.fetch = falso as typeof fetch;
+  }
+  const aqui = cf.enZona(z.id).filter((r) => r.name === sub);
+  assert.deepEqual(aqui.map((r) => r.type).sort(), ['MX', 'TXT']);
+});
+
+/* ------------------------ Coherencia plan / comprobación ------------------ */
+
+test('el vértice es el de la zona: un CNAME en un dominio que es subdominio es un conflicto', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('matriz.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'CNAME', name: 'envios.matriz.es', content: 'marketing.otro.com' });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'envios.matriz.es');
+
+  const plan = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: cliente.userCookie! } });
+  assert.equal(plan.statusCode, 200, plan.body);
+  const cambios = (plan.json() as { changes: { type: string; name: string; action: string; reason: string }[] }).changes;
+  const de = (type: string) => cambios.find((c) => c.type === type && c.name === 'envios.matriz.es');
+  assert.equal(de('MX')?.action, 'conflict');
+  assert.match(de('MX')!.reason, /CNAME/);
+  assert.equal(de('TXT')?.action, 'conflict');
+});
+
+test('un MX de respaldo ajeno con menor preferencia se conserva, igual que en la comprobación', () => {
+  const propio = existente({ type: 'MX', name: APEX, content: 'mail.servidor.es', priority: 10 });
+  const respaldo = existente({ type: 'MX', name: APEX, content: 'respaldo.otro.es', priority: 50 });
+  const [c] = planificar([mx], [propio, respaldo], { apex: APEX });
+  assert.equal(c!.action, 'keep');
+  assert.match(c!.reason, /menor preferencia/);
+
+  const porDelante = existente({ type: 'MX', name: APEX, content: 'smtp.google.com', priority: 10 });
+  const [d] = planificar([mx], [propio, porDelante], { apex: APEX });
+  assert.equal(d!.action, 'conflict', 'con la misma prioridad se reparten el correo');
+  assert.deepEqual(d!.reemplazo!.deletes, [porDelante.id]);
+  assert.deepEqual(d!.reemplazo!.posts, [], 'el propio ya existe: no se vuelve a crear');
+
+  const [e] = planificar([mx], [existente({ type: 'MX', name: APEX, content: 'mail.servidor.es', priority: 20 })], { apex: APEX });
+  assert.equal(e!.action, 'keep');
+  assert.match(e!.reason, /prioridad 20/);
+});
+
+test('el TXT de verificación se reconoce en la zona y no se vuelve a crear', () => {
+  const deseado: Deseado = {
+    type: 'TXT',
+    name: `_mailway.${APEX}`,
+    content: 'mailway-verificacion=0123456789abcdef0123456789abcdef',
+    required: false,
+  };
+  const [igual] = planificar([deseado], [existente({ type: 'TXT', name: deseado.name, content: `"${deseado.content}"` })], { apex: APEX });
+  assert.equal(igual!.action, 'keep');
+  const [viejo] = planificar(
+    [deseado],
+    [existente({ type: 'TXT', name: deseado.name, content: '"mailway-verificacion=ffff"', comment: 'Mailway' })],
+    { apex: APEX },
+  );
+  assert.equal(viejo!.action, 'update', 'el creado por Mailway con otro token se actualiza');
+});
+
+test('DNS de la plataforma: con un servidor de dos etiquetas se proponen autoconfig y autodiscover', () => {
+  setInstanceSettings({ mailHostname: 'ejemplo.com', publicIp: '203.0.113.10', webmailUrl: '', panelUrl: '' });
+  const { deseados } = deseadosDeInstancia();
+  const nombres = deseados.map((d) => `${d.type} ${d.name}`);
+  assert.ok(nombres.includes('CNAME autoconfig.ejemplo.com'), nombres.join(', '));
+  assert.ok(nombres.includes('CNAME autodiscover.ejemplo.com'));
 });

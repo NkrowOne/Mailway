@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
 import { setInstanceSettings } from '../src/modules/settings';
+import { debeVigilarse } from '../src/modules/watchdog';
 import {
   applyClientDomainCheck,
   getClientDomain,
@@ -77,11 +78,41 @@ test('un resultado desconocido solo actualiza el detalle', () => {
   assert.ok(domain.lastCheckedAt);
 });
 
-test('un fallo definitivo se escribe como pendiente de DNS', () => {
+test('un fallo definitivo se escribe como pendiente de DNS a la segunda vez seguida', () => {
   seed('w3', 'webmail.roto.test', 'active', 1000);
-  const domain = applyClientDomainCheck('w3', { status: 'failed', detail: 'apunta a otra IP' }, null);
-  assert.equal(domain.status, 'pending_dns');
-  assert.equal(domain.detail, 'apunta a otra IP');
+  const primero = applyClientDomainCheck('w3', { status: 'failed', detail: 'apunta a otra IP' }, null);
+  assert.equal(primero.status, 'active', 'un solo fallo puede ser transitorio: sigue publicado');
+  assert.match(primero.detail, /^apunta a otra IP Se volverá a comprobar/);
+  const segundo = applyClientDomainCheck('w3', { status: 'failed', detail: 'apunta a otra IP' }, null);
+  assert.equal(segundo.status, 'pending_dns');
+  assert.equal(segundo.detail, 'apunta a otra IP');
+});
+
+test('un único HTTPS sin respuesta no saca de servicio un dominio activo', () => {
+  seed('w6', 'webmail.lento.test', 'active', 1000);
+  const ok = { status: 'ok' as const, detail: 'apunta aquí' };
+  const lento = { ok: false, detail: 'No se ha recibido respuesta a tiempo.' };
+  assert.equal(applyClientDomainCheck('w6', ok, lento).status, 'active');
+  // Se recupera: el contador vuelve a cero y un fallo aislado posterior tampoco lo degrada.
+  assert.equal(applyClientDomainCheck('w6', ok, { ok: true, detail: 'Certificado válido' }).status, 'active');
+  assert.equal(applyClientDomainCheck('w6', ok, lento).status, 'active');
+  assert.equal(applyClientDomainCheck('w6', ok, lento).status, 'issuing', 'dos seguidos sí');
+});
+
+test('la gracia solo protege a los dominios activos', () => {
+  assert.equal(nextClientDomainStatus('active', 'failed', false, 1), 'active');
+  assert.equal(nextClientDomainStatus('active', 'ok', false, 1), 'active');
+  assert.equal(nextClientDomainStatus('active', 'ok', false, 2), 'issuing');
+  assert.equal(nextClientDomainStatus('issuing', 'failed', false, 1), 'pending_dns');
+  assert.equal(nextClientDomainStatus('pending_dns', 'ok', false, 1), 'issuing');
+});
+
+test('el vigilante vuelve a medir los dominios que estuvieron activos y cayeron a pendiente', () => {
+  const base = { id: 'x', clientId: 'c', hostname: 'h.test', kind: 'webmail' as const, detail: '', lastCheckedAt: null, createdAt: 0 };
+  assert.equal(debeVigilarse({ ...base, status: 'pending_dns', activatedAt: 1000 }), true);
+  assert.equal(debeVigilarse({ ...base, status: 'pending_dns', activatedAt: null }), false, 'uno nuevo es tarea del cliente');
+  assert.equal(debeVigilarse({ ...base, status: 'issuing', activatedAt: null }), true);
+  assert.equal(debeVigilarse({ ...base, status: 'active', activatedAt: 1000 }), true);
 });
 
 test('DNS correcto y certificado emitido activa el dominio y fija la fecha', () => {

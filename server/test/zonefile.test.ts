@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import {
   categoriaDe,
   esObligatorio,
+  esRegistroPropiedad,
   evaluarConflicto,
   filtrarPorNivel,
   generarZona,
+  registroPropiedad,
+  registrosDelDominio,
   seleccionarRegistros,
   trocearTxt,
 } from '../src/modules/zonefile';
@@ -243,4 +246,19 @@ test('MTA-STS y TLS-RPT son endurecimiento, no autoconfiguración', () => {
   assert.equal(cat(`202609e._domainkey.${dominio}`), 'obligatorio');
   const recomendados = filtrarPorNivel(sel, 'recomendados');
   assert.ok(!recomendados.some((r) => r.name.startsWith('mta-sts.')), 'el CNAME de MTA-STS solo no sirve de nada');
+});
+
+test('el TXT de verificación de la propiedad va una sola vez y con lo recomendado', () => {
+  const todos = registrosDelDominio(dominio, delMotor);
+  const propios = todos.filter(esRegistroPropiedad);
+  assert.equal(propios.length, 1);
+  assert.equal(propios[0]!.name, `_mailway.${dominio}`);
+  assert.equal(categoriaDe(propios[0]!), 'verificacion');
+  assert.ok(!esObligatorio(propios[0]!));
+  assert.ok(filtrarPorNivel(todos, 'recomendados').some(esRegistroPropiedad));
+  assert.ok(!filtrarPorNivel(todos, 'obligatorios').some(esRegistroPropiedad));
+  // Si el motor lo devolviera (no lo hace), no se duplica.
+  assert.equal(registrosDelDominio(dominio, [...delMotor, registroPropiedad(dominio)]).filter(esRegistroPropiedad).length, 1);
+  const zona = generarZona({ domain: dominio, records: delMotor, nivel: 'recomendados' });
+  assert.match(zona, /demuestra que el dominio es suyo/);
 });
