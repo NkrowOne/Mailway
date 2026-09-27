@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { clientLockKey, withLock } from '../core/locks';
 import { generateMailboxPassword, randomId } from '../core/crypto';
-import { badRequest, conflict, notFound } from '../core/errors';
+import { HttpError, badRequest, conflict, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
-import { assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
-import { getDomain, type DomainRecord } from './domains';
+import { assertClientActive, assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
+import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
 import { alCambiarContrasenaBuzon } from './portal';
 
 export interface Mailbox {
@@ -194,10 +194,29 @@ export function requireMailboxAccess(
   return { user, mailbox, domain };
 }
 
+function mailboxExistsError(email: string): HttpError {
+  return conflict(`El buzón ${email} ya existe.`, 'mailbox_exists');
+}
+
+/** Motivo por el que no se puede crear nada en el dominio, o null si se puede. */
+function ownershipPendingMessage(domainId: string): string | null {
+  try {
+    assertDomainOwnership(domainId);
+    return null;
+  } catch (err) {
+    if (err instanceof HttpError && err.code === 'domain_ownership_pending') return err.message;
+    throw err;
+  }
+}
+
 function mailboxExists(domainId: string, localPart: string): boolean {
   return Boolean(
     db.prepare('SELECT 1 FROM mailboxes WHERE domain_id = ? AND local_part = ?').get(domainId, localPart),
   );
+}
+
+function aliasExistsError(email: string): HttpError {
+  return conflict(`El alias ${email} ya existe.`, 'alias_exists');
 }
 
 function aliasExists(domainId: string, localPart: string): boolean {
@@ -250,8 +269,10 @@ const bulkSchema = z.object({
 });
 
 /**
- * Crea un buzón en el motor y en la base. Comprueba el plan justo antes de
- * crear: en un alta masiva protege frente a altas simultáneas.
+ * Crea un buzón en el motor y en la base. Comprueba el plan y la propiedad
+ * del dominio justo antes de crear; quien llama debe tener el cerrojo del
+ * cliente (clientLockKey), que es lo que impide que dos altas simultáneas
+ * de la misma dirección lleguen a la vez al motor.
  */
 async function createMailboxRecord(input: {
   domain: DomainRecord;
@@ -259,11 +280,13 @@ async function createMailboxRecord(input: {
   displayName: string;
   password?: string;
   quotaMb?: number;
+  viewerIsAdmin: boolean;
 }): Promise<{ mailbox: Mailbox; password: string }> {
   const { domain, localPart } = input;
-  assertWithinLimit(domain.clientId, 'mailboxes');
+  assertWithinLimit(domain.clientId, 'mailboxes', 1, input.viewerIsAdmin);
+  assertDomainOwnership(domain.id);
   const email = `${localPart}@${domain.domain}`;
-  if (mailboxExists(domain.id, localPart)) throw conflict(`El buzón ${email} ya existe.`, 'mailbox_exists');
+  if (mailboxExists(domain.id, localPart)) throw mailboxExistsError(email);
   if (aliasExists(domain.id, localPart)) {
     throw conflict(`Ya existe un alias ${email}. Elija otro nombre.`, 'alias_exists');
   }
@@ -291,9 +314,13 @@ async function createMailboxRecord(input: {
        VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
     ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
   } catch (err) {
-    // El INSERT falló (p. ej. el dominio se borró en paralelo → FK, o
-    // colisión de unicidad): deshacemos el buzón en el motor para no dejar
-    // un principal huérfano que impediría recrear esa dirección.
+    // Otra petición ya registró esta dirección: el principal del motor es
+    // SUYO (con su contraseña). Borrarlo dejaría su buzón en el panel sin
+    // cuenta en el motor; se responde 409 y no se toca nada.
+    if (isUniqueViolation(err)) throw mailboxExistsError(email);
+    // Cualquier otro fallo (p. ej. el dominio se borró en paralelo → FK):
+    // se deshace el buzón en el motor para no dejar un principal huérfano
+    // que impediría recrear esa dirección.
     await engine.deleteMailbox(email).catch(() => undefined);
     throw err;
   }
@@ -439,7 +466,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
   app.post('/api/mailboxes', async (req) => {
     const body = createSchema.parse(req.body);
     const domain = getDomain(body.domainId);
-    requireClientAccess(req, domain.clientId);
+    const user = requireClientAccess(req, domain.clientId);
     const localPart = normalizeLocalPart(body.localPart);
     const { mailbox, password } = await withLock(clientLockKey(domain.clientId), () =>
       createMailboxRecord({
@@ -448,6 +475,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
         displayName: body.displayName,
         password: body.password,
         quotaMb: body.quotaMb,
+        viewerIsAdmin: user.role === 'admin',
       }),
     );
     audit(req, 'mailbox.created', { id: mailbox.id, email: mailbox.email }, domain.clientId);
@@ -463,14 +491,13 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
   app.post('/api/mailboxes/bulk', async (req) => {
     const body = bulkSchema.parse(req.body);
     const domain = getDomain(body.domainId);
-    requireClientAccess(req, domain.clientId);
+    const user = requireClientAccess(req, domain.clientId);
+    const viewerIsAdmin = user.role === 'admin';
     const client = getClient(domain.clientId);
-    if (client.suspended) {
-      throw badRequest(
-        'Este cliente está suspendido. No es posible crear recursos hasta que se reactive.',
-        'client_suspended',
-      );
-    }
+    assertClientActive(client.id);
+    // Sin propiedad comprobada no se crea ningún buzón; la revisión lo dice
+    // en cada línea para que nadie prepare un lote que no se va a crear.
+    const ownershipError = ownershipPendingMessage(domain.id);
 
     const seen = new Set<string>();
     const checked = body.entries.map((entry) => {
@@ -480,6 +507,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       if (!error && seen.has(localPart)) error = 'La dirección está repetida en la lista.';
       if (!error && mailboxExists(domain.id, localPart)) error = 'El buzón ya existe.';
       if (!error && aliasExists(domain.id, localPart)) error = 'Ya existe un alias con esa dirección.';
+      if (!error && ownershipError) error = 'Falta comprobar la propiedad del dominio.';
       seen.add(localPart);
       return { localPart, email, displayName: entry.displayName, error };
     });
@@ -498,6 +526,8 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
         capacity,
         valid: valid.length,
         exceedsPlan: valid.length > capacity.remaining,
+        ownershipPending: ownershipError !== null,
+        ownershipError,
         results: checked.map((c) => ({
           localPart: c.localPart,
           email: c.email,
@@ -508,13 +538,14 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       };
     }
 
+    if (ownershipError) throw conflict(ownershipError, 'domain_ownership_pending');
     if (valid.length === 0) {
       throw badRequest('Ninguna dirección de la lista es válida. Revise la lista e inténtelo de nuevo.', 'bulk_empty');
     }
     // Con el cerrojo del cliente, ninguna otra alta (individual o masiva) se
     // cuela entre la comprobación del plan y la última inserción del lote.
     return withLock(clientLockKey(client.id), async () => {
-    assertWithinLimit(client.id, 'mailboxes', valid.length);
+    assertWithinLimit(client.id, 'mailboxes', valid.length, viewerIsAdmin);
     if (bulkInProgress.has(client.id)) {
       throw conflict('Ya hay un alta masiva en curso para este cliente. Espere a que termine.', 'bulk_in_progress');
     }
@@ -541,6 +572,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
             localPart: entry.localPart,
             displayName: entry.displayName,
             quotaMb: body.quotaMb,
+            viewerIsAdmin,
           });
           results.push({
             localPart: entry.localPart,
@@ -730,16 +762,17 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       })
       .parse(req.body);
     const domain = getDomain(body.domainId);
-    requireClientAccess(req, domain.clientId);
+    const user = requireClientAccess(req, domain.clientId);
     return withLock(clientLockKey(domain.clientId), async () => {
-    assertWithinLimit(domain.clientId, 'aliases');
+    assertWithinLimit(domain.clientId, 'aliases', 1, user.role === 'admin');
+    assertDomainOwnership(domain.id);
 
     const localPart = normalizeLocalPart(body.localPart);
     const email = `${localPart}@${domain.domain}`;
     if (mailboxExists(domain.id, localPart)) {
       throw conflict(`Ya existe un buzón ${email}. Elija otro nombre para el alias.`, 'mailbox_exists');
     }
-    if (aliasExists(domain.id, localPart)) throw conflict(`El alias ${email} ya existe.`, 'alias_exists');
+    if (aliasExists(domain.id, localPart)) throw aliasExistsError(email);
 
     const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
     await getEngine().upsertAlias(email, internal, external);
@@ -752,6 +785,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
          VALUES (?, ?, ?, ?, ?)`,
       ).run(id, domain.id, localPart, JSON.stringify(all), now());
     } catch (err) {
+      // Igual que con los buzones: si otra petición registró el alias, la
+      // lista del motor es la suya y no se borra.
+      if (isUniqueViolation(err)) throw aliasExistsError(email);
       await getEngine().deleteAlias(email).catch(() => undefined);
       throw err;
     }

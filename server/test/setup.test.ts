@@ -104,6 +104,28 @@ test('el estado anuncia el token y el motor del entorno, sin la contraseña', as
   assert.ok(!res.body.includes(SETUP_TOKEN), 'el token de puesta en marcha tampoco');
 });
 
+test('el token de puesta en marcha no se puede probar sin límite', async () => {
+  const app = await getTestApp();
+  const creds = { email: 'intruso@mailway.test', name: 'Intruso', password: 'clave-intruso-segura' };
+  for (let i = 0; i < 10; i += 1) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/setup/admin',
+      payload: { ...creds, setupToken: `intento-${i}` },
+      remoteAddress: '192.0.2.50',
+    });
+    assert.equal(res.statusCode, 403, res.body);
+  }
+  const bloqueado = await app.inject({
+    method: 'POST',
+    url: '/api/setup/admin',
+    payload: { ...creds, setupToken: SETUP_TOKEN },
+    remoteAddress: '192.0.2.50',
+  });
+  assert.equal(bloqueado.statusCode, 429, 'ni con el token correcto desde esa IP');
+  assert.equal((db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number }).c, 0);
+});
+
 test('crear el administrador exige el token de puesta en marcha', async () => {
   const app = await getTestApp();
   const creds = { email: 'admin@mailway.test', name: 'Administración', password: 'clave-admin-segura' };
@@ -261,4 +283,139 @@ test('el DNS de la plataforma se mide sin red como «sin dato»', async () => {
     ],
   );
   assert.equal(body.ptr?.status, 'unknown');
+});
+
+/* ---------------------- Motor: pruebas y cambios (S7) ---------------------- */
+
+/** Servidor ajeno que anota lo que le llega: no debe recibir nunca la contraseña. */
+function servidorAjeno() {
+  const recibidas: { authorization: string | undefined }[] = [];
+  const server = http.createServer((req, res) => {
+    recibidas.push({ authorization: req.headers.authorization });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data: { items: [], total: 0 } }));
+  });
+  return { server, recibidas };
+}
+
+test('probar o cambiar el motor con otra URL exige la contraseña y una sesión del panel', async () => {
+  const app = await getTestApp();
+  const ajeno = servidorAjeno();
+  await new Promise<void>((resolve) => ajeno.server.listen(0, '127.0.0.1', resolve));
+  const urlAjena = `http://127.0.0.1:${(ajeno.server.address() as AddressInfo).port}`;
+  try {
+    const actual = getEngineSettings()!;
+    const cuerpo = {
+      kind: 'stalwart',
+      url: urlAjena,
+      adminUser: actual.adminUser,
+      adminPassword: '',
+      smtpHost: actual.smtpHost,
+      smtpPort: actual.smtpPort,
+      smtpSecure: actual.smtpSecure,
+    };
+
+    const prueba = await app.inject({
+      method: 'POST',
+      url: '/api/settings/engine/test',
+      headers: { cookie: adminCookie },
+      payload: cuerpo,
+    });
+    assert.equal(prueba.statusCode, 400, prueba.body);
+    assert.equal((prueba.json() as { code: string }).code, 'engine_password_required');
+    const cambio = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/engine',
+      headers: { cookie: adminCookie },
+      payload: cuerpo,
+    });
+    assert.equal(cambio.statusCode, 400, cambio.body);
+    assert.equal(ajeno.recibidas.length, 0, 'la contraseña guardada no sale hacia otra URL');
+    assert.equal(getEngineSettings()?.url, motorUrl, 'el motor configurado no cambia');
+
+    // Tampoco se puede redirigir el SMTP (recibe las credenciales de las claves de API).
+    const smtp = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/engine',
+      headers: { cookie: adminCookie },
+      payload: { ...cuerpo, url: motorUrl, smtpHost: 'smtp.ajeno.test' },
+    });
+    assert.equal(smtp.statusCode, 400, smtp.body);
+    assert.equal((smtp.json() as { code: string }).code, 'engine_password_required');
+
+    // Mismo destino: se prueba con la contraseña guardada, sin volver a escribirla.
+    const mismo = await app.inject({
+      method: 'POST',
+      url: '/api/settings/engine/test',
+      headers: { cookie: adminCookie },
+      payload: { ...cuerpo, url: `${motorUrl}/` },
+    });
+    assert.equal(mismo.statusCode, 200, mismo.body);
+    assert.equal((mismo.json() as { ok: boolean }).ok, true);
+
+    // Con un token de gestión (aunque sea de administrador), ni probar ni cambiar.
+    const token = await app.inject({
+      method: 'POST',
+      url: '/api/tokens',
+      headers: { cookie: adminCookie },
+      payload: { name: 'Integración' },
+    });
+    assert.equal(token.statusCode, 200, token.body);
+    const bearer = { authorization: `Bearer ${(token.json() as { token: string }).token}` };
+    for (const [method, url] of [
+      ['POST', '/api/settings/engine/test'],
+      ['PUT', '/api/settings/engine'],
+      ['POST', '/api/setup/engine'],
+    ] as const) {
+      const res = await app.inject({
+        method,
+        url,
+        headers: bearer,
+        payload: { ...cuerpo, adminPassword: 'la-que-sea-0123' },
+      });
+      assert.equal(res.statusCode, 403, `${method} ${url}: ${res.body}`);
+      assert.equal((res.json() as { code: string }).code, 'session_required');
+    }
+    assert.equal(ajeno.recibidas.length, 0);
+  } finally {
+    ajeno.server.closeAllConnections();
+    ajeno.server.close();
+  }
+});
+
+test('la identidad solo admite un nombre de servidor válido y URL http(s)', async () => {
+  const app = await getTestApp();
+  for (const payload of [
+    { mailHostname: 'mail servidor.test' },
+    { mailHostname: 'mail.test"; rm -rf' },
+    { webmailUrl: 'javascript:alert(1)' },
+    { panelUrl: 'ftp://panel.mailway.test' },
+  ]) {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/instance',
+      headers: { cookie: adminCookie },
+      payload,
+    });
+    assert.equal(res.statusCode, 400, JSON.stringify(payload));
+  }
+});
+
+test('con la puesta en marcha completa, el estado público solo trae la marca', async () => {
+  const app = await getTestApp();
+  const fin = await app.inject({ method: 'POST', url: '/api/setup/complete', headers: { cookie: adminCookie } });
+  assert.equal(fin.statusCode, 200, fin.body);
+
+  const anonimo = await app.inject({ method: 'GET', url: '/api/setup/status' });
+  assert.equal(anonimo.statusCode, 200);
+  const publico = anonimo.json() as Record<string, unknown>;
+  assert.deepEqual(Object.keys(publico).sort(), ['hasAdmin', 'instance', 'requiresSetupToken', 'setupComplete']);
+  assert.deepEqual(publico.instance, { brandName: 'Correo Ejemplo' });
+  assert.ok(!anonimo.body.includes('203.0.113.10'), 'sin la IP pública');
+  assert.ok(!anonimo.body.includes(motorUrl), 'sin la URL interna del motor');
+
+  const admin = await app.inject({ method: 'GET', url: '/api/setup/status', headers: { cookie: adminCookie } });
+  const completo = admin.json() as { instance: { publicIp: string }; engineDefaults: unknown };
+  assert.equal(completo.instance.publicIp, '203.0.113.10');
+  assert.ok(completo.engineDefaults);
 });

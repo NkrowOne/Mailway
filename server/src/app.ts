@@ -5,7 +5,7 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { ZodError } from 'zod';
 import { config } from './config';
-import { HttpError } from './core/errors';
+import { HttpError, isUniqueViolation } from './core/errors';
 import { sessionHook } from './modules/auth';
 import { registerAuthRoutes } from './modules/auth';
 import { registerAuditRoutes } from './modules/audit';
@@ -94,6 +94,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         error: first ? `${first.message}` : 'Datos no válidos.',
         code: 'validation',
         issues: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+      return;
+    }
+    if (isUniqueViolation(err)) {
+      // Red de seguridad para las altas simultáneas que ninguna ruta ha
+      // traducido: es un conflicto del cliente (lo mismo creado dos veces),
+      // no un fallo interno.
+      reply.status(409).send({
+        error: 'Ese elemento ya existe o se está creando en otra petición simultánea. Actualice la página y compruebe el resultado.',
+        code: 'conflict',
       });
       return;
     }

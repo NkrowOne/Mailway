@@ -195,24 +195,126 @@ test('un cuerpo inválido responde 400 sin gastar cupo diario', async () => {
   assert.equal(usage.c, 1);
 });
 
+/** Cliente propio con un plan a medida: los límites del plan son por cliente. */
+async function clienteConPlan(limites: { apiDailyLimit: number; apiPerMinuteLimit: number }) {
+  const plan = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/plans',
+    headers: { cookie: ctx.adminCookie },
+    payload: {
+      name: `API ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      maxDomains: 1,
+      maxMailboxes: 5,
+      maxAliases: 5,
+      mailboxQuotaMb: 1024,
+      ...limites,
+    },
+  });
+  assert.equal(plan.statusCode, 200, plan.body);
+  const cliente = await createClient(ctx);
+  const cambio = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/clients/${cliente.clientId}`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { planId: plan.json().plan.id },
+  });
+  assert.equal(cambio.statusCode, 200, cambio.body);
+  const { domainId } = await createDomain(ctx, cliente.clientId);
+  const buzon = await createMailbox(ctx, domainId, 'avisos');
+  const clave = async (nombre: string) => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/apikeys',
+      headers: { cookie: ctx.adminCookie },
+      payload: { clientId: cliente.clientId, name: nombre, senderMailboxId: buzon.mailboxId },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    return (res.json() as { key: string }).key;
+  };
+  return { clientId: cliente.clientId, clave };
+}
+
 test('el límite por minuto del plan responde 429 rate_limited', async () => {
-  const { key } = await crearClave();
-  const planId = (db.prepare('SELECT plan_id FROM clients WHERE id = ?').get(clientId) as {
-    plan_id: string;
-  }).plan_id;
-  const previo = (db.prepare('SELECT api_per_minute_limit AS l FROM plans WHERE id = ?').get(planId) as {
-    l: number;
-  }).l;
-  db.prepare('UPDATE plans SET api_per_minute_limit = 2 WHERE id = ?').run(planId);
+  const { clave } = await clienteConPlan({ apiDailyLimit: 100, apiPerMinuteLimit: 2 });
+  const key = await clave('Minuto');
+  assert.equal((await enviar(key)).statusCode, 200);
+  assert.equal((await enviar(key)).statusCode, 200);
+  const tercero = await enviar(key);
+  assert.equal(tercero.statusCode, 429);
+  assert.equal(tercero.json().code, 'rate_limited');
+});
+
+test('el límite por minuto es del cliente: varias claves no lo multiplican', async () => {
+  const { clave } = await clienteConPlan({ apiDailyLimit: 100, apiPerMinuteLimit: 2 });
+  const a = await clave('Clave A');
+  const b = await clave('Clave B');
+  assert.equal((await enviar(a)).statusCode, 200);
+  assert.equal((await enviar(b)).statusCode, 200);
+  const res = await enviar(await clave('Clave C'));
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.json().code, 'rate_limited');
+});
+
+test('el cupo diario del plan es del cliente: varias claves no lo multiplican', async () => {
+  const { clientId: cliente, clave } = await clienteConPlan({ apiDailyLimit: 3, apiPerMinuteLimit: 100 });
+  const a = await clave('Clave A');
+  const b = await clave('Clave B');
+  assert.equal((await enviar(a)).statusCode, 200);
+  assert.equal((await enviar(a)).statusCode, 200);
+  assert.equal((await enviar(b)).statusCode, 200);
+  const cuarto = await enviar(b);
+  assert.equal(cuarto.statusCode, 429);
+  assert.equal(cuarto.json().code, 'daily_limit_reached');
+  assert.match(cuarto.json().error, /sumando todas sus claves/);
+  const enviados = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE client_id = ?').get(cliente) as { c: number };
+  assert.equal(enviados.c, 3, 'el rechazado no queda como envío');
+});
+
+test('una petición mal formada no gasta la ventana por minuto', async () => {
+  const { clave } = await clienteConPlan({ apiDailyLimit: 100, apiPerMinuteLimit: 1 });
+  const key = await clave('Formato');
+  const mala = await enviar(key, { text: undefined, html: undefined });
+  assert.equal(mala.statusCode, 400);
+  const otraMala = await enviar(key, { to: 'no-es-un-correo' });
+  assert.equal(otraMala.statusCode, 400);
+  assert.equal((await enviar(key)).statusCode, 200, 'el único envío del minuto sigue disponible');
+});
+
+test('un cliente suspendido no puede crear claves de API', async () => {
+  const { clientId: cliente, clave } = await clienteConPlan({ apiDailyLimit: 100, apiPerMinuteLimit: 100 });
+  await clave('Antes');
+  db.prepare('UPDATE clients SET suspended = 1 WHERE id = ?').run(cliente);
   try {
-    assert.equal((await enviar(key)).statusCode, 200);
-    assert.equal((await enviar(key)).statusCode, 200);
-    const tercero = await enviar(key);
-    assert.equal(tercero.statusCode, 429);
-    assert.equal(tercero.json().code, 'rate_limited');
+    const buzon = db
+      .prepare('SELECT m.id FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE d.client_id = ?')
+      .get(cliente) as { id: string };
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/apikeys',
+      headers: { cookie: ctx.adminCookie },
+      payload: { clientId: cliente, name: 'Durante', senderMailboxId: buzon.id },
+    });
+    assert.equal(res.statusCode, 400, res.body);
+    assert.equal(res.json().code, 'client_suspended');
   } finally {
-    db.prepare('UPDATE plans SET api_per_minute_limit = ? WHERE id = ?').run(previo, planId);
+    db.prepare('UPDATE clients SET suspended = 0 WHERE id = ?').run(cliente);
   }
+});
+
+test('el alta y la revocación de claves se anotan en la actividad del cliente', async () => {
+  const { key, info } = await crearClave();
+  assert.ok(key);
+  const del = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/apikeys/${info.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(del.statusCode, 200);
+  const filas = db
+    .prepare("SELECT action, client_id FROM audit_log WHERE action IN ('apikey.created', 'apikey.revoked') AND detail LIKE ?")
+    .all(`%${info.id}%`) as { action: string; client_id: string | null }[];
+  assert.deepEqual(filas.map((f) => f.action).sort(), ['apikey.created', 'apikey.revoked']);
+  assert.ok(filas.every((f) => f.client_id === clientId));
 });
 
 test('effectiveDailyLimit: el plan acota siempre a la clave', () => {

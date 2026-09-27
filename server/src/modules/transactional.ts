@@ -20,7 +20,7 @@ import type { EngineSettings } from '../engine/types';
 import { getEngineSettings, getInstanceSettings } from './settings';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
-import { getClient, getPlan } from './clients';
+import { assertClientActive, getClient, getPlan } from './clients';
 import { getMailbox, type Mailbox } from './mailboxes';
 
 /* ------------------------------ Claves de API ----------------------------- */
@@ -100,6 +100,56 @@ function releaseDailyUsage(keyId: string): void {
   ).run(keyId, todayKey());
 }
 
+/* ------------------------- Cupo diario del cliente ------------------------ */
+
+/*
+ * El límite diario del plan es del CLIENTE, no de cada clave: si se aplicara
+ * por clave, bastaría con crear diez claves para enviar diez veces el plan.
+ * Lo enviado hoy se cuenta en `messages` (cada envío admitido deja su fila,
+ * también los que el SMTP rechaza) y lo que está saliendo en este momento,
+ * en memoria: comprobar y apuntar es síncrono, así que las peticiones
+ * simultáneas no se cuelan entre la cuenta y la inserción.
+ */
+const enviosEnCurso = new Map<string, number>();
+
+function inicioDelDiaUtc(t = now()): number {
+  const d = new Date(t);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Envíos del cliente en el día UTC en curso (los ya registrados y los que están saliendo). */
+export function clientSentToday(clientId: string): number {
+  const registrados = (
+    db
+      .prepare('SELECT COUNT(*) AS c FROM messages WHERE client_id = ? AND created_at >= ?')
+      .get(clientId, inicioDelDiaUtc()) as { c: number }
+  ).c;
+  return registrados + (enviosEnCurso.get(clientId) ?? 0);
+}
+
+/**
+ * Reserva un envío del cupo diario del plan para el cliente. Devuelve la
+ * función que libera la reserva: se llama cuando el envío ya tiene su fila
+ * en `messages` (desde ahí cuenta la base) o si se rechaza antes.
+ */
+function reservarCupoCliente(clientId: string, limite: number): () => void {
+  if (limite > 0 && clientSentToday(clientId) >= limite) {
+    throw tooMany(
+      `Se ha alcanzado el límite diario de ${limite} envíos del plan para este cliente (sumando todas sus claves). El contador se reinicia a medianoche UTC.`,
+      'daily_limit_reached',
+    );
+  }
+  enviosEnCurso.set(clientId, (enviosEnCurso.get(clientId) ?? 0) + 1);
+  let liberada = false;
+  return () => {
+    if (liberada) return;
+    liberada = true;
+    const quedan = (enviosEnCurso.get(clientId) ?? 1) - 1;
+    if (quedan > 0) enviosEnCurso.set(clientId, quedan);
+    else enviosEnCurso.delete(clientId);
+  };
+}
+
 /**
  * Límite diario efectivo de una clave (0 = ilimitado). El del plan acota
  * siempre al de la clave: se recalcula en cada envío, no solo al crearla,
@@ -159,6 +209,10 @@ function podarVentanas(nowMs: number): void {
   }
 }
 
+/**
+ * Ventana de un minuto por clave de contador (en /v1/send, `cliente:<id>`:
+ * el límite por minuto del plan es del cliente, sume las claves que sume).
+ */
 export function checkPerMinute(keyId: string, limit: number, nowMs = Date.now()): void {
   podarVentanas(nowMs);
   // Un límite 0 o negativo se interpreta como «sin límite», igual que el diario.
@@ -370,6 +424,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
     if (!clientId) throw badRequest('Indique el cliente propietario de la clave.');
     requireClientAccess(req, clientId);
+    assertClientActive(clientId);
 
     const mailbox = getMailbox(body.senderMailboxId);
     const domain = db
@@ -429,7 +484,9 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
       }
       throw err;
     }
-    audit(req, 'apikey.created', { id, name: body.name, sender: mailbox.email });
+    // Con el cliente dueño de la clave: lo que hace el administrador (o Skyway
+    // con su token) debe aparecer también en la actividad de ese cliente.
+    audit(req, 'apikey.created', { id, name: body.name, sender: mailbox.email }, clientId);
 
     // La clave completa solo se muestra una vez.
     return { key, info: toInfo(db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as ApiKeyRow) };
@@ -454,7 +511,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la contraseña de aplicación al revocar la clave');
     }
-    audit(req, 'apikey.revoked', { id });
+    audit(req, 'apikey.revoked', { id, name: row.name }, row.client_id);
     return { ok: true };
   });
 
@@ -612,94 +669,110 @@ export function registerSendRoutes(app: FastifyInstance): void {
     const mailbox = resolveSender(keyRow);
     const plan = getPlan(client.planId);
 
-    checkPerMinute(keyRow.id, plan.apiPerMinuteLimit);
-
-    const effectiveDaily = effectiveDailyLimit(plan.apiDailyLimit, keyRow.daily_limit);
-
-    // Se valida el cuerpo ANTES de reservar cupo: un envío malformado no debe
-    // gastar cupo diario.
+    // Se valida el cuerpo ANTES de contar nada: un envío malformado no debe
+    // gastar ni la ventana por minuto ni el cupo diario.
     const body = sendSchema.parse(req.body);
     if (!body.html && !body.text) {
       throw badRequest('Incluya «html», «text» o ambos con el contenido del mensaje.');
     }
 
-    // Reserva atómica del cupo: incrementar y comprobar de forma síncrona
-    // cierra la carrera con el await del envío (peticiones concurrentes ya no
-    // pueden superar el límite entre la lectura y el incremento).
+    // Los límites del plan son del cliente (todas sus claves suman); el
+    // límite diario propio de una clave, si lo tiene, la acota además a ella.
+    checkPerMinute(`cliente:${client.id}`, plan.apiPerMinuteLimit);
+    const liberarCupoCliente = reservarCupoCliente(client.id, plan.apiDailyLimit);
+
+    // Reserva atómica del cupo de la clave: incrementar y comprobar de forma
+    // síncrona cierra la carrera con el await del envío.
+    const effectiveDaily = effectiveDailyLimit(plan.apiDailyLimit, keyRow.daily_limit);
     const reserved = reserveDailyUsage(keyRow.id);
     if (effectiveDaily > 0 && reserved > effectiveDaily) {
       releaseDailyUsage(keyRow.id);
+      liberarCupoCliente();
       throw tooMany(
-        `Se ha alcanzado el límite diario de ${effectiveDaily} envíos. El contador se reinicia a medianoche UTC.`,
+        `Se ha alcanzado el límite diario de ${effectiveDaily} envíos de esta clave. El contador se reinicia a medianoche UTC.`,
         'daily_limit_reached',
       );
     }
 
-    const from = body.fromName
-      ? { name: body.fromName, address: mailbox.email }
-      : mailbox.email;
-
-    const messageId = randomId('msg');
-    const engineSettings = getEngineSettings();
-    let status: 'sent' | 'failed' = 'sent';
-    let error = '';
-    let smtpMessageId = '';
-    const sizeBytes = messageSizeBytes(body);
-
-    if (engineSettings?.kind === 'demo') {
-      smtpMessageId = `<demo-${messageId}@mailway>`;
-    } else if (!engineSettings) {
-      status = 'failed';
-      error = 'el motor de correo no está configurado';
-    } else {
-      const { mailHostname } = getInstanceSettings();
-      try {
-        const transport = getTransport(
-          keyRow.id,
-          mailbox.email,
-          parseSmtpCredentials(keyRow.smtp_password_enc).plain,
-          engineSettings,
-          mailHostname,
-        );
-        const result = await transport.sendMail({
-          from,
-          to: body.to,
-          cc: body.cc,
-          bcc: body.bcc,
-          subject: body.subject,
-          html: body.html,
-          text: body.text,
-          replyTo: body.replyTo,
-          headers: body.headers,
-        });
-        smtpMessageId = result.messageId || '';
-      } catch (err) {
-        status = 'failed';
-        error = describeSmtpError(err, mailHostname || engineSettings.smtpHost);
-        req.log.warn({ err, key: keyRow.prefix }, 'Envío por API rechazado por el SMTP del motor');
-      }
+    try {
+      return await enviar(req, keyRow, mailbox, body);
+    } finally {
+      liberarCupoCliente();
     }
-
-    db.prepare(
-      `INSERT INTO messages (id, client_id, api_key_id, from_address, to_json, subject,
-         status, error, smtp_message_id, size_bytes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      messageId, keyRow.client_id, keyRow.id, mailbox.email, JSON.stringify(body.to),
-      body.subject, status, error, smtpMessageId, sizeBytes, now(),
-    );
-    // El cupo ya se reservó arriba (reserveDailyUsage); aquí no se vuelve a
-    // incrementar. Un envío fallido conserva la reserva (evita reintentos
-    // ilimitados ante un motor caído).
-    db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now(), keyRow.id);
-
-    if (status === 'failed') {
-      return {
-        id: messageId,
-        status,
-        error: `No se pudo entregar al servidor SMTP: ${error}`,
-      };
-    }
-    return { id: messageId, status, messageId: smtpMessageId };
   });
+}
+
+/** Envía por el SMTP del motor y deja la fila en `messages` (que cuenta para el cupo). */
+async function enviar(
+  req: FastifyRequest,
+  keyRow: ApiKeyRow,
+  mailbox: Mailbox,
+  body: z.infer<typeof sendSchema>,
+): Promise<{ id: string; status: 'sent' | 'failed'; error?: string; messageId?: string }> {
+  const from = body.fromName
+    ? { name: body.fromName, address: mailbox.email }
+    : mailbox.email;
+
+  const messageId = randomId('msg');
+  const engineSettings = getEngineSettings();
+  let status: 'sent' | 'failed' = 'sent';
+  let error = '';
+  let smtpMessageId = '';
+  const sizeBytes = messageSizeBytes(body);
+
+  if (engineSettings?.kind === 'demo') {
+    smtpMessageId = `<demo-${messageId}@mailway>`;
+  } else if (!engineSettings) {
+    status = 'failed';
+    error = 'el motor de correo no está configurado';
+  } else {
+    const { mailHostname } = getInstanceSettings();
+    try {
+      const transport = getTransport(
+        keyRow.id,
+        mailbox.email,
+        parseSmtpCredentials(keyRow.smtp_password_enc).plain,
+        engineSettings,
+        mailHostname,
+      );
+      const result = await transport.sendMail({
+        from,
+        to: body.to,
+        cc: body.cc,
+        bcc: body.bcc,
+        subject: body.subject,
+        html: body.html,
+        text: body.text,
+        replyTo: body.replyTo,
+        headers: body.headers,
+      });
+      smtpMessageId = result.messageId || '';
+    } catch (err) {
+      status = 'failed';
+      error = describeSmtpError(err, mailHostname || engineSettings.smtpHost);
+      req.log.warn({ err, key: keyRow.prefix }, 'Envío por API rechazado por el SMTP del motor');
+    }
+  }
+
+  db.prepare(
+    `INSERT INTO messages (id, client_id, api_key_id, from_address, to_json, subject,
+       status, error, smtp_message_id, size_bytes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    messageId, keyRow.client_id, keyRow.id, mailbox.email, JSON.stringify(body.to),
+    body.subject, status, error, smtpMessageId, sizeBytes, now(),
+  );
+  // El cupo ya se reservó antes de llamar aquí; no se vuelve a incrementar.
+  // Un envío fallido conserva la reserva y su fila cuenta para el cupo del
+  // cliente (evita reintentos ilimitados ante un motor caído).
+  db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now(), keyRow.id);
+
+  if (status === 'failed') {
+    return {
+      id: messageId,
+      status,
+      error: `No se pudo entregar al servidor SMTP: ${error}`,
+    };
+  }
+  return { id: messageId, status, messageId: smtpMessageId };
 }

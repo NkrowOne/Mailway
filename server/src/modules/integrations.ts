@@ -9,6 +9,7 @@ import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import { getClient, getClientUsage, getPlan } from './clients';
 import { getConnectionSettings, publicBaseUrl } from './connection';
 import { listDomains } from './domains';
+import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
 import { getTraefikToken } from './whitelabel';
 
@@ -178,37 +179,25 @@ interface SummaryAppPassword {
  * /api/mailboxes/:id/app-passwords.
  */
 
-function summaryMailboxes(clientId: string): SummaryMailbox[] {
-  const rows = db
-    .prepare(
-      `SELECT m.id, m.domain_id, m.local_part, m.display_name, m.quota_mb, m.status,
-              m.created_at, m.used_bytes, d.domain
-       FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-       WHERE d.client_id = ?
-       ORDER BY d.domain, m.local_part`,
-    )
-    .all(clientId) as {
-    id: string;
-    domain_id: string;
-    local_part: string;
-    display_name: string;
-    quota_mb: number;
-    status: 'active' | 'suspended';
-    created_at: number;
-    used_bytes: number | null;
-    domain: string;
-  }[];
-  return rows.map((row) => ({
-    id: row.id,
-    domainId: row.domain_id,
-    domain: row.domain,
-    localPart: row.local_part,
-    email: `${row.local_part}@${row.domain}`,
-    displayName: row.display_name,
-    quotaMb: row.quota_mb,
-    status: row.status,
-    createdAt: row.created_at,
-    usedBytes: row.used_bytes,
+/**
+ * Buzones del resumen con la ocupación al día: se leen con listMailboxes, que
+ * la refresca del motor si está caducada (con espera acotada). Leerla tal
+ * cual de la base dejaba en «0 B» para siempre los buzones que nadie abría
+ * en el panel.
+ */
+async function summaryMailboxes(clientId: string): Promise<SummaryMailbox[]> {
+  const mailboxes = await listMailboxes({ clientId });
+  return mailboxes.map((m) => ({
+    id: m.id,
+    domainId: m.domainId,
+    domain: m.domain,
+    localPart: m.localPart,
+    email: m.email,
+    displayName: m.displayName,
+    quotaMb: m.quotaMb,
+    status: m.status,
+    createdAt: m.createdAt,
+    usedBytes: m.usedBytes,
   }));
 }
 
@@ -289,18 +278,16 @@ function summaryAppPasswords(clientId: string): SummaryAppPassword[] {
 
 /**
  * Hay Cloudflare utilizable si existe alguna cuenta conectada que este
- * usuario pueda usar: el administrador, cualquiera; un cliente, las suyas y
- * las de la instancia (client_id NULL).
+ * usuario pueda usar: el administrador, cualquiera; un cliente, solo las
+ * suyas. Las de la instancia no cuentan para un cliente porque el plan y la
+ * aplicación del DNS se las niegan: anunciarlas llevaba a un «DNS en un clic»
+ * que después fallaba.
  */
 function cloudflareAvailable(user: { role: 'admin' | 'client'; clientId: string | null }): boolean {
   const row =
     user.role === 'admin'
       ? db.prepare('SELECT 1 FROM cloudflare_accounts LIMIT 1').get()
-      : db
-          .prepare(
-            'SELECT 1 FROM cloudflare_accounts WHERE client_id IS NULL OR client_id = ? LIMIT 1',
-          )
-          .get(user.clientId ?? '');
+      : db.prepare('SELECT 1 FROM cloudflare_accounts WHERE client_id = ? LIMIT 1').get(user.clientId ?? '');
   return Boolean(row);
 }
 
@@ -487,7 +474,7 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
       plan: getPlan(client.planId),
       usage: getClientUsage(id),
       domains: listDomains(id),
-      mailboxes: summaryMailboxes(id),
+      mailboxes: await summaryMailboxes(id),
       apiKeys: summaryApiKeys(id),
       appPasswords: summaryAppPasswords(id),
       connection: {

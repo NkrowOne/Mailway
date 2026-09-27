@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
 import { channelsConfigured, dispatch, getChannels, type Severity } from '../core/notify';
-import { notFound } from '../core/errors';
+import { isUniqueViolation, notFound } from '../core/errors';
 import { setJsonSetting } from './settings';
 import { audit } from './audit';
 import { requireAdmin, requireAuth } from './auth';
@@ -87,10 +87,13 @@ export function fireAlert(input: FireInput): boolean {
         input.dedupeKey,
         now(),
       ) as { id: number };
-  } catch {
+  } catch (err) {
     // El índice único parcial rechaza el INSERT: ya hay una alerta abierta
-    // con esta clave. No es un error, es el dedupe funcionando.
-    return false;
+    // con esta clave. No es un error, es el dedupe funcionando. Cualquier
+    // otro fallo (base bloqueada, cliente inexistente…) sí lo es: tragárselo
+    // haría creer que el aviso ya estaba abierto cuando no se ha guardado.
+    if (isUniqueViolation(err)) return false;
+    throw err;
   }
   if (!inserted) return false;
 

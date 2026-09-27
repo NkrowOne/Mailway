@@ -1,7 +1,9 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
+import { getEngine } from '../src/engine';
 import { createAppPassword } from '../src/modules/apppasswords';
+import { resetUsageRefreshState } from '../src/modules/mailboxes';
 import {
   adminContext,
   createClient,
@@ -320,6 +322,51 @@ test('resumen: un token de cliente lee el suyo y no el de otro cliente', async (
     headers: bearer(adminToken),
   });
   assert.equal(noExiste.statusCode, 404);
+});
+
+test('resumen: la ocupación de los buzones se refresca del motor como en el listado', async () => {
+  const cliente = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, cliente.clientId);
+  const buzon = await createMailbox(ctx, domainId, 'ocupado');
+  // Lectura caducada: el resumen debe pedir la ocupación al motor.
+  db.prepare('UPDATE mailboxes SET used_bytes = 0, usage_checked_at = 1 WHERE id = ?').run(buzon.mailboxId);
+  const engine = getEngine();
+  const original = engine.getMailboxUsage.bind(engine);
+  engine.getMailboxUsage = async () => new Map([[buzon.email.toLowerCase(), 777_000]]);
+  resetUsageRefreshState();
+  try {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/integrations/clients/${cliente.clientId}/summary`,
+      headers: bearer(adminToken),
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const resumen = res.json() as { mailboxes: { email: string; usedBytes: number | null }[] };
+    assert.equal(resumen.mailboxes.find((m) => m.email === buzon.email)?.usedBytes, 777_000);
+  } finally {
+    engine.getMailboxUsage = original;
+  }
+});
+
+test('features.cloudflare de un cliente solo cuenta sus propias cuentas', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const clienteToken = await tokenDe(cliente.userCookie!, 'Cloudflare');
+  const insertar = db.prepare(
+    `INSERT INTO cloudflare_accounts (id, client_id, label, token_enc, token_hint, created_at)
+     VALUES (?, ?, ?, 'cifrado', '', ?)`,
+  );
+  // Una cuenta de la instancia no le sirve a un cliente (se la niega el DNS en un clic).
+  insertar.run(`cfa_instancia_${Date.now()}`, null, 'Instancia', Date.now());
+  const info = async (headers: Record<string, string>) => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/integrations/info', headers });
+    assert.equal(res.statusCode, 200, res.body);
+    return (res.json() as { features: { cloudflare: boolean } }).features.cloudflare;
+  };
+  assert.equal(await info(bearer(clienteToken)), false);
+  assert.equal(await info(bearer(adminToken)), true, 'el administrador sí puede usarla');
+
+  insertar.run(`cfa_cliente_${Date.now()}`, cliente.clientId, 'Propia', Date.now());
+  assert.equal(await info(bearer(clienteToken)), true);
 });
 
 test('las rutas de clientes de integración son solo para administradores', async () => {

@@ -3,9 +3,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
-import { conflict, notFound } from '../core/errors';
+import { badRequest, conflict, notFound } from '../core/errors';
+import { withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { assertClientActive } from './clients';
 import { getMailbox, requireMailboxAccess } from './mailboxes';
 
 /**
@@ -95,15 +97,57 @@ function newAppPassword(): string {
 }
 
 /**
+ * Máximo de contraseñas de aplicación activas por buzón. Una por dispositivo
+ * o aplicación es lo normal; decenas suelen indicar que no se revocan las
+ * antiguas, y cada una es una puerta más al buzón. Es el mismo para el panel,
+ * «Mi buzón» y las integraciones: se comprueba al crear, sea cual sea la vía.
+ */
+export const MAX_ACTIVE_APP_PASSWORDS = 25;
+
+function activeAppPasswords(mailboxId: string): number {
+  return (
+    db
+      .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+      .get(mailboxId) as { c: number }
+  ).c;
+}
+
+/**
  * Crea una contraseña de aplicación en el motor y la registra. Devuelve la
  * contraseña en claro UNA sola vez; en la base solo queda el hash del motor.
+ *
+ * Aquí (y no en cada ruta) se comprueban el cliente suspendido, el buzón
+ * suspendido y el máximo de activas, para que ninguna vía se los salte. Las
+ * altas del mismo buzón van en fila: si no, varias simultáneas pasarían a la
+ * vez la cuenta del máximo.
  */
-export async function createAppPassword(
+export function createAppPassword(
+  mailboxId: string,
+  name: string,
+  createdBy: string | null,
+): Promise<{ appPassword: AppPasswordInfo; password: string }> {
+  return withLock(`contrasenas-app:${mailboxId}`, () => createAppPasswordNow(mailboxId, name, createdBy));
+}
+
+async function createAppPasswordNow(
   mailboxId: string,
   name: string,
   createdBy: string | null,
 ): Promise<{ appPassword: AppPasswordInfo; password: string }> {
   const mailbox = getMailbox(mailboxId);
+  assertClientActive(mailbox.clientId);
+  if (mailbox.status === 'suspended') {
+    throw badRequest(
+      `El buzón ${mailbox.email} está suspendido. Reactívelo antes de crear contraseñas de aplicación.`,
+      'mailbox_suspended',
+    );
+  }
+  if (activeAppPasswords(mailboxId) >= MAX_ACTIVE_APP_PASSWORDS) {
+    throw conflict(
+      `Este buzón ya tiene ${MAX_ACTIVE_APP_PASSWORDS} contraseñas de aplicación activas. Revoque las que ya no se utilicen antes de crear otra.`,
+      'app_password_limit',
+    );
+  }
   const password = newAppPassword();
   const stored = await getEngine().addAppPassword(mailbox.email, password, engineLabel(name));
   const id = randomId('app');
@@ -133,13 +177,6 @@ export async function revokeAppPassword(mailboxId: string, appId: string): Promi
   db.prepare('UPDATE app_passwords SET revoked_at = ? WHERE id = ?').run(now(), appId);
 }
 
-/**
- * Máximo de contraseñas de aplicación activas por buzón. Una por dispositivo
- * o aplicación es lo normal; decenas suelen indicar que no se revocan las
- * antiguas, y cada una es una puerta más al buzón.
- */
-const MAX_ACTIVE_APP_PASSWORDS = 25;
-
 const createSchema = z.object({
   name: z
     .string({ required_error: 'Indique un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).' })
@@ -160,17 +197,6 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const { user, mailbox, domain } = requireMailboxAccess(req, id);
     const body = createSchema.parse(req.body ?? {});
-    const active = (
-      db
-        .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
-        .get(id) as { c: number }
-    ).c;
-    if (active >= MAX_ACTIVE_APP_PASSWORDS) {
-      throw conflict(
-        `Este buzón ya tiene ${MAX_ACTIVE_APP_PASSWORDS} contraseñas de aplicación activas. Revoque las que ya no se utilicen antes de crear otra.`,
-        'app_password_limit',
-      );
-    }
     const result = await createAppPassword(id, body.name, user.id);
     audit(req, 'mailbox.app_password_created', {
       mailboxId: id,
