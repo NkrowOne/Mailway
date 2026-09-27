@@ -1,4 +1,425 @@
-/** Tokens de gestión para integraciones (Skyway, scripts). Pendiente de implementar. */
-export function HojaTokens(_props: { isAdmin: boolean }) {
-  return null;
+import { useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, ApiError } from '../../lib/api';
+import { formatDate, formatDay, plural } from '../../lib/format';
+import {
+  CADUCIDADES,
+  tokenEnmascarado,
+  veredictoToken,
+  type TokenCreado,
+  type TokenGestion,
+} from '../../lib/tokens';
+import { Button } from '../../ui/Button';
+import { Input, Select } from '../../ui/Field';
+import { Dialogo, Hoja, MarcaFondo, Midiendo, Muestra, Vacio, type Veredicto } from '../../ui/kit';
+import { useToast } from '../../ui/toast';
+
+/** Fuera de rango primero: un token caducado rompe una integración y se lee antes. */
+const PESO: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
+
+const bandaError =
+  'border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera';
+
+/**
+ * Tokens de gestión: credenciales para que Skyway, un script o la CI
+ * gestionen Mailway por API con los permisos del usuario que los crea.
+ * El token completo se muestra una sola vez, al crearlo.
+ */
+export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [verTodos, setVerTodos] = useState(false);
+  const [verRevocados, setVerRevocados] = useState(false);
+  const [crearAbierto, setCrearAbierto] = useState(false);
+  const [nombre, setNombre] = useState('');
+  const [caducidad, setCaducidad] = useState('365');
+  const [errorAlta, setErrorAlta] = useState('');
+  const [creado, setCreado] = useState<TokenCreado | null>(null);
+  const [aRevocar, setARevocar] = useState<TokenGestion | null>(null);
+
+  const todos = isAdmin && verTodos;
+  const tokens = useQuery({
+    queryKey: ['tokens', todos ? 'todos' : 'propios'],
+    queryFn: () => api.get<{ tokens: TokenGestion[] }>(`/api/tokens${todos ? '?all=1' : ''}`),
+  });
+
+  const crear = useMutation({
+    mutationFn: () =>
+      api.post<TokenCreado>('/api/tokens', {
+        name: nombre.trim(),
+        expiresInDays: CADUCIDADES.find((c) => c.valor === caducidad)?.dias ?? null,
+      }),
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ['tokens'] });
+      setCrearAbierto(false);
+      setNombre('');
+      setErrorAlta('');
+      setCreado(data);
+    },
+    onError: (err) =>
+      setErrorAlta(err instanceof ApiError ? err.message : 'No se ha podido crear el token.'),
+  });
+
+  const revocar = useMutation({
+    mutationFn: (token: TokenGestion) => api.delete(`/api/tokens/${token.id}`),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['tokens'] });
+      setARevocar(null);
+      toast('ok', 'Token revocado. Las integraciones que lo utilicen dejarán de tener acceso.');
+    },
+    onError: (err) => {
+      setARevocar(null);
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido revocar el token.');
+    },
+  });
+
+  function abrirAlta() {
+    setErrorAlta('');
+    setCrearAbierto(true);
+  }
+
+  function enviarAlta(e: FormEvent) {
+    e.preventDefault();
+    if (!nombre.trim()) {
+      setErrorAlta('Indique un nombre para el token.');
+      return;
+    }
+    crear.mutate();
+  }
+
+  const ahora = Date.now();
+  const lista = tokens.data?.tokens ?? [];
+  const vigentes = lista
+    .filter((t) => t.status !== 'revoked')
+    .map((t) => ({ token: t, ...veredictoToken(t, ahora) }))
+    .sort((a, b) => PESO[a.veredicto] - PESO[b.veredicto] || b.token.createdAt - a.token.createdAt);
+  const revocados = lista.filter((t) => t.status === 'revoked');
+  const origen = typeof window !== 'undefined' ? window.location.origin : '';
+
+  return (
+    <>
+      <Hoja
+        title="Tokens de gestión"
+        meta={
+          tokens.isSuccess && vigentes.length > 0
+            ? plural(vigentes.length, 'token vigente', 'tokens vigentes')
+            : undefined
+        }
+        actions={
+          <Button variant="perfil" onClick={abrirAlta}>
+            Crear token
+          </Button>
+        }
+        flush
+      >
+        <div className="regla-fila flex flex-col gap-2 px-4 py-3">
+          <p className="max-w-[75ch] text-base text-tinta-2">
+            Un token de gestión permite que Skyway, un script o un proceso de integración continua
+            gestionen Mailway por API. Tiene los mismos permisos que el usuario que lo crea y se
+            envía en la cabecera{' '}
+            <code className="valor text-sm text-tinta">Authorization: Bearer mwt_…</code>.
+          </p>
+          <p className="max-w-[75ch] text-sm text-tinta-3">
+            {isAdmin
+              ? 'Para conectar Skyway se necesita un token creado por un administrador. Cambiar la contraseña no revoca los tokens: revóquelos aquí si sospecha de un uso indebido.'
+              : 'Su token solo da acceso a los datos de su cuenta. Para conectar Skyway se necesita un token de un administrador de la instancia.'}
+          </p>
+          {isAdmin && (
+            <label className="mt-1 flex w-fit cursor-pointer items-center gap-2 text-sm text-tinta-2">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5"
+                checked={verTodos}
+                onChange={(e) => setVerTodos(e.target.checked)}
+              />
+              Mostrar los tokens de todos los usuarios
+            </label>
+          )}
+        </div>
+
+        {tokens.isPending ? (
+          <Midiendo label="Leyendo los tokens de gestión…" />
+        ) : tokens.isError ? (
+          <div className="flex flex-col items-start gap-3 px-4 py-4">
+            <p role="alert" className={`${bandaError} w-full`}>
+              No se han podido leer los tokens de gestión.{' '}
+              {tokens.error instanceof ApiError ? tokens.error.message : 'Compruebe la conexión con el servidor.'}
+            </p>
+            <Button variant="perfil" busy={tokens.isFetching} onClick={() => tokens.refetch()}>
+              Reintentar
+            </Button>
+          </div>
+        ) : vigentes.length === 0 && revocados.length === 0 ? (
+          <Vacio title="No hay tokens de gestión">
+            Cree un token con «Crear token» para conectar Skyway o automatizar tareas por API. El
+            token completo se muestra una sola vez.
+          </Vacio>
+        ) : (
+          <>
+            {vigentes.length === 0 ? (
+              <p className="px-4 py-3 text-base text-tinta-2">
+                No hay tokens vigentes. Los revocados se conservan como referencia.
+              </p>
+            ) : (
+              <>
+                <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+                  <span className="rotulo min-w-0 flex-1">Token</span>
+                  <span className="rotulo shrink-0 basis-28">Creado</span>
+                  <span className="rotulo shrink-0 basis-32">Último uso</span>
+                  <span className="rotulo shrink-0 basis-28">Caducidad</span>
+                  <span className="rotulo shrink-0 basis-32 text-right">Estado</span>
+                  <span className="rotulo shrink-0 basis-20 text-right">Acción</span>
+                </div>
+                <ul>
+                  {vigentes.map(({ token, veredicto, texto }) => (
+                    <FilaToken
+                      key={token.id}
+                      token={token}
+                      veredicto={veredicto}
+                      estado={texto}
+                      mostrarTitular={todos}
+                      onRevocar={() => setARevocar(token)}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {revocados.length > 0 && (
+              <div className="border-t border-regla px-4 py-2.5">
+                <Button variant="plano" onClick={() => setVerRevocados((v) => !v)} aria-expanded={verRevocados}>
+                  {verRevocados
+                    ? 'Ocultar los tokens revocados'
+                    : `Mostrar los tokens revocados (${revocados.length})`}
+                </Button>
+              </div>
+            )}
+            {verRevocados && revocados.length > 0 && (
+              <ul className="border-t border-regla">
+                {revocados.map((token) => (
+                  <FilaToken
+                    key={token.id}
+                    token={token}
+                    veredicto="sin-dato"
+                    estado="Revocado"
+                    mostrarTitular={todos}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </Hoja>
+
+      {/* Alta */}
+      <Dialogo open={crearAbierto} onClose={() => setCrearAbierto(false)} title="Crear token de gestión">
+        <form onSubmit={enviarAlta} className="flex flex-col gap-4">
+          <Input
+            label="Nombre"
+            required
+            maxLength={60}
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            placeholder="Skyway producción"
+            help="Sirve para reconocerlo después. Se recomienda un token por integración o entorno."
+          />
+          <Select
+            label="Caducidad"
+            value={caducidad}
+            onChange={(e) => setCaducidad(e.target.value)}
+            help="Al caducar, la integración deja de tener acceso hasta que se configure un token nuevo."
+          >
+            {CADUCIDADES.map((c) => (
+              <option key={c.valor} value={c.valor}>
+                {c.texto}
+              </option>
+            ))}
+          </Select>
+          <p className="text-sm text-tinta-3">
+            {isAdmin
+              ? 'El token tendrá permisos de administrador sobre toda la instancia. Guárdelo como cualquier otra contraseña.'
+              : 'El token tendrá los mismos permisos que su usuario, limitados a su cuenta.'}
+          </p>
+          {errorAlta && (
+            <p role="alert" className={bandaError}>
+              {errorAlta}
+            </p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="plano" onClick={() => setCrearAbierto(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="tinta" busy={crear.isPending}>
+              Crear token
+            </Button>
+          </div>
+        </form>
+      </Dialogo>
+
+      {/* El token, una sola vez */}
+      <Dialogo open={creado !== null} onClose={() => setCreado(null)} title="Token de gestión creado">
+        {creado && (
+          <TokenRecienCreado creado={creado} origen={origen} isAdmin={isAdmin} onCerrar={() => setCreado(null)} />
+        )}
+      </Dialogo>
+
+      {/* Revocar */}
+      <Dialogo open={aRevocar !== null} onClose={() => setARevocar(null)} title="Revocar token">
+        {aRevocar && (
+          <div className="flex flex-col gap-4">
+            <p className="text-base text-tinta-2">
+              El token <strong className="text-tinta">{aRevocar.name}</strong>
+              {todos && aRevocar.ownerEmail ? (
+                <>
+                  {' '}
+                  de <span className="valor text-sm text-tinta">{aRevocar.ownerEmail}</span>
+                </>
+              ) : null}{' '}
+              dejará de funcionar de inmediato. Las integraciones que lo utilicen recibirán un error
+              401 hasta que se configure un token nuevo.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="plano" onClick={() => setARevocar(null)}>
+                Cancelar
+              </Button>
+              <Button variant="peligro" busy={revocar.isPending} onClick={() => revocar.mutate(aRevocar)}>
+                Revocar
+              </Button>
+            </div>
+          </div>
+        )}
+      </Dialogo>
+    </>
+  );
+}
+
+/* ------------------------------ Fila de la tabla -------------------------- */
+
+function FilaToken({
+  token,
+  veredicto,
+  estado,
+  mostrarTitular,
+  onRevocar,
+}: {
+  token: TokenGestion;
+  veredicto: Veredicto;
+  estado: string;
+  mostrarTitular: boolean;
+  onRevocar?: () => void;
+}) {
+  const tinte = veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
+  return (
+    <li
+      className={`regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1.5 px-4 py-3 last:border-b-0 ${tinte}`}
+    >
+      {/* El nombre identifica la fila: línea propia en móvil, nunca recortado. */}
+      <div className="min-w-0 basis-full sm:basis-0 sm:grow">
+        <p className="break-words text-base font-medium text-tinta">{token.name}</p>
+        <p className="mt-0.5 break-all text-sm text-tinta-3">
+          <span className="valor text-tinta-2">{tokenEnmascarado(token.prefix)}</span>
+          {mostrarTitular && (
+            <>
+              {' · '}
+              <span className="valor">{token.ownerEmail}</span>
+              {token.ownerClientName
+                ? ` (${token.ownerClientName})`
+                : token.ownerRole === 'admin'
+                  ? ' (administración)'
+                  : ''}
+            </>
+          )}
+        </p>
+      </div>
+      <span className="shrink-0 text-sm text-tinta-2 sm:basis-28">
+        <span className="rotulo mr-1.5 sm:hidden">Creado</span>
+        <span className="valor">{formatDay(token.createdAt)}</span>
+      </span>
+      <span className="shrink-0 text-sm text-tinta-2 sm:basis-32">
+        <span className="rotulo mr-1.5 sm:hidden">Último uso</span>
+        {token.lastUsedAt ? (
+          <span className="valor" title={token.lastUsedIp ? `Desde ${token.lastUsedIp}` : undefined}>
+            {formatDate(token.lastUsedAt)}
+          </span>
+        ) : (
+          <span className="text-tinta-3">Sin uso</span>
+        )}
+      </span>
+      <span className="shrink-0 text-sm text-tinta-2 sm:basis-28">
+        <span className="rotulo mr-1.5 sm:hidden">Caducidad</span>
+        {token.expiresAt ? (
+          <span className="valor">{formatDay(token.expiresAt)}</span>
+        ) : (
+          <span className="text-tinta-3">Sin caducidad</span>
+        )}
+      </span>
+      <span className="shrink-0 sm:basis-32 sm:text-right">
+        <MarcaFondo veredicto={veredicto}>{estado}</MarcaFondo>
+      </span>
+      <span className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
+        {onRevocar && (
+          <Button variant="plano" onClick={onRevocar}>
+            Revocar
+          </Button>
+        )}
+      </span>
+    </li>
+  );
+}
+
+/* --------------------------- Token recién creado -------------------------- */
+
+function TokenRecienCreado({
+  creado,
+  origen,
+  isAdmin,
+  onCerrar,
+}: {
+  creado: TokenCreado;
+  origen: string;
+  isAdmin: boolean;
+  onCerrar: () => void;
+}) {
+  const curl = `curl -H "Authorization: Bearer ${creado.token}" \\\n  ${origen}/api/integrations/info`;
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-base text-tinta-2">
+        Copie el token ahora y guárdelo en un gestor de secretos:{' '}
+        <strong className="text-tinta">no se volverá a mostrar</strong>.
+      </p>
+      <Muestra rotulo={`Token «${creado.info.name}»`} copiar={creado.token}>
+        <code className="valor block break-all text-sm text-tinta">{creado.token}</code>
+      </Muestra>
+
+      <div className="flex flex-col gap-2">
+        <p className="rotulo">Para conectar Skyway</p>
+        {isAdmin ? (
+          <>
+            <p className="text-sm text-tinta-2">
+              En Skyway, abra «Ajustes» → «Correo (Mailway)» e introduzca la URL del panel y este
+              token.
+            </p>
+            <Muestra rotulo="URL del panel" copiar={origen}>
+              <code className="valor block break-all text-sm text-tinta">{origen}</code>
+            </Muestra>
+          </>
+        ) : (
+          <p className="text-sm text-tinta-2">
+            Skyway necesita un token de un administrador de la instancia. Este token sirve para
+            automatizar la gestión de su cuenta desde scripts o procesos propios.
+          </p>
+        )}
+      </div>
+
+      <Muestra rotulo="Comprobación desde la línea de comandos" copiar={curl}>
+        <pre className="valor whitespace-pre-wrap break-all text-sm leading-relaxed text-tinta">{curl}</pre>
+      </Muestra>
+
+      <div className="flex justify-end">
+        <Button variant="tinta" onClick={onCerrar}>
+          Aceptar
+        </Button>
+      </div>
+    </div>
+  );
 }
