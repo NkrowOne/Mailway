@@ -1249,7 +1249,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       applied: resultado.applied.length,
       errors: resultado.errors.length,
       replaceConflicts: body.replaceConflicts === true,
-    });
+    }, domain.clientId);
     return { applied: resultado.applied, errors: resultado.errors, skipped: resultado.skipped, domain: resultado.domain };
   });
 
@@ -1297,7 +1297,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       zone: resolucion.zona.name,
       applied: resultado.applied.length,
       errors: resultado.errors.length,
-    });
+    }, domain.clientId);
     return { ...resultado, domain };
   });
 

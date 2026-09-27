@@ -6,6 +6,7 @@ import { randomId } from '../core/crypto';
 import { badRequest, conflict, HttpError, notFound } from '../core/errors';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { refreshAutoconfigForDomain } from './autoconfig';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit } from './clients';
 import { aplicarDnsDominio } from './cloudflare';
@@ -156,6 +157,12 @@ export async function refreshDomainDns(domainId: string): Promise<DomainRecord> 
     report.allRequiredOk ? now() : null,
     domainId,
   );
+  if (newStatus === 'active') {
+    // Con el dominio en marcha, sus hosts autoconfig./autodiscover./mta-sts.
+    // pueden publicarse ya en Traefik sin esperar a la vuelta horaria del
+    // vigilante. En segundo plano: la verificación no espera a este DNS.
+    void refreshAutoconfigForDomain(domainId).catch(() => undefined);
+  }
   return getDomain(domainId);
 }
 
@@ -343,7 +350,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const records = await engine.getDnsRecords(domain.domain);
     const zona = generarZona({ domain: domain.domain, records, nivel: elegido });
 
-    audit(req, 'domain.zonefile_downloaded', { id, domain: domain.domain, nivel: elegido });
+    audit(req, 'domain.zonefile_downloaded', { id, domain: domain.domain, nivel: elegido }, domain.clientId);
     reply
       .type('text/plain; charset=utf-8')
       .header(
@@ -365,7 +372,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const domain = await refreshDomainDns(id);
     const auto = (req.query as { auto?: string }).auto === '1';
     if (!auto || domain.status !== antes) {
-      audit(req, 'domain.verified', { id, status: domain.status });
+      audit(req, 'domain.verified', { id, status: domain.status }, domain.clientId);
     }
     return { domain };
   });
@@ -376,7 +383,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const { domain } = requireDomainAccess(req, id);
     const engine = getEngine();
     await engine.ensureDkim(domain.domain, domain.dkimSelector);
-    audit(req, 'domain.dkim_regenerated', { id, domain: domain.domain });
+    audit(req, 'domain.dkim_regenerated', { id, domain: domain.domain }, domain.clientId);
     return { ok: true };
   });
 
@@ -434,7 +441,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
 
     const borrados = mailboxes.length + aliases.length - fallidos.length;
     if (fallidos.length > 0) {
-      audit(req, 'domain.delete_partial', { id, domain: domain.domain, removed: borrados, failed: fallidos });
+      audit(req, 'domain.delete_partial', { id, domain: domain.domain, removed: borrados, failed: fallidos }, domain.clientId);
       throw new HttpError(
         502,
         `No se han podido eliminar del servidor de correo: ${fallidos.join(', ')}. El resto se ha eliminado. Vuelva a intentarlo para completar la eliminación del dominio.`,
@@ -444,7 +451,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
 
     await engine.deleteDomain(domain.domain);
     db.prepare('DELETE FROM domains WHERE id = ?').run(id);
-    audit(req, 'domain.deleted', { id, domain: domain.domain, mailboxes: mailboxCount });
+    audit(req, 'domain.deleted', { id, domain: domain.domain, mailboxes: mailboxCount }, domain.clientId);
     return { ok: true };
   });
 }

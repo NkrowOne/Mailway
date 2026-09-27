@@ -121,6 +121,11 @@ export interface DomainRecord {
   };
   lastCheckedAt: number | null;
   verifiedAt: number | null;
+  /** Nombre legible si es un dominio internacional (se guarda en punycode). */
+  domainUnicode?: string;
+  /** Zona de Cloudflare donde Mailway gestiona su DNS, si la hay. */
+  cloudflare?: { accountId: string; zoneId: string } | null;
+  dnsAppliedAt?: number | null;
   createdAt: number;
 }
 
@@ -271,6 +276,9 @@ export interface AuditEntry {
   detail: Record<string, unknown>;
   ip: string;
   createdAt: number;
+  /** Autor legible (el correo solo lo ve la administración). */
+  actor?: { name: string; email: string | null; role: string };
+  clientName?: string | null;
 }
 
 export type WhitelabelStatus = 'pending_dns' | 'issuing' | 'active' | 'error';
@@ -330,4 +338,8 @@ export interface ConnectionInfo {
   smtp: { host: string; port: number; security: string };
   smtpAlt: { host: string; port: number; security: string };
   webmailUrl: string;
+  /** Direcciones de autoconfiguración y perfil de Apple (ruta autenticada). */
+  autoconfig?: { thunderbird: string; outlook: string; appleProfileUrl: string };
+  /** «Mi buzón» del titular. */
+  portalUrl?: string;
 }
