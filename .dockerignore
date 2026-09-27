@@ -1,0 +1,25 @@
+# Contexto de construcción de la imagen del panel: solo lo que la compila.
+# Todo lo demás (dependencias locales, compilados, datos, secretos, git,
+# documentación, pruebas) no entra: la imagen se construye igual en
+# cualquier máquina y no arrastra nada privado.
+
+**/node_modules
+**/dist
+data/
+**/*.db
+**/*.db-*
+.git/
+.github/
+.claude/
+.agents/
+.impeccable/
+docs/
+*.md
+server/test/
+deploy/*
+!deploy/docker-entrypoint.sh
+.env
+**/.env
+**/.env.*
+*.log
+.DS_Store

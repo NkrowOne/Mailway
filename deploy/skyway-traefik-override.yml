@@ -1,38 +1,38 @@
-# Marca blanca: dominios propios de tus clientes con certificado automático.
+# Dominios propios de los clientes (webmail de marca blanca y autoconfiguración
+# de dispositivos) con certificado automático en el Traefik de Skyway.
+#
+# LO MÁS SENCILLO
+#   deploy/instalar.sh lo configura solo: genera este fichero en la carpeta de
+#   Skyway a partir de los flags con los que Traefik está arrancado AHORA y
+#   añade el proveedor de Mailway. Esta plantilla es para hacerlo a mano.
 #
 # QUÉ HACE
-#   Hace que el Traefik de Skyway le pregunte a Mailway, cada 15 segundos, qué
-#   dominios de clientes debe servir. Cuando un cliente añade
-#   `webmail.suempresa.com` y su DNS ya apunta aquí, Traefik lo enruta y pide
-#   su certificado a Let's Encrypt sin que tengas que tocar nada.
+#   Traefik pregunta cada 15 segundos qué dominios de clientes debe servir.
+#   Cuando un cliente añade webmail.suempresa.com y su DNS ya apunta aquí,
+#   Traefik lo enruta y pide su certificado a Let's Encrypt.
 #
-# CÓMO SE INSTALA (una sola vez)
-#   1. Copia este fichero a la carpeta de Skyway con el nombre exacto
-#      `docker-compose.override.yml`:
-#
+# CÓMO SE INSTALA A MANO (una sola vez)
+#   1. Copie este fichero a la carpeta de Skyway con el nombre exacto
+#      docker-compose.override.yml:
 #        cp deploy/skyway-traefik-override.yml /ruta/a/Skyway/docker-compose.override.yml
+#   2. Elija UNA de las dos formas de consulta de abajo (A o B).
+#   3. Aplíquelo:
+#        cd /ruta/a/Skyway && docker compose up -d traefik
 #
-#   2. Sustituye PON_AQUI_TU_TOKEN por el token que aparece en
-#      Mailway → Ajustes → Marca blanca (el panel te da este bloque ya relleno).
+# POR QUÉ UN FICHERO APARTE
+#   Compose fusiona docker-compose.override.yml con el principal. Skyway no lo
+#   versiona, así que sobrevive a «git pull» y no ensucia su repositorio.
 #
-#   3. Aplícalo:
-#        cd /ruta/a/Skyway && docker compose up -d
-#
-# POR QUÉ UN FICHERO APARTE Y NO EDITAR EL COMPOSE DE SKYWAY
-#   Docker Compose lee `docker-compose.override.yml` automáticamente y lo
-#   fusiona con el principal. Al ser un fichero que Skyway no versiona, tus
-#   cambios sobreviven a `git pull` y no ensucian su repositorio.
-#
-# AVISO IMPORTANTE SOBRE `command`
-#   Compose REEMPLAZA `command` entero, no lo fusiona. Por eso hay que repetir
-#   aquí los flags que Skyway ya traía: si se omite alguno, Traefik arrancaría
-#   sin él. Los de abajo son los de Skyway v0.24; si algún día actualizas
-#   Skyway y cambia su configuración de Traefik, compara y actualiza esta lista.
+# AVISO SOBRE «command»
+#   Compose REEMPLAZA «command» entero, no lo fusiona: hay que repetir los
+#   flags que Skyway ya trae. Los de abajo son los de Skyway 0.33. Si actualiza
+#   Skyway y cambian, compárelos con su docker-compose.yml (o con
+#   «docker inspect -f '{{json .Config.Cmd}}' skyway-traefik») y actualícelos.
 
 services:
   traefik:
     command:
-      # ---- Flags originales de Skyway (mantener sincronizados) ----
+      # ---- Flags originales de Skyway 0.33 (mantener sincronizados) ----
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=skyway-edge
@@ -44,9 +44,17 @@ services:
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
 
       # ---- Añadido por Mailway ----
-      # `mailway-panel` es el nombre del contenedor del panel. Si lo despliegas
-      # con Skyway, su nombre lo genera Skyway: compruébalo con `docker ps` y
-      # ajústalo aquí (el panel te muestra la línea exacta en Ajustes).
-      - --providers.http.endpoint=http://mailway-panel:4100/api/traefik/config
+      # A) Recomendado si su Skyway incluye el puente de Mailway
+      #    (curl -s http://127.0.0.1:4000/api/traefik/mailway responde 200):
+      #    Skyway filtra lo que publica Mailway antes de dárselo a Traefik.
+      #    Requiere conectar Mailway en Skyway → Ajustes → Mailway.
+      # - --providers.http.endpoint=http://skyway:4000/api/traefik/mailway
+      #
+      # B) Directamente al panel. «skyway-mailway-panel» es el contenedor del
+      #    panel: skyway-<proyecto>-<servicio> (compruébelo con docker ps). El
+      #    token es MAILWAY_TRAEFIK_TOKEN (Mailway → Ajustes → Marca blanca).
+      - --providers.http.endpoint=http://skyway-mailway-panel:4100/api/traefik/config
+      - --providers.http.headers.X-Mailway-Token=PONGA_AQUI_SU_TOKEN
+
       - --providers.http.pollInterval=15s
-      - --providers.http.headers.X-Mailway-Token=PON_AQUI_TU_TOKEN
+      - --providers.http.pollTimeout=5s
