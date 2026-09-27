@@ -10,6 +10,7 @@ import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
 import { countUsers, createUser, createSession, requireAdmin, requireAdminSession } from './auth';
 import { ensureDefaultPlans } from './clients';
+import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
 import {
   getEngineSettings,
@@ -354,6 +355,8 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     // Con el nombre del servidor ya conocido, el motor lo recibe aquí mismo:
     // sin él, Stalwart anuncia el identificador del contenedor en su DNS.
     const recommended = await applyRecommendedQuietly(getEngineSettings());
+    // Los hosts de autoconfiguración dependen del nombre y la IP del servidor.
+    void refreshAutoconfigHosts().catch(() => undefined);
     audit(req, 'setup.instance_configured', { recommendedApplied: recommended?.applied ?? false });
     return { instance, recommended };
   });
@@ -460,6 +463,9 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     requireAdmin(req);
     const body = instanceSchema.parse(req.body);
     const instance = setInstanceSettings(body);
+    // Un cambio de nombre o de IP cambia qué hosts de autoconfiguración se
+    // pueden publicar: se recalcula ya, sin esperar a la vuelta del vigilante.
+    void refreshAutoconfigHosts().catch(() => undefined);
     audit(req, 'settings.instance_updated', {});
     return { instance };
   });
