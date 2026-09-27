@@ -294,6 +294,23 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_app_passwords_mailbox ON app_passwords(mailbox_id);
     `,
   },
+  {
+    id: '004-propiedad-de-dominios',
+    sql: `
+      -- Prueba de que el dominio es de quien lo da de alta (MX apuntando a
+      -- este servidor o TXT de verificación). Sin ella no se crean buzones
+      -- ni alias: si no, un cliente podría dar de alta un dominio ajeno y
+      -- quedarse con el correo que otros clientes del servidor le envían.
+      ALTER TABLE domains ADD COLUMN owner_verified_at INTEGER;
+
+      -- Los dominios anteriores a esta versión que ya funcionaban o ya
+      -- tenían buzones se consideran verificados, para no romper nada.
+      UPDATE domains SET owner_verified_at = COALESCE(verified_at, created_at)
+        WHERE verified_at IS NOT NULL
+           OR id IN (SELECT domain_id FROM mailboxes)
+           OR id IN (SELECT domain_id FROM aliases);
+    `,
+  },
 ];
 
 function runMigrations(): void {
