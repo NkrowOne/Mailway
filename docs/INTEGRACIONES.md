@@ -1,185 +1,646 @@
 # Integraciones de Mailway
 
-Cómo conectar Mailway con otras piezas: **Skyway** (crear y gestionar el
-correo de cada proyecto desde su panel), **Cloudflare** (DNS automático),
-**cualquier plataforma o script** (API de gestión con tokens) y los
-**programas de correo** de los usuarios (autoconfiguración).
+Cómo conectar Mailway con otras piezas:
+
+- **cualquier sistema** (scripts, CI, agentes): API de gestión con tokens
+  (secciones 1 y 2);
+- **Skyway**: el correo de cada proyecto desde su panel (sección 3);
+- **Cloudflare**: DNS de correo en un clic (sección 4);
+- **programas de correo** de los titulares: autoconfiguración, enlaces de
+  configuración y «Mi buzón» (secciones 5 y 6);
+- **Traefik**: marca blanca y rutas (sección 7);
+- **otras plataformas** que envían correo (sección 8).
+
+Base de todas las rutas: la URL pública del panel, p. ej.
+`https://panel.miempresa.com`.
 
 ---
 
 ## 1. Tokens de gestión
 
-Todo lo que hace el panel existe como endpoint bajo `/api`. Para usarlo
-desde fuera (Skyway, un script, un pipeline de CI, un agente) se crea un
-**token de gestión** en **Conexiones → Tokens de gestión**.
+Todo lo que hace el panel existe como ruta bajo `/api`. Para usarla desde
+fuera se crea un **token de gestión** en **Conexiones → Tokens de gestión**.
 
-- Formato: `mwt_<prefijo>_<secreto>`. Se muestra **una sola vez**; en la base
-  de datos solo queda su hash.
-- Hereda los permisos del usuario que lo crea: un token del administrador lo
-  puede todo; el de un usuario de cliente solo ve y gestiona ese cliente.
-- Se crea solo desde una sesión del panel (un token no puede crear otros
-  tokens) y puede tener caducidad. Revocarlo corta el acceso al instante.
-- Cada acción queda en **Actividad** con la marca «mediante token X».
+- **Formato**: `mwt_<prefijo de 8 hexadecimales>_<secreto de 43 caracteres>`.
+  Se muestra **una sola vez**; en la base de datos solo queda su hash. El
+  prefijo, visible en el panel, sirve para reconocerlo.
+- **Permisos**: los del usuario que lo crea. Un token de administración lo
+  puede todo; el de un usuario de cliente solo ve y gestiona ese cliente. Si el
+  usuario se deshabilita o cambia de rol, el token lo refleja en la siguiente
+  petición.
+- **Creación**: solo desde una sesión del panel, nunca con otro token (un
+  token filtrado no puede perpetuarse creando más). Caducidad opcional de 1 a
+  3650 días. Máximo **25 tokens activos** por usuario.
+- **Revocación**: inmediata. El panel anota el último uso (fecha e IP).
+- **Actividad**: cada acción hecha con un token queda en **Actividad** con
+  `via: "token:<nombre>"` en el detalle.
 
 ```bash
-BASE="https://panel.tuempresa.com"
+BASE="https://panel.miempresa.com"
 TOKEN="mwt_..."
 
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/auth/me"
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/integrations/info"
-curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/clients"
 ```
 
-> Las claves `mw_…` son otra cosa: solo sirven para **enviar** correo por
-> `POST /v1/send` (ver [API.md](API.md)). No dan acceso a la gestión.
+### 1.1 Reglas de la cabecera `Authorization`
 
-### Endpoints pensados para integraciones
+- Con `Authorization: Bearer …` **no se lee la cookie** de sesión, aunque
+  venga: una llamada de máquina actúa siempre con la identidad de su token, y
+  un token no válido nunca «cae» a la sesión de un navegador.
+- Las peticiones con `Authorization` no pasan por la protección CSRF (no usan
+  cookies).
+- `GET /api/auth/me` devuelve `{ user, via }`, con
+  `via = { kind: "token", tokenId, name }` o `{ kind: "session" }`.
 
-| Método y ruta | Quién | Qué hace |
+### 1.2 Rutas de tokens
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/tokens` | Tokens propios (`{ tokens }`). La administración ve los de todos con `?all=1`. |
+| `POST /api/tokens` | `{ name (1–60), expiresInDays? (1–3650 o null) }` → `{ token, info }`. **Solo con sesión del panel.** |
+| `DELETE /api/tokens/:id` | Revoca → `{ ok, token }`. Idempotente. Un token ajeno responde `404 token_not_found`. |
+
+`info`: `{ id, name, prefix, createdAt, expiresAt, lastUsedAt, lastUsedIp,
+revokedAt, status: active|expired|revoked, userId, ownerEmail, ownerName,
+ownerRole, ownerClientId, ownerClientName, current }`.
+
+### 1.3 Errores de autenticación
+
+| HTTP | `code` | Causa |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera con token | Versión, marca, servidores IMAP/SMTP, URL del panel y del webmail, funciones disponibles. Con token de administrador incluye además el token del proveedor de Traefik. |
-| `POST /api/integrations/clients/ensure` | administración | Crea (o devuelve) el cliente asociado a una referencia externa, p. ej. `skyway:project:<id>`. Idempotente. Cuerpo: `{externalRef, name, contactEmail?, planId?}`. |
-| `GET /api/integrations/clients/by-ref?externalRef=…` | administración | Busca el cliente de una referencia externa. |
-| `PUT /api/integrations/clients/:id/link` | administración | Vincula un cliente existente a una referencia externa: `{externalRef}`. |
-| `DELETE /api/integrations/clients/:id/link` | administración | Quita el vínculo (no borra nada más). |
-| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: plan, uso, dominios con su estado DNS, buzones con su ocupación, claves de API, contraseñas de aplicación y datos de conexión. |
-| `GET /api/mailboxes/:id/app-passwords` · `POST` · `DELETE /:appId` | acceso al cliente | Contraseñas de aplicación de un buzón (una por dispositivo o app). La contraseña se devuelve una vez. |
-| `POST /api/mailboxes/:id/setup-links` | acceso al cliente | Enlace de configuración para el titular del buzón (`{url, expiresAt}`), opcionalmente con la contraseña recién generada. |
+| `401` | `unauthorized` | Sin sesión ni token |
+| `401` | `invalid_token` | El token no tiene el formato `mwt_…` o no existe |
+| `401` | `token_revoked` | Token revocado |
+| `401` | `token_expired` | Token caducado |
+| `401` | `token_user_disabled` | El usuario dueño del token está deshabilitado |
+| `401` | `api_key_not_allowed` | Se ha usado una clave de envío `mw_…` en `/api` (solo vale en `/v1/send`) |
+| `403` | `session_required` | Operación reservada a la sesión del panel: crear tokens, cambiar la contraseña del panel |
+| `403` | `forbidden` | El usuario no tiene acceso a ese cliente o la operación es de administración |
+| `403` | `cross_site_request` | Petición con cookie enviada desde otro sitio web (CSRF) |
+| `409` | `token_limit` | Ya hay 25 tokens activos |
 
-Además están todos los endpoints del panel: clientes, planes, dominios
-(`POST /api/domains`, `POST /api/domains/:id/verify`), buzones
-(`POST /api/mailboxes`, `POST /api/mailboxes/:id/password`), alias, claves de
-API (`POST /api/apikeys`) y Cloudflare (sección 3). Los errores siempre
-llegan como `{ "error": "<mensaje en español>", "code": "<código>" }`.
+> Las claves `mw_…` solo sirven para **enviar** correo por `POST /v1/send`
+> ([API.md](API.md)). No dan acceso a la gestión.
 
 ---
 
-## 2. Skyway
+## 2. API de gestión: referencia
 
-Con Skyway ≥ 0.34, el correo de cada proyecto se crea y se gestiona desde el
-propio proyecto de Skyway.
+### 2.1 Convenciones
 
-### Conectar (una vez)
+- Cuerpos y respuestas en JSON. Los errores llegan siempre como
+  `{ "error": "<mensaje en español listo para mostrar>", "code": "<código>" }`;
+  los de validación (`400 validation`) añaden `issues: [{ path, message }]`.
+- Los errores del motor de correo se devuelven como `502` con
+  `engine_unreachable`, `engine_error`, `engine_not_found` o `engine_exists`.
+- Contraseñas, tokens y claves se devuelven **una sola vez**, en la respuesta
+  que los crea.
+- Un usuario de cliente solo ve lo suyo: los filtros `clientId` de las rutas
+  de listado solo los usa la administración.
+
+### 2.2 Rutas pensadas para integraciones
+
+| Método y ruta | Quién | Descripción |
+|---|---|---|
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. |
+| `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
+| `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
+| `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
+| `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. |
+| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Un usuario de otro cliente recibe `403` exista o no el id. |
+
+Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
+`_`, `-`), empezando por letra o número; p. ej. `skyway:project:<id>`. Es
+única entre clientes. El nombre (`name`) tiene de 2 a 80 caracteres; si el
+*slug* ya existe se añade un sufijo (`acme-2`, `acme-3`…).
+
+| Código | Cuándo |
+|---|---|
+| `400 plan_not_found` | `planId` no existe |
+| `409 no_plans` | No hay ningún plan definido |
+| `409 external_ref_in_use` | La referencia ya está vinculada a otro cliente |
+| `404 client_not_found` | No hay cliente con esa referencia o ese id |
+
+### 2.3 Clientes, planes y usuarios (administración)
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/plans` | `{ plans }`, cada uno con `clientCount`. |
+| `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit`, `notes`. Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
+| `GET /api/clients` | Clientes con `plan` y `usage` (`{ domains, mailboxes, aliases, apiKeys, messagesLast30d }`). |
+| `POST /api/clients` | `{ name, planId, contactEmail?, notes?, user?: { email, name, password? } }` → `{ client, user?, password? }` (`password` solo si se generó). |
+| `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente). |
+| `PATCH /api/clients/:id` | `{ name?, contactEmail?, planId?, notes?, suspended? }` → `{ client, suspension? }`. Un plan por debajo del uso actual: `409 plan_below_usage`. Suspender o reactivar se aplica a todos los buzones en el motor: `suspension = { updated, skipped, failed: [{ email, error }] }`; repetir la petición reintenta los fallidos. |
+| `DELETE /api/clients/:id` | `409 client_has_domains` si aún tiene dominios. |
+| `POST /api/clients/:id/users` | `{ email, name, password? }`. Correo repetido: `409 user_exists`. |
+| `PATCH /api/clients/:id/users/:userId` | `{ name?, password?, generatePassword?, disabled? }`. |
+| `DELETE /api/clients/:id/users/:userId` | Elimina el usuario. |
+
+### 2.4 Dominios
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/domains?clientId=` | `{ domains: DomainRecord[] }`. |
+| `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4). Duplicado: `409`. |
+| `GET /api/domains/:id` | `{ domain }`. |
+| `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }] }`, sin punto final y sin SRV de puertos que no se publican. |
+| `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar. |
+| `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? (MX, SPF, DMARC actuales). |
+| `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain }`. Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
+| `POST /api/domains/:id/dkim` | Regenera las claves DKIM en el motor. |
+| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio. Con buzones exige `confirm` (`409 needs_confirmation`). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
+
+`DomainRecord`: `{ id, clientId, domain, domainUnicode, status:
+pending_dns|active|error, dkimSelector, dnsStatus: { checks, requiredTotal,
+requiredOk, allRequiredOk, checkedAt }, lastCheckedAt, verifiedAt, createdAt,
+cloudflare: { accountId, zoneId } | null, dnsAppliedAt, ownershipVerifiedAt,
+ownershipRecord: { type: "TXT", name, content } }`.
+
+**Propiedad del dominio.** Nadie (ni la administración ni un token) puede
+crear buzones ni alias en un dominio cuya propiedad no se ha comprobado:
+`409 domain_ownership_pending`. La propiedad queda comprobada, y no se vuelve a
+perder, cuando al medir el DNS:
+
+- algún MX del dominio apunta al servidor de correo de la instancia, o
+- existe el TXT `_mailway.<dominio>` con el valor
+  `mailway-verificacion=<token>` (`ownershipRecord`; el token es estable y
+  propio de cada dominio y de cada instancia).
+
+El TXT permite preparar los buzones antes de mover el MX desde otro proveedor.
+Aplicar el DNS en Cloudflare lo crea. Los dominios de versiones anteriores que
+ya estaban verificados o tenían buzones quedaron comprobados al actualizar.
+
+### 2.5 Buzones y alias
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato). |
+| `POST /api/mailboxes` | `{ domainId, localPart, displayName?, password? (10–200), quotaMb? }` → `{ mailbox, password? }` (`password` solo si se generó). La cuota se acota a la del plan. |
+| `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ capacity, valid, exceedsPlan, results }`. Si no, comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. |
+| `PATCH /api/mailboxes/:id` | `{ displayName?, quotaMb?, status?: active\|suspended }`. Reactivar con el cliente suspendido: `409 client_suspended`. |
+| `POST /api/mailboxes/:id/password` | `{ password? }` → `{ ok, password? }`. Sin cuerpo genera una. **Desconecta los dispositivos** que usan la contraseña principal; las contraseñas de aplicación siguen valiendo. Cierra las sesiones de «Mi buzón» y borra la contraseña guardada en los enlaces de configuración. |
+| `DELETE /api/mailboxes/:id` | → `{ ok, aliasesUpdated, aliasesDeleted }`: antes de borrar, quita el buzón de los alias que reenvían a él (y borra los que se quedan sin destinos). Remitente de una clave activa: `409 mailbox_in_use`. |
+| `GET /api/mailboxes/:id/connection` | Datos de conexión (sección 5.3). |
+| `GET /api/mailboxes/:id/mobileconfig` | Perfil de Apple del buzón, sin contraseña. Sin nombre de servidor configurado: `409 mail_hostname_missing`. |
+| `GET /api/aliases?clientId=&domainId=` | `{ aliases }`, cada uno con `destinations` y `externalDestinations`. |
+| `POST /api/aliases` | `{ domainId, localPart, destinations (1–20) }`. |
+| `PATCH /api/aliases/:id` | `{ destinations }`: sustituye los destinos. |
+| `DELETE /api/aliases/:id` | Elimina el alias. |
+
+Los destinos de un alias pueden ser buzones del **mismo cliente** o direcciones
+externas (reenvío a otro proveedor). Una dirección de un dominio de esta
+instancia que no es un buzón existente se rechaza en lugar de salir a Internet.
+
+Errores frecuentes de altas:
+
+| Código | Cuándo |
+|---|---|
+| `400 plan_limit_reached` | Se superaría el máximo de dominios, buzones o alias del plan |
+| `400 client_suspended` | El cliente está suspendido: no se crean recursos |
+| `409 domain_ownership_pending` | La propiedad del dominio no está comprobada |
+| `400 invalid_local_part` | Nombre no válido (solo `a-z`, `0-9`, `.`, `-`, `_`; sin símbolo al principio o al final ni `..`) |
+| `409 mailbox_exists` · `409 alias_exists` | Ya existe un buzón o un alias con esa dirección |
+| `400 alias_loop` | El alias se reenvía a sí mismo |
+| `400 destination_other_client` | El destino es un buzón de otro cliente |
+| `400 destination_not_found` | El destino es de un dominio de esta instancia pero no existe |
+
+Las altas de un mismo cliente (dominios, buzones, alias) se ejecutan en fila:
+varias peticiones simultáneas nunca superan el plan.
+
+### 2.6 Contraseñas de aplicación
+
+Una por dispositivo o programa (el móvil, una aplicación de Skyway…). Se
+revocan una a una sin tocar la contraseña principal. Usuario IMAP/SMTP: la
+dirección completa del buzón.
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/mailboxes/:id/app-passwords` | `{ appPasswords: [{ id, mailboxId, email, name, createdAt, revokedAt }] }`. |
+| `POST /api/mailboxes/:id/app-passwords` | `{ name (1–60) }` → `{ appPassword, password }`; **`password` solo aparece aquí**. Máximo 25 activas por buzón: `409 app_password_limit`. |
+| `DELETE /api/mailboxes/:id/app-passwords/:appId` | Revoca al instante → `{ ok }`. |
+
+Una contraseña de aplicación **no sirve** para entrar en «Mi buzón» ni para
+cambiar la contraseña principal (`400 app_password_not_allowed`): quien
+encuentre un móvil perdido no puede adueñarse del buzón.
+
+### 2.7 Enlaces de configuración
+
+| Método y ruta | Descripción |
+|---|---|
+| `POST /api/mailboxes/:id/setup-links` | `{ includePassword?, password?, ttlHours? (1–720, 72 por defecto) }` → `{ link: { id, url, expiresAt, hasPassword } }`. `url` = `<panel>/conectar/<token>`. |
+| `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword }] }`. |
+| `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
+
+- Con `includePassword: true` hay que indicar en `password` la contraseña
+  recién generada (`400 password_required`). Se comprueba antes de guardarla
+  (`400 password_mismatch`), con límite de intentos fallidos (`429`).
+- El token del enlace tiene 256 bits y solo se guarda su hash. La contraseña
+  se guarda cifrada y se borra al caducar o revocar el enlace, cuando el
+  titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
+  buzón. Los enlaces caducados se eliminan 30 días después.
+- Buzón o cliente suspendido: `400 mailbox_suspended`.
+
+### 2.8 Actividad
+
+`GET /api/audit?clientId=&limit=&before=` → `{ entries, nextBefore }`.
+`limit` de 1 a 500 (100 por defecto); para la página siguiente, pase
+`before=<nextBefore>`. Un usuario de cliente solo ve su cliente, y de las
+acciones de la administración no ve el correo de quien administra.
+
+### 2.9 Otras rutas
+
+Envíos de la API (`GET /api/messages`), marca blanca (sección 7), Cloudflare
+(sección 4), alertas (`GET /api/alerts`, `POST /api/alerts/:id/dismiss`),
+canales de aviso (`GET|PUT /api/notify/channels`, `POST /api/notify/test`),
+entregabilidad (`GET /api/deliverability/server`), resúmenes
+(`GET /api/dashboard/admin`, `GET /api/dashboard/client`) y ajustes y motor
+(`/api/settings`, `/api/engine/*`, solo administración).
+
+---
+
+## 3. Skyway
+
+Con Skyway 0.34 o posterior, el correo de cada proyecto se crea y se gestiona
+desde el propio proyecto. Skyway usa la API de la sección 2 con un token de
+administración y **aísla los proyectos por su cuenta**: antes de actuar sobre
+un dominio o un buzón comprueba, con el resumen del cliente vinculado, que es
+de ese proyecto (si no, responde 404 sin llegar a Mailway).
+
+### 3.1 Conectar (una vez)
 
 1. En Mailway: **Conexiones → Tokens de gestión → Crear token** con la cuenta
    de administración (p. ej. «Skyway», sin caducidad).
-2. En Skyway: **Ajustes → Correo (Mailway)**. Elija el servicio de Skyway que
-   ejecuta el panel de Mailway (o escriba su URL pública), pegue el token y
-   pulse **Probar conexión**.
+2. En Skyway: **Ajustes → Correo (Mailway)**. Seleccione el servicio de Skyway
+   que ejecuta el panel de Mailway (Skyway le habla por la red interna,
+   `http://skyway-<proyecto>-<servicio>:4100`) o escriba su URL pública;
+   pegue el token (debe empezar por `mwt_`) y pulse **Probar conexión**. Skyway
+   muestra la versión, la marca y el servidor de correo, y avisa si el token no
+   es de administración. Guarde.
+3. Para los usuarios de Skyway que no son administradores, el plan de su
+   cuenta debe incluir el módulo **Correo** (`mail`). Los planes anteriores a
+   la 0.34 no lo incluyen.
 
-### Usar desde un proyecto
+### 3.2 Usar desde un proyecto
 
-En la cabecera del proyecto, el botón **Correo** abre el correo del proyecto:
+El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
 
-- **Activar correo**: crea en Mailway un cliente vinculado a ese proyecto
-  (o, para la administración, vincula uno que ya exista).
-- **Dominios**: añadir un dominio, ver sus registros, **Configurar en
-  Cloudflare** con un clic y **Verificar**.
-- **Buzones**: crear, restablecer la contraseña, generar el enlace de
-  configuración para el titular y eliminar.
-- **Conectar a un servicio**: elige un servicio del proyecto y un buzón.
-  - *SMTP*: crea una contraseña de aplicación y añade al servicio
-    `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_SECURE=false`, `SMTP_USER`,
-    `SMTP_PASS` y `SMTP_FROM`.
-  - *API*: crea una clave de envío y añade `MAILWAY_API_URL`,
-    `MAILWAY_API_KEY` y `MAIL_FROM`.
-  - Opcionalmente vuelve a desplegar el servicio. Los valores nunca se
-    muestran: van directos a las variables de entorno.
+- **Activar correo**:
+  - *crear* un cliente nuevo (nombre, plan y correo de contacto opcionales):
+    Skyway llama a `POST /api/integrations/clients/ensure` con
+    `externalRef = skyway:project:<id del proyecto>`, así que repetirlo nunca
+    duplica clientes;
+  - *vincular uno existente* (solo la administración de Skyway):
+    `PUT /api/integrations/clients/:id/link`.
+- **Dominios**: añadir, ver los registros, **Configurar en Cloudflare** (vista
+  previa de cambios y conflictos antes de aplicar) y verificar.
+- **Buzones**: crear (la contraseña se muestra una vez), generar el enlace de
+  configuración para el titular, restablecer la contraseña y eliminar.
+- **Conectar a un servicio**: elija un servicio del proyecto (no de base de
+  datos) y un buzón.
+  - *SMTP*: crea una contraseña de aplicación `skyway:<servicio>` y añade
+    `SMTP_HOST` (`mail.<dominio>`), `SMTP_PORT=587`, `SMTP_SECURE=false`
+    (STARTTLS), `SMTP_USER` y `SMTP_FROM` (la dirección del buzón) y
+    `SMTP_PASS`.
+  - *API*: crea una clave de envío y añade `MAILWAY_API_URL` (URL pública del
+    panel), `MAILWAY_API_KEY` y `MAIL_FROM`.
+  - Las variables se fusionan con las existentes y sus valores nunca se
+    muestran ni se anotan. Opcionalmente vuelve a desplegar el servicio.
+  - Conectar de nuevo crea una credencial nueva, pero **no revoca la
+    anterior**: retírela en Mailway (contraseñas de aplicación del buzón o
+    **API de envío**) si ya no se usa.
+- **Desactivar el correo**: quita la referencia en Mailway (los datos se
+  conservan). Borrar el proyecto en Skyway también la quita.
 
-### Rutas automáticas en Traefik
+Con un usuario de Skyway que no es administrador, Skyway solo usa las cuentas
+de Cloudflare **del propio cliente** (parámetro `soloCliente=1`, sección 4.3).
 
-Skyway incluye un puente para el proveedor HTTP de Traefik: Traefik le
-pregunta a Skyway y Skyway le entrega, filtradas, las rutas que Mailway
-necesita (webmail con dominio propio de cada cliente, `autoconfig.`,
-`autodiscover.` y `mta-sts.`). No hace falta ningún
-`docker-compose.override.yml`. Sin Skyway (o con una versión anterior), el
-bloque manual sigue disponible en **Ajustes → Rutas y autoconfiguración**.
+### 3.3 Rutas automáticas en Traefik
 
-Cuando el panel se despliega con Skyway, Mailway deduce solo el nombre de su
-contenedor (`skyway-<proyecto>-<servicio>`, a partir de las variables
-`SKYWAY_PROJECT` y `SKYWAY_SERVICE` que Skyway inyecta) y su URL pública
-(`PUBLIC_URL`).
+El Traefik de Skyway consulta `GET http://skyway:4000/api/traefik/mailway`
+cada 15 segundos. Skyway obtiene las rutas de Mailway
+(`/api/traefik/config`, con el token de Traefik que le da
+`/api/integrations/info`), las **filtra** (solo reglas `Host()` hacia
+contenedores de Mailway, nunca un dominio que ya sirve Skyway, solo
+redirecciones a HTTPS y el emisor `le`) y, si Mailway no responde, sirve la
+última configuración válida. No hace falta ningún
+`docker-compose.override.yml`.
+
+Sin Skyway, o con una versión anterior, el bloque manual está en **Ajustes →
+Rutas de Traefik** (sección 7.3).
+
+### 3.4 Variables que Mailway aprovecha de Skyway
+
+Cuando el panel se despliega con Skyway, Mailway deduce el nombre de su
+contenedor (`skyway-<SKYWAY_PROJECT>-<SKYWAY_SERVICE>`, para las rutas de
+Traefik) y su URL pública (`PUBLIC_URL`, si no se define `MAILWAY_PANEL_URL`).
 
 ---
 
-## 3. Cloudflare
+## 4. Cloudflare
 
 Si el DNS de un dominio está en Cloudflare, Mailway crea los registros por
 usted.
 
-1. **Conexiones → Cloudflare → Conectar cuenta**. El botón abre Cloudflare con
-   un token ya preparado con los permisos mínimos: *Zona → Zona → Leer* y
-   *Zona → DNS → Editar*. Limítelo a las zonas que quiera, créelo y péguelo.
-   - El administrador puede conectar una cuenta para **toda la instancia**
-     (sirve para cualquier dominio cuya zona vea el token) o para un cliente.
-   - Cada cliente puede conectar su propia cuenta.
-   - El token se guarda cifrado y nunca se vuelve a mostrar.
-2. En el detalle de un dominio: **Revisar cambios** muestra qué registros se
-   crearán, cuáles ya están bien y cuáles chocan con otros existentes, con el
-   motivo. **Aplicar en Cloudflare** los crea en una sola operación y el panel
-   comprueba la propagación automáticamente.
-3. Al dar de alta un dominio, la casilla **Configurar el DNS
-   automáticamente en Cloudflare** hace todo en un paso.
+### 4.1 Conectar una cuenta
 
-Reglas que protegen el correo existente:
+**Conexiones → Cloudflare → Conectar cuenta.** El botón abre Cloudflare con un
+token ya preparado con los permisos mínimos: *Zona → Zona → Leer* y *Zona →
+DNS → Editar*. Limítelo a las zonas que quiera, créelo y péguelo.
+
+- La administración puede conectar una cuenta para **toda la instancia** o
+  para un cliente. Cada cliente puede conectar la suya.
+- Se admiten tokens de usuario y de cuenta (`cfat_…`). Se **rechaza la clave
+  global** de la API (`400 cloudflare_global_key`): da acceso a toda la
+  cuenta.
+- El token se verifica al conectarlo y debe ver al menos una zona
+  (`400 cloudflare_no_zones`). Se guarda cifrado y no se vuelve a mostrar.
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/cloudflare/accounts` | Cuentas visibles: `{ accounts: [{ id, clientId, label, tokenHint, createdAt, lastVerifiedAt, lastError, zones?, zonesTotal? }] }`. Administración: `?clientId=<id>` o `?clientId=instancia`. `?refresh=1` vuelve a leer las zonas. |
+| `POST /api/cloudflare/accounts` | `{ token, label?, clientId? }` (`clientId` null o ausente = instancia; solo administración) → `{ account }`. Mismo token en el mismo ámbito: `409 cloudflare_duplicate`. |
+| `DELETE /api/cloudflare/accounts/:id` | Desconecta la cuenta. |
+
+### 4.2 Aplicar el DNS de un dominio
+
+1. En el detalle de un dominio, **Revisar cambios** muestra qué registros se
+   crearán, cuáles ya están bien y cuáles chocan con otros, con el motivo.
+2. **Aplicar en Cloudflare** los crea en una sola operación (si Cloudflare
+   rechaza el lote, se aplican uno a uno y se informa de cada error) y el panel
+   mide la propagación.
+3. Al dar de alta un dominio, la casilla **Configurar el DNS automáticamente
+   en Cloudflare** (`autoDns: true`) hace todo en un paso, sin reemplazar nada
+   que ya exista.
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required }], summary }`. `?includeRecommended=false` limita a los obligatorios. |
+| `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. |
+| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. |
+| `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
+
+Si la zona está pendiente de activación en Cloudflare, `zone.nameServers`
+indica los servidores de nombres que debe poner en su registrador.
+
+### 4.3 Qué cuentas se usan
+
+- Primero, la cuenta ya asociada al dominio; después, las del **cliente**
+  dueño del dominio; y, solo si actúa la **administración**, las de la
+  instancia.
+- Un cliente **no** puede usar las cuentas de la instancia: si pudiera, le
+  bastaría con dar de alta un dominio que vive en la cuenta del administrador
+  para escribir en esa zona. Excepción: una cuenta de la instancia que quedó
+  asociada al dominio porque la administración ya aplicó su DNS con ella.
+- **`?soloCliente=1`** en `GET /api/domains/:id/cloudflare` y en
+  `POST /api/domains/:id/cloudflare/apply` limita la búsqueda a las cuentas del
+  cliente aunque la petición llegue con un token de administración. Skyway lo
+  envía cuando quien actúa en Skyway no es administrador, para que su token de
+  administración no abra a los proyectos las cuentas de la instancia.
+
+### 4.4 Reglas que protegen el correo existente
 
 - Todos los registros van **sin proxy** (nube gris): el proxy de Cloudflare
-  rompe SMTP e IMAP.
+  rompe SMTP e IMAP. Un registro con proxy se corrige.
 - **SPF**: si ya existe uno, se fusiona (se añade `mx`) en lugar de crear un
-  segundo, que invalidaría ambos.
+  segundo, que invalidaría ambos. Con dos SPF no se toca y se avisa.
 - **DMARC**: si ya existe, se respeta.
 - **MX de otro proveedor** (Google, Microsoft…): se marcan como conflicto y
-  solo se sustituyen si usted lo confirma expresamente, porque cambiarlos
-  mueve el correo de todo el dominio.
-- Si la zona tiene **Email Routing** activado, Cloudflare bloquea los MX: el
-  panel lo indica para que lo desactive primero.
+  solo se sustituyen si se confirma expresamente (`replaceConflicts: true`),
+  porque cambiarlos mueve el correo de todo el dominio.
+- Un **CNAME** no convive con otros registros del mismo nombre: se marca como
+  conflicto.
+- No se crean registros CAA (restringirían las autoridades de certificación de
+  todo el dominio).
 
-El administrador tiene además **DNS de la plataforma**: crea los registros A
-de `mail.`, `panel.` y `webmail.`, y los `autoconfig.`/`autodiscover.` del
-dominio base.
+### 4.5 Errores de Cloudflare
 
----
-
-## 4. Programas de correo de los usuarios (autoconfiguración)
-
-El panel sirve la configuración que piden los programas de correo, así el
-titular solo escribe su dirección y su contraseña:
-
-| Cliente | Cómo se configura |
+| Código | Causa |
 |---|---|
-| Thunderbird (escritorio) y Thunderbird para Android | Solos. Buscan `autoconfig.<dominio>` y, si no existe, `autoconfig.<dominio del MX>`: basta con que la plataforma tenga `autoconfig.<dominio base>` para cubrir a todos los clientes. |
-| iPhone, iPad y Mac | Perfil de configuración (`.mobileconfig`) desde el enlace de configuración o desde «Mi buzón». |
-| Outlook | Autodiscover (`autodiscover.<dominio>`); las versiones recientes de Outlook ya no detectan bien IMAP, así que el enlace muestra también los datos manuales. |
-| Gmail, Samsung Email y otros | Datos manuales (servidor, puertos, SSL/TLS), con botones de copiar. |
-
-Rutas públicas: `GET /mail/config-v1.1.xml`,
-`GET /.well-known/autoconfig/mail/config-v1.1.xml`,
-`POST /autodiscover/autodiscover.xml`,
-`GET /autodiscover/autodiscover.json`, `GET /.well-known/mta-sts.txt`.
-
-### Enlace de configuración y «Mi buzón»
-
-- Desde **Buzones → Conectar dispositivos** se genera un enlace (y su QR) para
-  el titular. Al abrirlo en el móvil ve los pasos exactos para su
-  dispositivo. Si se crea justo al dar de alta el buzón, puede incluir la
-  contraseña inicial; se borra al caducar el enlace o cuando el titular marca
-  «Ya lo he configurado».
-- **Mi buzón** (`/mi-buzon`): el titular entra con su dirección y su
-  contraseña para ver sus datos de conexión, descargar el perfil, cambiar la
-  contraseña y crear contraseñas de aplicación por dispositivo.
-- En el webmail, **Ajustes → Contraseña** cambia la contraseña del buzón a
-  través del panel.
+| `400 cloudflare_token_invalid` · `cloudflare_token_malformed` · `cloudflare_token_inactive` | Token no válido, incompleto, desactivado o caducado |
+| `400 cloudflare_forbidden` | El token no tiene permiso sobre la zona o está limitado por IP |
+| `409 cloudflare_email_routing` | La zona tiene *Email Routing* activado, que bloquea MX y SPF: desactívelo en Cloudflare (Email → Email Routing) |
+| `409 cloudflare_exists` | Otro registro con ese nombre impide crear el nuevo |
+| `429 cloudflare_rate_limited` | Límite de Cloudflare (1200 peticiones cada 5 minutos por token) |
+| `502 cloudflare_unreachable` · `504 cloudflare_timeout` | Cloudflare no responde o tarda más de 15 segundos |
 
 ---
 
-## 5. Otras plataformas (Railway, Vercel, un VPS…)
+## 5. Programas de correo (autoconfiguración)
 
-Cualquier aplicación puede enviar correo con Mailway de dos formas:
+El panel sirve la configuración que piden los programas de correo, de modo que
+el titular solo escribe su dirección y su contraseña.
+
+| Programa | Cómo se configura |
+|---|---|
+| Thunderbird (escritorio) y Thunderbird para Android | Solos. Buscan `autoconfig.<dominio>` y, si no existe, `autoconfig.<dominio del MX>`: basta con que la plataforma tenga `autoconfig.<dominio base>` para cubrir a todos los clientes cuyo MX sea este servidor. |
+| iPhone, iPad y Mac | Perfil de configuración (`.mobileconfig`) desde el enlace de configuración o desde «Mi buzón». |
+| Outlook | Autodiscover (`autodiscover.<dominio>`). Las versiones recientes de Outlook apenas autodetectan IMAP, así que el enlace muestra también los datos manuales. |
+| Gmail, Samsung Email y otros | Datos manuales (servidor, puertos, cifrado) con botones de copiar. |
+
+### 5.1 Rutas públicas
+
+| Ruta | Uso |
+|---|---|
+| `GET /mail/config-v1.1.xml?emailaddress=` y `GET /.well-known/autoconfig/mail/config-v1.1.xml` | Thunderbird. El dominio se toma de `emailaddress` o del host (`autoconfig.<dominio>`). En el host de la instancia sin dirección se devuelve un documento genérico con `%EMAILDOMAIN%`. |
+| `GET\|POST /autodiscover/autodiscover.xml` | Autodiscover (Outlook y Thunderbird), sin distinguir mayúsculas. Responde siempre `200` (con el XML de error si no procede) y **nunca lee** la cabecera `Authorization`, en la que Thunderbird envía la contraseña real. |
+| `GET /autodiscover/autodiscover.json?Email=&Protocol=AutodiscoverV1` y `GET /autodiscover/autodiscover.json/v1.0/<dirección>` | Autodiscover v2: devuelve la URL del documento XML. |
+| `GET /.well-known/mta-sts.txt` | Política MTA-STS (modo `testing`) en `mta-sts.<dominio>`. |
+
+Solo se responde para dominios dados de alta en esta instancia.
+
+### 5.2 Nombres y rutas de Traefik
+
+Cada dominio tiene tres nombres (`autoconfig.`, `autodiscover.`, `mta-sts.`) y
+la instancia dos (`autoconfig.` y `autodiscover.` del dominio base, derivado
+del nombre del servidor de correo). Traefik solo los enruta al panel cuando su
+DNS apunta a este servidor (CNAME al servidor de correo o A a la IP pública):
+publicar uno que no resuelve haría fallar Let's Encrypt. El vigilante los
+revisa cada hora, y los de un dominio en cuanto este queda activo. Hace falta
+conocer el contenedor del panel (`MAILWAY_PANEL_BACKEND_URL` o despliegue con
+Skyway).
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/autoconfig/status` | Administración: estado de cada nombre (`ok`, `pending`, `unknown`), si está enrutado y los CNAME que faltan para la instancia. |
+| `POST /api/autoconfig/refresh` | Administración: vuelve a comprobarlos → `{ summary, status }`. |
+
+### 5.3 Datos de conexión de un buzón
+
+`GET /api/mailboxes/:id/connection` →
+
+```json
+{
+  "email": "ana@cliente.es",
+  "username": "ana@cliente.es",
+  "imap":    { "host": "mail.miempresa.com", "port": 993, "security": "SSL/TLS" },
+  "smtp":    { "host": "mail.miempresa.com", "port": 465, "security": "SSL/TLS" },
+  "smtpAlt": { "host": "mail.miempresa.com", "port": 587, "security": "STARTTLS" },
+  "webmailUrl": "https://webmail.miempresa.com",
+  "autoconfig": {
+    "thunderbird": "https://autoconfig.cliente.es/mail/config-v1.1.xml?emailaddress=ana%40cliente.es",
+    "outlook": "https://autodiscover.cliente.es/autodiscover/autodiscover.xml",
+    "appleProfileUrl": "https://panel.miempresa.com/api/mailboxes/mbx_…/mobileconfig"
+  },
+  "portalUrl": "https://panel.miempresa.com/mi-buzon"
+}
+```
+
+Las URL de autoconfiguración usan el nombre del dominio si su DNS ya apunta
+aquí; si no, el de la instancia; y, como último recurso, el panel (que sirve
+las mismas rutas en cualquier nombre). `webmailUrl` es el webmail de marca
+blanca del cliente si tiene uno en servicio.
+
+---
+
+## 6. Enlace de configuración, «Mi buzón» y webmail
+
+### 6.1 Enlace de configuración
+
+Desde **Buzones → (buzón) → Conectar dispositivos** se genera un enlace
+(`/conectar/<token>`) con su código QR. Al abrirlo, el titular ve los pasos
+para su dispositivo (iPhone o iPad, Mac, Android, Outlook, Thunderbird, otros),
+con el perfil de Apple, el QR de importación de Thunderbird para Android, los
+datos manuales, el webmail y el acceso a «Mi buzón». Si el enlace se crea al
+dar de alta el buzón, puede incluir la contraseña inicial.
+
+Rutas públicas (60 peticiones por minuto e IP, sin caché):
+
+| Ruta | Descripción |
+|---|---|
+| `GET /api/public/setup/:token` | `{ email, displayName, brandName, connection, password?, hasPassword, expiresAt, portalUrl, appleProfileUrl, thunderbirdAndroidQr }`. |
+| `GET /api/public/setup/:token/perfil.mobileconfig` | Perfil de Apple (con la contraseña si el enlace la lleva). |
+| `POST /api/public/setup/:token/done` | «Ya lo he configurado»: borra la contraseña del enlace. |
+
+Enlace inexistente, caducado o revocado: `404 setup_link_invalid`. Buzón o
+cliente suspendido: `403 mailbox_suspended`.
+
+### 6.2 «Mi buzón»
+
+En `/mi-buzon` el titular entra con su dirección y la **contraseña principal**
+del buzón para ver sus datos de conexión y su espacio ocupado, descargar el
+perfil de Apple, cambiar la contraseña y crear o revocar contraseñas de
+aplicación.
+
+| Método y ruta | Descripción |
+|---|---|
+| `POST /api/portal/login` | `{ email, password }` → `{ ok, email }`. Cookie `mailway_buzon` (httpOnly, `SameSite=Lax`, `Path=/api/portal`, 12 horas). |
+| `GET /api/portal/me` | Datos del buzón, conexión, ocupación y webmail. |
+| `POST /api/portal/logout` | Cierra la sesión. |
+| `POST /api/portal/password` | `{ current, next (≥ 10) }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. |
+| `GET /api/portal/mobileconfig` | Perfil de Apple sin contraseña. |
+| `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }`). |
+
+- La contraseña se comprueba **en local** contra el hash del motor, nunca
+  pidiéndole al motor que autentique (sus fallos bloquearían la IP del proxy
+  para todos).
+- Límite: 5 fallos por buzón y 20 por IP cada 15 minutos (`429`).
+- Mismo `401 bad_credentials` para una dirección inexistente que para una
+  contraseña incorrecta. Buzón suspendido: `403 mailbox_suspended`. Motor sin
+  respuesta: `503 engine_unreachable`. Sin sesión: `401 portal_unauthorized`.
+- Contraseña nueva igual a la actual: `400 same_password`; actual incorrecta:
+  `400 bad_current_password`; contraseña de aplicación en lugar de la
+  principal: `400 app_password_not_allowed`.
+
+### 6.3 Webmail
+
+Roundcube, en español, con cambio de contraseña (**Ajustes → Contraseña**),
+filtros, reenvío y aviso de ausencia (**Ajustes → Filtros**, por ManageSieve),
+carpeta de archivo y botón «Marcar como Spam». Su enlace de ayuda lleva a «Mi
+buzón».
+
+El cambio de contraseña llama al panel por la red interna:
+
+`POST /api/webmail/password` (formulario `user`, `curpass`, `newpass`;
+cabecera `X-Mailway-Token` = `MAILWAY_WEBMAIL_TOKEN`) → `200 ok`, o `error`
+con `400`, `401`, `403`, `429` o `503`. Sin `MAILWAY_WEBMAIL_TOKEN` la ruta no
+existe (`404`) y el webmail oculta la pestaña.
+
+---
+
+## 7. Marca blanca y rutas de Traefik
+
+### 7.1 Dominios propios de los clientes
+
+En **Marca blanca**, un cliente sirve el webmail en su propio dominio
+(`webmail.sucliente.com`) con certificado automático.
+
+Reglas:
+
+- Debe ser un **subdominio de un dominio de correo del mismo cliente ya
+  verificado** (`400 hostname_not_owned`, `400 domain_not_verified`). Así nadie
+  puede reclamar el nombre de otra aplicación del servidor.
+- No puede empezar por `autoconfig.`, `autodiscover.` ni `mta-sts.`, ni ser
+  uno de los nombres de la instancia (`400 reserved_hostname`).
+- Máximo **5 por cliente** (`400 whitelabel_limit`). La administración debe
+  indicar el cliente (`400 client_required`).
+- Tipo `webmail` (por defecto) o `panel`; este último requiere conocer el
+  contenedor del panel (`400 kind_unavailable`).
+
+Estados: **Esperando DNS** (`pending_dns`) → **Emitiendo certificado**
+(`issuing`) → **En servicio** (`active`), o `error`. Solo se publican en
+Traefik los dominios cuyo DNS ya apunta aquí.
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/whitelabel/domains?clientId=` | `{ domains }`. |
+| `POST /api/whitelabel/domains` | `{ hostname, kind?, clientId? }` → `{ domain, instructions }` (CNAME recomendado hacia el servidor de correo o A hacia la IP). |
+| `GET /api/whitelabel/domains/:id` · `POST …/:id/verify` · `DELETE …/:id` | Ficha, comprobación y baja. |
+| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el registro en Cloudflare (sección 4). |
+
+### 7.2 Configuración para Traefik
+
+`GET /api/traefik/config` (cabecera `X-Mailway-Token`; `401` sin ella)
+devuelve la configuración dinámica de Traefik: un par de routers por nombre
+(`mailway-<id>` en `websecure` con el emisor `le`, y `mailway-<id>-http` que
+redirige a HTTPS), los servicios `mailway-webmail` y `mailway-panel` y el
+*middleware* `mailway-https`. Los routers de autoconfiguración se llaman
+`mailway-autoconfig-<id>`, `mailway-autodiscover-<id>` y `mailway-mtasts-<id>`
+(`…-instancia` para los de la instancia). El token es `MAILWAY_TRAEFIK_TOKEN`
+o, si no se define, uno generado y guardado.
+
+### 7.3 Ajustes → Rutas de Traefik
+
+`GET /api/whitelabel/setup` (administración) → `{ token, tokenFromEnv,
+certResolver, webmailBackend, panelBackend, panelDomainsAvailable, panelUrl,
+underSkyway, providerEndpoint, overrideSnippet, autoconfig: { routingAvailable,
+routedHosts }, skywayBridge: { minVersion: "0.34.0", endpoint, note },
+publishedDomains }`.
+
+- Con **Skyway 0.34 o posterior** no hay que instalar nada (sección 3.3).
+- Con Skyway anterior o un Traefik propio, `overrideSnippet` es el
+  `docker-compose.override.yml` exacto que hace que Traefik consulte el panel
+  directamente. **No lo instale con Skyway 0.34**: Traefik solo admite un
+  proveedor HTTP y el fichero sustituiría al puente.
+
+---
+
+## 8. Otras plataformas
+
+Cualquier aplicación (Railway, Vercel, un VPS, un script) puede enviar correo
+con Mailway de dos formas:
 
 - **SMTP** con una contraseña de aplicación del buzón remitente:
-  `SMTP_HOST=mail.tuempresa.com`, `SMTP_PORT=587` (STARTTLS) o `465`
-  (TLS), usuario = dirección completa.
-- **API HTTP** con una clave `mw_…`: `POST https://panel.tuempresa.com/v1/send`
-  (ver [API.md](API.md)).
+  `SMTP_HOST=mail.miempresa.com`, `SMTP_PORT=587` (STARTTLS) o `465`
+  (SSL/TLS), usuario = dirección completa del buzón.
+- **API HTTP** con una clave `mw_…`:
+  `POST https://panel.miempresa.com/v1/send` ([API.md](API.md)).
 
 Y cualquier sistema puede **gestionar** el correo con un token de gestión y
-los endpoints de la sección 1.
+las rutas de la sección 2. Flujo típico de una integración que da correo a sus
+propios clientes:
+
+```bash
+BASE=https://panel.miempresa.com; AUTH="Authorization: Bearer $TOKEN"
+# 1. Cliente idempotente por referencia externa
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/integrations/clients/ensure" \
+  -d '{"externalRef":"crm:cuenta:4821","name":"Acme S.L."}'
+# 2. Dominio (con DNS automático si hay cuenta de Cloudflare)
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/domains" \
+  -d '{"clientId":"cli_…","domain":"acme.es","autoDns":true}'
+# 3. Cuando la propiedad esté comprobada: buzón y enlace de configuración
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/mailboxes" \
+  -d '{"domainId":"dom_…","localPart":"ana","displayName":"Ana Pérez"}'
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/mailboxes/mbx_…/setup-links" \
+  -d '{"ttlHours":72}'
+```
