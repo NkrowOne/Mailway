@@ -64,6 +64,8 @@ export interface Plan {
   apiDailyLimit: number;
   apiPerMinuteLimit: number;
   notes: string;
+  /** Clientes que usan el plan (solo en GET /api/plans). */
+  clientCount?: number;
 }
 
 export interface ClientUsage {
@@ -83,6 +85,8 @@ export interface Client {
   suspended: boolean;
   notes: string;
   createdAt: number;
+  /** Referencia en un sistema externo; «skyway:…» si lo gestiona Skyway. */
+  externalRef: string | null;
   plan?: Plan;
   usage?: ClientUsage;
   users?: { id: string; email: string; name: string; disabled: boolean; lastLoginAt: number | null }[];
@@ -130,6 +134,11 @@ export interface Mailbox {
   quotaMb: number;
   status: 'active' | 'suspended';
   createdAt: number;
+  /** Bytes ocupados según el motor; null = sin dato. */
+  usedBytes: number | null;
+  usageCheckedAt?: number | null;
+  clientId?: string;
+  clientName?: string;
 }
 
 export interface Alias {
@@ -137,7 +146,13 @@ export interface Alias {
   domainId: string;
   localPart: string;
   email: string;
+  /** Todos los destinos, en minúsculas (internos y externos). */
   destinations: string[];
+  /** Los destinos que no son buzones de esta instancia (reenvío externo). */
+  externalDestinations?: string[];
+  domain?: string;
+  clientId?: string;
+  clientName?: string;
   createdAt: number;
 }
 
