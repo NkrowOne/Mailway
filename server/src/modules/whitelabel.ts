@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
-import { lookupA, lookupCname } from '../core/dns';
+import { dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
@@ -193,6 +193,7 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
  * handshake y sabemos que sigue en proceso.
  */
 async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: string }> {
+  if (dnsOffline()) return { ok: false, detail: 'Comprobación HTTPS desactivada (modo sin red).' };
   try {
     const res = await fetch(`https://${hostname}/`, {
       method: 'HEAD',

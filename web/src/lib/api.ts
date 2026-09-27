@@ -215,6 +215,7 @@ export interface InstanceSettings {
   publicIp: string;
   webmailUrl: string;
   systemFrom: string;
+  panelUrl: string;
 }
 
 export interface AdminDashboard {

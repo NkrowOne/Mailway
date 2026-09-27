@@ -198,6 +198,102 @@ const migrations: { id: string; sql: string }[] = [
         ON alerts(dedupe_key) WHERE resolved_at IS NULL AND dedupe_key IS NOT NULL;
     `,
   },
+  {
+    id: '003-integraciones-y-portal',
+    sql: `
+      -- Tokens de gestión: acceso por API (Skyway, scripts, agentes) con los
+      -- mismos permisos que el usuario que los crea. Solo se guarda el hash.
+      CREATE TABLE management_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        prefix TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        last_used_at INTEGER,
+        last_used_ip TEXT NOT NULL DEFAULT '',
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_management_tokens_user ON management_tokens(user_id);
+
+      -- Cuentas de Cloudflare conectadas. client_id NULL = cuenta de la
+      -- instancia (del administrador), utilizable para cualquier dominio cuya
+      -- zona vea el token. El token va cifrado; token_hint son sus 4 últimos.
+      CREATE TABLE cloudflare_accounts (
+        id TEXT PRIMARY KEY,
+        client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        token_enc TEXT NOT NULL,
+        token_hint TEXT NOT NULL DEFAULT '',
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        last_verified_at INTEGER,
+        last_error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX idx_cloudflare_accounts_client ON cloudflare_accounts(client_id);
+
+      -- Dónde vive el DNS de cada dominio, cuando Mailway lo gestiona.
+      ALTER TABLE domains ADD COLUMN cloudflare_account_id TEXT
+        REFERENCES cloudflare_accounts(id) ON DELETE SET NULL;
+      ALTER TABLE domains ADD COLUMN cloudflare_zone_id TEXT;
+      ALTER TABLE domains ADD COLUMN dns_applied_at INTEGER;
+
+      -- Ocupación de cada buzón, leída del motor (el motor es la fuente).
+      ALTER TABLE mailboxes ADD COLUMN used_bytes INTEGER;
+      ALTER TABLE mailboxes ADD COLUMN usage_checked_at INTEGER;
+
+      -- Referencia a un sistema externo (p. ej. un proyecto de Skyway), para
+      -- que las integraciones localicen «su» cliente sin duplicarlo.
+      ALTER TABLE clients ADD COLUMN external_ref TEXT;
+      CREATE UNIQUE INDEX idx_clients_external_ref
+        ON clients(external_ref) WHERE external_ref IS NOT NULL;
+
+      -- Enlaces de configuración de dispositivos: una URL que se envía al
+      -- titular del buzón (o se abre con un QR) para configurar su correo.
+      -- password_enc solo existe si se adjuntó la contraseña recién generada;
+      -- se borra al caducar o al revocar el enlace.
+      CREATE TABLE setup_links (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        password_enc TEXT,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_setup_links_mailbox ON setup_links(mailbox_id);
+
+      -- Sesiones del portal «Mi buzón»: el titular entra con su dirección y
+      -- la contraseña del buzón (verificada contra el motor).
+      CREATE TABLE mailbox_sessions (
+        token_hash TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        ip TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX idx_mailbox_sessions_mailbox ON mailbox_sessions(mailbox_id);
+
+      -- Contraseñas de aplicación de un buzón (móvil, una app de Skyway…):
+      -- se revocan una a una sin tocar la contraseña principal. stored_secret
+      -- es el secreto tal y como quedó en el motor ($app$…$<hash>), necesario
+      -- para retirarlo; la contraseña en claro no se guarda nunca.
+      CREATE TABLE app_passwords (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        stored_secret TEXT NOT NULL,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_app_passwords_mailbox ON app_passwords(mailbox_id);
+    `,
+  },
 ];
 
 function runMigrations(): void {

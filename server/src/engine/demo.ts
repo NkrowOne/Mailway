@@ -1,7 +1,9 @@
+import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
 import type {
   CreateMailboxInput,
   EngineDnsRecord,
   EngineHealth,
+  EngineReloadResult,
   MailEngine,
   QueueSummary,
   UpdateMailboxPatch,
@@ -40,16 +42,87 @@ export class DemoEngine implements MailEngine {
     ];
   }
 
-  async createMailbox(_input: CreateMailboxInput): Promise<void> {}
-  async setMailboxPassword(): Promise<void> {}
-  async updateMailbox(_email: string, _patch: UpdateMailboxPatch): Promise<void> {}
-  async deleteMailbox(): Promise<void> {}
+  /*
+   * Estado en memoria del modo demostración: basta para que el portal del
+   * titular, las contraseñas de aplicación y las pruebas se comporten como
+   * con un motor real (una contraseña equivocada se rechaza de verdad).
+   */
+  private readonly passwords = new Map<string, string>();
+  private readonly appPasswords = new Map<string, Set<string>>();
+  private readonly suspended = new Set<string>();
+  private readonly settings = new Map<string, string>();
+
+  async createMailbox(input: CreateMailboxInput): Promise<void> {
+    const email = input.email.toLowerCase();
+    this.passwords.set(email, sha512Crypt(input.password));
+    this.appPasswords.set(email, new Set());
+    this.suspended.delete(email);
+  }
+
+  async setMailboxPassword(email: string, password: string): Promise<void> {
+    this.passwords.set(email.toLowerCase(), sha512Crypt(password));
+  }
+
+  async updateMailbox(email: string, patch: UpdateMailboxPatch): Promise<void> {
+    if (patch.suspended === undefined) return;
+    if (patch.suspended) this.suspended.add(email.toLowerCase());
+    else this.suspended.delete(email.toLowerCase());
+  }
+
+  async deleteMailbox(email: string): Promise<void> {
+    const key = email.toLowerCase();
+    this.passwords.delete(key);
+    this.appPasswords.delete(key);
+    this.suspended.delete(key);
+  }
+
   async upsertAlias(): Promise<void> {}
   async deleteAlias(): Promise<void> {}
-  async addAppPassword(_email: string, _password: string, label: string): Promise<string> {
-    return `$app$${label}$demo`;
+
+  async addAppPassword(email: string, password: string, label: string): Promise<string> {
+    const stored = `$app$${label}$${sha512Crypt(password)}`;
+    const key = email.toLowerCase();
+    if (!this.appPasswords.has(key)) this.appPasswords.set(key, new Set());
+    this.appPasswords.get(key)!.add(stored);
+    return stored;
   }
-  async removeAppPassword(): Promise<void> {}
+
+  async removeAppPassword(email: string, storedSecret: string): Promise<void> {
+    this.appPasswords.get(email.toLowerCase())?.delete(storedSecret);
+  }
+
+  async verifyCredentials(email: string, password: string): Promise<boolean | null> {
+    const key = email.toLowerCase();
+    if (this.suspended.has(key)) return false;
+    const main = this.passwords.get(key);
+    if (main && verifySha512Crypt(password, main)) return true;
+    for (const stored of this.appPasswords.get(key) || []) {
+      const hash = stored.slice(stored.indexOf('$', 5) + 1);
+      if (verifySha512Crypt(password, hash)) return true;
+    }
+    return false;
+  }
+
+  async getMailboxUsage(): Promise<Map<string, number>> {
+    // Sin motor no hay correo guardado: todos los buzones conocidos están vacíos.
+    return new Map([...this.passwords.keys()].map((email) => [email, 0]));
+  }
+
+  async applyServerSettings(values: Record<string, string>): Promise<EngineReloadResult> {
+    for (const [key, value] of Object.entries(values)) this.settings.set(key, value);
+    return { errors: [], warnings: [] };
+  }
+
+  async getServerSettings(keys: string[]): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const key of keys) {
+      const value = this.settings.get(key);
+      if (value !== undefined) out[key] = value;
+    }
+    return out;
+  }
+
+  async reloadCertificates(): Promise<void> {}
 
   async getQueueSummary(): Promise<QueueSummary> {
     return { pending: 0, oldestSeconds: null };

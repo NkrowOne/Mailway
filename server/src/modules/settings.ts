@@ -45,6 +45,8 @@ export interface InstanceSettings {
   webmailUrl: string;
   /** Dirección desde la que el panel envía avisos (opcional). */
   systemFrom: string;
+  /** URL pública de este panel, p. ej. https://panel.miempresa.com */
+  panelUrl: string;
 }
 
 export function getInstanceSettings(): InstanceSettings {
@@ -55,6 +57,7 @@ export function getInstanceSettings(): InstanceSettings {
     publicIp: stored.publicIp || config.publicIpDefault,
     webmailUrl: stored.webmailUrl || config.webmailUrlDefault,
     systemFrom: stored.systemFrom || '',
+    panelUrl: (stored.panelUrl || config.panelUrlDefault).replace(/\/+$/, ''),
   };
 }
 

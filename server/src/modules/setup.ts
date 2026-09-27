@@ -41,6 +41,7 @@ const instanceSchema = z.object({
     .regex(/^$|^(\d{1,3}\.){3}\d{1,3}$/, 'La IP debe tener formato IPv4, ej.: 203.0.113.10')
     .optional(),
   webmailUrl: z.string().url().or(z.literal('')).optional(),
+  panelUrl: z.string().url('La URL del panel no es válida (ej.: https://panel.miempresa.com).').or(z.literal('')).optional(),
   systemFrom: z.string().email().or(z.literal('')).optional(),
 });
 

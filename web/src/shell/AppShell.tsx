@@ -5,6 +5,8 @@ import {
   Activity,
   BellRing,
   Building2,
+  Cable,
+  ClipboardList,
   Gauge,
   Globe,
   Inbox,
@@ -74,6 +76,8 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
         section: 'Instrumentos',
         items: [
           { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
+          { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
+          { to: '/planes', label: 'Planes', icon: <ClipboardList className={iconClass} /> },
           { to: '/actividad', label: 'Actividad', icon: <Activity className={iconClass} /> },
           { to: '/ajustes', label: 'Ajustes', icon: <Settings className={iconClass} /> },
         ],
@@ -93,7 +97,10 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
     },
     {
       section: 'Automatización',
-      items: [{ to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> }],
+      items: [
+        { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
+        { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
+      ],
     },
     {
       section: 'Cuenta',

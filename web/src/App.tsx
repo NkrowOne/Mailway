@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, type SetupStatus, type User } from './lib/api';
 import { AppShell } from './shell/AppShell';
 import { Midiendo } from './ui/kit';
@@ -20,8 +20,26 @@ import Alias from './pages/Alias';
 import ApiKeys from './pages/ApiKeys';
 import Actividad from './pages/Actividad';
 import Cuenta from './pages/Cuenta';
+import Conexiones from './pages/Conexiones';
+import Planes from './pages/admin/Planes';
+import PortalApp from './pages/portal/PortalApp';
+
+/**
+ * Las páginas del titular del buzón (enlace de configuración y «Mi buzón»)
+ * viven fuera del panel: no dependen de la sesión de usuario del panel ni del
+ * asistente de puesta en marcha.
+ */
+export function esRutaPortal(pathname: string): boolean {
+  return pathname.startsWith('/conectar/') || pathname === '/mi-buzon' || pathname.startsWith('/mi-buzon/');
+}
 
 export default function App() {
+  const location = useLocation();
+  if (esRutaPortal(location.pathname)) return <PortalApp />;
+  return <PanelApp />;
+}
+
+function PanelApp() {
   const setup = useQuery({
     queryKey: ['setup'],
     queryFn: () => api.get<SetupStatus>('/api/setup/status'),
@@ -85,6 +103,7 @@ export default function App() {
             <Route path="/clientes/:id" element={<ClienteDetalle />} />
             <Route path="/entregabilidad" element={<Entregabilidad />} />
             <Route path="/avisos" element={<Avisos />} />
+            <Route path="/planes" element={<Planes />} />
             <Route path="/ajustes" element={<Ajustes />} />
           </>
         ) : (
@@ -98,6 +117,7 @@ export default function App() {
         <Route path="/api-envio" element={<ApiKeys user={user} />} />
         <Route path="/actividad" element={<Actividad />} />
         <Route path="/cuenta" element={<Cuenta />} />
+        <Route path="/conexiones" element={<Conexiones isAdmin={isAdmin} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>
