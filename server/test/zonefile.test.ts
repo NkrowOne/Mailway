@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  categoriaDe,
   esObligatorio,
   evaluarConflicto,
   filtrarPorNivel,
   generarZona,
+  seleccionarRegistros,
   trocearTxt,
 } from '../src/modules/zonefile';
 import type { EngineDnsRecord } from '../src/engine/types';
@@ -107,8 +109,8 @@ test('la cabecera avisa de la nube naranja, que es el fallo que rompe el correo'
 
 test('avisa del SPF duplicado, que es el otro fallo silencioso al importar', () => {
   const zona = generarZona({ domain: dominio, records: registros, nivel: 'obligatorios' });
-  assert.match(zona, /Importar NO borra lo que ya tengas/);
-  assert.match(zona, /acabarás con dos y ninguno valdrá/);
+  assert.match(zona, /Importar NO borra los registros existentes/);
+  assert.match(zona, /quedarán dos y ninguno será válido/);
 });
 
 test('solo avisa del fichero de política MTA-STS cuando el nivel lo incluye', () => {
@@ -145,7 +147,7 @@ test('detecta que el dominio ya recibe correo en otro proveedor', () => {
   assert.equal(c.dmarcPolitica, 'reject');
   assert.match(c.aviso!, /ya recibe correo en mailserver\.purelymail\.com/);
   assert.match(c.aviso!, /solo puede haber uno/, 'debe avisar del SPF duplicado');
-  assert.match(c.aviso!, /rebote el correo/, 'con p=reject el fallo no es spam, es rebote');
+  assert.match(c.aviso!, /provoca que se rechace/, 'con p=reject el fallo no es spam, es rechazo');
 });
 
 test('no avisa cuando el MX ya es el nuestro', () => {
@@ -169,4 +171,76 @@ test('un fallo de red (null) no se confunde con "no hay nada"', () => {
   const c = evaluarConflicto({ mx: null, txt: null, dmarc: null, mailHostname: 'mail.nkrow.com' });
   assert.equal(c.hayOtroProveedor, false, 'sin datos no se puede afirmar que haya conflicto');
   assert.equal(c.spfActual, null);
+});
+
+/* ------------------- Selección común (comprobación, zona, Cloudflare) ------ */
+
+// Lo que devuelve Stalwart para un dominio: con punto final, con escuchas que
+// el despliegue no publica, TLSA y el SPF del propio servidor (otro dominio).
+const delMotor: EngineDnsRecord[] = [
+  { type: 'MX', name: `${dominio}.`, content: '10 mail.nkrow.com.' },
+  { type: 'CNAME', name: `mail.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'TXT', name: `202609e._domainkey.${dominio}.`, content: 'v=DKIM1; k=ed25519; h=sha256; p=AAAA' },
+  { type: 'TXT', name: 'mail.nkrow.com.', content: 'v=spf1 a ra=postmaster -all' },
+  { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx ra=postmaster -all' },
+  { type: 'SRV', name: `_submissions._tcp.${dominio}.`, content: '0 1 465 mail.nkrow.com.' },
+  { type: 'SRV', name: `_submission._tcp.${dominio}.`, content: '0 1 587 mail.nkrow.com.' },
+  { type: 'SRV', name: `_imap._tcp.${dominio}.`, content: '0 1 143 mail.nkrow.com.' },
+  { type: 'SRV', name: `_imaps._tcp.${dominio}.`, content: '0 1 993 mail.nkrow.com.' },
+  { type: 'SRV', name: `_pop3._tcp.${dominio}.`, content: '0 1 110 mail.nkrow.com.' },
+  { type: 'SRV', name: `_pop3s._tcp.${dominio}.`, content: '0 1 995 mail.nkrow.com.' },
+  { type: 'SRV', name: `_jmap._tcp.${dominio}.`, content: '0 1 443 mail.nkrow.com.' },
+  { type: 'SRV', name: `_sieve._tcp.${dominio}.`, content: '0 1 4190 mail.nkrow.com.' },
+  { type: 'CNAME', name: `autoconfig.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'CNAME', name: `autodiscover.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'CNAME', name: `mta-sts.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'TXT', name: `_mta-sts.${dominio}.`, content: 'v=STSv1; id=123' },
+  { type: 'TXT', name: `_dmarc.${dominio}.`, content: `v=DMARC1; p=reject; rua=mailto:postmaster@${dominio}` },
+  { type: 'TXT', name: `_smtp._tls.${dominio}.`, content: `v=TLSRPTv1; rua=mailto:postmaster@${dominio}` },
+  { type: 'TLSA', name: `_25._tcp.mail.${dominio}.`, content: '3 0 1 abcdef' },
+  // Un nombre que «termina igual» pero es de otro dominio.
+  { type: 'TXT', name: `otro${dominio}.`, content: 'v=spf1 -all' },
+];
+
+test('la selección quita los SRV de puertos no publicados', () => {
+  const sel = seleccionarRegistros(dominio, delMotor);
+  const srv = sel.filter((r) => r.type === 'SRV').map((r) => r.name.split('.')[0]);
+  assert.deepEqual(srv.sort(), ['_imaps', '_jmap', '_submission', '_submissions']);
+});
+
+test('la selección quita TLSA y los nombres ajenos al dominio', () => {
+  const sel = seleccionarRegistros(dominio, delMotor);
+  assert.ok(!sel.some((r) => r.type === 'TLSA'));
+  assert.ok(!sel.some((r) => r.name === 'mail.nkrow.com'), 'el SPF del servidor es de otra zona');
+  assert.ok(!sel.some((r) => r.name === `otro${dominio}`), 'un sufijo no es un subdominio');
+});
+
+test('la selección deja nombres y destinos sin punto final', () => {
+  const sel = seleccionarRegistros(dominio, delMotor);
+  for (const r of sel) assert.ok(!r.name.endsWith('.'), `nombre con punto: ${r.name}`);
+  const mx = sel.find((r) => r.type === 'MX')!;
+  assert.equal(mx.content, '10 mail.nkrow.com');
+  const cname = sel.find((r) => r.name === `autoconfig.${dominio}`)!;
+  assert.equal(cname.content, 'mail.nkrow.com');
+});
+
+test('el fichero de zona vuelve a poner el punto final a los destinos', () => {
+  const zona = generarZona({ domain: dominio, records: delMotor, nivel: 'completo' });
+  assert.match(zona, /\tMX\t10 mail\.nkrow\.com\.$/m);
+  assert.match(zona, /\tSRV\t0 1 993 mail\.nkrow\.com\.$/m);
+  assert.match(zona, /^autoconfig\.panaderialaura\.com\.\t3600\tIN\tCNAME\tmail\.nkrow\.com\.$/m);
+  assert.ok(!zona.includes('TLSA'), 'TLSA no se publica');
+  assert.ok(!zona.includes('_pop3'), 'los SRV de POP3 no se publican');
+});
+
+test('MTA-STS y TLS-RPT son endurecimiento, no autoconfiguración', () => {
+  const sel = seleccionarRegistros(dominio, delMotor);
+  const cat = (name: string) => categoriaDe(sel.find((r) => r.name === name)!);
+  assert.equal(cat(`mta-sts.${dominio}`), 'endurecimiento');
+  assert.equal(cat(`_mta-sts.${dominio}`), 'endurecimiento');
+  assert.equal(cat(`_smtp._tls.${dominio}`), 'endurecimiento');
+  assert.equal(cat(`autoconfig.${dominio}`), 'autoconfiguracion');
+  assert.equal(cat(`202609e._domainkey.${dominio}`), 'obligatorio');
+  const recomendados = filtrarPorNivel(sel, 'recomendados');
+  assert.ok(!recomendados.some((r) => r.name.startsWith('mta-sts.')), 'el CNAME de MTA-STS solo no sirve de nada');
 });
