@@ -1,14 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   api,
   ApiError,
+  type Client,
   type ClientDomain,
   type DnsInstruction,
+  type DomainRecord,
+  type User,
   type WhitelabelStatus,
 } from '../lib/api';
+import { formatDate } from '../lib/format';
+import {
+  cuentaCloudflarePara,
+  MAX_DOMINIOS_PROPIOS,
+  type CuentaCloudflare,
+  type ResultadoCloudflareMarcaBlanca,
+} from '../lib/rutas';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Field';
+import { Input, Select } from '../ui/Field';
 import {
   Dialogo,
   Hoja,
@@ -20,25 +31,40 @@ import {
   type Veredicto,
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
-import { formatDate } from '../lib/format';
 
-const estadoMeta: Record<
-  WhitelabelStatus,
-  { veredicto: Veredicto; etiqueta: string; pista: string }
-> = {
+const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: string; pista: string }> = {
   pending_dns: {
     veredicto: 'vigilar',
     etiqueta: 'Esperando DNS',
-    pista: 'Crea el registro que aparece abajo en tu proveedor de dominios.',
+    pista: 'Cree en su proveedor de DNS el registro que se indica a continuación.',
   },
   issuing: {
     veredicto: 'vigilar',
     etiqueta: 'Emitiendo certificado',
-    pista: 'El DNS ya apunta aquí. El certificado suele tardar menos de un minuto.',
+    pista: 'El DNS ya apunta a este servidor. El certificado suele tardar menos de un minuto.',
   },
-  active: { veredicto: 'normal', etiqueta: 'En marcha', pista: 'El dominio funciona con HTTPS.' },
+  active: { veredicto: 'normal', etiqueta: 'En servicio', pista: 'El dominio funciona con HTTPS.' },
   error: { veredicto: 'fuera', etiqueta: 'Con error', pista: '' },
 };
+
+/** «Fuera de rango primero»: lo que requiere acción, arriba. */
+const ORDEN: Record<WhitelabelStatus, number> = { error: 0, pending_dns: 1, issuing: 2, active: 3 };
+
+function BandaError({ texto }: { texto: string }) {
+  return (
+    <p
+      role="alert"
+      className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
+    >
+      {texto}
+    </p>
+  );
+}
+
+/** Dominio de correo que ya demostró que el cliente controla su DNS. */
+function verificado(d: DomainRecord): boolean {
+  return d.status === 'active' || d.verifiedAt !== null;
+}
 
 /**
  * Dominios propios del cliente: su webmail en su dominio, con certificado
@@ -46,112 +72,140 @@ const estadoMeta: Record<
  * exacta para copiar; el estado es el veredicto de la última medición.
  */
 export default function MarcaBlanca() {
-  const queryClient = useQueryClient();
-  const toast = useToast();
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
+  });
+  const isAdmin = me.data?.user?.role === 'admin';
+  const [filtro, setFiltro] = useState('');
   const [abierto, setAbierto] = useState(false);
-  const [hostname, setHostname] = useState('');
-  const [nuevo, setNuevo] = useState<{
-    domain: ClientDomain;
-    instructions: DnsInstruction[];
-  } | null>(null);
+  const [nuevo, setNuevo] = useState<{ domain: ClientDomain; instructions: DnsInstruction[] } | null>(null);
 
+  const clients = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
+    enabled: isAdmin,
+  });
   const domains = useQuery({
-    queryKey: ['whitelabel-domains'],
-    queryFn: () => api.get<{ domains: ClientDomain[] }>('/api/whitelabel/domains'),
-  });
-
-  const crear = useMutation({
-    mutationFn: () =>
-      api.post<{ domain: ClientDomain; instructions: DnsInstruction[] }>(
-        '/api/whitelabel/domains',
-        { hostname: hostname.trim(), kind: 'webmail' },
+    queryKey: ['whitelabel-domains', isAdmin ? filtro : 'propio'],
+    queryFn: () =>
+      api.get<{ domains: ClientDomain[] }>(
+        isAdmin && filtro
+          ? `/api/whitelabel/domains?clientId=${encodeURIComponent(filtro)}`
+          : '/api/whitelabel/domains',
       ),
-    onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
-      setAbierto(false);
-      setHostname('');
-      setNuevo(data);
-    },
-    onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo añadir el dominio.'),
+    enabled: me.isSuccess,
+  });
+  // Cloudflare es opcional: si el área no existe o falla, simplemente no se ofrece.
+  const cuentas = useQuery({
+    queryKey: ['cloudflare-accounts'],
+    queryFn: () => api.get<{ accounts: CuentaCloudflare[] }>('/api/cloudflare/accounts'),
+    retry: false,
+    staleTime: 60_000,
   });
 
-  if (domains.isLoading) return <Midiendo label="Cargando dominios…" />;
-
-  const lista = domains.data?.domains ?? [];
+  const nombres = useMemo(
+    () => new Map((clients.data?.clients ?? []).map((c) => [c.id, c.name])),
+    [clients.data],
+  );
+  const lista = [...(domains.data?.domains ?? [])].sort(
+    (a, b) => ORDEN[a.status] - ORDEN[b.status] || a.hostname.localeCompare(b.hostname),
+  );
 
   return (
     <>
       <Membrete
         title="Marca blanca"
-        meta="Sirve el webmail en el dominio de tu cliente, con su propio certificado."
+        meta="El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo verificado del cliente."
         actions={
-          <Button variant="campo" onClick={() => setAbierto(true)}>
+          <Button variant="campo" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
             Añadir dominio
           </Button>
         }
       />
 
-      {lista.length === 0 ? (
+      {isAdmin && (
+        <Hoja className="mb-4">
+          <div className="max-w-sm">
+            <Select label="Cliente" value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+              <option value="">Todos los clientes</option>
+              {(clients.data?.clients ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </Hoja>
+      )}
+
+      {me.isError || domains.isError ? (
         <Hoja>
-          <Vacio title="Todavía no hay dominios propios">
-            Por defecto tus clientes entran al webmail por la dirección general del servidor.
-            Añade aquí un dominio suyo —por ejemplo{' '}
-            <span className="valor">webmail.suempresa.com</span>— y entrarán por una dirección
-            con su propia marca.
+          <BandaError texto="No se han podido cargar los dominios propios. Compruebe la conexión y vuelva a intentarlo." />
+          <Button
+            variant="perfil"
+            className="mt-3"
+            onClick={() => {
+              void me.refetch();
+              void domains.refetch();
+            }}
+          >
+            Reintentar
+          </Button>
+        </Hoja>
+      ) : me.isPending || domains.isPending ? (
+        <Hoja>
+          <Midiendo label="Leyendo los dominios propios…" />
+        </Hoja>
+      ) : lista.length === 0 ? (
+        <Hoja>
+          <Vacio
+            title="No hay dominios propios"
+            action={
+              <Button variant="perfil" onClick={() => setAbierto(true)}>
+                Añadir el primero
+              </Button>
+            }
+          >
+            Por omisión, el webmail se abre en la dirección general del servidor. Con un dominio
+            propio —por ejemplo <span className="valor">webmail.suempresa.com</span>, si{' '}
+            <span className="valor">suempresa.com</span> es un dominio de correo verificado— se abre
+            con la marca del cliente. Máximo {MAX_DOMINIOS_PROPIOS} por cliente.
           </Vacio>
         </Hoja>
       ) : (
         <div className="flex flex-col gap-4">
           {lista.map((domain) => (
-            <FichaDominio key={domain.id} domain={domain} />
+            <FichaDominio
+              key={domain.id}
+              domain={domain}
+              cliente={isAdmin ? nombres.get(domain.clientId) ?? '' : ''}
+              cuentas={cuentas.data?.accounts ?? []}
+            />
           ))}
         </div>
       )}
 
-      <Dialogo open={abierto} onClose={() => setAbierto(false)} title="Añadir dominio propio">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            crear.mutate();
-          }}
-          className="flex flex-col gap-4"
-        >
-          <Input
-            label="Dominio del webmail"
-            help="Un subdominio que controles. Ejemplo: webmail.suempresa.com"
-            mono
-            value={hostname}
-            onChange={(e) => setHostname(e.target.value)}
-            placeholder="webmail.suempresa.com"
-            autoFocus
-            required
-          />
-          <p className="text-base text-tinta-2">
-            Después tendrás que crear un registro en tu proveedor de DNS. Te lo damos hecho en el
-            paso siguiente.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="plano" onClick={() => setAbierto(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="tinta" busy={crear.isPending}>
-              Añadir
-            </Button>
-          </div>
-        </form>
-      </Dialogo>
+      <DialogoAlta
+        open={abierto}
+        isAdmin={isAdmin}
+        clientes={clients.data?.clients ?? []}
+        clienteInicial={filtro}
+        clientePropio={me.data?.user?.clientId ?? ''}
+        onClose={() => setAbierto(false)}
+        onCreado={(data) => {
+          setAbierto(false);
+          setNuevo(data);
+        }}
+      />
 
-      <Dialogo
-        open={nuevo !== null}
-        onClose={() => setNuevo(null)}
-        title="Crea este registro en tu DNS"
-      >
+      <Dialogo open={nuevo !== null} onClose={() => setNuevo(null)} title="Registro DNS necesario">
         {nuevo && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              Copia este registro en el panel de tu proveedor de dominios. Cuando esté puesto,
-              pulsa «Comprobar» en la ficha del dominio.
+              Cree este registro en el proveedor de DNS de{' '}
+              <span className="valor">{nuevo.domain.hostname}</span>. Cuando esté publicado, pulse
+              «Comprobar» en la ficha del dominio.
             </p>
             {nuevo.instructions
               .filter((i) => i.recommended)
@@ -159,7 +213,7 @@ export default function MarcaBlanca() {
                 <RegistroDns key={i.type} instruccion={i} />
               ))}
             <Button variant="tinta" onClick={() => setNuevo(null)}>
-              Entendido
+              Aceptar
             </Button>
           </div>
         )}
@@ -168,86 +222,278 @@ export default function MarcaBlanca() {
   );
 }
 
+/* ------------------------------ Alta de dominio ---------------------------- */
+
+function DialogoAlta({
+  open,
+  isAdmin,
+  clientes,
+  clienteInicial,
+  clientePropio,
+  onClose,
+  onCreado,
+}: {
+  open: boolean;
+  isAdmin: boolean;
+  clientes: Client[];
+  clienteInicial: string;
+  clientePropio: string;
+  onClose: () => void;
+  onCreado: (data: { domain: ClientDomain; instructions: DnsInstruction[] }) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [clientId, setClientId] = useState('');
+  const [subdominio, setSubdominio] = useState('webmail');
+  const [padre, setPadre] = useState('');
+  const [error, setError] = useState('');
+
+  // Al abrir, el cliente del filtro (administrador) o el propio (cliente).
+  useEffect(() => {
+    if (!open) return;
+    setClientId(isAdmin ? clienteInicial : clientePropio);
+    setSubdominio('webmail');
+    setPadre('');
+    setError('');
+  }, [open, isAdmin, clienteInicial, clientePropio]);
+
+  const dominiosCorreo = useQuery({
+    queryKey: ['domains', 'cliente', isAdmin ? clientId : 'propio'],
+    queryFn: () =>
+      api.get<{ domains: DomainRecord[] }>(
+        isAdmin ? `/api/domains?clientId=${encodeURIComponent(clientId)}` : '/api/domains',
+      ),
+    enabled: open && (!isAdmin || Boolean(clientId)),
+  });
+  const verificados = (dominiosCorreo.data?.domains ?? []).filter(verificado);
+  const pendientes = (dominiosCorreo.data?.domains ?? []).filter((d) => !verificado(d));
+  const dominioPadre = padre || verificados[0]?.domain || '';
+  const prefijo = subdominio.trim().toLowerCase().replace(/\.+$/, '');
+  const hostname = prefijo && dominioPadre ? `${prefijo}.${dominioPadre}` : '';
+
+  const crear = useMutation({
+    mutationFn: () =>
+      api.post<{ domain: ClientDomain; instructions: DnsInstruction[] }>('/api/whitelabel/domains', {
+        hostname,
+        kind: 'webmail',
+        clientId: isAdmin ? clientId : undefined,
+      }),
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
+      onCreado(data);
+    },
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : 'No se ha podido añadir el dominio.'),
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    crear.mutate();
+  }
+
+  const sinCliente = isAdmin && !clientId;
+
+  return (
+    <Dialogo open={open} onClose={onClose} title="Añadir dominio propio">
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        {isAdmin && (
+          <Select
+            label="Cliente"
+            required
+            value={clientId}
+            onChange={(e) => {
+              setClientId(e.target.value);
+              setPadre('');
+            }}
+          >
+            <option value="">Seleccione un cliente…</option>
+            {clientes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        )}
+
+        {sinCliente ? null : dominiosCorreo.isPending ? (
+          <Midiendo label="Leyendo los dominios de correo…" />
+        ) : dominiosCorreo.isError ? (
+          <BandaError texto="No se han podido leer los dominios de correo del cliente. Vuelva a intentarlo." />
+        ) : verificados.length === 0 ? (
+          <div className="flex flex-col gap-2 text-base text-tinta-2">
+            <p>
+              {pendientes.length > 0
+                ? `El cliente todavía no tiene ningún dominio de correo verificado (${pendientes
+                    .map((d) => d.domain)
+                    .join(', ')} está pendiente de DNS).`
+                : 'El cliente todavía no tiene dominios de correo.'}{' '}
+              El dominio propio debe ser un subdominio de un dominio de correo verificado: así se
+              garantiza que el cliente controla su DNS.
+            </p>
+            <Link to="/dominios" className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta">
+              Ir a Dominios
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                label="Subdominio"
+                mono
+                required
+                value={subdominio}
+                onChange={(e) => setSubdominio(e.target.value)}
+                placeholder="webmail"
+                autoFocus
+              />
+              <Select label="Dominio de correo" value={dominioPadre} onChange={(e) => setPadre(e.target.value)}>
+                {verificados.map((d) => (
+                  <option key={d.id} value={d.domain}>
+                    {d.domain}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Muestra rotulo="Dirección del webmail">
+              <span className="valor break-all text-base text-tinta">
+                {hostname ? `https://${hostname}` : '—'}
+              </span>
+            </Muestra>
+            <p className="text-sm text-tinta-2">
+              Solo se admiten subdominios de los dominios de correo verificados del cliente, hasta{' '}
+              {MAX_DOMINIOS_PROPIOS} por cliente. Los nombres autoconfig, autodiscover y mta-sts están
+              reservados para la configuración automática de los programas de correo. Después se
+              indicará el registro DNS que hay que crear.
+            </p>
+          </>
+        )}
+
+        {error && <BandaError texto={error} />}
+
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="plano" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button type="submit" variant="tinta" busy={crear.isPending} disabled={!hostname || sinCliente}>
+            Añadir
+          </Button>
+        </div>
+      </form>
+    </Dialogo>
+  );
+}
+
+/* --------------------------------- Fichas --------------------------------- */
+
 function RegistroDns({ instruccion }: { instruccion: DnsInstruction }) {
   return (
     <Muestra rotulo={`Registro ${instruccion.type}`} copiar={instruccion.value}>
       <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5 text-base">
         <dt className="rotulo self-baseline">Nombre</dt>
-        {/* Desplazamiento horizontal, nunca partir el valor a mitad de palabra:
-            un DNS mal copiado no falla, funciona mal. */}
-        <dd className="valor overflow-x-auto whitespace-nowrap text-tinta">{instruccion.name}</dd>
+        {/* Se parte por caracteres en vez de recortarse: el botón copia el valor exacto. */}
+        <dd className="valor min-w-0 break-all text-tinta">{instruccion.name}</dd>
         <dt className="rotulo self-baseline">Valor</dt>
-        <dd className="valor overflow-x-auto whitespace-nowrap text-tinta">{instruccion.value}</dd>
+        <dd className="valor min-w-0 break-all text-tinta">{instruccion.value}</dd>
       </dl>
       <p className="mt-2 text-sm text-tinta-2">{instruccion.help}</p>
     </Muestra>
   );
 }
 
-function FichaDominio({ domain }: { domain: ClientDomain }) {
+function FichaDominio({
+  domain,
+  cliente,
+  cuentas,
+}: {
+  domain: ClientDomain;
+  cliente: string;
+  cuentas: CuentaCloudflare[];
+}) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const [confirmar, setConfirmar] = useState(false);
   const meta = estadoMeta[domain.status];
+  const cuenta = domain.status === 'pending_dns' ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname) : undefined;
 
   const detalle = useQuery({
     queryKey: ['whitelabel-domain', domain.id],
     queryFn: () =>
-      api.get<{ domain: ClientDomain; instructions: DnsInstruction[] }>(
-        `/api/whitelabel/domains/${domain.id}`,
-      ),
-    // Las instrucciones solo dependen del servidor y del hostname: no cambian
+      api.get<{ domain: ClientDomain; instructions: DnsInstruction[] }>(`/api/whitelabel/domains/${domain.id}`),
+    // Las instrucciones solo dependen del servidor y del nombre: no cambian
     // mientras la ficha está abierta.
     staleTime: 5 * 60_000,
+    enabled: domain.status !== 'active',
   });
 
   const comprobar = useMutation({
-    mutationFn: () =>
-      api.post<{ domain: ClientDomain }>(`/api/whitelabel/domains/${domain.id}/verify`),
+    mutationFn: () => api.post<{ domain: ClientDomain }>(`/api/whitelabel/domains/${domain.id}/verify`),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
       if (data.domain.status === 'active') {
-        toast('ok', `¡${data.domain.hostname} ya funciona con HTTPS!`);
+        toast('ok', `${data.domain.hostname} ya funciona con HTTPS.`);
       } else {
-        toast('ok', data.domain.detail || 'Comprobación hecha.');
+        toast('ok', data.domain.detail || 'Se ha completado la comprobación.');
       }
     },
     onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo comprobar.'),
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido completar la comprobación.'),
+  });
+
+  const cloudflare = useMutation({
+    mutationFn: () =>
+      api.post<ResultadoCloudflareMarcaBlanca>(`/api/whitelabel/domains/${domain.id}/cloudflare`),
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
+      if (data.errors.length > 0) {
+        toast('error', `Cloudflare ha rechazado el registro: ${data.errors[0]!.error}`);
+      } else {
+        toast('ok', 'Se ha creado el registro en Cloudflare. La comprobación se repetirá en unos minutos.');
+      }
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 404) {
+        toast('error', 'La configuración automática en Cloudflare no está disponible en este servidor.');
+        return;
+      }
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido configurar Cloudflare.');
+    },
   });
 
   const borrar = useMutation({
     mutationFn: () => api.delete(`/api/whitelabel/domains/${domain.id}`),
     onSuccess: async () => {
+      setConfirmar(false);
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
-      toast('ok', 'Dominio eliminado.');
+      toast('ok', `Se ha eliminado ${domain.hostname}.`);
     },
     onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo eliminar.'),
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido eliminar el dominio.'),
   });
 
   const instrucciones = detalle.data?.instructions ?? [];
 
   return (
     <Hoja>
-      {/* El dominio en su propia línea: en móvil es lo que identifica la ficha
-          y no puede quedar comprimido por las acciones. */}
+      {/* El dominio en su propia línea: en móvil identifica la ficha y no
+          puede quedar comprimido por las acciones. */}
       <div className="regla-cabecera mb-3 flex flex-col gap-3 pb-3 sm:flex-row sm:items-baseline sm:justify-between">
-        <span className="valor min-w-0 break-words text-md text-tinta">{domain.hostname}</span>
+        <div className="min-w-0">
+          <span className="valor block break-all text-md text-tinta">{domain.hostname}</span>
+          {cliente && <span className="text-sm text-tinta-3">{cliente}</span>}
+        </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <MarcaFondo veredicto={meta.veredicto}>{meta.etiqueta}</MarcaFondo>
+          {cuenta && (
+            <Button variant="perfil" busy={cloudflare.isPending} onClick={() => cloudflare.mutate()}>
+              Configurar en Cloudflare
+            </Button>
+          )}
           {domain.status !== 'active' && (
             <Button variant="perfil" busy={comprobar.isPending} onClick={() => comprobar.mutate()}>
               Comprobar
             </Button>
           )}
-          <Button
-            variant="plano"
-            onClick={() => {
-              if (confirm(`¿Eliminar ${domain.hostname}? Dejará de funcionar en unos segundos.`)) {
-                borrar.mutate();
-              }
-            }}
-          >
+          <Button variant="plano" onClick={() => setConfirmar(true)}>
             Eliminar
           </Button>
         </div>
@@ -257,12 +503,12 @@ function FichaDominio({ domain }: { domain: ClientDomain }) {
 
       {domain.status === 'active' ? (
         <p className="mt-2 text-base text-tinta-2">
-          Tus clientes ya pueden entrar en{' '}
+          El webmail ya está disponible en{' '}
           <a
             href={`https://${domain.hostname}`}
             target="_blank"
             rel="noreferrer"
-            className="valor text-laboratorio underline underline-offset-2"
+            className="valor break-all text-laboratorio underline underline-offset-2"
           >
             https://{domain.hostname}
           </a>
@@ -270,15 +516,42 @@ function FichaDominio({ domain }: { domain: ClientDomain }) {
             <span className="text-tinta-3"> · activo desde {formatDate(domain.activatedAt)}</span>
           )}
         </p>
+      ) : detalle.isError ? (
+        <div className="mt-3">
+          <BandaError texto="No se han podido leer las instrucciones de DNS de este dominio. Vuelva a cargar la página." />
+        </div>
       ) : (
         instrucciones.length > 0 && (
           <div className="mt-3 flex flex-col gap-3">
+            {cuenta && (
+              <p className="text-sm text-tinta-2">
+                La zona está en Cloudflare ({cuenta.label}): «Configurar en Cloudflare» crea el registro
+                sin pasar por su panel.
+              </p>
+            )}
             {instrucciones.map((i) => (
               <RegistroDns key={i.type} instruccion={i} />
             ))}
           </div>
         )
       )}
+
+      <Dialogo open={confirmar} onClose={() => setConfirmar(false)} title="Eliminar dominio propio">
+        <div className="flex flex-col gap-4">
+          <p className="text-base text-tinta-2">
+            Se eliminará <span className="valor break-all">{domain.hostname}</span>. El webmail dejará de
+            responder en esa dirección en unos segundos; los buzones y el correo no se ven afectados.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="plano" onClick={() => setConfirmar(false)}>
+              Cancelar
+            </Button>
+            <Button variant="peligro" busy={borrar.isPending} onClick={() => borrar.mutate()}>
+              Eliminar
+            </Button>
+          </div>
+        </div>
+      </Dialogo>
     </Hoja>
   );
 }

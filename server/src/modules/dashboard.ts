@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { db, now } from '../core/db';
+import { badRequest } from '../core/errors';
 import { getEngine, engineConfigured } from '../engine';
-import { requireAdmin, requireAuth } from './auth';
+import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import { getClient, getClientUsage, getPlan } from './clients';
+import { webmailUrlForClient } from './connection';
 import { listDomains } from './domains';
 import { getInstanceSettings } from './settings';
-import { getMailbox } from './mailboxes';
-import { requireClientAccess } from './auth';
 
 function count(sql: string, ...params: unknown[]): number {
   return (db.prepare(sql).get(...params) as { c: number }).c;
@@ -58,7 +58,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
   app.get('/api/dashboard/client', async (req) => {
     const user = requireAuth(req);
     const clientId = user.role === 'client' ? user.clientId! : (req.query as { clientId?: string }).clientId;
-    if (!clientId) return { error: 'clientId requerido' };
+    if (!clientId) throw badRequest('Indique el cliente (parámetro clientId).', 'client_required');
     requireClientAccess(req, clientId);
 
     const client = getClient(clientId);
@@ -97,29 +97,8 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
         hasApiKey,
         hasSentMessage,
       },
-      webmailUrl: getInstanceSettings().webmailUrl,
-    };
-  });
-
-  /**
-   * Datos de conexión de un buzón: lo que el usuario final debe meter en su
-   * programa de correo (Thunderbird, iPhone...) y el enlace al webmail.
-   */
-  app.get('/api/mailboxes/:id/connection', async (req) => {
-    const { id } = req.params as { id: string };
-    const mailbox = getMailbox(id);
-    const domainRow = db
-      .prepare('SELECT client_id FROM domains WHERE id = ?')
-      .get(mailbox.domainId) as { client_id: string };
-    requireClientAccess(req, domainRow.client_id);
-    const instance = getInstanceSettings();
-    return {
-      email: mailbox.email,
-      username: mailbox.email,
-      imap: { host: instance.mailHostname, port: 993, security: 'SSL/TLS' },
-      smtp: { host: instance.mailHostname, port: 465, security: 'SSL/TLS' },
-      smtpAlt: { host: instance.mailHostname, port: 587, security: 'STARTTLS' },
-      webmailUrl: instance.webmailUrl,
+      // El webmail con la marca del cliente, si ya lo tiene en marcha.
+      webmailUrl: webmailUrlForClient(clientId),
     };
   });
 }

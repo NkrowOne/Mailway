@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { config } from '../config';
 import { db } from '../core/db';
-import { getInstanceSettings } from './settings';
+import { notFound } from '../core/errors';
+import { getInstanceSettings, getJsonSetting } from './settings';
 
 /**
  * Datos de conexión de los buzones y generadores de los documentos de
@@ -35,7 +36,7 @@ export interface ConnectionSettings {
 export const PUERTOS = { imaps: 993, smtps: 465, submission: 587 } as const;
 
 /** Webmail con la marca del cliente, si tiene uno activo. */
-function webmailPropio(clientId: string | null): string | null {
+export function webmailPropio(clientId: string | null): string | null {
   if (!clientId) return null;
   const row = db
     .prepare(
@@ -72,6 +73,11 @@ export function getConnectionSettings(domain: string, clientId?: string | null):
   };
 }
 
+/** Webmail que debe ver un cliente: el de su marca si lo tiene activo; si no, el global. */
+export function webmailUrlForClient(clientId: string | null): string {
+  return webmailPropio(clientId) || getInstanceSettings().webmailUrl;
+}
+
 /**
  * URL pública del panel. Primero la configurada; si no, la de la petición en
  * curso (con trustProxy, Fastify ya respeta X-Forwarded-Proto/Host).
@@ -85,6 +91,119 @@ export function publicBaseUrl(req?: FastifyRequest): string {
     if (hostValue) return `${req.protocol}://${String(hostValue).split(',')[0]!.trim()}`;
   }
   return '';
+}
+
+/* ------------------- Hosts de autoconfiguración (estado) ------------------- */
+
+/**
+ * Estado del DNS de un host de autoconfiguración (autoconfig.<d>,
+ * autodiscover.<d>, mta-sts.<d>): `ok` apunta a este servidor, `pending` el
+ * registro falta o apunta a otro sitio, `unknown` nunca se pudo consultar.
+ * Lo escribe autoconfig.ts; aquí solo se lee, para elegir las URL que se
+ * enseñan al usuario.
+ */
+export type AutoconfigHostState = 'ok' | 'pending' | 'unknown';
+
+export interface AutoconfigHostRecord {
+  state: AutoconfigHostState;
+  /** Explicación en español de la última medición concluyente. */
+  detail: string;
+  /** Última consulta concluyente (ok o pending). */
+  checkedAt: number | null;
+  /** Cuándo cambió de estado por última vez. */
+  changedAt: number | null;
+  /** Última consulta, concluyente o no. */
+  lastAttemptAt: number | null;
+  /** true si la última consulta no obtuvo respuesta (se conservó el estado previo). */
+  lastAttemptInconclusive: boolean;
+}
+
+/** Clave de ajustes con el mapa host → estado. */
+export const AUTOCONFIG_HOSTS_SETTING = 'autoconfig_hosts';
+
+export function readAutoconfigHostStates(): Record<string, AutoconfigHostRecord> {
+  return getJsonSetting<Record<string, AutoconfigHostRecord>>(AUTOCONFIG_HOSTS_SETTING) || {};
+}
+
+/**
+ * Dominio base de la instancia para la autoconfiguración: el nombre del
+ * servidor de correo sin su primera etiqueta (mail.proveedor.com →
+ * proveedor.com). Thunderbird, si el dominio del usuario no tiene
+ * autoconfiguración propia, consulta https://autoconfig.<dominio del MX>: con
+ * servir ese host, cualquier dominio cuyo MX sea este servidor se configura
+ * sin registros DNS adicionales.
+ */
+export function instanceAutoconfigBase(mailHostname = getInstanceSettings().mailHostname): string | null {
+  const labels = mailHostname.trim().toLowerCase().replace(/\.$/, '').split('.').filter(Boolean);
+  if (labels.length < 2) return null;
+  if (labels.length === 2) return labels.join('.');
+  return labels.slice(1).join('.');
+}
+
+/* --------------------------- Datos de un buzón ----------------------------- */
+
+export interface ConnectionInfo {
+  email: string;
+  username: string;
+  imap: ServerEndpoint;
+  smtp: ServerEndpoint;
+  smtpAlt: ServerEndpoint;
+  webmailUrl: string;
+  autoconfig: {
+    /** Documento de Thunderbird para esta dirección (sirve para comprobarlo en el navegador). */
+    thunderbird: string;
+    /** Punto de Autodiscover (POX) que usan Outlook y Thunderbird. */
+    outlook: string;
+    /** Descarga autenticada del perfil de Apple (sin contraseña). */
+    appleProfileUrl: string;
+  };
+  /** Página «Mi buzón» del titular. */
+  portalUrl: string;
+}
+
+/**
+ * Datos de conexión completos de un buzón. Las URL de autoconfiguración usan
+ * el host del propio dominio si su DNS ya apunta aquí; si no, el de la
+ * instancia; y como último recurso el panel, que sirve las mismas rutas en
+ * cualquier host (así el enlace funciona siempre, aunque falte el DNS).
+ */
+export function buildConnectionInfo(mailboxId: string, req?: FastifyRequest): ConnectionInfo {
+  const row = db
+    .prepare(
+      `SELECT m.id, m.local_part, d.domain, d.client_id
+       FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.id = ?`,
+    )
+    .get(mailboxId) as { id: string; local_part: string; domain: string; client_id: string } | undefined;
+  if (!row) throw notFound('Buzón no encontrado.');
+  const email = `${row.local_part}@${row.domain}`;
+  const settings = getConnectionSettings(row.domain, row.client_id);
+  const base = publicBaseUrl(req);
+  const states = readAutoconfigHostStates();
+  const instanceBase = instanceAutoconfigBase();
+  const ok = (host: string | null): host is string => Boolean(host && states[host]?.state === 'ok');
+
+  const pick = (prefix: 'autoconfig' | 'autodiscover'): string => {
+    const own = `${prefix}.${row.domain}`;
+    if (ok(own)) return `https://${own}`;
+    const shared = instanceBase ? `${prefix}.${instanceBase}` : null;
+    if (ok(shared)) return `https://${shared}`;
+    return base || `https://${own}`;
+  };
+
+  return {
+    email,
+    username: email,
+    imap: settings.imap,
+    smtp: settings.smtp,
+    smtpAlt: settings.smtpAlt,
+    webmailUrl: settings.webmailUrl,
+    autoconfig: {
+      thunderbird: `${pick('autoconfig')}/mail/config-v1.1.xml?emailaddress=${encodeURIComponent(email)}`,
+      outlook: `${pick('autodiscover')}/autodiscover/autodiscover.xml`,
+      appleProfileUrl: `${base}/api/mailboxes/${row.id}/mobileconfig`,
+    },
+    portalUrl: `${base}/mi-buzon`,
+  };
 }
 
 /* ------------------------------ Utilidades -------------------------------- */
