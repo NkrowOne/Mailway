@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { domainToASCII, domainToUnicode } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config';
 import { db, now } from '../core/db';
 import { withLock } from '../core/locks';
 import { randomId } from '../core/crypto';
@@ -82,6 +84,47 @@ function toDomain(row: DomainRow): DomainRecord {
         : null,
     dnsAppliedAt: row.dns_applied_at ?? null,
   };
+}
+
+/* -------------------------- Propiedad del dominio ------------------------- */
+
+/**
+ * Token de verificación de propiedad de un dominio. Derivado del secreto de
+ * la instancia: es estable (no hay que guardarlo) e imposible de adivinar.
+ */
+export function ownershipToken(domain: string): string {
+  return crypto.createHmac('sha256', config.secret).update(`propiedad:${domain}`).digest('hex').slice(0, 32);
+}
+
+/**
+ * Registro TXT que demuestra la propiedad sin tocar el MX (útil para
+ * preparar los buzones antes de migrar el correo de otro proveedor).
+ */
+export function ownershipRecord(domain: string): { type: 'TXT'; name: string; content: string } {
+  return {
+    type: 'TXT',
+    name: `_mailway.${domain}`,
+    content: `mailway-verificacion=${ownershipToken(domain)}`,
+  };
+}
+
+/**
+ * Sin propiedad comprobada no se crean buzones ni alias: si no, un cliente
+ * podría dar de alta un dominio ajeno (gmail.com) y el motor entregaría en
+ * local el correo que otros clientes del servidor envían a ese dominio.
+ * Se aplica a todos, también a la administración y a los tokens (Skyway
+ * trabaja con un token de administrador en nombre de sus proyectos).
+ */
+export function assertDomainOwnership(domainId: string): void {
+  const row = db.prepare('SELECT domain, owner_verified_at FROM domains WHERE id = ?').get(domainId) as
+    | { domain: string; owner_verified_at: number | null }
+    | undefined;
+  if (!row) throw notFound('Dominio no encontrado.');
+  if (row.owner_verified_at) return;
+  throw conflict(
+    `Antes de crear buzones o alias en ${row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación y pulse «Verificar».`,
+    'domain_ownership_pending',
+  );
 }
 
 export function getDomain(id: string): DomainRecord {
