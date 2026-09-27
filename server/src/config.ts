@@ -42,10 +42,26 @@ function detectPanelBackend(): string {
   return '';
 }
 
+/**
+ * Cuántos proxies hay delante del panel. Con `true`, Fastify se creería la
+ * primera IP de X-Forwarded-For, que la pone el propio cliente: cualquiera
+ * podría cambiar de IP en cada intento y saltarse los límites de intentos.
+ * Por defecto se confía en un salto (Traefik, el despliegue normal).
+ */
+function parseTrustProxy(): boolean | number | string {
+  const raw = process.env.MAILWAY_TRUST_PROXY?.trim();
+  if (!raw) return 1;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return raw; // lista de IPs o CIDR separadas por comas
+}
+
 export const config = {
   /** Versión publicada; va sincronizada con los package.json y la documentación. */
   version: '1.0.0',
   port,
+  trustProxy: parseTrustProxy(),
   host: process.env.HOST || '0.0.0.0',
   dataDir,
   dbPath: path.join(dataDir, 'mailway.db'),

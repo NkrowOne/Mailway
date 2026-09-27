@@ -2,6 +2,7 @@ import { domainToASCII, domainToUnicode } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
+import { withLock } from '../core/locks';
 import { randomId } from '../core/crypto';
 import { badRequest, conflict, HttpError, notFound } from '../core/errors';
 import { getEngine } from '../engine';
@@ -207,35 +208,41 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
     if (!clientId) throw badRequest('Indique a qué cliente pertenece el dominio.');
     requireClientAccess(req, clientId);
-    assertWithinLimit(clientId, 'domains');
-
     const domain = normalizeDomain(body.domain);
-    const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
-    if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.');
+    // Todas las altas de dominio van en fila: entre comprobar que el dominio
+    // no existe y guardarlo hay llamadas al motor, y dos altas simultáneas
+    // del mismo dominio (de clientes distintos) acabarían con una borrando
+    // en el motor el dominio que la otra acababa de crear.
+    const id = await withLock('altas:dominios', async () => {
+      assertWithinLimit(clientId, 'domains');
+      const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
+      if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.');
 
-    const engine = getEngine();
-    // El motor adopta un dominio que ya existiera allí (p. ej. huérfano de un
-    // borrado interrumpido): el panel es la fuente de verdad.
-    await engine.createDomain(domain);
-    try {
-      await engine.ensureDkim(domain, 'mail');
-    } catch (err) {
-      // El dominio queda creado; el DKIM se puede regenerar desde el panel.
-      req.log.warn({ err, domain }, 'No se pudo generar DKIM al crear el dominio');
-    }
+      const engine = getEngine();
+      // El motor adopta un dominio que ya existiera allí (p. ej. huérfano de un
+      // borrado interrumpido): el panel es la fuente de verdad.
+      await engine.createDomain(domain);
+      try {
+        await engine.ensureDkim(domain, 'mail');
+      } catch (err) {
+        // El dominio queda creado; el DKIM se puede regenerar desde el panel.
+        req.log.warn({ err, domain }, 'No se pudo generar DKIM al crear el dominio');
+      }
 
-    const id = randomId('dom');
-    try {
-      db.prepare(
-        `INSERT INTO domains (id, client_id, domain, dkim_selector, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(id, clientId, domain, 'mail', now());
-    } catch (err) {
-      // Se deshace el dominio en el motor para no dejarlo huérfano si el
-      // INSERT falla (p. ej. el cliente se borró en paralelo).
-      await engine.deleteDomain(domain).catch(() => undefined);
-      throw err;
-    }
+      const nuevoId = randomId('dom');
+      try {
+        db.prepare(
+          `INSERT INTO domains (id, client_id, domain, dkim_selector, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(nuevoId, clientId, domain, 'mail', now());
+      } catch (err) {
+        // Se deshace el dominio en el motor para no dejarlo huérfano si el
+        // INSERT falla (p. ej. el cliente se borró en paralelo).
+        await engine.deleteDomain(domain).catch(() => undefined);
+        throw err;
+      }
+      return nuevoId;
+    });
     audit(req, 'domain.created', { id, domain, clientId });
 
     // DNS automático: si una cuenta de Cloudflare accesible contiene la zona,

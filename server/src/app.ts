@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { ZodError } from 'zod';
@@ -26,6 +26,40 @@ import { registerPortalRoutes } from './modules/portal';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
 import { registerEngineOpsRoutes } from './modules/engineops';
 
+const MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Protección CSRF para las peticiones que viajan con cookie. SameSite=Lax no
+ * basta cuando otra web del MISMO sitio (un subdominio de una app desplegada
+ * en el mismo servidor, p. ej.) envía un formulario: el navegador adjunta la
+ * cookie. Se rechaza cualquier petición mutante que el navegador marque como
+ * de otro origen. Las que llevan Authorization (tokens, claves) no usan
+ * cookies; las rutas públicas y la del webmail tampoco.
+ */
+function csrfGuard(req: FastifyRequest, reply: FastifyReply, done: () => void): void {
+  if (!MUTANTES.has(req.method) || !req.url.startsWith('/api/')) return done();
+  if (req.headers.authorization) return done();
+  if (req.url.startsWith('/api/public/') || req.url.startsWith('/api/webmail/')) return done();
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string') {
+    if (site === 'same-origin' || site === 'none') return done();
+  } else {
+    // Navegadores sin Sec-Fetch-Site: se compara el Origin con el host pedido.
+    const origin = req.headers.origin;
+    if (!origin) return done();
+    try {
+      const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0]!.trim();
+      if (new URL(origin).host === host) return done();
+    } catch {
+      // Origin mal formado: se rechaza abajo.
+    }
+  }
+  reply.status(403).send({
+    error: 'Petición rechazada: no procede de este panel.',
+    code: 'cross_site_request',
+  });
+}
+
 export interface BuildAppOptions {
   /** Registro de Fastify; en las pruebas se desactiva para no ensuciar la salida. */
   logger?: boolean;
@@ -41,11 +75,12 @@ export interface BuildAppOptions {
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: options.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' },
-    trustProxy: true,
+    trustProxy: config.trustProxy,
     bodyLimit: 5 * 1024 * 1024,
   });
 
   await app.register(cookie, { secret: config.secret });
+  app.addHook('onRequest', csrfGuard);
   app.addHook('onRequest', sessionHook);
 
   app.setErrorHandler((err, req, reply) => {

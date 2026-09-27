@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
+import { clientLockKey, withLock } from '../core/locks';
 import { generateMailboxPassword, randomId } from '../core/crypto';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { getEngine } from '../engine';
@@ -440,13 +441,15 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const domain = getDomain(body.domainId);
     requireClientAccess(req, domain.clientId);
     const localPart = normalizeLocalPart(body.localPart);
-    const { mailbox, password } = await createMailboxRecord({
-      domain,
-      localPart,
-      displayName: body.displayName,
-      password: body.password,
-      quotaMb: body.quotaMb,
-    });
+    const { mailbox, password } = await withLock(clientLockKey(domain.clientId), () =>
+      createMailboxRecord({
+        domain,
+        localPart,
+        displayName: body.displayName,
+        password: body.password,
+        quotaMb: body.quotaMb,
+      }),
+    );
     audit(req, 'mailbox.created', { id: mailbox.id, email: mailbox.email }, domain.clientId);
     // La contraseña solo se devuelve en esta respuesta; no se guarda en claro.
     return { mailbox, password: body.password ? undefined : password };
@@ -508,6 +511,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     if (valid.length === 0) {
       throw badRequest('Ninguna dirección de la lista es válida. Revise la lista e inténtelo de nuevo.', 'bulk_empty');
     }
+    // Con el cerrojo del cliente, ninguna otra alta (individual o masiva) se
+    // cuela entre la comprobación del plan y la última inserción del lote.
+    return withLock(clientLockKey(client.id), async () => {
     assertWithinLimit(client.id, 'mailboxes', valid.length);
     if (bulkInProgress.has(client.id)) {
       throw conflict('Ya hay un alta masiva en curso para este cliente. Espere a que termine.', 'bulk_in_progress');
@@ -572,6 +578,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       failed: results.length - createdEmails.length,
       capacity: { ...capacity, used: capacity.used + createdEmails.length, remaining: Math.max(0, capacity.remaining - createdEmails.length) },
     };
+    });
   });
 
   app.patch('/api/mailboxes/:id', async (req) => {
@@ -724,6 +731,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       .parse(req.body);
     const domain = getDomain(body.domainId);
     requireClientAccess(req, domain.clientId);
+    return withLock(clientLockKey(domain.clientId), async () => {
     assertWithinLimit(domain.clientId, 'aliases');
 
     const localPart = normalizeLocalPart(body.localPart);
@@ -749,6 +757,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     }
     audit(req, 'alias.created', { id, email, destinations: all.length, external: external.length }, domain.clientId);
     return { ok: true, id, alias: toAlias(getAliasRow(id)) };
+    });
   });
 
   app.patch('/api/aliases/:id', async (req) => {
