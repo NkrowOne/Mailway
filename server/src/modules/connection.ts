@@ -132,15 +132,24 @@ export function stableUuid(seed: string): string {
  * Documento clientConfig v1.1 de Thunderbird. Se sirve para el dominio del
  * correo; %EMAILADDRESS% lo sustituye el propio cliente por la dirección.
  */
-export function thunderbirdAutoconfigXml(domain: string, settings: ConnectionSettings): string {
+export function thunderbirdAutoconfigXml(
+  domain: string,
+  settings: ConnectionSettings,
+  opts: { placeholderDomain?: boolean } = {},
+): string {
   const d = xmlEscape(domain);
+  // Thunderbird para Android llega por el MX (autoconfig.<dominio de la
+  // instancia>) sin ?emailaddress: %EMAILDOMAIN% hace que el documento valga
+  // para cualquier dominio de cliente. El Thunderbird de escritorio ignora la
+  // entrada que no entiende y usa la otra.
+  const extraDomain = opts.placeholderDomain ? '\n    <domain>%EMAILDOMAIN%</domain>' : '';
   const brand = xmlEscape(settings.brandName);
   const imapHost = xmlEscape(settings.imap.host);
   const smtpHost = xmlEscape(settings.smtp.host);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <clientConfig version="1.1">
   <emailProvider id="${d}">
-    <domain>${d}</domain>
+    <domain>${d}</domain>${extraDomain}
     <displayName>${brand} (${d})</displayName>
     <displayShortName>${brand}</displayShortName>
     <incomingServer type="imap">
@@ -177,7 +186,12 @@ export function autodiscoverRequestEmail(body: string): string | null {
   return match ? match[1]!.trim().toLowerCase() : null;
 }
 
-/** Respuesta Autodiscover POX con IMAP y SMTP, que Outlook entiende. */
+/**
+ * Respuesta Autodiscover POX con IMAP y SMTP. Para 993/465 basta <SSL>on</SSL>:
+ * <Encryption>TLS</Encryption> significaría STARTTLS y rompería el 465.
+ * Ojo al servirla: Thunderbird envía aquí la contraseña real por Basic auth;
+ * la ruta nunca debe responder 401 ni registrar la cabecera Authorization.
+ */
 export function autodiscoverXml(email: string, settings: ConnectionSettings): string {
   const e = xmlEscape(email);
   return `<?xml version="1.0" encoding="utf-8"?>
@@ -197,7 +211,6 @@ export function autodiscoverXml(email: string, settings: ConnectionSettings): st
         <LoginName>${e}</LoginName>
         <SPA>off</SPA>
         <SSL>on</SSL>
-        <Encryption>SSL</Encryption>
         <AuthRequired>on</AuthRequired>
       </Protocol>
       <Protocol>
@@ -208,7 +221,6 @@ export function autodiscoverXml(email: string, settings: ConnectionSettings): st
         <LoginName>${e}</LoginName>
         <SPA>off</SPA>
         <SSL>on</SSL>
-        <Encryption>SSL</Encryption>
         <AuthRequired>on</AuthRequired>
         <UsePOPAuth>off</UsePOPAuth>
         <SMTPLast>off</SMTPLast>
@@ -350,3 +362,25 @@ export function mobileconfigFilename(email: string): string {
 }
 
 export const MOBILECONFIG_CONTENT_TYPE = 'application/x-apple-aspen-config';
+
+/** Tipos de contenido que exigen los clientes (Thunderbird descarta otros). */
+export const AUTOCONFIG_CONTENT_TYPE = 'application/xml; charset=utf-8';
+export const AUTODISCOVER_CONTENT_TYPE = 'text/xml; charset=utf-8';
+
+/* ------------------------ Thunderbird para Android ------------------------- */
+
+/**
+ * Contenido del QR de importación de Thunderbird para Android (formato v1 de
+ * «Exportar para el móvil» del Thunderbird de escritorio): el titular lo
+ * escanea desde Incorporación → Importar ajustes. Seguridad 3 = TLS implícito,
+ * autenticación 1 = contraseña normal. La contraseña va vacía: la pide la app.
+ */
+export function thunderbirdAndroidQrPayload(
+  email: string,
+  displayName: string,
+  settings: ConnectionSettings,
+): string {
+  const incoming = [0, settings.imap.host, settings.imap.port, 3, 1, email, email, ''];
+  const outgoing = [[0, settings.smtp.host, settings.smtp.port, 3, 1, email, ''], [email, displayName || email]];
+  return JSON.stringify([1, [1, 1], incoming, [outgoing]]);
+}
