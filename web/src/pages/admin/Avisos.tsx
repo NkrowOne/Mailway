@@ -3,23 +3,47 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Alert, type NotifyChannelsView } from '../../lib/api';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
-import { Hoja, Marca, MarcaFondo, Membrete, Midiendo, Vacio, type Veredicto } from '../../ui/kit';
+import {
+  AvisoError,
+  Hoja,
+  Marca,
+  MarcaFondo,
+  Membrete,
+  Midiendo,
+  Vacio,
+  type Veredicto,
+} from '../../ui/kit';
 import { useToast } from '../../ui/toast';
-import { formatDate } from '../../lib/format';
+import { formatDate, plural } from '../../lib/format';
 
 /** La severidad es el veredicto del hallazgo, no una etiqueta decorativa. */
-const severidad: Record<Alert['severity'], { veredicto: Veredicto; etiqueta: string }> = {
-  critical: { veredicto: 'fuera', etiqueta: 'Crítico' },
-  warning: { veredicto: 'vigilar', etiqueta: 'Aviso' },
-  info: { veredicto: 'sin-dato', etiqueta: 'Info' },
+const severidad: Record<Alert['severity'], { veredicto: Veredicto; etiqueta: string; peso: number }> = {
+  critical: { veredicto: 'fuera', etiqueta: 'Crítico', peso: 0 },
+  warning: { veredicto: 'vigilar', etiqueta: 'Aviso', peso: 1 },
+  info: { veredicto: 'sin-dato', etiqueta: 'Información', peso: 2 },
 };
+
+/** Abiertas antes que resueltas y, dentro de ellas, lo más grave primero. */
+function ordenar(lista: Alert[]): Alert[] {
+  return [...lista].sort((a, b) => {
+    const abiertaA = a.resolvedAt === null ? 0 : 1;
+    const abiertaB = b.resolvedAt === null ? 0 : 1;
+    if (abiertaA !== abiertaB) return abiertaA - abiertaB;
+    const gravedad = severidad[a.severity].peso - severidad[b.severity].peso;
+    return gravedad !== 0 ? gravedad : b.createdAt - a.createdAt;
+  });
+}
 
 /** Rejilla común de la tabla de hallazgos: veredicto · hallazgo · registro. */
 const rejilla = 'sm:grid-cols-[8.5rem_minmax(0,1fr)_12rem]';
 
+function mensajeDe(err: unknown, porDefecto: string): string {
+  return err instanceof ApiError ? err.message : porDefecto;
+}
+
 /**
- * Hallazgos del parte: qué está fuera de rango ahora mismo y por dónde te
- * avisa Mailway cuando no estás mirando.
+ * Hallazgos del parte: qué está fuera de rango ahora mismo y por qué canales
+ * avisa Mailway cuando nadie está mirando el panel.
  */
 export default function Avisos() {
   const queryClient = useQueryClient();
@@ -38,11 +62,10 @@ export default function Avisos() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['alerts'] });
     },
+    onError: (err) => toast('error', mensajeDe(err, 'No se pudo descartar el aviso.')),
   });
 
-  if (alerts.isLoading) return <Midiendo label="Leyendo avisos…" />;
-
-  const list = alerts.data?.alerts ?? [];
+  const list = ordenar(alerts.data?.alerts ?? []);
   const abiertas = list.filter((a) => !a.resolvedAt);
 
   return (
@@ -50,40 +73,53 @@ export default function Avisos() {
       <Membrete
         title="Avisos"
         meta={
-          abiertas.length === 0
-            ? 'Sin incidencias abiertas.'
-            : `${abiertas.length} incidencia(s) abierta(s).`
+          alerts.isPending
+            ? 'Leyendo los avisos…'
+            : abiertas.length === 0
+              ? 'Sin incidencias abiertas.'
+              : `${plural(abiertas.length, 'incidencia abierta', 'incidencias abiertas')}.`
         }
         actions={
-          <Button variant="plano" onClick={() => setVerResueltas((v) => !v)}>
+          <Button
+            variant="contorno"
+            aria-pressed={verResueltas}
+            onClick={() => setVerResueltas((v) => !v)}
+          >
             {verResueltas ? 'Ver solo abiertas' : 'Ver historial'}
           </Button>
         }
       />
 
       <div className="flex flex-col gap-4">
-        <Hoja title="Incidencias" meta={`${list.length} registrada(s)`} flush>
-          {alerts.isError ? (
+        <Hoja
+          title="Incidencias"
+          meta={alerts.data ? plural(list.length, 'registrada', 'registradas') : undefined}
+          flush
+        >
+          {alerts.isPending ? (
+            <Midiendo label="Leyendo los avisos…" />
+          ) : !alerts.data ? (
             <div className="p-4">
-              <p
-                role="alert"
-                className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-              >
-                No se pudieron leer los avisos. Comprueba que el servidor de Mailway sigue en marcha
-                y vuelve a intentarlo.
-              </p>
-              <Button variant="perfil" className="mt-3" onClick={() => void alerts.refetch()}>
-                Reintentar
-              </Button>
+              <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
+                No se pudieron leer los avisos. Compruebe que el servidor de Mailway sigue en
+                marcha.
+              </AvisoError>
             </div>
           ) : list.length === 0 ? (
-            <Vacio title="Todo en orden">
+            <Vacio title={verResueltas ? 'Sin avisos registrados' : 'Todo en orden'}>
               El vigilante comprueba cada minuto el servidor de correo, el webmail y la cola de
-              salida; una vez al día, las listas negras. Si algo se rompe, aparecerá aquí y te
-              llegará por los canales que configures abajo.
+              salida y, una vez al día, las listas negras. Si algo falla, aparecerá aquí y se
+              notificará por los canales configurados más abajo.
             </Vacio>
           ) : (
             <>
+              {alerts.isRefetchError && (
+                <div className="px-4 pt-4">
+                  <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
+                    No se pudo actualizar la lista. Se muestra la última lectura.
+                  </AvisoError>
+                </div>
+              )}
               <div
                 className={`regla-cabecera hidden gap-x-4 px-4 pb-1.5 pt-2.5 sm:grid ${rejilla}`}
               >
@@ -94,19 +130,34 @@ export default function Avisos() {
               <ul>
                 {list.map((alert) => {
                   const meta = severidad[alert.severity];
+                  const abierta = !alert.resolvedAt;
+                  // La fila abierta se tiñe con su veredicto; resuelta, ya no califica nada.
+                  const tinte = !abierta
+                    ? ''
+                    : meta.veredicto === 'fuera'
+                      ? 'fila-fuera'
+                      : meta.veredicto === 'vigilar'
+                        ? 'fila-vigilar'
+                        : '';
                   return (
                     <li
                       key={alert.id}
-                      className={`regla-fila grid gap-x-4 gap-y-2 px-4 py-3 last:border-b-0 ${rejilla}`}
+                      className={`regla-fila grid gap-x-4 gap-y-2 px-4 py-3 last:border-b-0 ${rejilla} ${tinte}`}
                     >
                       <span className="justify-self-start sm:pt-0.5">
-                        <MarcaFondo veredicto={meta.veredicto}>{meta.etiqueta}</MarcaFondo>
+                        <MarcaFondo veredicto={abierta ? meta.veredicto : 'sin-dato'}>
+                          {meta.etiqueta}
+                        </MarcaFondo>
                       </span>
 
                       <div className="min-w-0">
-                        <p className="text-md font-semibold text-tinta">{alert.title}</p>
-                        <p className="mt-0.5 text-base text-tinta-2">{alert.message}</p>
-                        {alert.remedy && !alert.resolvedAt && (
+                        <p className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">
+                          {alert.title}
+                        </p>
+                        <p className="mt-0.5 text-base text-tinta-2 [overflow-wrap:anywhere]">
+                          {alert.message}
+                        </p>
+                        {alert.remedy && abierta && (
                           <div className="mt-2 bg-hoja-2 px-3 py-2">
                             <p className="rotulo">Qué hacer</p>
                             <p className="mt-0.5 text-base text-tinta-2">{alert.remedy}</p>
@@ -176,13 +227,16 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
   }, [channels.data]);
 
   const save = useMutation({
-    mutationFn: () => api.put('/api/notify/channels', form),
-    onSuccess: async () => {
+    mutationFn: (opciones: { clearTelegramToken?: boolean } = {}) =>
+      api.put('/api/notify/channels', { ...form, ...opciones }),
+    onSuccess: async (_res, opciones) => {
       await queryClient.invalidateQueries({ queryKey: ['notify-channels'] });
-      onToast('ok', 'Canales guardados.');
+      onToast(
+        'ok',
+        opciones?.clearTelegramToken ? 'Token de Telegram eliminado.' : 'Canales guardados.',
+      );
     },
-    onError: (err) =>
-      onToast('error', err instanceof ApiError ? err.message : 'No se pudo guardar.'),
+    onError: (err) => onToast('error', mensajeDe(err, 'No se pudieron guardar los canales.')),
   });
 
   const test = useMutation({
@@ -198,37 +252,46 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       } else {
         onToast(
           'error',
-          `Fallaron: ${(res.failures || []).join(', ')}. Revisa la URL o el token.`,
+          `No se pudo entregar por: ${(res.failures || []).join(', ')}. Revise la URL o el token.`,
         );
       }
     },
+    onError: (err) => onToast('error', mensajeDe(err, 'No se pudo enviar el aviso de prueba.')),
   });
 
   const configured = channels.data?.configured ?? [];
+  const hayToken = channels.data?.channels.hasTelegramToken ?? false;
 
   return (
     <Hoja
-      title="Cómo quieres que te avise"
+      title="Canales de aviso"
       actions={
-        configured.length > 0 ? (
-          <MarcaFondo veredicto="normal">{configured.join(' · ')}</MarcaFondo>
-        ) : (
-          <MarcaFondo veredicto="vigilar">Sin canales</MarcaFondo>
-        )
+        channels.data ? (
+          configured.length > 0 ? (
+            <MarcaFondo veredicto="normal">{configured.join(' · ')}</MarcaFondo>
+          ) : (
+            <MarcaFondo veredicto="vigilar">Sin canales</MarcaFondo>
+          )
+        ) : undefined
       }
     >
       {channels.isPending ? (
-        <Midiendo label="Leyendo canales…" />
+        <Midiendo label="Leyendo los canales de aviso…" />
+      ) : !channels.data ? (
+        <AvisoError onRetry={() => void channels.refetch()} retrying={channels.isFetching}>
+          No se pudieron leer los canales de aviso.
+        </AvisoError>
       ) : (
         <>
-          <p className="mb-4 text-base text-tinta-2">
-            Rellena los que uses. Si no configuras ninguno, los avisos solo aparecerán en esta
-            página y no te enterarás hasta que entres.
+          <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
+            Complete los canales que utilice. Si no configura ninguno, los avisos solo aparecerán
+            en esta página y no se enterará hasta que entre en el panel. El aviso de prueba se
+            envía por los canales ya guardados.
           </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              save.mutate();
+              save.mutate({});
             }}
             className="flex flex-col gap-4"
           >
@@ -242,22 +305,36 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
               placeholder="https://discord.com/api/webhooks/…"
             />
             <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="Token del bot de Telegram"
-                help={
-                  channels.data?.channels.hasTelegramToken
-                    ? 'Ya hay un token guardado. Déjalo vacío para conservarlo.'
-                    : 'Créalo hablando con @BotFather en Telegram.'
-                }
-                mono
-                type="password"
-                value={form.telegramToken}
-                onChange={(e) => setForm({ ...form, telegramToken: e.target.value })}
-                placeholder="123456:ABC-DEF…"
-              />
+              <div className="flex flex-col gap-1.5">
+                <Input
+                  label="Token del bot de Telegram"
+                  help={
+                    hayToken
+                      ? 'Hay un token guardado. Déjelo vacío para conservarlo.'
+                      : 'Se obtiene al crear el bot con @BotFather en Telegram.'
+                  }
+                  mono
+                  type="password"
+                  autoComplete="off"
+                  value={form.telegramToken}
+                  onChange={(e) => setForm({ ...form, telegramToken: e.target.value })}
+                  placeholder="123456:ABC-DEF…"
+                />
+                {hayToken && (
+                  <Button
+                    type="button"
+                    variant="plano"
+                    className="self-start"
+                    busy={save.isPending && save.variables?.clearTelegramToken === true}
+                    onClick={() => save.mutate({ clearTelegramToken: true })}
+                  >
+                    Eliminar el token guardado
+                  </Button>
+                )}
+              </div>
               <Input
                 label="ID del chat de Telegram"
-                help="Escribe a tu bot y consulta getUpdates, o usa @userinfobot."
+                help="Escriba al bot y consulte getUpdates, o utilice @userinfobot."
                 mono
                 value={form.telegramChat}
                 onChange={(e) => setForm({ ...form, telegramChat: e.target.value })}
@@ -266,7 +343,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
             </div>
             <Input
               label="Webhook genérico"
-              help="Recibe un JSON con la alerta. Útil para n8n, Zapier o tu propio sistema."
+              help="Recibe un JSON con cada aviso. Útil para n8n, Zapier o un sistema propio."
               mono
               type="url"
               value={form.webhookUrl}
@@ -282,7 +359,11 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
               >
                 Enviar aviso de prueba
               </Button>
-              <Button type="submit" variant="tinta" busy={save.isPending}>
+              <Button
+                type="submit"
+                variant="tinta"
+                busy={save.isPending && !save.variables?.clearTelegramToken}
+              >
                 Guardar canales
               </Button>
             </div>
