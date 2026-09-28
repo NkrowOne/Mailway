@@ -68,11 +68,11 @@ export default function PanelAdmin() {
     queryFn: () => api.get<{ entries: AuditEntry[] }>('/api/audit'),
   });
 
-  if (dashboard.isPending) return <Midiendo label="Midiendo las constantes…" />;
+  if (dashboard.isPending) return <Midiendo label="Cargando el resumen…" />;
   if (dashboard.isError || !dashboard.data) {
     return (
       <p className="border border-regla bg-fuera-fondo px-4 py-3 text-base text-fuera">
-        No se pudo leer el parte. Comprueba que el servicio está en marcha y recarga la página.
+        No se pudo cargar el resumen. Comprueba que el servicio está en marcha y recarga la página.
       </p>
     );
   }
@@ -137,13 +137,13 @@ export default function PanelAdmin() {
   return (
     <>
       <Membrete
-        title="Parte de la instancia"
+        title="Resumen del servicio"
         meta={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="valor text-sm text-white/75">
               {instance.mailHostname || 'servidor sin nombre'}
             </span>
-            <span className="text-sm text-white/70">Medido {formatDate(Date.now())}</span>
+            <span className="text-sm text-white/70">Actualizado {formatDate(Date.now())}</span>
           </span>
         }
         actions={
@@ -159,7 +159,7 @@ export default function PanelAdmin() {
         }
       />
 
-      <Hoja title="Constantes" meta="Fuera de rango primero" className="mb-4">
+      <Hoja title="Estado general" meta="Lo importante, primero" className="mb-4">
         <CabeceraMedidas />
         {ordenarPorVeredicto(constantes).map((c) => (
           <Medida
@@ -176,8 +176,8 @@ export default function PanelAdmin() {
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <Hoja
-          title="Hallazgos"
-          meta="Entregabilidad"
+          title="Recomendaciones"
+          meta="Calidad de entrega"
           actions={
             <Link
               to="/entregabilidad"
@@ -194,7 +194,7 @@ export default function PanelAdmin() {
             </p>
           ) : criticos.length === 0 ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-5">
-              <Marca veredicto="normal">Sin hallazgos</Marca>
+              <Marca veredicto="normal">Sin incidencias</Marca>
               <span className="text-base text-tinta-2">
                 El PTR, el registro A y las listas negras están en orden.
               </span>
@@ -214,7 +214,7 @@ export default function PanelAdmin() {
           )}
         </Hoja>
 
-        <Hoja title="Registro" meta="Altas en la instancia" flush>
+        <Hoja title="Tu servicio" meta="Recursos activos" flush>
           <ul>
             <FilaRegistro to="/clientes" label="Clientes" valor={totals.clients} />
             <FilaRegistro to="/dominios" label="Dominios" valor={totals.domains} />
@@ -225,7 +225,7 @@ export default function PanelAdmin() {
       </div>
 
       <Hoja
-        title="Movimiento reciente"
+        title="Actividad reciente"
         className="mt-4"
         actions={
           <Link

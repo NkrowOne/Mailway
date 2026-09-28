@@ -93,7 +93,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
 
       {domains.isPending ? (
         <Hoja>
-          <Midiendo label="Leyendo el registro de dominios…" />
+          <Midiendo label="Cargando dominios…" />
         </Hoja>
       ) : domains.isError ? (
         <Hoja>
@@ -153,7 +153,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                   </span>
 
                   <span className="shrink-0 sm:basis-32">
-                    <span className="rotulo mr-1.5 sm:hidden">Medido</span>
+                    <span className="rotulo mr-1.5 sm:hidden">Comprobado</span>
                     <span className="text-sm text-tinta-3">{formatDate(domain.lastCheckedAt)}</span>
                   </span>
 

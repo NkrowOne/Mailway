@@ -62,7 +62,7 @@ export default function Actividad() {
 
       <Hoja flush>
         {audit.isPending ? (
-          <Midiendo label="Midiendo actividad…" />
+          <Midiendo label="Cargando actividad…" />
         ) : entries.length === 0 ? (
           <Vacio title="Sin actividad todavía" />
         ) : (

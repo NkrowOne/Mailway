@@ -91,7 +91,7 @@ export default function ClienteDetalle() {
   if (client.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Leyendo la ficha del cliente…" />
+        <Midiendo label="Cargando el cliente…" />
       </Hoja>
     );
   }
@@ -220,13 +220,13 @@ export default function ClienteDetalle() {
       <Hoja
         title="Dominios del cliente"
         meta={
-          domains.isPending ? 'midiendo…' : plural(domainList.length, 'dominio', 'dominios')
+          domains.isPending ? 'cargando…' : plural(domainList.length, 'dominio', 'dominios')
         }
         className="mt-4"
         flush
       >
         {domains.isPending ? (
-          <Midiendo label="Leyendo los dominios del cliente…" />
+          <Midiendo label="Cargando los dominios del cliente…" />
         ) : domainList.length === 0 ? (
           <Vacio title="Sin dominios">
             El cliente puede añadirlos desde su panel, o tú desde «Dominios».

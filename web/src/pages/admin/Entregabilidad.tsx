@@ -47,7 +47,7 @@ export default function Entregabilidad() {
   return (
     <>
       <Membrete
-        title="Entregabilidad"
+        title="Estado del correo"
         meta="Si algo de esto está fuera de rango, tus correos acaban en spam o los rechazan."
         actions={
           <Button

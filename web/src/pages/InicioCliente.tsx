@@ -15,7 +15,7 @@ export default function InicioCliente() {
     queryFn: () => api.get<ClientDashboard>('/api/dashboard/client'),
   });
 
-  if (isPending) return <Midiendo label="Leyendo tu parte…" />;
+  if (isPending) return <Midiendo label="Cargando tu resumen…" />;
   if (isError || !data) {
     return (
       <p className="border border-regla bg-fuera-fondo px-4 py-3 text-base text-fuera">

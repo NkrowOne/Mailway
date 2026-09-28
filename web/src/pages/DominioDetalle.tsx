@@ -102,7 +102,7 @@ export default function DominioDetalle() {
   if (domain.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Leyendo la ficha del dominio…" />
+        <Midiendo label="Cargando el dominio…" />
       </Hoja>
     );
   }
@@ -158,7 +158,7 @@ export default function DominioDetalle() {
       />
 
       {checks.length === 0 ? (
-        <Hoja title="Sin lectura del DNS">
+        <Hoja title="DNS sin comprobar">
           <p className="max-w-[75ch] text-base text-tinta-2">
             Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
             que debes crear.
@@ -166,7 +166,7 @@ export default function DominioDetalle() {
         </Hoja>
       ) : (
         <div className="flex flex-col gap-4">
-          <Hoja title="Resumen de la medición" meta={formatDate(record.lastCheckedAt)}>
+          <Hoja title="Resumen de la comprobación" meta={formatDate(record.lastCheckedAt)}>
             <CabeceraMedidas />
             <Medida
               concepto="Registros obligatorios en rango"

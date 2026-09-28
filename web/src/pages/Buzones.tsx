@@ -166,7 +166,7 @@ export default function Buzones() {
 
       {cargando ? (
         <Hoja flush>
-          <Midiendo label="Midiendo buzones…" />
+          <Midiendo label="Cargando buzones…" />
         </Hoja>
       ) : domainList.length === 0 ? (
         <Hoja flush>

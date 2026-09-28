@@ -134,7 +134,7 @@ export default function ApiKeys({ user }: { user: User }) {
       <div className="flex flex-col gap-4">
         {keys.isPending ? (
           <Hoja>
-            <Midiendo label="Leyendo las claves de API…" />
+            <Midiendo label="Cargando las claves de API…" />
           </Hoja>
         ) : keys.isError ? (
           <Hoja>
@@ -241,11 +241,11 @@ export default function ApiKeys({ user }: { user: User }) {
         {/* Historial */}
         <Hoja
           title="Últimos envíos"
-          meta={messages.isFetching ? <span className="rotulo">midiendo…</span> : undefined}
+          meta={messages.isFetching ? <span className="rotulo">actualizando…</span> : undefined}
           flush
         >
           {messages.isPending ? (
-            <Midiendo label="Leyendo los últimos envíos…" />
+            <Midiendo label="Cargando los últimos envíos…" />
           ) : messageList.length === 0 ? (
             <Vacio title="Todavía no hay envíos">
               Cuando tu aplicación llame a la API, cada mensaje aparecerá aquí con su estado.
