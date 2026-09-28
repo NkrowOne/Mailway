@@ -146,7 +146,7 @@ export default function PanelAdmin() {
           <p className="mt-3 flex flex-wrap gap-x-2 text-base text-white/70">
             <span>{instance.mailHostname || 'Servidor sin nombre'}</span>
             <span aria-hidden>·</span>
-            <span>Actualizado {formatDate(Date.now())}</span>
+            <span>Actualizado {formatDate(dashboard.dataUpdatedAt)}</span>
           </p>
           <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15">
@@ -177,6 +177,8 @@ export default function PanelAdmin() {
         <Hoja title="Recomendaciones" meta="Qué conviene revisar" actions={<Link to="/entregabilidad" className="text-sm text-laboratorio hover:underline">Ver todas</Link>} flush>
           {health.isPending ? (
             <p className="px-4 py-5 text-base text-tinta-3">Comprobando la entregabilidad…</p>
+          ) : health.isError ? (
+            <p role="alert" className="px-4 py-5 text-base text-fuera">No se pudo comprobar el estado del correo. <button className="underline" onClick={() => void health.refetch()}>Reintentar</button></p>
           ) : recommendations.length === 0 ? (
             <div className="px-4 py-5">
               <Marca veredicto="normal">Sin recomendaciones pendientes</Marca>
@@ -199,11 +201,9 @@ export default function PanelAdmin() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <Hoja title="Tu servicio" meta="Recursos activos" flush>
+        <Hoja title="Tu servicio" meta="Estado operativo" flush>
           <ul>
-            <FilaRegistro to="/clientes" label="Clientes" valor={totals.clients} icon={<Building2 />} />
-            <FilaRegistro to="/dominios" label="Dominios" valor={totals.domains} icon={<Globe2 />} />
-            <FilaRegistro to="/buzones" label="Buzones" valor={totals.mailboxes} icon={<Inbox />} />
+            {ordenarPorVeredicto(constantes).map(c => <li key={c.concepto} className="regla-fila px-4 py-3 last:border-b-0"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-base text-tinta-2">{c.concepto}</span><span className={`text-base font-semibold ${c.veredicto === 'fuera' ? 'text-fuera' : c.veredicto === 'vigilar' ? 'text-vigilar' : 'text-tinta'}`}>{c.valor} {c.unidad}</span></div>{c.nota && <p className="mt-1 text-sm text-tinta-2">{c.nota}</p>}</li>)}
             <FilaRegistro to="/api-envio" label="Claves de API activas" valor={totals.apiKeys} icon={<KeyRound />} />
           </ul>
         </Hoja>
@@ -211,6 +211,8 @@ export default function PanelAdmin() {
         <Hoja title="Actividad reciente" actions={<Link to="/actividad" className="text-sm text-laboratorio hover:underline">Ver todo</Link>} flush>
         {audit.isPending ? (
           <p className="px-4 py-5 text-base text-tinta-3">Cargando actividad…</p>
+        ) : audit.isError ? (
+          <p role="alert" className="px-4 py-5 text-fuera">No se pudo cargar la actividad. <button className="underline" onClick={() => void audit.refetch()}>Reintentar</button></p>
         ) : (audit.data?.entries.length ?? 0) === 0 ? (
           <p className="px-4 py-5 text-base text-tinta-3">
             Todavía no hay movimiento. Crea tu primer cliente para empezar.

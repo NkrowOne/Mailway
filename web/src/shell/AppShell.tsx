@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, type Alert, type User } from '../lib/api';
+import { PanelTools } from './PanelTools';
 
 /**
  * El membrete del índice. El logotipo es la marca de una escala medida:
@@ -245,7 +246,7 @@ export function AppShell({
         </header>
 
         <main className="min-w-0 flex-1 px-4 py-5 sm:px-7 sm:py-8 xl:px-10">
-          <div className="mx-auto max-w-7xl">{children}</div>
+          <div className="mx-auto max-w-7xl"><PanelTools user={user} />{children}</div>
         </main>
       </div>
     </div>

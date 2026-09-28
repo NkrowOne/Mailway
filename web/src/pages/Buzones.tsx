@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type ConnectionInfo, type DomainRecord, type Mailbox } from '../lib/api';
 import { Button } from '../ui/Button';
@@ -20,6 +21,7 @@ import { formatMb, plural } from '../lib/format';
  * buzón medido — dirección, cuota y veredicto de servicio.
  */
 export default function Buzones() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -122,7 +124,8 @@ export default function Buzones() {
   }
 
   const domainList = domains.data?.domains ?? [];
-  const list = mailboxes.data?.mailboxes ?? [];
+  const searchTerm = searchParams.get('q')?.trim().toLocaleLowerCase('es') ?? '';
+  const list = (mailboxes.data?.mailboxes ?? []).filter(m => !searchTerm || m.email.toLocaleLowerCase('es').includes(searchTerm));
   const grouped = useMemo(() => {
     const groups = new Map<string, Mailbox[]>();
     for (const mailbox of list) {
@@ -137,6 +140,7 @@ export default function Buzones() {
 
   return (
     <>
+      {searchTerm && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-base"><span>Resultados para <strong>{searchTerm}</strong></span><button className="text-laboratorio underline" onClick={() => setSearchParams({})}>Mostrar todos los buzones</button></div>}
       <Membrete
         title="Buzones"
         meta={
