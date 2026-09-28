@@ -1,13 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowRight, Building2, Globe2, Inbox, KeyRound } from 'lucide-react';
 import { api, type AdminDashboard, type AuditEntry, type ServerHealth } from '../../lib/api';
 import {
-  CabeceraMedidas,
   Hoja,
   Marca,
-  MarcaFondo,
-  Medida,
-  Membrete,
   Midiendo,
   type Veredicto,
 } from '../../ui/kit';
@@ -79,7 +77,8 @@ export default function PanelAdmin() {
 
   const { totals, messages, engine, queue, instance } = dashboard.data;
   const score = health.data?.score;
-  const criticos = (health.data?.recommendations ?? []).filter((r) => r.severity === 'critical');
+  const recommendations = health.data?.recommendations ?? [];
+  const criticos = recommendations.filter((r) => r.severity === 'critical');
 
   const constantes: Constante[] = [
     {
@@ -133,110 +132,83 @@ export default function PanelAdmin() {
   const peor = ordenarPorVeredicto(constantes)[0]?.veredicto ?? 'sin-dato';
   const veredictoGlobal: Veredicto =
     criticos.length > 0 && peor !== 'fuera' ? 'fuera' : peor;
+  const estadoGlobal =
+    veredictoGlobal === 'normal' ? 'Todo en orden' :
+    veredictoGlobal === 'fuera' ? 'Requiere atención' :
+    veredictoGlobal === 'vigilar' ? 'Hay puntos que revisar' : 'Comprobando el servicio';
 
   return (
     <>
-      <Membrete
-        title="Resumen del servicio"
-        meta={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="valor text-sm text-white/75">
-              {instance.mailHostname || 'servidor sin nombre'}
+      <header className="campo-lab relative mb-5 overflow-hidden rounded-xl px-5 py-6 shadow-panel sm:px-7 sm:py-7 lg:min-h-[224px] lg:pr-[35%]">
+        <div className="relative z-10 max-w-2xl">
+          <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Vista general</p>
+          <h1 className="titular text-3xl text-white sm:text-4xl">Resumen del servicio</h1>
+          <p className="mt-3 flex flex-wrap gap-x-2 text-base text-white/70">
+            <span>{instance.mailHostname || 'Servidor sin nombre'}</span>
+            <span aria-hidden>·</span>
+            <span>Actualizado {formatDate(Date.now())}</span>
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15">
+              <span className={`h-2 w-2 rounded-full ${veredictoGlobal === 'normal' ? 'bg-emerald-300' : veredictoGlobal === 'vigilar' ? 'bg-amber-300' : veredictoGlobal === 'fuera' ? 'bg-rose-300' : 'bg-white/50'}`} />
+              {estadoGlobal}
             </span>
-            <span className="text-sm text-white/70">Actualizado {formatDate(Date.now())}</span>
-          </span>
-        }
-        actions={
-          <MarcaFondo veredicto={veredictoGlobal}>
-            {veredictoGlobal === 'normal'
-              ? 'Todo en rango'
-              : veredictoGlobal === 'fuera'
-                ? 'Requiere atención'
-                : veredictoGlobal === 'vigilar'
-                  ? 'Con avisos'
-                  : 'Sin datos'}
-          </MarcaFondo>
-        }
-      />
+            <span className="text-sm text-white/60">{veredictoGlobal === 'normal' ? 'Tu correo funciona correctamente.' : 'Consulta los detalles a continuación.'}</span>
+          </div>
+        </div>
+        <img src="/mail-server.png" alt="" aria-hidden className="pointer-events-none absolute -bottom-8 right-0 hidden h-[260px] w-[350px] object-contain object-bottom lg:block xl:right-6" />
+      </header>
 
-      <Hoja title="Estado general" meta="Lo importante, primero" className="mb-4">
-        <CabeceraMedidas />
-        {ordenarPorVeredicto(constantes).map((c) => (
-          <Medida
-            key={c.concepto}
-            concepto={c.concepto}
-            valor={c.valor}
-            unidad={c.unidad}
-            referencia={c.referencia}
-            veredicto={c.veredicto}
-            nota={c.nota}
-          />
-        ))}
-      </Hoja>
-
-      <div className="grid items-start gap-4 lg:grid-cols-2">
-        <Hoja
-          title="Recomendaciones"
-          meta="Calidad de entrega"
-          actions={
-            <Link
-              to="/entregabilidad"
-              className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta"
-            >
-              Ver informe completo
+      <div className="mb-4 grid items-start gap-4 xl:grid-cols-[1.2fr_1fr]">
+        <Hoja title="Estado general" meta="Indicadores clave" flush>
+          <div className="grid grid-cols-2 divide-x divide-regla sm:grid-cols-4">
+            <ResumenNumero to="/clientes" value={totals.clients} label="Clientes" icon={<Building2 />} />
+            <ResumenNumero to="/dominios" value={totals.domains} label="Dominios" icon={<Globe2 />} />
+            <ResumenNumero to="/buzones" value={totals.mailboxes} label="Buzones" icon={<Inbox />} />
+            <ResumenNumero to="/entregabilidad" value={score ?? '—'} suffix={score === undefined ? '' : '/100'} label="Reputación" icon={<span className="text-lg font-semibold leading-none">↗</span>} />
+          </div>
+          <div className="border-t border-regla px-4 py-2.5">
+            <Link to="/entregabilidad" className="inline-flex items-center gap-1.5 text-sm font-medium text-laboratorio hover:underline">
+              Ver estado del correo <ArrowRight className="h-3.5 w-3.5" />
             </Link>
-          }
-          flush
-        >
+          </div>
+        </Hoja>
+
+        <Hoja title="Recomendaciones" meta="Qué conviene revisar" actions={<Link to="/entregabilidad" className="text-sm text-laboratorio hover:underline">Ver todas</Link>} flush>
           {health.isPending ? (
-            <p className="px-4 py-5 text-base text-tinta-3">
-              Comprobando PTR, registro A y listas negras…
-            </p>
-          ) : criticos.length === 0 ? (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-5">
-              <Marca veredicto="normal">Sin incidencias</Marca>
-              <span className="text-base text-tinta-2">
-                El PTR, el registro A y las listas negras están en orden.
-              </span>
+            <p className="px-4 py-5 text-base text-tinta-3">Comprobando la entregabilidad…</p>
+          ) : recommendations.length === 0 ? (
+            <div className="px-4 py-5">
+              <Marca veredicto="normal">Sin recomendaciones pendientes</Marca>
+              <p className="mt-1 text-sm text-tinta-2">No se han detectado problemas en la última comprobación.</p>
             </div>
           ) : (
             <ul>
-              {criticos.slice(0, 3).map((rec) => (
-                <li key={rec.title} className="regla-fila px-4 py-3 last:border-b-0">
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <p className="text-base font-medium text-tinta">{rec.title}</p>
-                    <Marca veredicto="fuera" />
-                  </div>
-                  <p className="mt-0.5 text-sm text-tinta-2">{rec.detail}</p>
+              {recommendations.slice(0, 3).map((rec) => (
+                <li key={`${rec.severity}-${rec.title}`} className="regla-fila last:border-b-0">
+                  <Link to="/entregabilidad" className="group flex items-start gap-3 px-4 py-3 hover:bg-hoja-2">
+                    <span aria-hidden className={`mt-0.5 h-9 w-0.5 shrink-0 rounded-full ${rec.severity === 'critical' ? 'bg-fuera' : rec.severity === 'warning' ? 'bg-vigilar' : 'bg-laboratorio-vivo'}`} />
+                    <span className="min-w-0 flex-1"><span className="block text-base font-medium text-tinta">{rec.title}</span><span className="mt-0.5 block text-sm text-tinta-2">{rec.detail}</span></span>
+                    <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-tinta-3 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                  </Link>
                 </li>
               ))}
             </ul>
           )}
         </Hoja>
-
-        <Hoja title="Tu servicio" meta="Recursos activos" flush>
-          <ul>
-            <FilaRegistro to="/clientes" label="Clientes" valor={totals.clients} />
-            <FilaRegistro to="/dominios" label="Dominios" valor={totals.domains} />
-            <FilaRegistro to="/buzones" label="Buzones" valor={totals.mailboxes} />
-            <FilaRegistro to="/api-envio" label="Claves de API activas" valor={totals.apiKeys} />
-          </ul>
-        </Hoja>
       </div>
 
-      <Hoja
-        title="Actividad reciente"
-        className="mt-4"
-        actions={
-          <Link
-            to="/actividad"
-            className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta"
-          >
-            Ver todo
-          </Link>
-        }
-        flush
-      >
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Hoja title="Tu servicio" meta="Recursos activos" flush>
+          <ul>
+            <FilaRegistro to="/clientes" label="Clientes" valor={totals.clients} icon={<Building2 />} />
+            <FilaRegistro to="/dominios" label="Dominios" valor={totals.domains} icon={<Globe2 />} />
+            <FilaRegistro to="/buzones" label="Buzones" valor={totals.mailboxes} icon={<Inbox />} />
+            <FilaRegistro to="/api-envio" label="Claves de API activas" valor={totals.apiKeys} icon={<KeyRound />} />
+          </ul>
+        </Hoja>
+
+        <Hoja title="Actividad reciente" actions={<Link to="/actividad" className="text-sm text-laboratorio hover:underline">Ver todo</Link>} flush>
         {audit.isPending ? (
           <p className="px-4 py-5 text-base text-tinta-3">Cargando actividad…</p>
         ) : (audit.data?.entries.length ?? 0) === 0 ? (
@@ -272,20 +244,29 @@ export default function PanelAdmin() {
             })}
           </ul>
         )}
-      </Hoja>
+        </Hoja>
+      </div>
     </>
   );
 }
 
-function FilaRegistro({ to, label, valor }: { to: string; label: string; valor: number }) {
+function ResumenNumero({ to, value, suffix, label, icon }: { to: string; value: number | string; suffix?: string; label: string; icon: ReactNode }) {
+  return <Link to={to} className="group min-w-0 px-4 py-5 text-center transition-colors hover:bg-hoja-2">
+    <span className="mb-3 flex h-5 items-center justify-center text-laboratorio [&>svg]:h-5 [&>svg]:w-5" aria-hidden>{icon}</span>
+    <span className="valor block text-2xl font-semibold leading-tight text-tinta sm:text-3xl">{value}<span className="text-base font-normal text-tinta-3">{suffix}</span></span>
+    <span className="mt-1 block text-sm text-tinta-2 group-hover:text-laboratorio">{label}</span>
+  </Link>;
+}
+
+function FilaRegistro({ to, label, valor, icon }: { to: string; label: string; valor: number; icon: ReactNode }) {
   return (
     <li className="regla-fila last:border-b-0">
       <Link
         to={to}
-        className="flex items-baseline justify-between gap-3 px-4 py-2.5 hover:bg-hoja-3"
+        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-hoja-3"
       >
-        <span className="text-base text-tinta-2">{label}</span>
-        <span className="valor text-md font-medium text-tinta">{valor}</span>
+        <span className="flex items-center gap-3 text-base text-tinta-2"><span className="text-laboratorio [&>svg]:h-4 [&>svg]:w-4" aria-hidden>{icon}</span>{label}</span>
+        <span className="flex items-center gap-3"><span className="valor text-md font-medium text-tinta">{valor}</span><ArrowRight className="h-3.5 w-3.5 text-tinta-3" aria-hidden /></span>
       </Link>
     </li>
   );
