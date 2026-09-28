@@ -266,6 +266,12 @@ suaves, navegación reconocible, controles táctiles y explicaciones en lenguaje
 cotidiano. Los nombres de tokens históricos (`laboratorio`, `muestra`, etc.) son
 detalles internos y no deben trasladarse al texto de producto.
 
+La interfaz puede ser expresiva, pero evita los patrones genéricos de dashboard:
+no encierra cada icono en un círculo de color, no repite una píldora «Correcto»
+debajo de cada cifra y no duplica un estado que ya se entiende por el contenido.
+Los estados en línea son texto y glifo discretos; los fondos de color se reservan
+para alertas, resúmenes o decisiones que realmente necesitan destacar.
+
 **Creative North Star: "El parte de análisis clínico"**
 
 Mailway se lee como un informe de laboratorio impreso. No hay panel de control ni

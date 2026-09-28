@@ -64,6 +64,13 @@ const veredictoTexto: Record<Veredicto, string> = {
   'sin-dato': 'Sin datos',
 };
 
+const veredictoColor: Record<Veredicto, string> = {
+  normal: 'text-normal',
+  vigilar: 'text-vigilar',
+  fuera: 'text-fuera',
+  'sin-dato': 'text-tinta-3',
+};
+
 const veredictoFondo: Record<Veredicto, string> = {
   normal: 'bg-normal-fondo text-normal',
   vigilar: 'bg-vigilar-fondo text-vigilar',
@@ -78,8 +85,8 @@ const veredictoFondo: Record<Veredicto, string> = {
 export function Marca({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-sm
-        font-semibold ${veredictoFondo[veredicto]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium
+        ${veredictoColor[veredicto]}`}
     >
       <GlifoVeredicto veredicto={veredicto} />
       {children ?? veredictoTexto[veredicto]}
@@ -91,7 +98,7 @@ export function Marca({ veredicto, children }: { veredicto: Veredicto; children?
 export function MarcaFondo({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1
         text-sm font-semibold
         ${veredictoFondo[veredicto]}`}
     >
