@@ -424,14 +424,16 @@ export function Membrete({
   title,
   meta,
   actions,
+  illustration,
 }: {
   title: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
+  illustration?: string;
 }) {
   return (
     <div className="campo-lab membrete-panel mb-5 rounded-xl px-5 py-6 sm:px-7 sm:py-7">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+      <div className={`relative z-10 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 ${illustration ? 'pb-24 sm:pb-0 sm:pr-[32%]' : ''}`}>
         <div className="min-w-0">
           <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Gestión de correo</p>
           <h1 className="titular text-3xl text-white sm:text-4xl">{title}</h1>
@@ -441,6 +443,7 @@ export function Membrete({
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
+      {illustration && <img src={illustration} alt="" aria-hidden className="pointer-events-none absolute -bottom-8 right-0 h-40 w-52 object-contain sm:h-56 sm:w-[30%]" />}
     </div>
   );
 }

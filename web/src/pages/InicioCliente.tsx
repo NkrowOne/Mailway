@@ -62,6 +62,7 @@ export default function InicioCliente() {
     <>
       <Membrete
         title={data.client.name}
+        illustration="/mail-server.png"
         meta={
           data.client.suspended ? (
             <MarcaFondo veredicto="fuera">
@@ -77,23 +78,24 @@ export default function InicioCliente() {
           )
         }
         actions={
-          siguiente ? (
+          <>
+          {data.webmailUrl && (
+            <a href={data.webmailUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center rounded-lg bg-white px-3.5 text-base font-semibold text-laboratorio hover:bg-laboratorio-claro">
+              Abrir webmail ↗
+            </a>
+          )}
+          {siguiente && (
             <Link to={siguiente.to}>
               <Button variant="campo">{siguiente.label}</Button>
             </Link>
-          ) : (
-            data.webmailUrl && (
-              <a href={data.webmailUrl} target="_blank" rel="noreferrer">
-                <Button variant="campo">Abrir webmail</Button>
-              </a>
-            )
-          )
+          )}
+          </>
         }
       />
 
       <div className="grid items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Hoja
-          title="Puesta en marcha"
+          title="Primeros pasos"
           meta={
             <span className="valor">
               {hechos}/{pasos.length}
@@ -141,7 +143,7 @@ export default function InicioCliente() {
           </ol>
         </Hoja>
 
-        <Hoja title="Carga del plan" meta="Uso frente a tu límite">
+        <Hoja title="Uso de tu plan" meta="Recursos disponibles">
           <div className="flex flex-col gap-4">
             <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
             <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />
