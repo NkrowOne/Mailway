@@ -245,6 +245,37 @@ oro para no caer en spam:
   [check.spamhaus.org](https://check.spamhaus.org) (las consultas por
   resolutores públicos las rechazan).
 
+### Lista de salida a producción
+
+Que el contenedor responda no significa todavía que el servicio de correo
+esté listo. Antes de aceptar clientes reales, deja **todos** estos puntos
+comprobados y registra la fecha de la prueba:
+
+- [ ] El panel solo se publica por HTTPS y `/api/health` devuelve `ok: true`.
+- [ ] El volumen persistente de `/data` está montado y una copia de seguridad
+  de prueba se ha restaurado en otro directorio. Deben copiarse juntos
+  `mailway.db`, sus ficheros WAL/SHM si existen, y `.secret`.
+- [ ] Los puertos 25 entrante **y saliente**, 465, 587 y 993 son accesibles
+  desde fuera; 8080 permanece ligado a localhost o a la red Docker.
+- [ ] El PTR devuelve `MAIL_HOSTNAME` y el registro A de ese nombre vuelve a
+  la misma IP (FCrDNS).
+- [ ] `openssl s_client` confirma un certificado público vigente en 465 y
+  993; no se usa el certificado autofirmado fuera de la red interna.
+- [ ] Un dominio piloto muestra MX, SPF, DKIM y DMARC verificados en Mailway.
+- [ ] Se ha probado recepción, envío SMTP autenticado y `POST /v1/send` en
+  ambos sentidos con Gmail u Outlook; no basta con probar dentro del dominio.
+- [ ] Hay al menos un canal de avisos configurado y el aviso de prueba llega.
+- [ ] La restauración de los volúmenes del motor y del panel se ha ensayado;
+  una copia que nunca se restauró no se considera verificada.
+- [ ] Se ha acordado calentamiento de IP y límites bajos para el primer
+  cliente. No se inicia envío masivo desde una IP nueva.
+
+**Criterio de decisión:** el software puede desplegarse cuando pasan la
+compilación, las pruebas y esta lista. La disponibilidad, reputación, PTR,
+firewall, TLS y restauración dependen del servidor final y no pueden validarse
+desde el repositorio. Mientras quede una casilla sin comprobar, trátalo como
+preproducción.
+
 ## 8. Operación y copias de seguridad
 
 - **Actualizar el panel**: push a `main` → webhook → Skyway redespliega solo.

@@ -188,6 +188,42 @@ export function createUser(input: {
   };
 }
 
+/**
+ * Crea el primer administrador de forma atómica.
+ *
+ * El asistente es público hasta que existe un usuario. Sin la transacción,
+ * dos peticiones simultáneas podían superar ambas `countUsers()` y la
+ * segunda terminaba como un error 500 de SQLite (o, en el peor caso tras un
+ * cambio de esquema, creaba otro administrador). La comprobación y el alta
+ * deben ser una sola operación serializada.
+ */
+export function createInitialAdmin(input: {
+  email: string;
+  name: string;
+  password: string;
+}): AuthedUser {
+  return db.transaction(() => {
+    if (countUsers() > 0) {
+      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.');
+    }
+    return createUser({ ...input, role: 'admin' });
+  })();
+}
+
+/** Conserva la sesión que hizo el cambio de contraseña y revoca las demás. */
+export function revokeOtherSessions(userId: string, currentToken?: string): void {
+  if (!currentToken) {
+    // Es una situación defensiva: una ruta autenticada normalmente siempre
+    // tiene cookie. Si no la hay, es más seguro revocarlas todas.
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    return;
+  }
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(
+    userId,
+    hashToken(currentToken),
+  );
+}
+
 /* -------------------------------- Rutas ----------------------------------- */
 
 const loginSchema = z.object({
@@ -241,8 +277,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       hashPassword(body.newPassword),
       user.id,
     );
-    // Cierra el resto de sesiones del usuario por seguridad.
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    // Cierra el resto de sesiones, pero conserva esta: la interfaz promete
+    // que el usuario no tendrá que volver a iniciar sesión tras el cambio.
+    revokeOtherSessions(user.id, req.cookies?.[COOKIE]);
     audit(req, 'auth.password_changed', {});
     return { ok: true };
   });
