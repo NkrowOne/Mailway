@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
-import { badRequest, forbidden } from '../core/errors';
+import { badRequest } from '../core/errors';
 import { buildEngine, engineConfigured } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
-import { countUsers, createUser, createSession, requireAdmin } from './auth';
+import { countUsers, createInitialAdmin, createSession, requireAdmin } from './auth';
 import { ensureDefaultPlans } from './clients';
 import {
   getEngineSettings,
@@ -71,11 +71,8 @@ export function registerSetupRoutes(app: FastifyInstance): void {
 
   /** Paso 1: crear la cuenta de administrador (solo si no existe ninguna). */
   app.post('/api/setup/admin', async (req, reply) => {
-    if (countUsers() > 0) {
-      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.');
-    }
     const body = adminSchema.parse(req.body);
-    const user = createUser({ ...body, role: 'admin' });
+    const user = createInitialAdmin(body);
     ensureDefaultPlans();
     createSession(req, reply, user.id);
     req.user = user;
