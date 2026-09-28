@@ -50,6 +50,7 @@ export default function Login({ brand }: { brand: string }) {
           <p className="mt-5 max-w-lg text-lg leading-relaxed text-white/65">
             Una vista clara del estado de tu servicio y los siguientes pasos para mantenerlo funcionando bien.
           </p>
+          <img src="/mail-server.png" alt="" aria-hidden className="mt-4 h-56 w-full object-contain object-left-bottom xl:h-72" />
         </div>
         <p className="relative text-sm text-white/40">Correo profesional, bajo tu control.</p>
       </aside>

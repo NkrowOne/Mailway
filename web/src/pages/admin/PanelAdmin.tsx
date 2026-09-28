@@ -139,7 +139,7 @@ export default function PanelAdmin() {
 
   return (
     <>
-      <header className="campo-lab relative mb-5 overflow-hidden rounded-xl px-5 py-6 shadow-panel sm:px-7 sm:py-7 lg:min-h-[224px] lg:pr-[35%]">
+      <header className="campo-lab relative mb-5 overflow-hidden rounded-xl px-5 pb-32 pt-6 shadow-panel sm:min-h-[224px] sm:px-7 sm:py-7 sm:pr-[36%]">
         <div className="relative z-10 max-w-2xl">
           <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Vista general</p>
           <h1 className="titular text-3xl text-white sm:text-4xl">Resumen del servicio</h1>
@@ -156,12 +156,12 @@ export default function PanelAdmin() {
             <span className="text-sm text-white/60">{veredictoGlobal === 'normal' ? 'Tu correo funciona correctamente.' : 'Consulta los detalles a continuación.'}</span>
           </div>
         </div>
-        <img src="/mail-server.png" alt="" aria-hidden className="pointer-events-none absolute -bottom-8 right-0 hidden h-[260px] w-[350px] object-contain object-bottom lg:block xl:right-6" />
+        <img src="/mail-server.png" alt="" aria-hidden className="pointer-events-none absolute -bottom-10 right-0 h-[160px] w-[205px] object-contain object-bottom sm:-bottom-8 sm:h-[260px] sm:w-[350px] xl:right-6" />
       </header>
 
       <div className="mb-4 grid items-start gap-4 xl:grid-cols-[1.2fr_1fr]">
         <Hoja title="Estado general" meta="Indicadores clave" flush>
-          <div className="grid grid-cols-2 divide-x divide-regla sm:grid-cols-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 [&>*:nth-child(even)]:border-l [&>*:nth-child(even)]:border-regla sm:[&>*:nth-child(3)]:border-l sm:[&>*:nth-child(3)]:border-regla [&>*:nth-child(n+3)]:border-t [&>*:nth-child(n+3)]:border-regla sm:[&>*:nth-child(n+3)]:border-t-0">
             <ResumenNumero to="/clientes" value={totals.clients} label="Clientes" icon={<Building2 />} />
             <ResumenNumero to="/dominios" value={totals.domains} label="Dominios" icon={<Globe2 />} />
             <ResumenNumero to="/buzones" value={totals.mailboxes} label="Buzones" icon={<Inbox />} />
