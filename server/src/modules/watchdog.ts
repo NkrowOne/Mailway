@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { syncMailHostname } from './hostname-sync';
 import { db, now } from '../core/db';
 import { checkDnsbl } from '../core/dns';
 import { engineConfigured, getEngine } from '../engine';
@@ -252,6 +253,7 @@ export async function runWatchdogOnce(): Promise<void> {
   if (running) return; // una vuelta lenta no debe solaparse con la siguiente
   running = true;
   try {
+    await syncMailHostname();
     // Las tres rápidas son independientes: en serie sumaban sus tiempos de
     // espera y, con el webmail caído, la vuelta tardaba 10 s de más.
     await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);

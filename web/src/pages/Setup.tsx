@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type SetupStatus, type User } from '../lib/api';
+import { api, ApiError, type SetupStatus, type User, type HostnameSyncStatus } from '../lib/api';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import { Hoja, Marca, Membrete } from '../ui/kit';
@@ -87,7 +87,11 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
   function submitInstance(e: FormEvent) {
     e.preventDefault();
     void run(async () => {
-      await api.post('/api/setup/instance', { brandName, mailHostname, publicIp, webmailUrl });
+      const result = await api.post<{ hostnameSync: HostnameSyncStatus }>('/api/setup/instance', { brandName, mailHostname, publicIp, webmailUrl });
+      if (result.hostnameSync.status === 'error') {
+        setError(result.hostnameSync.detail);
+        return;
+      }
       setStep(3);
     });
   }
@@ -304,9 +308,12 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   label="Nombre del servidor de correo (FQDN)"
                   mono
                   value={mailHostname}
+                  readOnly={status.hostnameFromEnv}
                   onChange={(e) => setMailHostname(e.target.value)}
                   placeholder="mail.tuempresa.com"
-                  help="Debe apuntar (registro A) a la IP del servidor y coincidir con el PTR."
+                  help={status.hostnameFromEnv
+                    ? 'Definido por MAILWAY_MAIL_HOSTNAME en Skyway. Mailway lo sincronizará con Stalwart.'
+                    : 'Se sincronizará con Stalwart. Debe apuntar a la IP del servidor y coincidir con el PTR.'}
                 />
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="min-w-[12rem] flex-1">

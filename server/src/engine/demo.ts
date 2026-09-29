@@ -13,6 +13,9 @@ import type {
  * Stalwart. Los envíos de la API se registran pero no salen a Internet.
  */
 export class DemoEngine implements MailEngine {
+  async syncHostname(_hostname: string): Promise<{ changed: boolean; previousHostname: string }> {
+    return { changed: false, previousHostname: '' };
+  }
   readonly kind = 'demo' as const;
 
   async ping(): Promise<EngineHealth> {

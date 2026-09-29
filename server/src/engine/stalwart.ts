@@ -1,5 +1,6 @@
 import { HttpError, upstream } from '../core/errors';
 import { sha512Crypt } from '../core/sha512crypt';
+import { normalizeMailHostname, validateMailHostname } from '../core/mail-hostname';
 import type {
   CreateMailboxInput,
   EngineDnsRecord,
@@ -109,6 +110,35 @@ export class StalwartEngine implements MailEngine {
       disabledPermissions: [],
       externalMembers: [],
     });
+  }
+
+  /** API comprobada contra Stalwart v0.15.5: settings.rs, reload.rs y dns.rs. */
+  async syncHostname(value: string): Promise<{ changed: boolean; previousHostname: string }> {
+    const hostname = validateMailHostname(value);
+    const settings = await this.request<Record<string, string>>('GET', '/api/settings/keys?keys=server.hostname');
+    // Este endpoint genera registros sin exigir que el dominio esté dado de alta.
+    const current = await this.getDnsRecords(hostname);
+    const mxHost = (records: EngineDnsRecord[]) => normalizeMailHostname(
+      records.find((r) => r.type === 'MX')?.content.trim().split(/\s+/).at(-1) || '',
+    );
+    const previousHostname = mxHost(current);
+    if (normalizeMailHostname(settings['server.hostname'] || '') === hostname && previousHostname === hostname) {
+      return { changed: false, previousHostname };
+    }
+    if (normalizeMailHostname(settings['server.hostname'] || '') !== hostname) {
+      await this.request('POST', '/api/settings', [{
+        type: 'insert', prefix: null, values: [['server.hostname', hostname]], assert_empty: false,
+      }]);
+    }
+    // Recarga también si una ejecución anterior guardó el valor pero no logró aplicarlo.
+    const result = await this.request<{ errors?: Record<string, unknown> }>('GET', '/api/reload');
+    if (!result || !result.errors || Object.keys(result.errors).length > 0) {
+      throw upstream('Stalwart no pudo recargar su configuración. Revisa los errores en el administrador del motor.', 'hostname_reload_failed');
+    }
+    if (mxHost(await this.getDnsRecords(hostname)) !== hostname) {
+      throw upstream('Stalwart sigue anunciando otro hostname después de recargar. Revisa si su configuración local sobrescribe server.hostname.', 'hostname_not_applied');
+    }
+    return { changed: true, previousHostname };
   }
 
   async deleteDomain(domain: string): Promise<void> {

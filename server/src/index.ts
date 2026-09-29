@@ -19,6 +19,7 @@ import { registerApiKeyRoutes, registerSendRoutes } from './modules/transactiona
 import { registerAlertRoutes } from './modules/alerts';
 import { registerWhitelabelRoutes } from './modules/whitelabel';
 import { startWatchdog } from './modules/watchdog';
+import { syncMailHostname } from './modules/hostname-sync';
 
 async function main(): Promise<void> {
   const app = Fastify({
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
   );
 
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
+  void syncMailHostname().catch(() => app.log.warn('No se pudo iniciar la sincronización del hostname.'));
 }
 
 main().catch((err) => {

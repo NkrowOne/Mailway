@@ -46,7 +46,7 @@ export const config = {
     smtpPort: Number(process.env.STALWART_SMTP_PORT || 587),
   },
   webmailUrlDefault: process.env.MAILWAY_WEBMAIL_URL || '',
-  mailHostnameDefault: process.env.MAILWAY_MAIL_HOSTNAME || '',
+  mailHostnameDefault: process.env.MAILWAY_MAIL_HOSTNAME?.trim() || '',
   publicIpDefault: process.env.MAILWAY_PUBLIC_IP || '',
   sessionTtlHours: Number(process.env.MAILWAY_SESSION_TTL_HOURS || 24 * 7),
   isProduction: process.env.NODE_ENV === 'production',

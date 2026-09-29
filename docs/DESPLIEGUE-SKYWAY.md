@@ -137,9 +137,29 @@ Antes de copiar el DNS, comprueba que Stalwart anuncia el nombre público
 del servidor (por ejemplo `mail.tuempresa.com`). Si el MX o los destinos SRV/CNAME
 contienen un identificador como `93e0126401b4`, el motor ha usado un nombre interno
 de Docker. Corrige su hostname en la configuración de Stalwart y vuelve a obtener
-los registros DNS. Cambiar `MAILWAY_MAIL_HOSTNAME` solo cambia la identidad del
-panel; no reconfigura el motor. Los Compose fijan `hostname` para evitar ese valor
-interno en nuevas instalaciones, pero no sobrescriben ajustes ya persistidos.
+los registros DNS. `MAILWAY_MAIL_HOSTNAME` tiene prioridad sobre el valor guardado
+en Mailway. Al arrancar o guardar los ajustes, Mailway aplica `server.hostname` en
+Stalwart, recarga su configuración y verifica el MX que genera antes de dar la
+sincronización por correcta. Los Compose también fijan `hostname` para evitar ese
+valor interno en nuevas instalaciones.
+
+Para cambiar el nombre posteriormente:
+
+1. Actualiza `MAILWAY_MAIL_HOSTNAME` en las variables del panel en Skyway y
+   redespliega Mailway. Si la variable no está definida, se usa el valor de Ajustes.
+2. Comprueba **Ajustes → Identidad del servidor**: indica si Stalwart ya confirma
+   el nuevo hostname. Puedes pulsar **Sincronizar hostname** para reintentar.
+   Los fallos quedan visibles en Ajustes y Avisos; el vigilante los reintenta.
+3. Alinea `MAIL_HOSTNAME` en el stack de correo y recrea los servicios afectados
+   para actualizar el destino IMAP/SMTP de Roundcube y las rutas del proxy.
+4. Revisa A/AAAA, PTR, certificados y los MX/CNAME/SRV de tus dominios. Los
+   informes de DNS anteriores se invalidan cuando se cambia el motor.
+
+Mailway no modifica Cloudflare ni emite por sí mismo los certificados del motor.
+El cambio se aplica al servidor compartido, no a los dominios personalizados del
+webmail. La variable de entorno se lee al iniciar el proceso: un cambio en Skyway
+requiere un redespliegue. Con `MAILWAY_WATCHDOG_DISABLED=1` no hay reintentos periódicos;
+se mantiene la sincronización inicial y la acción manual.
 
 Mailway compara los MX existentes con los anunciados por el motor y la identidad
 del panel. Si alguno difiere, pide revisarlo sin afirmar que necesariamente sea
