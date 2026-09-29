@@ -136,11 +136,19 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
   };
 
   if (record.type === 'MX') {
+    const expectedHost = normalizeValue(record.content.trim().split(/\s+/).at(-1) || '');
+    if (!expectedHost.includes('.')) {
+      return {
+        ...base,
+        found: null,
+        status: 'mismatch',
+        help: `El motor anuncia «${expectedHost || '.'}» como MX. Configura en Stalwart el nombre público completo del servidor y después corrige el DNS; un nombre interno de contenedor no sirve como destino de correo público.`,
+      };
+    }
     const found = await lookupMx(name);
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = found.map((r) => `${r.priority} ${r.exchange}`).join(', ');
-    const expectedHost = normalizeValue(record.content.split(/\s+/).slice(-1)[0] || '');
     const ok = found.some((r) => normalizeValue(r.exchange) === expectedHost);
     return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
   }

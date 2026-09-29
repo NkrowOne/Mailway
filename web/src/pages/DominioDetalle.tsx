@@ -72,6 +72,7 @@ export default function DominioDetalle() {
     onSuccess: async (data) => {
       queryClient.setQueryData(['domain', id], data);
       await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      await queryClient.invalidateQueries({ queryKey: ['domain-conflicto', id] });
       setJustVerified(true);
       const report = data.domain.dnsStatus;
       if (report.allRequiredOk) {
@@ -347,7 +348,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
   const conflicto = useQuery({
     queryKey: ['domain-conflicto', domainId],
     queryFn: () =>
-      api.get<{ hayOtroProveedor: boolean; mxActuales: string[]; aviso: string | null }>(
+      api.get<{ hayOtroProveedor: boolean; mxActuales: string[]; aviso: string | null; avisoConfiguracion: string | null }>(
         `/api/domains/${domainId}/conflicto`,
       ),
   });
@@ -359,14 +360,30 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       title="Importar en tu proveedor de DNS"
       meta="Fichero de zona"
       actions={
-        <a href={`/api/domains/${domainId}/zonefile?nivel=${nivel}`} download>
-          <Button variant="tinta">Descargar</Button>
-        </a>
+        conflicto.data?.avisoConfiguracion ? (
+          <Button variant="tinta" disabled>Corrige el servidor para descargar</Button>
+        ) : (
+          <a href={`/api/domains/${domainId}/zonefile?nivel=${nivel}`} download>
+            <Button variant="tinta">Descargar</Button>
+          </a>
+        )
       }
     >
+      {conflicto.data?.avisoConfiguracion && (
+        <div role="alert" className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
+          <p className="rotulo text-fuera">Revisa el nombre del servidor de correo</p>
+          <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.avisoConfiguracion}</p>
+        </div>
+      )}
+      {conflicto.isError && (
+        <p role="alert" className="mb-4 text-base text-tinta-2">
+          No se pudieron contrastar los MX con el motor. Compruébalos antes de importar.{' '}
+          <button className="underline" onClick={() => void conflicto.refetch()}>Reintentar</button>
+        </p>
+      )}
       {hayConflicto && conflicto.data?.aviso && (
         <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
-          <p className="rotulo text-fuera">No lo importes todavía</p>
+          <p className="rotulo text-fuera">Revisa los destinos MX antes de importar</p>
           <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.aviso}</p>
         </div>
       )}

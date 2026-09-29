@@ -133,6 +133,19 @@ Al abrir el panel por primera vez, Mailway te guía en 4 paradas:
 
 ## 5. TLS del motor (IMAP/SMTP con certificado válido)
 
+Antes de copiar el DNS, comprueba que Stalwart anuncia el nombre público
+del servidor (por ejemplo `mail.tuempresa.com`). Si el MX o los destinos SRV/CNAME
+contienen un identificador como `93e0126401b4`, el motor ha usado un nombre interno
+de Docker. Corrige su hostname en la configuración de Stalwart y vuelve a obtener
+los registros DNS. Cambiar `MAILWAY_MAIL_HOSTNAME` solo cambia la identidad del
+panel; no reconfigura el motor. Los Compose fijan `hostname` para evitar ese valor
+interno en nuevas instalaciones, pero no sobrescriben ajustes ya persistidos.
+
+Mailway compara los MX existentes con los anunciados por el motor y la identidad
+del panel. Si alguno difiere, pide revisarlo sin afirmar que necesariamente sea
+otro proveedor. Si el propio motor anuncia un nombre sin dominio público completo,
+lo marca como problema de configuración e impide exportar esa zona.
+
 Los clientes de correo (Thunderbird, iPhone) exigen un certificado válido en
 993/465. El Traefik de Skyway ya obtuvo uno para `mail.tuempresa.com` en el
 paso 2; solo hay que dárselo a Stalwart:

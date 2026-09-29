@@ -22,6 +22,7 @@ services:
   mailway-mail:
     image: stalwartlabs/stalwart:v0.15.5
     container_name: mailway-mail
+    hostname: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en .env}
     restart: unless-stopped
     ports:
       - '25:25'       # SMTP entre servidores (recepción y entrega)

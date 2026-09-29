@@ -143,9 +143,9 @@ test('detecta que el dominio ya recibe correo en otro proveedor', () => {
   });
   assert.equal(c.hayOtroProveedor, true);
   assert.equal(c.dmarcPolitica, 'reject');
-  assert.match(c.aviso!, /ya recibe correo en mailserver\.purelymail\.com/);
+  assert.match(c.aviso!, /MX distintos.*mailserver\.purelymail\.com/);
   assert.match(c.aviso!, /solo puede haber uno/, 'debe avisar del SPF duplicado');
-  assert.match(c.aviso!, /rebote el correo/, 'con p=reject el fallo no es spam, es rebote');
+  assert.match(c.aviso!, /ni SPF alineado ni DKIM alineado/);
 });
 
 test('no avisa cuando el MX ya es el nuestro', () => {
@@ -163,6 +163,37 @@ test('un dominio sin correo todavía no genera aviso', () => {
   const c = evaluarConflicto({ mx: [], txt: [], dmarc: [], mailHostname: 'mail.nkrow.com' });
   assert.equal(c.hayOtroProveedor, false);
   assert.equal(c.aviso, null);
+});
+
+test('reconoce los MX del motor aunque difieran de la identidad del panel', () => {
+  const c = evaluarConflicto({
+    mx: [{ priority: 10, exchange: 'MX1.Servicio.com.' }], txt: [], dmarc: [],
+    mailHostname: 'panel.nkrow.com', mxEsperados: ['mx1.servicio.com'],
+  });
+  assert.equal(c.hayOtroProveedor, false);
+  assert.equal(c.aviso, null);
+  assert.equal(c.avisoConfiguracion, null);
+});
+
+test('un MX propio con nombre Docker genera aviso de configuración, no de proveedor', () => {
+  const c = evaluarConflicto({
+    mx: [{ priority: 10, exchange: '93e0126401b4.' }], txt: [], dmarc: [],
+    mailHostname: 'mail.nkrow.com', mxEsperados: ['93e0126401b4'],
+  });
+  assert.equal(c.hayOtroProveedor, false);
+  assert.equal(c.aviso, null);
+  assert.match(c.avisoConfiguracion!, /93e0126401b4/);
+  assert.match(c.avisoConfiguracion!, /Stalwart/);
+});
+
+test('un MX adicional ajeno sigue avisando aunque otro sea el del motor', () => {
+  const c = evaluarConflicto({
+    mx: [{ priority: 10, exchange: 'mx.servicio.com' }, { priority: 20, exchange: 'otro.example.com' }],
+    txt: [], dmarc: [], mailHostname: 'mail.nkrow.com', mxEsperados: ['mx.servicio.com'],
+  });
+  assert.equal(c.hayOtroProveedor, true);
+  assert.match(c.aviso!, /otro.example.com/);
+  assert.doesNotMatch(c.aviso!, /la mitad se perderá/);
 });
 
 test('un fallo de red (null) no se confunde con "no hay nada"', () => {
