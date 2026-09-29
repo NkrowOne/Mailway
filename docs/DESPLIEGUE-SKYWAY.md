@@ -201,7 +201,7 @@ incidencias solo aparecen en el panel y no te enterarás hasta entrar.
 ## 6 ter. Marca blanca: el webmail en el dominio de cada cliente
 
 Por defecto todos tus clientes entran por `webmail.tuempresa.com`. Si quieres
-que entren por `webmail.sucliente.com`, con su propio certificado, hay que
+que entren por `mail.sudominio.com`, con su propio certificado, hay que
 configurar Traefik **una sola vez**:
 
 1. En el panel, **Ajustes → Marca blanca**: copia el bloque que te muestra (ya
@@ -212,10 +212,30 @@ configurar Traefik **una sola vez**:
    la URL del sondeo si no es `mailway-panel`.
 4. Aplica: `cd /ruta/a/Skyway && docker compose up -d`.
 
-A partir de ahí es autoservicio: en **Marca blanca**, el cliente añade su
-dominio, copia el CNAME que le damos, pulsa **Comprobar**, y cuando el DNS
-apunta aquí Traefik pide el certificado solo. El panel pasa el dominio por
-*Esperando DNS → Emitiendo certificado → En marcha*.
+A partir de ahí se gestiona desde Mailway:
+
+1. El administrador abre **Clientes → un cliente → Configurar webmail**.
+   También puede seleccionar el cliente en **Webmail personalizado**.
+   El cliente puede gestionar sus propios dominios desde esa misma sección.
+2. Añade `mail.sudominio.com` y copia el CNAME o registro A que indica Mailway
+   al proveedor DNS de ese dominio. No hace falta modificar el Compose por cliente.
+3. Pulsa **Comprobar**. Con el DNS apuntando al servidor, Traefik publica la ruta
+   y solicita el certificado. El estado pasa por *Esperando DNS → Pendiente de
+   HTTPS → En marcha*. Un 404 o 5xx no cuenta como dominio activo.
+4. Si tiene varios dominios de webmail, pulsa **Usar como principal** en el deseado.
+   Sin una selección explícita se usa el dominio activo más antiguo.
+
+Los accesos de **Inicio** y **Buzones → Configurar en un dispositivo** usan el
+mismo dominio activo del cliente. Si ninguno está activo, usan **Ajustes → URL
+general del webmail** (por ejemplo `https://webmail.nkrow.com`). Esta URL general
+y `WEBMAIL_HOSTNAME` siguen siendo el acceso compartido; no hay que cambiarlos por
+cada cliente. Los servidores IMAP/SMTP mantienen la identidad del servidor de correo.
+
+**Ajustes → Marca blanca** muestra cuándo Traefik consultó por última vez los
+dominios. Si nunca ha consultado o lleva más de 90 segundos sin hacerlo, revisa
+la URL interna del panel, el token y la red `skyway-edge`. Una consulta confirma
+que el proxy obtiene la configuración; la comprobación HTTPS de cada dominio
+confirma su respuesta. El certificado debe ser válido y la respuesta HTTP 2xx/3xx.
 
 **Por qué funciona así**: Compose fusiona `docker-compose.override.yml` con el
 principal, de modo que el repositorio de Skyway no se toca y el cambio

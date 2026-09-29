@@ -7,6 +7,7 @@ import { listDomains } from './domains';
 import { getInstanceSettings } from './settings';
 import { getMailbox } from './mailboxes';
 import { requireClientAccess } from './auth';
+import { getClientWebmailUrl } from './whitelabel';
 
 function count(sql: string, ...params: unknown[]): number {
   return (db.prepare(sql).get(...params) as { c: number }).c;
@@ -97,7 +98,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
         hasApiKey,
         hasSentMessage,
       },
-      webmailUrl: getInstanceSettings().webmailUrl,
+      webmailUrl: getClientWebmailUrl(clientId),
     };
   });
 
@@ -119,7 +120,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
       imap: { host: instance.mailHostname, port: 993, security: 'SSL/TLS' },
       smtp: { host: instance.mailHostname, port: 465, security: 'SSL/TLS' },
       smtpAlt: { host: instance.mailHostname, port: 587, security: 'STARTTLS' },
-      webmailUrl: instance.webmailUrl,
+      webmailUrl: getClientWebmailUrl(domainRow.client_id),
     };
   });
 }

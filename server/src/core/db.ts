@@ -198,6 +198,14 @@ const migrations: { id: string; sql: string }[] = [
         ON alerts(dedupe_key) WHERE resolved_at IS NULL AND dedupe_key IS NOT NULL;
     `,
   },
+  {
+    id: '003-webmail-principal',
+    sql: `
+      ALTER TABLE client_domains ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
+      CREATE UNIQUE INDEX idx_client_webmail_primary
+        ON client_domains(client_id) WHERE is_primary = 1 AND kind = 'webmail';
+    `,
+  },
 ];
 
 function runMigrations(): void {
