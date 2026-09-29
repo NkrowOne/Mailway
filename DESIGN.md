@@ -1,6 +1,6 @@
 ---
 name: Mailway
-description: Panel de correo multi-cliente leído como un parte de laboratorio; todo dato es una medición con rango de referencia y veredicto.
+description: Panel de correo multi-cliente claro, cercano y orientado a tareas, con estados fáciles de entender y una identidad teal sobria.
 colors:
   mesa: "rgb(238 236 229)"
   hoja: "rgb(255 255 255)"
@@ -257,6 +257,20 @@ sección se mantienen en inglés porque son el contrato de formato de DESIGN.md;
 todo lo demás va en español, como el producto.
 
 ## Overview
+
+Mailway se presenta como un producto SaaS accesible y directo. La precisión del
+sistema original se conserva en tablas, cifras y estados, pero la experiencia
+visible evita metáforas clínicas: usa «Resumen», «Correcto», «Revisar»,
+«Necesita atención», «Comprobación» y «Actividad». La interfaz prioriza tarjetas
+suaves, navegación reconocible, controles táctiles y explicaciones en lenguaje
+cotidiano. Los nombres de tokens históricos (`laboratorio`, `muestra`, etc.) son
+detalles internos y no deben trasladarse al texto de producto.
+
+La interfaz puede ser expresiva, pero evita los patrones genéricos de dashboard:
+no encierra cada icono en un círculo de color, no repite una píldora «Correcto»
+debajo de cada cifra y no duplica un estado que ya se entiende por el contenido.
+Los estados en línea son texto y glifo discretos; los fondos de color se reservan
+para alertas, resúmenes o decisiones que realmente necesitan destacar.
 
 **Creative North Star: "El parte de análisis clínico"**
 

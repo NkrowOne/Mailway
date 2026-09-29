@@ -75,11 +75,12 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
     volumes:
       - mailway-webmail-db:/var/roundcube/db
       - mailway-webmail-config:/var/roundcube/config
+      - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
     networks:
       - skyway-edge
     labels:

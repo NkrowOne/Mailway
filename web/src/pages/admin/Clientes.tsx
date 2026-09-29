@@ -79,7 +79,7 @@ export default function Clientes() {
 
       {clients.isPending ? (
         <Hoja flush>
-          <Midiendo label="Midiendo clientes…" />
+          <Midiendo label="Cargando clientes…" />
         </Hoja>
       ) : list.length === 0 ? (
         <Hoja flush>

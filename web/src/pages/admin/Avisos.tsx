@@ -40,7 +40,7 @@ export default function Avisos() {
     },
   });
 
-  if (alerts.isLoading) return <Midiendo label="Leyendo avisos…" />;
+  if (alerts.isLoading) return <Midiendo label="Cargando alertas…" />;
 
   const list = alerts.data?.alerts ?? [];
   const abiertas = list.filter((a) => !a.resolvedAt);
@@ -48,7 +48,7 @@ export default function Avisos() {
   return (
     <>
       <Membrete
-        title="Avisos"
+        title="Alertas"
         meta={
           abiertas.length === 0
             ? 'Sin incidencias abiertas.'
@@ -218,7 +218,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       }
     >
       {channels.isPending ? (
-        <Midiendo label="Leyendo canales…" />
+        <Midiendo label="Cargando canales…" />
       ) : (
         <>
           <p className="mb-4 text-base text-tinta-2">

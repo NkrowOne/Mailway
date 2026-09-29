@@ -28,7 +28,7 @@ export default function Ajustes() {
     queryFn: () => api.get<SettingsResponse>('/api/settings'),
   });
 
-  if (settings.isPending) return <Midiendo label="Leyendo los ajustes…" />;
+  if (settings.isPending) return <Midiendo label="Cargando los ajustes…" />;
   if (settings.isError || !settings.data) {
     return (
       <>
@@ -84,7 +84,7 @@ function HojaMarcaBlanca() {
   if (setup.isPending) {
     return (
       <Hoja title="Marca blanca" className="min-w-0 lg:col-span-2">
-        <Midiendo label="Leyendo la configuración…" />
+        <Midiendo label="Cargando la configuración…" />
       </Hoja>
     );
   }

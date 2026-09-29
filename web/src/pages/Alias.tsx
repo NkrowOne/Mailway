@@ -102,7 +102,7 @@ export default function Alias() {
 
       {aliases.isPending ? (
         <Hoja flush>
-          <Midiendo label="Midiendo alias…" />
+          <Midiendo label="Cargando alias…" />
         </Hoja>
       ) : list.length === 0 ? (
         <Hoja flush>

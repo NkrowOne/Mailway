@@ -34,7 +34,7 @@ export default function App() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Midiendo label="Preparando el informe…" />
+        <Midiendo label="Preparando tu panel…" />
       </div>
     );
   }
