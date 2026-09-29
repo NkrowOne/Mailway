@@ -137,6 +137,9 @@ export default function ClienteDetalle() {
         }
         actions={
           <>
+            <Link to={`/marca-blanca?clientId=${encodeURIComponent(id)}`} className="inline-flex min-h-9 items-center rounded-lg bg-white px-3 text-base font-semibold text-laboratorio">
+              Configurar webmail
+            </Link>
             <Button variant="peligro" onClick={() => setDeleteOpen(true)}>Eliminar</Button>
             <Button
               variant="perfil"

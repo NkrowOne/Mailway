@@ -94,7 +94,7 @@ export default function App() {
         <Route path="/dominios/:id" element={<DominioDetalle />} />
         <Route path="/buzones" element={<Buzones />} />
         <Route path="/alias" element={<Alias />} />
-        <Route path="/marca-blanca" element={<MarcaBlanca />} />
+        <Route path="/marca-blanca" element={<MarcaBlanca isAdmin={isAdmin} />} />
         <Route path="/api-envio" element={<ApiKeys user={user} />} />
         <Route path="/actividad" element={<Actividad />} />
         <Route path="/cuenta" element={<Cuenta />} />

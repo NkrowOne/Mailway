@@ -5,6 +5,7 @@ import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Hoja, MarcaFondo, Membrete, Midiendo, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
+import { formatDate } from '../../lib/format';
 
 interface SettingsResponse {
   instance: InstanceSettings;
@@ -79,6 +80,7 @@ function HojaMarcaBlanca() {
   const setup = useQuery({
     queryKey: ['whitelabel-setup'],
     queryFn: () => api.get<WhitelabelSetup>('/api/whitelabel/setup'),
+    refetchInterval: 15_000,
   });
 
   if (setup.isPending) {
@@ -96,7 +98,7 @@ function HojaMarcaBlanca() {
     );
   }
 
-  const { token, publishedDomains, certResolver, webmailBackend, panelBackend, panelDomainsAvailable } =
+  const { token, publishedDomains, certResolver, webmailBackend, panelBackend, panelDomainsAvailable, lastPollAt } =
     setup.data;
 
   // El bloque se escribe con los valores REALES de esta instancia: si el
@@ -142,6 +144,13 @@ services:
       }
       className="min-w-0 lg:col-span-2"
     >
+      <p className="mb-3 text-base text-tinta-2" role="status">
+        {lastPollAt && Date.now() - lastPollAt < 90_000
+          ? `Skyway está consultando los dominios. Última consulta: ${formatDate(lastPollAt)}.`
+          : lastPollAt
+            ? `No hay consultas recientes de Skyway. Última consulta: ${formatDate(lastPollAt)}. Revisa la conexión antes de añadir dominios.`
+            : 'Todavía no se ha recibido ninguna consulta de Traefik. Conecta el proxy de Skyway para que publique los dominios personalizados.'}
+      </p>
       <p className="text-base text-tinta-2">
         Para que tus clientes puedan usar su propio dominio de webmail, Traefik tiene que
         preguntarle a Mailway qué dominios servir. Se configura <strong>una sola vez</strong>: crea
@@ -180,6 +189,11 @@ services:
         ))}
       </div>
 
+      <p className="mt-3 text-sm text-tinta-3">
+        Compose reemplaza la lista completa de comandos: conserva todos los parámetros de tu versión
+        de Skyway y añade los tres de providers.http. Si ya tienes un override, incorpora los cambios
+        en él. La consulta del proxy confirma la conexión, no que cada dominio esté operativo.
+      </p>
       <p className="mt-3 text-sm text-tinta-3">
         El token autentica a Traefik contra Mailway: sin él, cualquiera podría leer la lista de
         dominios. Si cambias el nombre del contenedor del panel en Skyway, ajusta también la URL del
@@ -232,12 +246,12 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           placeholder="203.0.113.10"
         />
         <Input
-          label="URL del webmail"
+          label="URL general del webmail"
           mono
           value={form.webmailUrl}
           onChange={(e) => setForm({ ...form, webmailUrl: e.target.value })}
           placeholder="https://webmail.tuempresa.com"
-          help="Si está vacío, el panel no mostrará enlaces de webmail."
+          help="Se usa cuando el cliente no tiene un dominio propio activo. Configura el suyo en Clientes → Configurar webmail."
         />
         {/* Única acción principal de la vista. */}
         <Button type="submit" variant="tinta" busy={save.isPending} className="self-start">

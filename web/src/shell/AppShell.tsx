@@ -70,7 +70,7 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
           { to: '/clientes', label: 'Clientes', icon: <Building2 className={iconClass} /> },
           { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
           { to: '/buzones', label: 'Buzones', icon: <Inbox className={iconClass} /> },
-          { to: '/marca-blanca', label: 'Marca blanca', icon: <Tag className={iconClass} /> },
+          { to: '/marca-blanca', label: 'Webmail personalizado', icon: <Tag className={iconClass} /> },
         ],
       },
       {
@@ -91,7 +91,7 @@ function buildNav(user: User): { section: string; items: NavItem[] }[] {
         { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
         { to: '/buzones', label: 'Buzones', icon: <Inbox className={iconClass} /> },
         { to: '/alias', label: 'Alias', icon: <Split className={iconClass} /> },
-        { to: '/marca-blanca', label: 'Marca blanca', icon: <Tag className={iconClass} /> },
+        { to: '/marca-blanca', label: 'Webmail personalizado', icon: <Tag className={iconClass} /> },
       ],
     },
     {

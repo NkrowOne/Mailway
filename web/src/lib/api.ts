@@ -260,6 +260,7 @@ export interface AuditEntry {
 export type WhitelabelStatus = 'pending_dns' | 'issuing' | 'active' | 'error';
 
 export interface ClientDomain {
+  isPrimary: boolean;
   id: string;
   clientId: string;
   hostname: string;
@@ -280,6 +281,7 @@ export interface DnsInstruction {
 }
 
 export interface WhitelabelSetup {
+  lastPollAt: number | null;
   token: string;
   certResolver: string;
   webmailBackend: string;
