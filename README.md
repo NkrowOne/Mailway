@@ -43,6 +43,9 @@ spam/entregabilidad en español y webmail incluido.
 
 ## Despliegue en producción
 
+**[Asistente Skyway → Mailway](docs/INTEGRACION-SKYWAY.md)**: dominio raíz,
+cuentas iniciales, webmail personalizado y archivo DNS para Cloudflare.
+
 Guía completa paso a paso: **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**.
 
 Resumen: 1) desbloquea el puerto 25 y configura el PTR; 2) levanta
