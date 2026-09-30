@@ -20,6 +20,7 @@ import { registerAlertRoutes } from './modules/alerts';
 import { registerWhitelabelRoutes } from './modules/whitelabel';
 import { startWatchdog } from './modules/watchdog';
 import { syncMailHostname } from './modules/hostname-sync';
+import { registerSkywayRoutes } from './modules/skyway';
 
 async function main(): Promise<void> {
   const app = Fastify({
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   registerAuditRoutes(app);
   registerAlertRoutes(app);
   registerWhitelabelRoutes(app);
+  registerSkywayRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');

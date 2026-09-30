@@ -206,6 +206,14 @@ const migrations: { id: string; sql: string }[] = [
         ON client_domains(client_id) WHERE is_primary = 1 AND kind = 'webmail';
     `,
   },
+  {
+    id: '004-skyway-onboarding',
+    sql: `CREATE TABLE skyway_bindings (
+      source TEXT NOT NULL, service_id TEXT NOT NULL, domain TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      PRIMARY KEY (source, service_id, domain)
+    );`,
+  },
 ];
 
 function runMigrations(): void {
