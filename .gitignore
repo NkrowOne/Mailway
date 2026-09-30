@@ -20,3 +20,6 @@ deploy/.env
 # Capturas de revisión de diseño
 .impeccable/review/
 
+
+# Python deployment diagnostics
+__pycache__/

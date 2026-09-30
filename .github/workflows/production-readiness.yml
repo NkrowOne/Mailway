@@ -1,0 +1,41 @@
+name: Production readiness
+on:
+  pull_request:
+  push:
+    branches: [main, codex/fix-mx-provider-warning]
+permissions:
+  contents: read
+concurrency:
+  group: readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: python3 -m unittest discover -s deploy/tls -p 'test_*.py' -v
+      - run: bash -n deploy/mailway.sh
+      - name: Validate both Compose files without production credentials
+        env:
+          MAIL_HOSTNAME: mail.example.test
+          WEBMAIL_HOSTNAME: webmail.example.test
+          STALWART_ADMIN_PASSWORD: test-only-not-deployed
+        run: |
+          docker compose -f deploy/docker-compose.mail.yml config --quiet
+          docker compose -f deploy/docker-compose.standalone.yml config --quiet
+  mail-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stalwart and Roundcube - TLS, IMAP login, SMTP auth and renewal
+        run: python3 deploy/test-stack.py

@@ -43,8 +43,9 @@ export async function syncMailHostname(force = false): Promise<HostnameSyncStatu
       validateMailHostname(hostname);
       const result = await engine.syncHostname(hostname);
       if (result.changed) {
+        // verified_at conserva el historial: el vigilante debe volver a revisar estos dominios.
         // Un informe medido con la identidad anterior ya no acredita el DNS actual.
-        db.prepare("UPDATE domains SET status = 'pending_dns', dns_status_json = '{}', last_checked_at = NULL, verified_at = NULL").run();
+        db.prepare("UPDATE domains SET status = 'pending_dns', dns_status_json = '{}', last_checked_at = NULL").run();
         fireAlert({
           severity: 'warning', type: 'hostname_dns_review', dedupeKey: `hostname_dns_review:${hostname}`,
           title: 'Revisa DNS y certificados tras actualizar el servidor de correo',

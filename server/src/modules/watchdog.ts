@@ -103,8 +103,8 @@ async function checkWebmail(): Promise<void> {
       redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
-    // Cualquier respuesta HTTP significa que el contenedor está sirviendo.
-    ok = res.status < 500;
+    // Una página de error no acredita que el webmail esté disponible.
+    ok = res.status >= 200 && res.status < 400;
   } catch {
     ok = false;
   }

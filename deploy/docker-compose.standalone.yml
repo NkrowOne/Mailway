@@ -55,7 +55,9 @@ services:
     volumes:
       - mailway-mail-data:/opt/stalwart
     networks:
-      - mailway-internal
+      mailway-internal:
+        aliases:
+          - ${MAIL_HOSTNAME}
 
   mailway-webmail:
     image: roundcube/roundcubemail:1.7.x-apache
@@ -75,6 +77,7 @@ services:
     volumes:
       - mailway-webmail-db:/var/roundcube/db
       - mailway-webmail-config:/var/roundcube/config
+      - ./roundcube/check.php:/opt/mailway-check.php:ro
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
     networks:
       - mailway-internal

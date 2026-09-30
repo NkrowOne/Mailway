@@ -88,7 +88,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     e.preventDefault();
     void run(async () => {
       const result = await api.post<{ hostnameSync: HostnameSyncStatus }>('/api/setup/instance', { brandName, mailHostname, publicIp, webmailUrl });
-      if (result.hostnameSync.status === 'error') {
+      if (!['synced', 'demo'].includes(result.hostnameSync.status)) {
         setError(result.hostnameSync.detail);
         return;
       }

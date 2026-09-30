@@ -113,6 +113,10 @@ export function registerSetupRoutes(app: FastifyInstance): void {
 
   app.post('/api/setup/complete', async (req) => {
     requireAdmin(req);
+    const sync = await syncMailHostname(true);
+    if (sync.status !== 'synced' && sync.status !== 'demo') {
+      throw badRequest('No se puede terminar: configura el motor y sincroniza el nombre del servidor.', 'hostname_not_ready');
+    }
     markSetupComplete();
     audit(req, 'setup.completed', {});
     return { ok: true };

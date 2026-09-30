@@ -266,7 +266,7 @@ function HojaIdentidad({ initial, onSaved, hostnameFromEnv, hostnameSync }: {
           <Button type="button" variant="perfil" className="mt-2" busy={sync.isPending} onClick={() => sync.mutate()}>
             Sincronizar hostname
           </Button>
-          <p className="mt-2 text-sm text-tinta-3">Al cambiarlo, revisa los registros DNS, el PTR, los certificados y el destino de Roundcube. Mailway no modifica esos servicios externos.</p>
+          <p className="mt-2 text-sm text-tinta-3">Al cambiarlo, revisa los registros DNS, el PTR, los certificados y el destino de Roundcube. El stack actualizado sincroniza los certificados de Traefik; DNS y PTR se cambian en sus proveedores. Un hostname sincronizado no acredita el login IMAP de Roundcube.</p>
         </div>
         <Input
           label="IP pública"

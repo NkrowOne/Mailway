@@ -76,7 +76,7 @@ export default function DominioDetalle() {
       setJustVerified(true);
       const report = data.domain.dnsStatus;
       if (report.allRequiredOk) {
-        toast('ok', '¡Dominio verificado! Ya está en reparto.');
+        toast('ok', 'DNS verificado. Comprueba el acceso al buzón y el envío y recepción externos.');
       } else {
         toast(
           'ok',

@@ -16,8 +16,8 @@ test('un nombre Docker como MX nunca deja el dominio verificado', async (t) => {
     { type: 'MX', name: 'ligaescarlata.com', content: '10 93e0126401b4' },
   ]);
   assert.equal(report.allRequiredOk, false);
-  assert.equal(report.checks[0].status, 'mismatch');
-  assert.match(report.checks[0].help, /Stalwart/);
+  assert.equal(report.checks.find((c) => c.type === 'MX' && !c.id.startsWith('engine-missing'))?.status, 'mismatch');
+  assert.match(report.checks.find((c) => c.type === 'MX' && !c.id.startsWith('engine-missing'))!.help, /Stalwart/);
 });
 
 test('un MX público que coincide conserva su verificación', async (t) => {
@@ -27,7 +27,8 @@ test('un MX público que coincide conserva su verificación', async (t) => {
   const report = await checkDomainDns('ligaescarlata.com', [
     { type: 'MX', name: 'ligaescarlata.com', content: '10 mail.nkrow.com.' },
   ]);
-  assert.equal(report.allRequiredOk, true);
+  assert.equal(report.checks.find((c) => c.id.startsWith('mx:'))?.status, 'ok');
+  assert.equal(report.allRequiredOk, false, 'el motor debe generar también SPF, DKIM y DMARC');
 });
 
 test('la API reconoce el MX del motor y bloquea la exportación de su nombre interno', async (t) => {

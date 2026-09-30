@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   checkDnsbl,
   lookupA,
+  lookupAaaa,
   lookupCname,
   lookupMx,
   lookupPtr,
@@ -12,6 +13,7 @@ import {
 import type { EngineDnsRecord } from '../engine/types';
 import { requireAdmin } from './auth';
 import { getInstanceSettings } from './settings';
+import { validateMailHostname } from '../core/mail-hostname';
 
 /* ----------------------- Comprobación DNS de dominio ---------------------- */
 
@@ -122,7 +124,7 @@ function classifyRecord(record: EngineDnsRecord, domain: string): {
   };
 }
 
-async function checkRecord(record: EngineDnsRecord, domain: string): Promise<DnsCheck> {
+async function checkRecord(record: EngineDnsRecord, domain: string, records: EngineDnsRecord[]): Promise<DnsCheck> {
   const meta = classifyRecord(record, domain);
   const name = record.name.replace(/\.$/, '');
   const base: Omit<DnsCheck, 'found' | 'status'> = {
@@ -137,7 +139,9 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
 
   if (record.type === 'MX') {
     const expectedHost = normalizeValue(record.content.trim().split(/\s+/).at(-1) || '');
-    if (!expectedHost.includes('.')) {
+    let validHost = true;
+    try { validateMailHostname(expectedHost); } catch { validHost = false; }
+    if (!validHost) {
       return {
         ...base,
         found: null,
@@ -149,7 +153,11 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = found.map((r) => `${r.priority} ${r.exchange}`).join(', ');
-    const ok = found.some((r) => normalizeValue(r.exchange) === expectedHost);
+    const expected = records.filter((r) => r.type === 'MX' && normalizeValue(r.name) === normalizeValue(name))
+      .map((r) => normalizeValue(r.content)).sort();
+    const actual = found.map((r) => `${r.priority} ${normalizeValue(r.exchange)}`).sort();
+    const ok = JSON.stringify(actual) === JSON.stringify(expected);
+    if (!ok) return { ...base, found: foundText, status: 'mismatch', help: 'Los destinos y prioridades MX deben coincidir con los del motor. Revisa también los MX adicionales antes de cambiar dónde se entrega el correo.' };
     return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
   }
 
@@ -167,6 +175,9 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
     });
     if (relevant.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = relevant.join(' | ');
+    if ((isSpf || isDmarc) && relevant.length !== 1) {
+      return { ...base, found: foundText, status: 'mismatch', help: `Hay varios registros ${isSpf ? 'SPF' : 'DMARC'}: conserva una única política válida en este nombre.` };
+    }
     let ok: boolean;
     if (isDkim) {
       ok = relevant.some((txt) => dkimKey(txt) === dkimKey(record.content));
@@ -174,11 +185,15 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
       ok = relevant.some((txt) => normalizeValue(txt) === normalizeValue(record.content));
       // Un SPF/DMARC personalizado que mantenga lo esencial también vale.
       if (!ok && isSpf) {
-        const mechanism = record.content.match(/include:[^\s]+|mx/)?.[0];
-        ok = mechanism ? relevant.some((txt) => txt.includes(mechanism)) : false;
+        const mechanisms = normalizeValue(record.content).split(' ').filter((token) => token === 'mx' || token.startsWith('include:'));
+        const tokens = normalizeValue(relevant[0]!).split(' ');
+        const allIndex = tokens.findIndex((token) => /^[+?~-]?all$/.test(token));
+        ok = mechanisms.length > 0 && mechanisms.every((token) => tokens.includes(token))
+          && (allIndex === -1 || mechanisms.every((token) => tokens.indexOf(token) < allIndex));
       }
       if (!ok && isDmarc) {
-        ok = relevant.some((txt) => /p=(none|quarantine|reject)/.test(txt.toLowerCase()));
+        const policies = relevant[0]!.toLowerCase().split(';').map((tag) => tag.trim()).filter((tag) => tag.startsWith('p='));
+        ok = policies.length === 1 && /^p=(none|quarantine|reject)$/.test(policies[0]!);
       }
     } else {
       ok = relevant.some((txt) => normalizeValue(txt) === normalizeValue(record.content));
@@ -199,13 +214,12 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = found.map((r) => `${r.priority} ${r.weight} ${r.port} ${r.name}`).join(', ');
-    const expectedHost = normalizeValue(record.content.split(/\s+/).slice(-1)[0] || '');
-    const ok = found.some((r) => normalizeValue(r.name) === expectedHost);
+    const ok = found.some((r) => normalizeValue(`${r.priority} ${r.weight} ${r.port} ${r.name}`) === normalizeValue(record.content));
     return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
   }
 
   if (record.type === 'A' || record.type === 'AAAA') {
-    const found = record.type === 'A' ? await lookupA(name) : null;
+    const found = record.type === 'A' ? await lookupA(name) : await lookupAaaa(name);
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const ok = found.some((ip) => ip === record.content.trim());
@@ -228,7 +242,23 @@ export async function checkDomainDns(
   domain: string,
   engineRecords: EngineDnsRecord[],
 ): Promise<DomainDnsReport> {
-  const checks = await Promise.all(engineRecords.map((r) => checkRecord(r, domain)));
+  const checks = await Promise.all(engineRecords.map((r) => checkRecord(r, domain, engineRecords)));
+  // No declarar un dominio listo si Stalwart omitió una familia obligatoria,
+  // por ejemplo cuando la creación de las claves DKIM falló.
+  const root = normalizeValue(domain);
+  const requiredFamilies = [
+    { id: 'mx', name: domain, test: (r: EngineDnsRecord) => r.type === 'MX' && normalizeValue(r.name) === root },
+    { id: 'spf', name: domain, test: (r: EngineDnsRecord) => r.type === 'TXT' && normalizeValue(r.name) === root && /^v=spf1\s/i.test(r.content) },
+    { id: 'dkim', name: `_domainkey.${domain}`, test: (r: EngineDnsRecord) => r.type === 'TXT' && normalizeValue(r.name).endsWith(`._domainkey.${root}`) && /(?:^|;)\s*p=[^;\s]+/.test(r.content) },
+    { id: 'dmarc', name: `_dmarc.${domain}`, test: (r: EngineDnsRecord) => r.type === 'TXT' && normalizeValue(r.name) === `_dmarc.${root}` && /^v=DMARC1;/i.test(r.content) },
+  ];
+  for (const family of requiredFamilies) {
+    if (!engineRecords.some(family.test)) checks.push({
+      id: `engine-missing:${family.id}`, label: `${family.id.toUpperCase()} pendiente en Stalwart`, type: family.id === 'mx' ? 'MX' : 'TXT',
+      name: family.name, expected: 'Pendiente de generar en el motor', found: null, status: 'missing', required: true,
+      help: 'El motor no ha generado este registro obligatorio. Revisa el dominio y sus claves DKIM en Stalwart antes de importar el DNS.',
+    });
+  }
   // Orden: obligatorios primero, luego por etiqueta, estable para la UI.
   checks.sort((a, b) =>
     a.required === b.required ? a.label.localeCompare(b.label) : a.required ? -1 : 1,
