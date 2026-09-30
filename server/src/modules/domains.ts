@@ -204,16 +204,20 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   app.get('/api/domains/:id/conflicto', async (req) => {
     const { id } = req.params as { id: string };
     const { domain } = requireDomainAccess(req, id);
-    const [mx, txt, dmarc] = await Promise.all([
+    const [mx, txt, dmarc, records] = await Promise.all([
       lookupMx(domain.domain),
       lookupTxt(domain.domain),
       lookupTxt(`_dmarc.${domain.domain}`),
+      getEngine().getDnsRecords(domain.domain),
     ]);
     return evaluarConflicto({
       mx,
       txt,
       dmarc,
       mailHostname: getInstanceSettings().mailHostname,
+      mxEsperados: records
+        .filter((r) => r.type === 'MX' && r.name.replace(/\.$/, '').toLowerCase() === domain.domain.toLowerCase())
+        .map((r) => r.content.trim().split(/\s+/).at(-1) || ''),
     });
   });
 
@@ -232,6 +236,9 @@ export function registerDomainRoutes(app: FastifyInstance): void {
 
     const engine = getEngine();
     const records = await engine.getDnsRecords(domain.domain);
+    if (records.some((r) => r.type === 'MX' && !(r.content.trim().split(/\s+/).at(-1) || '').replace(/\.$/, '').includes('.'))) {
+      throw badRequest('El motor anuncia un MX sin dominio público completo. Corrige el nombre del servidor en Stalwart antes de exportar sus registros.');
+    }
     const zona = generarZona({ domain: domain.domain, records, nivel: elegido });
 
     audit(req, 'domain.zonefile_downloaded', { id, domain: domain.domain, nivel: elegido });

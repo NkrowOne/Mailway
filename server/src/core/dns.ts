@@ -56,6 +56,14 @@ export async function lookupA(name: string): Promise<string[] | null> {
   }
 }
 
+export async function lookupAaaa(name: string): Promise<string[] | null> {
+  try {
+    return await publicResolver().resolve6(name);
+  } catch (err) {
+    return isNoData(err) ? [] : null;
+  }
+}
+
 export async function lookupCname(name: string): Promise<string[] | null> {
   try {
     return await publicResolver().resolveCname(name);

@@ -48,7 +48,10 @@ Guía completa paso a paso: **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY
 Resumen: 1) desbloquea el puerto 25 y configura el PTR; 2) levanta
 `deploy/docker-compose.mail.yml` (motor + webmail); 3) despliega el panel con
 Skyway desde este repo (puerto 4100, volumen `/data`, dominio con TLS);
-4) sigue el asistente de primera puesta en marcha.
+4) sigue el asistente de primera puesta en marcha; 5) ejecuta
+`cd deploy && ./mailway.sh check` y `./mailway.sh login`. El stack sincroniza y
+renueva los certificados de Traefik en Stalwart automáticamente. El login IMAP
+y la entrega externa deben probarse en el servidor real; un DNS verde no los acredita.
 
 Sin Skyway: `deploy/docker-compose.standalone.yml` levanta panel + motor +
 webmail en un solo comando.

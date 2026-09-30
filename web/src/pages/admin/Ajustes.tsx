@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type InstanceSettings, type WhitelabelSetup } from '../../lib/api';
+import { api, ApiError, type InstanceSettings, type WhitelabelSetup, type HostnameSyncStatus } from '../../lib/api';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Hoja, MarcaFondo, Membrete, Midiendo, Muestra } from '../../ui/kit';
@@ -8,6 +8,8 @@ import { useToast } from '../../ui/toast';
 import { formatDate } from '../../lib/format';
 
 interface SettingsResponse {
+  hostnameFromEnv: boolean;
+  hostnameSync: HostnameSyncStatus;
   instance: InstanceSettings;
   engine: {
     kind: 'stalwart' | 'demo';
@@ -27,6 +29,7 @@ export default function Ajustes() {
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: () => api.get<SettingsResponse>('/api/settings'),
+    refetchInterval: 15_000,
   });
 
   if (settings.isPending) return <Midiendo label="Cargando los ajustes…" />;
@@ -50,6 +53,8 @@ export default function Ajustes() {
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <HojaIdentidad
           initial={settings.data.instance}
+          hostnameFromEnv={settings.data.hostnameFromEnv}
+          hostnameSync={settings.data.hostnameSync}
           onSaved={() => void queryClient.invalidateQueries()}
         />
         <HojaMotor data={settings.data} onSaved={() => void queryClient.invalidateQueries()} toast={toast} />
@@ -203,18 +208,31 @@ services:
   );
 }
 
-function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSaved: () => void }) {
+function HojaIdentidad({ initial, onSaved, hostnameFromEnv, hostnameSync }: {
+  initial: InstanceSettings; onSaved: () => void; hostnameFromEnv: boolean; hostnameSync: HostnameSyncStatus;
+}) {
   const toast = useToast();
   const [form, setForm] = useState(initial);
-  useEffect(() => setForm(initial), [initial]);
+  const initialJson = JSON.stringify(initial);
+  useEffect(() => setForm(JSON.parse(initialJson)), [initialJson]);
 
   const save = useMutation({
-    mutationFn: () => api.put('/api/settings/instance', form),
-    onSuccess: () => {
-      toast('ok', 'Ajustes guardados.');
+    mutationFn: () => api.put<{ hostnameSync: HostnameSyncStatus }>('/api/settings/instance', form),
+    onSuccess: (data) => {
+      toast(data.hostnameSync.status === 'error' ? 'error' : 'ok',
+        data.hostnameSync.status === 'error' ? 'Ajustes guardados; falta sincronizar el hostname con Stalwart.' : 'Ajustes guardados.');
       onSaved();
     },
     onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudo guardar.'),
+  });
+
+  const sync = useMutation({
+    mutationFn: () => api.post<{ hostnameSync: HostnameSyncStatus }>('/api/settings/hostname/sync'),
+    onSuccess: (data) => {
+      toast(data.hostnameSync.status === 'error' ? 'error' : 'ok', data.hostnameSync.detail);
+      onSaved();
+    },
+    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudo sincronizar el hostname.'),
   });
 
   function submit(e: FormEvent) {
@@ -234,10 +252,22 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           label="Servidor de correo (FQDN)"
           mono
           value={form.mailHostname}
+          readOnly={hostnameFromEnv}
           onChange={(e) => setForm({ ...form, mailHostname: e.target.value })}
           placeholder="mail.tuempresa.com"
-          help="Se usa en los datos de conexión de los buzones y en los checks de entregabilidad."
+          help={hostnameFromEnv
+            ? 'Gestionado por MAILWAY_MAIL_HOSTNAME. Cámbialo en las variables de Skyway y redespliega Mailway; se aplicará a Stalwart.'
+            : 'Se aplica a Stalwart y a los datos de conexión de los buzones. También puedes definirlo con MAILWAY_MAIL_HOSTNAME en Skyway.'}
         />
+        <div className="border-t border-regla pt-3">
+          <p role="status" className={`text-base ${hostnameSync.status === 'error' ? 'text-fuera' : 'text-tinta-2'}`}>
+            {hostnameSync.detail}
+          </p>
+          <Button type="button" variant="perfil" className="mt-2" busy={sync.isPending} onClick={() => sync.mutate()}>
+            Sincronizar hostname
+          </Button>
+          <p className="mt-2 text-sm text-tinta-3">Al cambiarlo, revisa los registros DNS, el PTR, los certificados y el destino de Roundcube. El stack actualizado sincroniza los certificados de Traefik; DNS y PTR se cambian en sus proveedores. Un hostname sincronizado no acredita el login IMAP de Roundcube.</p>
+        </div>
         <Input
           label="IP pública"
           mono
@@ -298,9 +328,10 @@ function HojaMotor({
   });
 
   const save = useMutation({
-    mutationFn: () => api.put('/api/settings/engine', payload()),
-    onSuccess: () => {
-      toast('ok', 'Motor guardado y verificado.');
+    mutationFn: () => api.put<{ hostnameSync: HostnameSyncStatus }>('/api/settings/engine', payload()),
+    onSuccess: (result) => {
+      toast(result.hostnameSync.status === 'error' ? 'error' : 'ok',
+        result.hostnameSync.status === 'error' ? 'Motor conectado; el hostname sigue pendiente de sincronizar.' : 'Motor guardado y verificado.');
       setAdminPassword('');
       onSaved();
     },

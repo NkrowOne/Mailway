@@ -11,6 +11,8 @@ export interface MailEngine {
   /** Comprueba conectividad y credenciales contra el motor. */
   ping(): Promise<EngineHealth>;
 
+  syncHostname(hostname: string): Promise<{ changed: boolean; previousHostname: string }>;
+
   createDomain(domain: string): Promise<void>;
   deleteDomain(domain: string): Promise<void>;
 

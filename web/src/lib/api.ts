@@ -195,6 +195,7 @@ export interface ServerHealth {
 }
 
 export interface SetupStatus {
+  hostnameFromEnv: boolean;
   setupComplete: boolean;
   hasAdmin: boolean;
   engineConfigured: boolean;
@@ -215,6 +216,13 @@ export interface InstanceSettings {
   publicIp: string;
   webmailUrl: string;
   systemFrom: string;
+}
+
+export interface HostnameSyncStatus {
+  status: 'pending' | 'synced' | 'error' | 'unconfigured' | 'demo';
+  hostname: string;
+  detail: string;
+  checkedAt: number | null;
 }
 
 export interface AdminDashboard {

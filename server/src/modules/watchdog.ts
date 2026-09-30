@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { syncMailHostname } from './hostname-sync';
 import { db, now } from '../core/db';
 import { checkDnsbl } from '../core/dns';
 import { engineConfigured, getEngine } from '../engine';
@@ -102,8 +103,8 @@ async function checkWebmail(): Promise<void> {
       redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
-    // Cualquier respuesta HTTP significa que el contenedor está sirviendo.
-    ok = res.status < 500;
+    // Una página de error no acredita que el webmail esté disponible.
+    ok = res.status >= 200 && res.status < 400;
   } catch {
     ok = false;
   }
@@ -252,6 +253,7 @@ export async function runWatchdogOnce(): Promise<void> {
   if (running) return; // una vuelta lenta no debe solaparse con la siguiente
   running = true;
   try {
+    await syncMailHostname();
     // Las tres rápidas son independientes: en serie sumaban sus tiempos de
     // espera y, con el webmail caído, la vuelta tardaba 10 s de más.
     await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);

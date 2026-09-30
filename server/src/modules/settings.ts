@@ -2,6 +2,8 @@ import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret } from '../core/crypto';
 import { config } from '../config';
 import type { EngineSettings } from '../engine/types';
+import { normalizeMailHostname, validateMailHostname } from '../core/mail-hostname';
+import { badRequest } from '../core/errors';
 
 const getStmt = db.prepare('SELECT value FROM settings WHERE key = ?');
 const setStmt = db.prepare(
@@ -51,7 +53,7 @@ export function getInstanceSettings(): InstanceSettings {
   const stored = getJsonSetting<Partial<InstanceSettings>>('instance') || {};
   return {
     brandName: stored.brandName || 'Mailway',
-    mailHostname: stored.mailHostname || config.mailHostnameDefault,
+    mailHostname: normalizeMailHostname(config.mailHostnameDefault || stored.mailHostname || ''),
     publicIp: stored.publicIp || config.publicIpDefault,
     webmailUrl: stored.webmailUrl || config.webmailUrlDefault,
     systemFrom: stored.systemFrom || '',
@@ -59,6 +61,14 @@ export function getInstanceSettings(): InstanceSettings {
 }
 
 export function setInstanceSettings(patch: Partial<InstanceSettings>): InstanceSettings {
+  if (patch.mailHostname !== undefined) {
+    const hostname = patch.mailHostname ? validateMailHostname(patch.mailHostname) : '';
+    const fromEnv = normalizeMailHostname(config.mailHostnameDefault);
+    if (fromEnv && hostname !== fromEnv) {
+      throw badRequest('El hostname está gestionado por MAILWAY_MAIL_HOSTNAME. Cámbialo en Skyway y redespliega Mailway.');
+    }
+    patch = { ...patch, mailHostname: hostname };
+  }
   const merged = { ...getInstanceSettings(), ...patch };
   setJsonSetting('instance', merged);
   return merged;

@@ -169,23 +169,28 @@ export interface ConflictoCorreo {
   /** Política DMARC vigente: con p=reject, un SPF roto rebota el correo. */
   dmarcPolitica: string | null;
   aviso: string | null;
+  avisoConfiguracion: string | null;
 }
 
 /**
- * Un dominio solo puede tener un proveedor de correo recibiendo. Importar
- * estos registros sobre un dominio que ya recibe en otro sitio no da error:
- * simplemente rompe el correo, y con DMARC en `p=reject` lo rebota.
- * Por eso se comprueba ANTES de que el usuario descargue nada.
+ * Contrasta los MX publicados con los que anuncia el motor y la identidad
+ * configurada. Una diferencia de nombre no demuestra que sea otro proveedor.
  */
 export function evaluarConflicto(input: {
   mx: { priority: number; exchange: string }[] | null;
   txt: string[] | null;
   dmarc: string[] | null;
   mailHostname: string;
+  mxEsperados?: string[];
 }): ConflictoCorreo {
-  const mxActuales = (input.mx ?? []).map((m) => m.exchange.replace(/\.$/, ''));
-  const propio = input.mailHostname.replace(/\.$/, '').toLowerCase();
-  const ajenos = mxActuales.filter((m) => m.toLowerCase() !== propio);
+  const normalizar = (host: string) => host.trim().replace(/\.$/, '').toLowerCase();
+  const mxActuales = (input.mx ?? []).map((m) => normalizar(m.exchange));
+  const propios = new Set([input.mailHostname, ...(input.mxEsperados ?? [])].map(normalizar).filter(Boolean));
+  const ajenos = mxActuales.filter((m) => !propios.has(m));
+  const internos = (input.mxEsperados ?? []).map(normalizar).filter((host) => !host.includes('.'));
+  const avisoConfiguracion = internos.length
+    ? `Stalwart anuncia un destino MX sin dominio público completo (${internos.join(', ') || '.'}). Configura el nombre público del servidor en Stalwart, vuelve a obtener los registros y corrige el DNS. Que el registro coincida no demuestra que el correo pueda llegar desde Internet.`
+    : null;
 
   const spfActual = (input.txt ?? []).find((t) => t.toLowerCase().startsWith('v=spf1')) ?? null;
   const dmarcRaw = (input.dmarc ?? []).find((t) => t.toLowerCase().startsWith('v=dmarc1')) ?? null;
@@ -196,8 +201,8 @@ export function evaluarConflicto(input: {
 
   if (hayOtroProveedor) {
     const partes = [
-      `Este dominio ya recibe correo en ${ajenos.join(', ')}.`,
-      'Un dominio solo puede tener un proveedor recibiendo: si importas estos registros, el correo que llegue se repartirá entre los dos servidores y la mitad se perderá.',
+      `Hay destinos MX distintos de los configurados en Mailway: ${ajenos.join(', ')}.`,
+      'Pueden ser de otro proveedor o nombres alternativos de tu propio servicio. Comprueba a qué servidores pertenecen antes de sustituirlos o añadir registros: cambiar los MX puede cambiar dónde se entrega el correo.',
     ];
     if (spfActual) {
       partes.push(
@@ -206,12 +211,12 @@ export function evaluarConflicto(input: {
     }
     if (dmarcPolitica === 'reject') {
       partes.push(
-        'Y su DMARC está en p=reject, así que un SPF roto no manda a spam: hace que rebote el correo.',
+        'DMARC está en p=reject: si no pasa ni SPF alineado ni DKIM alineado, el receptor puede rechazar el mensaje.',
       );
     }
-    partes.push('Si de verdad quieres mover este dominio a Mailway, es una migración planificada, no una importación.');
+    partes.push('Si pertenecen a otro proveedor, planifica la migración antes de cambiar el DNS.');
     aviso = partes.join(' ');
   }
 
-  return { hayOtroProveedor, mxActuales, spfActual, dmarcPolitica, aviso };
+  return { hayOtroProveedor, mxActuales, spfActual, dmarcPolitica, aviso, avisoConfiguracion };
 }

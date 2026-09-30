@@ -7,6 +7,7 @@ import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
 import { countUsers, createInitialAdmin, createSession, requireAdmin } from './auth';
 import { ensureDefaultPlans } from './clients';
+import { getHostnameSyncStatus, syncMailHostname } from './hostname-sync';
 import {
   getEngineSettings,
   getInstanceSettings,
@@ -66,6 +67,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
         smtpPort: config.engineDefaults.smtpPort,
       },
       instance: getInstanceSettings(),
+      hostnameFromEnv: Boolean(config.mailHostnameDefault),
     };
   });
 
@@ -97,7 +99,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     }
     setEngineSettings(body);
     audit(req, 'setup.engine_configured', { kind: body.kind, url: body.url });
-    return { ok: true };
+    return { ok: true, hostnameSync: await syncMailHostname(true) };
   });
 
   /** Paso 3: identidad del servidor (hostname, IP, webmail, marca). */
@@ -106,11 +108,15 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     const body = instanceSchema.parse(req.body);
     const instance = setInstanceSettings(body);
     audit(req, 'setup.instance_configured', {});
-    return { instance };
+    return { instance, hostnameSync: await syncMailHostname(true) };
   });
 
   app.post('/api/setup/complete', async (req) => {
     requireAdmin(req);
+    const sync = await syncMailHostname(true);
+    if (sync.status !== 'synced' && sync.status !== 'demo') {
+      throw badRequest('No se puede terminar: configura el motor y sincroniza el nombre del servidor.', 'hostname_not_ready');
+    }
     markSetupComplete();
     audit(req, 'setup.completed', {});
     return { ok: true };
@@ -137,6 +143,8 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     const engine = getEngineSettings();
     return {
       instance: getInstanceSettings(),
+      hostnameFromEnv: Boolean(config.mailHostnameDefault),
+      hostnameSync: getHostnameSyncStatus(),
       engine: engine
         ? {
             kind: engine.kind,
@@ -157,7 +165,14 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     const body = instanceSchema.parse(req.body);
     const instance = setInstanceSettings(body);
     audit(req, 'settings.instance_updated', {});
-    return { instance };
+    return { instance, hostnameSync: await syncMailHostname(true) };
+  });
+
+  app.post('/api/settings/hostname/sync', async (req) => {
+    requireAdmin(req);
+    const hostnameSync = await syncMailHostname(true);
+    audit(req, 'settings.hostname_sync', { status: hostnameSync.status, hostname: hostnameSync.hostname });
+    return { hostnameSync };
   });
 
   app.put('/api/settings/engine', async (req) => {
@@ -179,7 +194,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     }
     setEngineSettings(body);
     audit(req, 'settings.engine_updated', { kind: body.kind });
-    return { ok: true };
+    return { ok: true, hostnameSync: await syncMailHostname(true) };
   });
 
   app.post('/api/settings/engine/test', async (req) => {
