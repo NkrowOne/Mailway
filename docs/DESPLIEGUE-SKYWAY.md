@@ -218,7 +218,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `SKYWAY_URL` | API de Skyway (por defecto `http://127.0.0.1:4000`; si ahí no responde, se prueba la IP del contenedor `skyway`). |
 | `SKYWAY_DIR` | Carpeta de Skyway (se detecta a partir de su Traefik). |
 | `MAILWAY_PROYECTO` | Proyecto de Skyway para el panel nuevo (por defecto `mailway`). Si Skyway ya despliega un panel, se actualiza ese (sección 8.2). |
-| `MAILWAY_PANEL_SERVICIO` | Identificador del servicio de Skyway del panel existente. Solo hace falta si Skyway despliega más de uno y el instalador pregunta cuál. |
+| `MAILWAY_PANEL_SERVICIO` | Identificador del servicio de Skyway del panel existente: lo actualiza sin preguntar. `ninguno`: no adopta ningún panel. Hace falta sin terminal, o si Skyway despliega más de uno (sección 8.2). |
 | `MAILWAY_REPO`, `MAILWAY_RAMA` | Repositorio y rama del panel (por defecto `https://github.com/NkrowOne/Mailway`, `main`). |
 | `MAILWAY_TRAEFIK_PROVEEDOR` | `1` ajusta el Traefik de Skyway sin preguntar (paso 12); `0` no lo toca. |
 | `STALWART_ADMIN_PASSWORD` | Contraseña del motor existente, si `deploy/.env` se perdió. |
@@ -764,19 +764,30 @@ datos: el correo sigue en el mismo volumen.
 
 Si el panel se creó a mano en Skyway con la guía anterior (con cualquier
 nombre de proyecto y de servicio), el instalador lo encuentra (por su
-contenedor o, si está parado, por el repositorio que despliega) y **actualiza
-ese panel**, sin crear otro:
+contenedor o, si está parado, por el repositorio que despliega), te pregunta
+si es el de esta instalación y, si respondes que sí, **actualiza ese panel**
+sin crear otro:
 
+- No pregunta por el panel que ya nombra `deploy/.env` (su contenedor o su
+  dominio). Ignora los paneles de los proyectos de clientes: en un Skyway
+  con clientes, otro puede desplegar también un Mailway.
 - Conserva su clave maestra. En esas instalaciones vive en el volumen `/data`
-  del panel y no en sus variables, así que el instalador no le añade
-  `MAILWAY_SECRET` (con otra clave, el panel perdería sus secretos cifrados,
-  los tokens de gestión y las claves de API dejarían de valer y cambiaría el
-  TXT `_mailway` de los dominios ya verificados).
-- Propone el dominio, los nombres, la IP y la contraseña del motor que ya usa
-  el panel cuando `deploy/.env` no los tiene, y conserva las variables y el
-  dominio que se añadieron a mano.
-- Si Skyway despliega varios paneles, se detiene sin tocar nada y pide cuál
-  con `MAILWAY_PANEL_SERVICIO=<id del servicio>`.
+  del panel y no en sus variables: el instalador la lee de ahí para
+  `deploy/.env` y no la añade a sus variables. Con otra clave, el panel
+  perdería sus secretos cifrados, los tokens de gestión y las claves de API
+  dejarían de valer y cambiaría el TXT `_mailway` de los dominios ya
+  verificados. Si el panel está parado y no se puede leer, `deploy/.env` no
+  guarda ninguna.
+- Conserva también su token de Traefik, que esos paneles guardan en su base
+  de datos.
+- Propone el dominio, los nombres y la IP que ya usa el panel cuando
+  `deploy/.env` no los tiene. Usa la contraseña del motor del panel solo si
+  el motor ya tiene datos. Conserva las variables y el dominio que se
+  añadieron a mano.
+- Sin terminal (`--actualizar` o ejecución desatendida), no pregunta: se
+  detiene sin tocar nada y pide `MAILWAY_PANEL_SERVICIO=<id del servicio>`
+  para actualizarlo o `MAILWAY_PANEL_SERVICIO=ninguno` para no tocarlo. Lo
+  mismo si Skyway despliega varios paneles.
 
 **A mano:**
 
@@ -1072,6 +1083,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no consulta el panel, o el puerto 80 está cerrado | Revisa la sección 4. Let's Encrypt valida por el puerto 80: debe estar abierto. |
 | Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
 | El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | `sudo bash deploy/instalar.sh --emparejar` (sección 2.6) o sección 4.1. |
+| El instalador se detiene: «deploy/.env no menciona ese panel» | Se ejecutó sin terminal (`--actualizar` o desatendido) y encontró un panel que no conoce | Repite desde una terminal y confirma, o indica `MAILWAY_PANEL_SERVICIO=<id>` (actualizarlo) o `MAILWAY_PANEL_SERVICIO=ninguno` (no tocarlo). |
 | El instalador se detiene porque Skyway despliega varios paneles de Mailway | Hay más de un servicio con el panel (p. ej. una copia de prueba) | Repite con `MAILWAY_PANEL_SERVICIO=<id>` y el servicio que corresponde (el instalador los lista). |
 | El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
 | Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |

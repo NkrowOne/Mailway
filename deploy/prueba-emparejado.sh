@@ -221,11 +221,10 @@ comprobar "solo consulta la URL indicada" no_contiene "$REGISTRO" "172.18.0.5"
 # Instalaciones anteriores a la 1.0: el panel se creó a mano en Skyway (proyecto
 # «Correo», servicio «mailway»), con su clave maestra en el volumen /data y sin
 # deploy/.env completo. El instalador debe actualizar ese panel sin duplicarlo
-# ni cambiar su clave.
+# ni cambiar su clave, y no tocar nunca el Mailway que despliegue un cliente.
 
-FAKE_PANEL_ENV=$'NODE_ENV=production\nMAILWAY_DATA_DIR=/data\nPORT=4100\nSTALWART_URL=http://mailway-mail:8080\nSTALWART_ADMIN_PASSWORD=clave-motor-antigua\nMAILWAY_MAIL_HOSTNAME=mail.ejemplo.test\nMAILWAY_WEBMAIL_URL=https://webmail.ejemplo.test\nMAILWAY_PUBLIC_IP=203.0.113.7'
-FAKE_CONTENEDORES=$'skyway-web-app\nskyway-correo-mailway'
-FAKE_PARADOS=""
+FAKE_PANEL_ENV_BASE=$'NODE_ENV=production\nMAILWAY_DATA_DIR=/data\nPORT=4100\nSTALWART_URL=http://mailway-mail:8080\nSTALWART_ADMIN_PASSWORD=clave-motor-antigua\nMAILWAY_MAIL_HOSTNAME=mail.ejemplo.test\nMAILWAY_WEBMAIL_URL=https://webmail.ejemplo.test\nMAILWAY_PUBLIC_IP=203.0.113.7'
+FAKE_CLAVE_VOLUMEN="clave-del-volumen-0123456789abcdef"
 docker() {
   printf 'docker %s\n' "$*" >>"$REGISTRO"
   local ultimo=${*: -1}
@@ -237,7 +236,12 @@ docker() {
         skyway-web-app) echo svc_web ;;
         skyway-correo-mailway | skyway-correo-mailway-2) echo svc_panel ;;
         skyway-otro-mailway) echo svc_otro ;;
+        skyway-cliente-mailway) echo svc_cliente ;;
+        *) return 1 ;;
       esac
+      ;;
+    "inspect --type container -f {{.State.Running}} "*)
+      case " $FAKE_CONTENEDORES " in *[[:space:]]"$ultimo"[[:space:]]*) echo true ;; *) echo false ;; esac
       ;;
     "inspect --type container -f {{range .Config.Env}}{{println .}}{{end}} "*)
       case "$ultimo" in
@@ -250,7 +254,8 @@ docker() {
       printf '%s\n' 'skyway.service=svc_panel' \
         'traefik.http.routers.skyway-correo-mailway.rule=Host(`Correo.Ejemplo.test`) || Host(`otro.ejemplo.test`)'
       ;;
-    "volume inspect "*) return 1 ;;
+    "exec skyway-correo-mailway cat /data/.secret") printf '%s\n' "$FAKE_CLAVE_VOLUMEN" ;;
+    "volume inspect mailway-mail-data") [ "$FAKE_VOLUMEN_MOTOR" = 1 ] ;;
     *)
       echo "docker no simulado: $*" >>"$REGISTRO"
       return 1
@@ -258,20 +263,20 @@ docker() {
   esac
 }
 
-# API de Skyway con el panel en el proyecto «Correo». FAKE_ENV_PANEL son sus
-# variables guardadas; FAKE_REPOS, los servicios git del segundo proyecto.
-FAKE_ENV_PANEL='{"vars":{"STALWART_URL":"http://mailway-mail:8080","MAILWAY_SMTP_ALLOW_SELF_SIGNED":"1","MI_VARIABLE":"se-conserva"}}'
-FAKE_REPOS='[{"id":"svc_panel","slug":"mailway","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway.git"}}]'
+# API de Skyway: el panel en el proyecto propio «Correo», una web en «Web» y
+# un Mailway de un cliente en «Cliente» (workspace ws_cliente).
 sky_api() {
   printf 'sky_api %s %s\n' "$1" "$SKYWAY_URL$2" >>"$REGISTRO"
   if [ -n "${3:-}" ]; then printf 'CUERPO %s %s %s\n' "$1" "$2" "$3" >>"$REGISTRO"; fi
   RESP_CODE=200
   case "$1 $2" in
     "GET /api/health") RESP_BODY='{"ok":true,"version":"0.34.0"}' ;;
-    "GET /api/projects") RESP_BODY='{"projects":[{"id":"prj_web","slug":"web","name":"Web"},{"id":"prj_correo","slug":"correo","name":"Correo"}]}' ;;
+    "GET /api/projects") RESP_BODY='{"projects":[{"id":"prj_web","slug":"web","name":"Web","workspace_id":null},{"id":"prj_correo","slug":"correo","name":"Correo","workspace_id":null},{"id":"prj_cliente","slug":"cliente","name":"Cliente","workspace_id":"ws_cliente"}]}' ;;
     "GET /api/projects/prj_web") RESP_BODY='{"project":{"id":"prj_web","slug":"web"},"services":[{"id":"svc_web","slug":"app","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/codanuance"}}]}' ;;
     "GET /api/projects/prj_correo") RESP_BODY="{\"project\":{\"id\":\"prj_correo\",\"slug\":\"correo\"},\"services\":$FAKE_REPOS}" ;;
-    "GET /api/services/svc_panel") RESP_BODY='{"service":{"id":"svc_panel","slug":"mailway","type":"git","config":{"volumes":[{"name":"skyway-correo-mailway-data","containerPath":"/data"}],"domains":["correo.ejemplo.test"]}},"project":{"id":"prj_correo","slug":"correo"}}' ;;
+    "GET /api/projects/prj_cliente") RESP_BODY='{"project":{"id":"prj_cliente","slug":"cliente","workspace_id":"ws_cliente"},"services":[{"id":"svc_cliente","slug":"mailway","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway"}}]}' ;;
+    "GET /api/services/svc_panel") RESP_BODY='{"service":{"id":"svc_panel","slug":"mailway","name":"mailway","type":"git","config":{"volumes":[{"name":"skyway-correo-mailway-data","containerPath":"/data"}],"domains":["correo.ejemplo.test"]}},"project":{"id":"prj_correo","slug":"correo","name":"Correo","workspace_id":null}}' ;;
+    "GET /api/services/svc_cliente") RESP_BODY='{"service":{"id":"svc_cliente","slug":"mailway","name":"mailway","type":"git","config":{}},"project":{"id":"prj_cliente","slug":"cliente","name":"Cliente","workspace_id":"ws_cliente"}}' ;;
     "GET /api/services/svc_panel/env") RESP_BODY=$FAKE_ENV_PANEL ;;
     "PUT /api/services/svc_panel/env" | "PATCH /api/services/svc_panel") RESP_BODY='{}' ;;
     "GET /api/domains/config") RESP_BODY='{"tls":true}' ;;
@@ -283,7 +288,8 @@ sky_api() {
 sleep() { :; }
 crear_token_temporal_skyway() { SKYWAY_TOKEN=sky_temporal12345; }
 
-# Estado de cada escenario: sin panel detectado y sin deploy/.env.
+# Estado de cada escenario: sin panel detectado, sin deploy/.env, el panel de
+# «Correo» en marcha con la clave en su volumen y el motor sin datos.
 reiniciar_panel() {
   : >"$REGISTRO"
   PANEL_EXISTENTE_SERVICIO=""
@@ -291,39 +297,153 @@ reiniciar_panel() {
   PANEL_EXISTENTE_HOST=""
   PANEL_EXISTENTE_ENV=()
   PANEL_ADOPTADO=""
+  PANEL_SIN_ADOPCION=0
   PANEL_CONTENEDOR=""
+  TRAEFIK_TOKEN_PROPIO=1
   CON_SKYWAY=1
+  INTERACTIVO=0
   ENV_FILE="$TMP/env-inexistente"
+  rm -f "$ENV_FILE" "$ENV_FILE.anterior"
+  ENV_COPIADO=0
   unset MAILWAY_PANEL_SERVICIO SKYWAY_TOKEN SKYWAY_URL STALWART_ADMIN_PASSWORD MAILWAY_IP
   FAKE_SANA=""
+  FAKE_CONTENEDORES=$'skyway-web-app\nskyway-correo-mailway'
+  FAKE_PARADOS=""
+  FAKE_PANEL_ENV=$FAKE_PANEL_ENV_BASE
+  FAKE_VOLUMEN_MOTOR=0
+  FAKE_ENV_PANEL='{"vars":{"STALWART_URL":"http://mailway-mail:8080","MAILWAY_SMTP_ALLOW_SELF_SIGNED":"1","MI_VARIABLE":"se-conserva"}}'
+  FAKE_REPOS='[{"id":"svc_panel","slug":"mailway","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway.git"}}]'
 }
 # Lo que ya han fijado los pasos anteriores de la instalación.
 datos_instalacion() {
   MAILWAY_SECRET=0123456789abcdef0123456789abcdef
   STALWART_ADMIN_PASSWORD=clave-motor-antigua
-  MAILWAY_SETUP_TOKEN=s MAILWAY_TRAEFIK_TOKEN=t MAILWAY_WEBMAIL_TOKEN=w
+  MAILWAY_SETUP_TOKEN=s MAILWAY_TRAEFIK_TOKEN=t MAILWAY_WEBMAIL_TOKEN=w ROUNDCUBE_DES_KEY=d
   MAIL_HOSTNAME=mail.ejemplo.test WEBMAIL_HOSTNAME=webmail.ejemplo.test PANEL_HOSTNAME=correo.ejemplo.test
-  IP_PUBLICA=203.0.113.7 INTERNAL_SUBNET=10.203.53.0/24 CERT_CONFIGURADO=1
+  IP_PUBLICA=203.0.113.7 INTERNAL_SUBNET=10.203.53.0/24 MAIL_INTERNAL_IP=10.203.53.10 CERT_CONFIGURADO=1
+  MARCA=Correo LE_EMAIL=admin@ejemplo.test PANEL_INTERNAL_URL=http://skyway-correo-mailway:4100
+  TRAEFIK_ACME_VOLUME="" MAILWAY_MAIL_VOLUME="" MAILWAY_WEBMAIL_DB_VOLUME="" MAILWAY_PANEL_VOLUME=""
   FAKE_SANA=http://127.0.0.1:4000
 }
 # Cuerpo del PUT de las variables del panel.
 cuerpo_put() { grep '^CUERPO PUT /api/services/svc_panel/env ' "$REGISTRO" | sed 's/^CUERPO PUT [^ ]* //'; }
+# Detecta como en una terminal, respondiendo $1 a la confirmación.
+# (read -p solo muestra la pregunta con una terminal: las comprobaciones miran
+# la línea que la presenta.)
+detectar_respondiendo() {
+  INTERACTIVO=1
+  detectar_panel_existente <<<"$1"
+  INTERACTIVO=0
+}
 
-echo "# Se reconoce el panel entre los contenedores de Skyway"
+echo "# Se reconoce el panel entre los contenedores de Skyway y se pide confirmación"
 reiniciar_panel
-detectar_panel_existente >"$SALIDA" 2>&1
+detectar_respondiendo s >"$SALIDA" 2>&1
+comprobar "lo presenta antes de preguntar" contiene "$SALIDA" "Skyway despliega un panel de Mailway: contenedor skyway-correo-mailway, https://correo.ejemplo.test."
 comprobar "elige el servicio del panel" igual "$PANEL_EXISTENTE_SERVICIO" svc_panel
 comprobar "y su contenedor" igual "$PANEL_EXISTENTE_CONTENEDOR" skyway-correo-mailway
 comprobar "toma el dominio de la regla de Traefik" igual "$PANEL_EXISTENTE_HOST" correo.ejemplo.test
 comprobar "lee la contraseña del motor de su entorno" igual "$(valor_panel STALWART_ADMIN_PASSWORD)" clave-motor-antigua
 comprobar "no confunde la web del otro proyecto" no_contiene "$SALIDA" skyway-web-app
-comprobar "explica que su clave maestra no cambia" contiene "$SALIDA" "Su clave maestra está en su volumen /data y no se cambia"
+comprobar "comprueba de quién es el panel antes de usar nada suyo" contiene "$REGISTRO" "sky_api GET http://127.0.0.1:4000/api/services/svc_panel"
 
-echo "# Sin deploy/.env: los secretos y los nombres salen del panel"
-detectar_panel_existente >/dev/null 2>&1
+echo "# Quien instala dice que no es el suyo: no se usa nada de él"
+reiniciar_panel
+detectar_respondiendo n >"$SALIDA" 2>&1
+comprobar "no lo adopta" igual "$PANEL_EXISTENTE_SERVICIO$PANEL_EXISTENTE_CONTENEDOR" ""
+comprobar "olvida su entorno" igual "$(valor_panel STALWART_ADMIN_PASSWORD)" ""
+comprobar "lo recuerda para no buscarlo por el repositorio" igual "$PANEL_SIN_ADOPCION" 1
+localizar_panel_en_skyway https://github.com/NkrowOne/Mailway >/dev/null 2>&1
+comprobar "y no lo busca por el repositorio" igual "$PANEL_ADOPTADO" ""
+
+echo "# Sin terminal y sin que deploy/.env lo nombre: se detiene sin tocar nada"
+reiniciar_panel
+(detectar_panel_existente) >"$SALIDA" 2>&1
+codigo=$?
+comprobar "termina con código 1" igual "$codigo" 1
+comprobar "explica cómo indicarlo" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO=svc_panel"
+comprobar "y cómo no tocarlo" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO=ninguno"
+
+echo "# El panel que nombra deploy/.env se adopta sin preguntar"
+reiniciar_panel
+printf 'MAILWAY_PANEL_INTERNAL_URL=http://skyway-correo-mailway:4100\n' >"$ENV_FILE"
+detectar_panel_existente >"$SALIDA" 2>&1
+comprobar "lo adopta" igual "$PANEL_EXISTENTE_SERVICIO" svc_panel
+comprobar "sin preguntar" no_contiene "$SALIDA" "Skyway despliega un panel de Mailway: contenedor"
+reiniciar_panel
+printf 'PANEL_HOSTNAME=correo.ejemplo.test\n' >"$ENV_FILE"
+detectar_panel_existente >"$SALIDA" 2>&1
+comprobar "también por su dominio" igual "$PANEL_EXISTENTE_SERVICIO" svc_panel
+
+echo "# El Mailway de un cliente no se toca"
+reiniciar_panel
+FAKE_CONTENEDORES="skyway-cliente-mailway"
+(detectar_respondiendo s && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO" && echo "CLAVE=$(valor_panel STALWART_ADMIN_PASSWORD)") >"$SALIDA" 2>&1
+comprobar "lo ignora" contiene "$SALIDA" "Se ignora el panel de Mailway del contenedor skyway-cliente-mailway"
+comprobar "no lo adopta" contiene "$SALIDA" "SERVICIO="$'\n'
+comprobar "ni pregunta" no_contiene "$SALIDA" "Skyway despliega un panel de Mailway: contenedor"
+comprobar "ni usa su entorno" contiene "$SALIDA" "CLAVE="$'\n'
+reiniciar_panel
+SKYWAY_URL=http://127.0.0.1:4000
+SKYWAY_TOKEN=sky_indicado12345
+PANEL_EXISTENTE_SERVICIO=svc_cliente
+(localizar_panel_en_skyway https://github.com/NkrowOne/Mailway) >"$SALIDA" 2>&1
+codigo=$?
+comprobar "la búsqueda por la API también lo rechaza" igual "$codigo" 1
+
+echo "# MAILWAY_PANEL_SERVICIO=ninguno: no se adopta nada"
+reiniciar_panel
+MAILWAY_PANEL_SERVICIO=ninguno
+detectar_panel_existente >"$SALIDA" 2>&1
+comprobar "no adopta" igual "$PANEL_EXISTENTE_SERVICIO" ""
+comprobar "ni busca contenedores" no_contiene "$REGISTRO" "docker ps"
+unset MAILWAY_PANEL_SERVICIO
+
+echo "# Clave maestra: la del volumen del panel, que es la que usa"
+reiniciar_panel
+# Un deploy/.env de una ejecución anterior con un token que el panel no usa.
+printf 'MAILWAY_TRAEFIK_TOKEN=token-que-el-panel-no-usa\n' >"$ENV_FILE"
+detectar_respondiendo s >/dev/null 2>&1
 preparar_secretos >"$SALIDA" 2>&1
-comprobar "reutiliza la contraseña del motor" igual "$STALWART_ADMIN_PASSWORD" clave-motor-antigua
-comprobar "genera una clave maestra para deploy/.env" coincide "$MAILWAY_SECRET" '^[0-9a-f]{64}$'
+comprobar "lee la del volumen /data" igual "$MAILWAY_SECRET" "$FAKE_CLAVE_VOLUMEN"
+comprobar "lo dice" contiene "$SALIDA" "Se conserva la clave maestra del panel"
+comprobar "el token de Traefik no es suyo: no se inventa" igual "$MAILWAY_TRAEFIK_TOKEN:$TRAEFIK_TOKEN_PROPIO" ":0"
+comprobar "motor sin datos: no usa la contraseña del panel" no_contiene <(printf '%s' "$STALWART_ADMIN_PASSWORD") clave-motor-antigua
+
+echo "# Clave maestra en el entorno del panel: manda sobre deploy/.env"
+reiniciar_panel
+FAKE_PANEL_ENV+=$'\nMAILWAY_SECRET=clave-maestra-del-panel-0123456789\nMAILWAY_TRAEFIK_TOKEN=token-del-panel'
+printf 'MAILWAY_SECRET=otra-clave-distinta-0123456789abcdef\n' >"$ENV_FILE"
+FAKE_VOLUMEN_MOTOR=1
+detectar_respondiendo s >/dev/null 2>&1
+preparar_secretos >"$SALIDA" 2>&1
+comprobar "usa la del panel" igual "$MAILWAY_SECRET" clave-maestra-del-panel-0123456789
+comprobar "y su token de Traefik" igual "$MAILWAY_TRAEFIK_TOKEN:$TRAEFIK_TOKEN_PROPIO" "token-del-panel:1"
+comprobar "motor con datos: reutiliza la contraseña del panel" igual "$STALWART_ADMIN_PASSWORD" clave-motor-antigua
+
+echo "# Una clave del entorno de menos de 16 caracteres no cuenta (como en el panel)"
+reiniciar_panel
+FAKE_PANEL_ENV+=$'\nMAILWAY_SECRET=  corta  '
+detectar_respondiendo s >/dev/null 2>&1
+preparar_secretos >/dev/null 2>&1
+comprobar "usa la del volumen" igual "$MAILWAY_SECRET" "$FAKE_CLAVE_VOLUMEN"
+
+echo "# Panel parado: la clave no se puede leer y deploy/.env no guarda ninguna"
+reiniciar_panel
+FAKE_CONTENEDORES=""
+FAKE_PARADOS="skyway-correo-mailway"
+detectar_respondiendo s >/dev/null 2>&1
+preparar_secretos >"$SALIDA" 2>&1
+comprobar "no inventa una clave" igual "$MAILWAY_SECRET" ""
+comprobar "lo explica" contiene "$SALIDA" "No se ha podido leer la clave maestra del panel"
+(datos_instalacion; MAILWAY_SECRET="" MAILWAY_TRAEFIK_TOKEN=""; escribir_env >/dev/null 2>&1; cat "$ENV_FILE") >"$SALIDA" 2>&1
+comprobar "deploy/.env lo anota sin valor" contiene "$SALIDA" "# MAILWAY_SECRET: el panel la guarda en su volumen /data."
+comprobar "sin ninguna línea MAILWAY_SECRET=" no_contiene "$SALIDA" "MAILWAY_SECRET="
+comprobar "ni MAILWAY_TRAEFIK_TOKEN=" no_contiene "$SALIDA" "MAILWAY_TRAEFIK_TOKEN="
+
+echo "# Sin deploy/.env: los nombres y la IP salen del panel"
+reiniciar_panel
+detectar_respondiendo s >/dev/null 2>&1
 (
   comprobar_subred() { :; }
   elegir_correo_admin() { ADMIN_EMAIL=admin@ejemplo.test; }
@@ -333,56 +453,65 @@ comprobar "genera una clave maestra para deploy/.env" coincide "$MAILWAY_SECRET"
 comprobar "propone el dominio, los nombres y la IP que ya usa" \
   igual "$(tail -n 1 "$SALIDA")" "ejemplo.test mail.ejemplo.test webmail.ejemplo.test correo.ejemplo.test 203.0.113.7"
 
-echo "# La clave maestra del panel manda sobre la de deploy/.env"
+echo "# Panel adoptado: se actualiza en su proyecto, sin crear otro ni darle clave ni token"
 reiniciar_panel
-FAKE_PANEL_ENV+=$'\nMAILWAY_SECRET=clave-maestra-del-panel-0123456789'
-printf 'MAILWAY_SECRET=otra-clave-distinta-0123456789abcdef\n' >"$TMP/env-previo"
-ENV_FILE="$TMP/env-previo"
-detectar_panel_existente >"$SALIDA" 2>&1
-preparar_secretos >>"$SALIDA" 2>&1
-comprobar "usa la del panel" igual "$MAILWAY_SECRET" clave-maestra-del-panel-0123456789
-comprobar "lo explica" contiene "$SALIDA" "Se conservan su clave maestra y sus secretos"
-FAKE_PANEL_ENV=${FAKE_PANEL_ENV%$'\n'MAILWAY_SECRET=*}
-
-echo "# Panel detectado: se actualiza en su proyecto, sin crear otro ni darle clave maestra"
-reiniciar_panel
-detectar_panel_existente >/dev/null 2>&1
+detectar_respondiendo s >/dev/null 2>&1
 datos_instalacion
-(desplegar_en_skyway && echo "PANEL_CONTENEDOR=$PANEL_CONTENEDOR") >"$SALIDA" 2>&1
+(desplegar_en_skyway && echo "PANEL_CONTENEDOR=$PANEL_CONTENEDOR" && echo "ENV_SECRET=$(grep '^MAILWAY_SECRET=' "$ENV_FILE")") >"$SALIDA" 2>&1
 comprobar "termina bien" contiene "$SALIDA" "Panel desplegado (skyway-correo-mailway)"
 comprobar "usa el contenedor del panel existente" contiene "$SALIDA" "PANEL_CONTENEDOR=skyway-correo-mailway"
 comprobar "no crea proyectos" no_contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/projects"
 comprobar "no crea servicios" no_contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/projects/"
-comprobar "no busca el proyecto «mailway»" no_contiene "$REGISTRO" "GET http://127.0.0.1:4000/api/projects"
 comprobar "no añade MAILWAY_SECRET a sus variables" no_contiene <(cuerpo_put) "MAILWAY_SECRET"
+comprobar "ni MAILWAY_TRAEFIK_TOKEN" no_contiene <(cuerpo_put) "MAILWAY_TRAEFIK_TOKEN"
 comprobar "conserva las variables puestas a mano" contiene <(cuerpo_put) '"MI_VARIABLE":"se-conserva"'
 comprobar "actualiza las del instalador" contiene <(cuerpo_put) '"MAILWAY_WEBMAIL_TOKEN":"w"'
 comprobar "retira MAILWAY_SMTP_ALLOW_SELF_SIGNED con certificado" no_contiene <(cuerpo_put) "MAILWAY_SMTP_ALLOW_SELF_SIGNED"
+comprobar "deploy/.env guarda la clave que de verdad usa" contiene "$SALIDA" "ENV_SECRET=MAILWAY_SECRET='$FAKE_CLAVE_VOLUMEN'"
 comprobar "despliega ese servicio" contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/services/svc_panel/deploy"
 
-echo "# Si sus variables ya llevan MAILWAY_SECRET, se conserva aunque deploy/.env diga otra"
+echo "# Si sus variables ya llevan clave y token, se conservan aunque deploy/.env diga otros"
 reiniciar_panel
-detectar_panel_existente >/dev/null 2>&1
-FAKE_ENV_PANEL='{"vars":{"MAILWAY_SECRET":"la-del-panel-0123456789abcdef"}}'
+detectar_respondiendo s >/dev/null 2>&1
+FAKE_ENV_PANEL='{"vars":{"MAILWAY_SECRET":"la-del-panel-0123456789abcdef","MAILWAY_TRAEFIK_TOKEN":"token-del-panel"}}'
 datos_instalacion
 (desplegar_en_skyway) >"$SALIDA" 2>&1
-comprobar "envía la del panel" contiene <(cuerpo_put) '"MAILWAY_SECRET":"la-del-panel-0123456789abcdef"'
+comprobar "envía su clave" contiene <(cuerpo_put) '"MAILWAY_SECRET":"la-del-panel-0123456789abcdef"'
+comprobar "y su token" contiene <(cuerpo_put) '"MAILWAY_TRAEFIK_TOKEN":"token-del-panel"'
 comprobar "y el resto de variables del instalador" contiene <(cuerpo_put) '"MAILWAY_WEBMAIL_TOKEN":"w"'
-comprobar "no envía la de deploy/.env" no_contiene <(cuerpo_put) "$MAILWAY_SECRET"
+comprobar "no envía la clave de deploy/.env" no_contiene <(cuerpo_put) "0123456789abcdef0123456789abcdef"
 comprobar "avisa de la diferencia" contiene "$SALIDA" "se conserva la del panel"
-FAKE_ENV_PANEL='{"vars":{}}'
 
-echo "# Sin contenedor (parado y retirado): se encuentra por el repositorio, se llame como se llame"
+echo "# Sin contenedor (parado y retirado): se encuentra por el repositorio y se confirma"
 reiniciar_panel
 FAKE_CONTENEDORES="skyway-web-app"
 detectar_panel_existente >/dev/null 2>&1
 comprobar "no detecta contenedor" igual "$PANEL_EXISTENTE_SERVICIO" ""
 SKYWAY_URL=http://127.0.0.1:4000
 SKYWAY_TOKEN=sky_indicado12345
+INTERACTIVO=1
+localizar_panel_en_skyway https://github.com/NkrowOne/Mailway <<<"s" >"$SALIDA" 2>&1
+INTERACTIVO=0
+comprobar "pregunta con su nombre y su proyecto" contiene "$SALIDA" "en el servicio «mailway» del proyecto «Correo»"
+comprobar "adopta el servicio propio (no el del cliente)" igual "$PANEL_ADOPTADO" "prj_correo correo svc_panel mailway"
+comprobar "no mira el proyecto del cliente" no_contiene "$REGISTRO" "/api/projects/prj_cliente"
+reiniciar_panel
+FAKE_CONTENEDORES="skyway-web-app"
+SKYWAY_URL=http://127.0.0.1:4000
+SKYWAY_TOKEN=sky_indicado12345
+(localizar_panel_en_skyway https://github.com/NkrowOne/Mailway) >"$SALIDA" 2>&1
+codigo=$?
+comprobar "sin terminal ni deploy/.env que lo nombre, se detiene" igual "$codigo" 1
+comprobar "con el identificador para indicarlo" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO=svc_panel"
+reiniciar_panel
+FAKE_CONTENEDORES="skyway-web-app"
+printf 'PANEL_HOSTNAME=correo.ejemplo.test\n' >"$ENV_FILE"
+SKYWAY_URL=http://127.0.0.1:4000
+SKYWAY_TOKEN=sky_indicado12345
 localizar_panel_en_skyway https://github.com/NkrowOne/Mailway >"$SALIDA" 2>&1
-comprobar "adopta el servicio que despliega el repositorio" igual "$PANEL_ADOPTADO" "prj_correo correo svc_panel mailway"
+comprobar "con su dominio en deploy/.env, sin preguntar" igual "$PANEL_ADOPTADO" "prj_correo correo svc_panel mailway"
 
-echo "# Dos servicios despliegan el repositorio: se pide cuál, sin tocar nada"
+echo "# Dos servicios propios despliegan el repositorio: se pide cuál, sin tocar nada"
 reiniciar_panel
 FAKE_REPOS='[{"id":"svc_panel","slug":"mailway","type":"git","config":{"repoUrl":"github.com/nkrowone/mailway/"}},{"id":"svc_copia","slug":"copia","type":"git","config":{"repoUrl":"git@github.com:NkrowOne/Mailway.git"}}]'
 SKYWAY_URL=http://127.0.0.1:4000
@@ -392,19 +521,19 @@ codigo=$?
 comprobar "termina con código 1" igual "$codigo" 1
 comprobar "lista los dos" contiene "$SALIDA" "servicio «copia» del proyecto «correo» (id svc_copia)"
 comprobar "explica cómo elegir" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO"
-FAKE_REPOS='[]'
 
 echo "# Sin panel en ningún sitio: instalación nueva en el proyecto «mailway»"
 reiniciar_panel
+FAKE_REPOS='[]'
 SKYWAY_URL=http://127.0.0.1:4000
 SKYWAY_TOKEN=sky_indicado12345
 localizar_panel_en_skyway https://github.com/NkrowOne/Mailway >"$SALIDA" 2>&1
 comprobar "no adopta nada" igual "$PANEL_ADOPTADO" ""
 
-echo "# Varios paneles en contenedores: se pide cuál"
+echo "# Varios paneles propios en contenedores: se pide cuál"
 reiniciar_panel
 FAKE_CONTENEDORES=$'skyway-correo-mailway\nskyway-otro-mailway'
-(detectar_panel_existente) >"$SALIDA" 2>&1
+(detectar_respondiendo s) >"$SALIDA" 2>&1
 codigo=$?
 comprobar "termina con código 1" igual "$codigo" 1
 comprobar "explica cómo elegir" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO=<servicio>"
@@ -412,30 +541,30 @@ comprobar "explica cómo elegir" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO=<ser
 echo "# Réplicas del mismo servicio: es un solo panel"
 reiniciar_panel
 FAKE_CONTENEDORES=$'skyway-correo-mailway\nskyway-correo-mailway-2'
-(detectar_panel_existente && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
+(detectar_respondiendo s && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
 comprobar "lo reconoce" contiene "$SALIDA" "SERVICIO=svc_panel"
 
 echo "# El panel en marcha manda sobre un panel parado de otro servicio"
 reiniciar_panel
 FAKE_CONTENEDORES="skyway-correo-mailway"
 FAKE_PARADOS="skyway-otro-mailway"
-(detectar_panel_existente && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
+(detectar_respondiendo s && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
 comprobar "elige el que está en marcha" contiene "$SALIDA" "SERVICIO=svc_panel"
 
 echo "# Ninguno en marcha: se reconoce el parado"
 reiniciar_panel
 FAKE_CONTENEDORES=""
 FAKE_PARADOS="skyway-otro-mailway"
-(detectar_panel_existente && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
+(detectar_respondiendo s && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO") >"$SALIDA" 2>&1
 comprobar "lo encuentra" contiene "$SALIDA" "SERVICIO=svc_otro"
-FAKE_PARADOS=""
 
-echo "# Indicado con MAILWAY_PANEL_SERVICIO"
+echo "# Indicado con MAILWAY_PANEL_SERVICIO: sin preguntar"
 reiniciar_panel
 FAKE_CONTENEDORES=$'skyway-correo-mailway\nskyway-otro-mailway'
 MAILWAY_PANEL_SERVICIO=svc_otro
 detectar_panel_existente >"$SALIDA" 2>&1
 comprobar "usa el indicado" igual "$PANEL_EXISTENTE_CONTENEDOR" skyway-otro-mailway
+comprobar "sin preguntar" no_contiene "$SALIDA" "Skyway despliega un panel de Mailway: contenedor"
 MAILWAY_PANEL_SERVICIO='../x'
 (detectar_panel_existente) >"$SALIDA" 2>&1
 comprobar "rechaza un identificador no válido" contiene "$SALIDA" "no es un identificador de servicio de Skyway válido"
