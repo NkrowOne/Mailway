@@ -132,11 +132,14 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 6. **DNS en Cloudflare** (si hay token): verifica el token (también los
    tokens de cuenta) y crea o corrige, sin proxy, los registros A de `mail.`,
    `webmail.` y `panel.` hacia la IP, y los CNAME `autoconfig.` y
-   `autodiscover.` del dominio base hacia `mail.`. Si un nombre ya apunta a
-   otro sitio, pregunta antes de cambiarlo. En `autoconfig.` y
-   `autodiscover.`, que pueden estar sirviendo a otro proveedor (por ejemplo,
-   Microsoft 365), la respuesta por defecto es no cambiarlos, también en la
-   ejecución desatendida.
+   `autodiscover.` del dominio base hacia `mail.`. Si un nombre ya existe
+   con otro valor o con el proxy de Cloudflare, pregunta antes de cambiarlo.
+   En `autoconfig.` y `autodiscover.`, que pueden estar sirviendo a otro
+   proveedor (por ejemplo, Microsoft 365), la respuesta por defecto es no
+   cambiarlos. Sin terminal (ejecución desatendida o `--actualizar`) no
+   modifica ningún registro existente: lo informa como conflicto y sigue;
+   con `MAILWAY_DNS_REEMPLAZAR=1` cambia los A de `mail.`, `webmail.` y
+   `panel.`, nunca los CNAME de autoconfiguración.
 7. **Propagación**: espera (hasta `MAILWAY_ESPERA_DNS` segundos, 300 por
    defecto) a que los tres nombres resuelvan a la IP. Así Traefik no pide
    certificados que Let's Encrypt rechazaría.
@@ -231,6 +234,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `STALWART_ADMIN_PASSWORD` | Contraseña del motor existente, si `deploy/.env` se perdió. |
 | `MAILWAY_INTERNAL_SUBNET`, `MAILWAY_MAIL_INTERNAL_IP` | Red interna (por defecto `10.203.53.0/24` y `10.203.53.10`). |
 | `MAILWAY_ESPERA_DNS` | Segundos máximos de espera a la propagación del DNS (por defecto 300). |
+| `MAILWAY_DNS_REEMPLAZAR` | `1` permite cambiar, sin terminal, los registros A de `mail.`, `webmail.` y `panel.` que ya existan en Cloudflare con otra IP o con el proxy (paso 6). Sin ella, una ejecución desatendida no modifica ningún registro existente. |
 | `MAILWAY_ENV_FILE` | Ruta alternativa del fichero de configuración (por defecto `deploy/.env`). |
 | `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
 
@@ -331,15 +335,17 @@ pregunta del paso 6) sirve también para que, desde entonces, los dominios que
 **tú, como administrador**, das de alta configuren su DNS en Cloudflare solos:
 los de correo en el panel (también el primer dominio del alta de un cliente)
 o desde Skyway, y los de los servicios en Skyway, también en proyectos de tus
-clientes. Se crea lo que falta sin modificar los registros existentes; un
-registro que choca se informa y no se toca. Para ello el instalador guarda el
-token:
+clientes. Se crea lo que falta sin modificar los registros existentes (ni
+siquiera para completar un SPF o quitar un proxy: eso se revisa y se aplica
+desde la ficha del dominio); un registro que choca se informa y no se toca.
+Para ello el instalador guarda el token:
 
 1. **En el panel**, como cuenta de Cloudflare **de la instancia**
    («Instalador de Mailway» en Conexiones → Cloudflare), con su herramienta de
-   terminal y el panel ya sano: junto a Skyway, dentro del emparejado y justo
-   después de crear la cuenta de administración; en la instalación autónoma,
-   en cuanto `mailway-panel` está sano.
+   terminal y el panel ya sano: junto a Skyway, al final de la instalación,
+   después del emparejado y aunque este no se haga (Skyway conectado con otro
+   panel, sin su herramienta o con un fallo); en la instalación autónoma, en
+   cuanto `mailway-panel` está sano.
 
    ```bash
    printf '%s' "$CF_TOKEN" | docker exec -i -u node <contenedor del panel> \
@@ -371,10 +377,16 @@ Reglas:
   con el ámbito «Toda la instancia».
 - Es **idempotente**: repetir la instalación con el mismo token no duplica la
   cuenta.
-- `--actualizar` y `--emparejar` **no tienen el token** (no se guarda en
-  `deploy/.env`) y no lo piden: lo dicen y conservan la cuenta ya conectada.
-  Para cambiarlo, conéctalo en Conexiones → Cloudflare o ejecuta
-  `--actualizar` con `CLOUDFLARE_API_TOKEN`.
+- **Para cambiar el token**, ejecuta `--actualizar` con el nuevo en
+  `CLOUDFLARE_API_TOKEN`: la herramienta del panel lo verifica y lo
+  **sustituye** en la cuenta «Instalador de Mailway» (no añade otra, y los
+  dominios asociados a ella lo siguen estando); Skyway también sustituye el
+  suyo. Si conectas el nuevo a mano en Conexiones → Cloudflare, se añade como
+  otra cuenta: elimina después la antigua.
+- `--actualizar` y `--emparejar` sin `CLOUDFLARE_API_TOKEN` **no tienen el
+  token** (no se guarda en `deploy/.env`) y no lo piden: no tocan la cuenta
+  que hubiera conectada, y como no saben si la hay, el resumen pide
+  comprobarlo en Conexiones → Cloudflare.
 
 ---
 

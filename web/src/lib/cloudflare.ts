@@ -192,7 +192,7 @@ export function avisoAltaDominio(
     return {
       tono: 'error',
       texto:
-        'Dominio dado de alta. Hay registros en conflicto en Cloudflare que no se han modificado: revísalos en la ficha del dominio.',
+        'Dominio dado de alta. Hay registros que ya existían en Cloudflare y no se han modificado (conflictos o cambios por revisar): revísalos en la ficha del dominio.',
     };
   }
   if (cf.applied.length > 0) return { tono: 'ok', texto: 'Dominio dado de alta y DNS aplicado en Cloudflare.' };

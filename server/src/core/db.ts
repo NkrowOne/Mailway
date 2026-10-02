@@ -389,6 +389,27 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_messages_form ON messages(form_id, created_at);
     `,
   },
+  {
+    id: '008-reservas-de-cloudflare',
+    sql: `
+      -- Dominios cuyo DNS de correo escribió el administrador con una cuenta
+      -- de Cloudflare de la instancia (sus zonas). Esos registros (MX, TXT de
+      -- verificación…) siguen en la zona aunque el dominio se borre, y bastan
+      -- para «probar» la propiedad: sin esta reserva, otro cliente podría dar
+      -- de alta el dominio y recibir y enviar su correo. Solo el cliente para
+      -- el que se escribió (o el administrador) puede volver a darlo de alta.
+      -- Sin claves foráneas a propósito: la reserva sobrevive al dominio y al
+      -- cliente.
+      CREATE TABLE cloudflare_reservas (
+        domain TEXT PRIMARY KEY,
+        client_id TEXT,
+        account_id TEXT,
+        zone_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 function runMigrations(): void {

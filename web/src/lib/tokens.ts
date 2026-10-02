@@ -161,6 +161,7 @@ const ETIQUETAS: Record<string, string> = {
   'cloudflare.account_connected': 'Cuenta de Cloudflare conectada',
   'cloudflare.account_removed': 'Cuenta de Cloudflare retirada',
   'cloudflare.account_updated': 'Cuenta de Cloudflare actualizada',
+  'cloudflare.account_token_replaced': 'Token de la cuenta de Cloudflare sustituido',
   'cloudflare.dns_applied': 'Registros DNS aplicados en Cloudflare',
   'cloudflare.instance_dns_applied': 'Registros DNS de la instancia aplicados en Cloudflare',
   // Marca blanca

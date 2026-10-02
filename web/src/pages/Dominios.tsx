@@ -316,8 +316,8 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
               <p className="mt-1 max-w-[70ch] text-sm text-tinta-2">
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
-                faltan y se completa el SPF existente; si hay registros en conflicto, no se
-                modifican y podrás revisarlos en la ficha del dominio.
+                faltan: lo que ya existe (también un SPF que habría que completar) no se
+                modifica y podrás revisarlo y aplicarlo en la ficha del dominio.
               </p>
             </div>
           )}

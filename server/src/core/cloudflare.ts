@@ -139,6 +139,19 @@ function codigosDe(errores: CfMensaje[]): number[] {
   return out;
 }
 
+/** Todos los mensajes, también los de `error_chain`, en una sola línea (solo para clasificar). */
+function mensajesDe(errores: CfMensaje[]): string {
+  const out: string[] = [];
+  const visitar = (lista: CfMensaje[] | undefined) => {
+    for (const e of lista || []) {
+      if (typeof e.message === 'string') out.push(e.message);
+      visitar(e.error_chain);
+    }
+  };
+  visitar(errores);
+  return out.join(' ');
+}
+
 function primerMensaje(errores: CfMensaje[]): string {
   const e = errores[0];
   if (!e) return '';
@@ -190,17 +203,31 @@ export function errorDeCloudflare(httpStatus: number, errores: CfMensaje[] = [])
       'cloudflare_token_malformed',
     );
   }
-  if (tiene(1000) || httpStatus === 401) {
+  // El 9109 de Cloudflare sirve para tres cosas distintas, y solo el texto las
+  // separa: un token que no existe o se ha revocado («Invalid access token»,
+  // con HTTP 403 en /zones), un token con restricción por IP que no incluye
+  // este servidor («Cannot use the access token from location…») y la falta de
+  // permiso. Tomar un token revocado por un problema de permisos manda a
+  // revisar lo que no es.
+  const textos = mensajesDe(errores).toLowerCase();
+  if (tiene(1000) || httpStatus === 401 || (tiene(9109) && textos.includes('invalid access token'))) {
     return nuevo(
       400,
       'El token de Cloudflare no es válido. Comprueba que lo has copiado completo o genera uno nuevo.',
       'cloudflare_token_invalid',
     );
   }
+  if (tiene(9109) && textos.includes('location')) {
+    return nuevo(
+      400,
+      'Cloudflare no acepta el token desde la dirección IP de este servidor: el token tiene una restricción por dirección IP que no la incluye. Añade la IP del servidor a las restricciones del token o quítalas.',
+      'cloudflare_token_ip_restricted',
+    );
+  }
   if (tiene(9109)) {
     return nuevo(
       400,
-      'El token de Cloudflare no tiene permiso para esta operación o está restringido por dirección IP. Revisa los permisos y las restricciones del token.',
+      'El token de Cloudflare no tiene permiso para esta operación. Revisa que tenga los permisos «Zone · Zone · Read» y «Zone · DNS · Edit» sobre la zona.',
       'cloudflare_forbidden',
     );
   }

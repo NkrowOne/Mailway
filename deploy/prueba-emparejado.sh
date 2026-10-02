@@ -154,6 +154,12 @@ docker_sin() {
   grep '^docker ' "$REGISTRO" >"$TMP/lineas-docker" || true
   ! grep -Fq -- "$1" "$TMP/lineas-docker"
 }
+# El final de la instalación junto a Skyway, en el mismo orden que main.
+final_skyway() {
+  emparejar_al_terminar
+  conectar_cloudflare_junto_a_skyway
+  conectar_cloudflare_en_skyway
+}
 # Las llamadas a la herramienta de Cloudflare van después de la de emparejado.
 cloudflare_tras_emparejado() {
   local emparejado cloudflare
@@ -231,7 +237,7 @@ echo "# Con token de Cloudflare: llega por la entrada estándar al panel y a Sky
 reiniciar
 CF_TOKEN=$TOKEN_CF
 FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
-{ emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1
+final_skyway >"$SALIDA" 2>&1
 comprobar "el panel recibe el token por la entrada estándar" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
 comprobar "como el usuario del panel y con su nombre" contiene "$REGISTRO" "docker exec -i -u node panel-c node server/dist/tools/cloudflare.js conectar --nombre Instalador de Mailway"
 comprobar "después de la herramienta de emparejado" cloudflare_tras_emparejado
@@ -245,17 +251,25 @@ comprobar "y lo de Skyway" contiene <(printf '%s' "$RESUMEN_CF_SKYWAY") "token g
 echo "# Cuenta que ya estaba conectada (otra ejecución): se dice así"
 reiniciar
 CF_TOKEN=$TOKEN_CF
-FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":false}'
-emparejar_con_skyway >"$SALIDA" 2>&1
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":false,"sustituida":false}'
+final_skyway >"$SALIDA" 2>&1
 comprobar "ya conectada" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "ya conectada"
-FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":true}'
+
+echo "# Token nuevo en la cuenta del instalador (rotación): se dice que se ha sustituido"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":4,"creada":false,"sustituida":true}'
+final_skyway >"$SALIDA" 2>&1
+comprobar "sustituido" igual "$RESUMEN_CF_PANEL" "token de la cuenta de la instancia sustituido por el nuevo («Instalador de Mailway», 4 zonas)"
+comprobar "queda conectada" igual "$CF_PANEL_CONECTADA" 1
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":true,"sustituida":false}'
 
 echo "# Skyway sin la herramienta de Cloudflare: aviso y sigue"
 reiniciar
 CF_TOKEN=$TOKEN_CF
 FAKE_CF_SKYWAY=0
 FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
-{ emparejar_con_skyway; conectar_cloudflare_en_skyway; echo "CODIGO=$?"; } >"$SALIDA" 2>&1
+{ final_skyway; echo "CODIGO=$?"; } >"$SALIDA" 2>&1
 comprobar "avisa" contiene "$SALIDA" "Esta versión de Skyway no guarda el token de Cloudflare"
 comprobar "no interrumpe" contiene "$SALIDA" "CODIGO=0"
 comprobar "no llama a una herramienta que no existe" no_contiene "$REGISTRO" "docker exec -i skyway node server/dist/tools/cloudflare.js"
@@ -267,30 +281,61 @@ echo "# Panel sin la herramienta o que falla: aviso, sin interrumpir el empareja
 reiniciar
 CF_TOKEN=$TOKEN_CF
 FAKE_CF_PANEL=0
-emparejar_con_skyway >"$SALIDA" 2>&1
+final_skyway >"$SALIDA" 2>&1
 comprobar "explica cómo conectarla a mano" contiene "$SALIDA" "Conexiones → Cloudflare"
 comprobar "no la llama" no_contiene "$REGISTRO" "CF_PANEL_RECIBIDO"
 comprobar "Skyway queda emparejado" igual "$EMPAREJADO_OK" 1
 reiniciar
 CF_TOKEN=$TOKEN_CF
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
 FAKE_CF_FALLA="Cloudflare ha rechazado el token."
-emparejar_con_skyway >"$SALIDA" 2>&1
+final_skyway >"$SALIDA" 2>&1
 comprobar "muestra el motivo" contiene "$SALIDA" "Cloudflare ha rechazado el token."
 comprobar "queda pendiente" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "pendiente"
 comprobar "Skyway queda emparejado igualmente" igual "$EMPAREJADO_OK" 1
 comprobar "y la contraseña sigue para el resumen" igual "$EMPAREJADO_ADMIN_EMAIL" "admin@ejemplo.test"
+# El fallo de Cloudflare no es un pendiente de la puesta en marcha: no se manda repetir --emparejar.
+comprobar "la puesta en marcha se da por completa" contiene "$SALIDA" "Puesta en marcha del panel completada con el entorno"
+comprobar "sin decir que tuvo avisos" no_contiene "$SALIDA" "completada con avisos"
+comprobar "ni el resumen del emparejado" no_contiene <(printf '%s' "$RESUMEN_EMPAREJADO") "con avisos"
 
-echo "# Si la herramienta de emparejado falla, no se pasa el token"
+echo "# Avisos de la puesta en marcha y Cloudflare sin avisos: el resumen conserva los de la puesta en marcha"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+FAKE_AVISO="El motor no responde. Al entrar en el panel, el asistente continúa en el paso del motor."
+final_skyway >"$SALIDA" 2>&1
+comprobar "dice que se completó con avisos" contiene "$SALIDA" "completada con avisos"
+comprobar "no dice que se completó sin más" no_contiene "$SALIDA" "[ok] Puesta en marcha del panel completada"
+comprobar "el resumen lo recoge" contiene <(printf '%s' "$RESUMEN_EMPAREJADO") "con avisos"
+comprobar "y la cuenta de Cloudflare se conecta igual" igual "$CF_PANEL_CONECTADA" 1
+
+echo "# Si la herramienta de emparejado falla, el panel recibe igualmente la cuenta de Cloudflare"
 reiniciar
 CF_TOKEN=$TOKEN_CF
 FAKE_SALIDA='{"adminEmail":"admin@ejemplo.test"}'
-emparejar_con_skyway >"$SALIDA" 2>&1
-comprobar "no llama a la herramienta de Cloudflare del panel" no_contiene "$REGISTRO" "cloudflare.js"
+final_skyway >"$SALIDA" 2>&1
+comprobar "no queda emparejado" igual "$EMPAREJADO_OK" 0
+comprobar "el panel recibe el token por la entrada estándar" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
+comprobar "queda conectada" igual "$CF_PANEL_CONECTADA" 1
+
+echo "# Skyway conectado con otro panel: no se empareja, pero el panel recibe la cuenta"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+SKYWAY_TOKEN=sky_indicado12345
+SKYWAY_URL=http://127.0.0.1:4000
+FAKE_CONFIG='{"configured":true,"serviceId":"otro","baseUrl":"https://otro.ejemplo.test"}'
+final_skyway >"$SALIDA" 2>&1
+comprobar "no ejecuta la herramienta de emparejado" no_contiene "$REGISTRO" "emparejar.js --email"
+comprobar "el panel recibe el token" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
+comprobar "el resumen dice qué cuenta quedó conectada" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "cuenta de la instancia conectada"
+SKYWAY_TOKEN=""
+FAKE_CONFIG='{"configured":false}'
 
 echo "# Sin token (instalación sin Cloudflare): no se llama a ninguna"
 reiniciar
 FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
-{ emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1
+final_skyway >"$SALIDA" 2>&1
 comprobar "ni en el panel ni en Skyway" no_contiene "$REGISTRO" "cloudflare.js"
 comprobar "el resumen no dice nada de una cuenta" igual "$RESUMEN_CF_PANEL$RESUMEN_CF_SKYWAY" ""
 
@@ -299,10 +344,14 @@ for modo in ACTUALIZAR EMPAREJAR; do
   reiniciar
   printf -v "$modo" '%s' 1
   FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
-  { emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1 </dev/null
+  final_skyway >"$SALIDA" 2>&1 </dev/null
   comprobar "$modo: no llama a ninguna herramienta de Cloudflare" no_contiene "$REGISTRO" "cloudflare.js"
-  comprobar "$modo: informa de que se conserva" contiene "$SALIDA" "la cuenta que ya tenga conectada el panel se conserva"
-  comprobar "$modo: el resumen lo recoge" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "se conserva"
+  # Esta ejecución no sabe si hay una cuenta: no la da por hecha.
+  comprobar "$modo: informa en condicional" contiene "$SALIDA" "si el panel ya tenía una cuenta conectada, la conserva"
+  comprobar "$modo: el resumen lo recoge" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "si el panel ya tenía una cuenta conectada"
+  if [ "$modo" = ACTUALIZAR ]; then
+    comprobar "$modo: y para Skyway, también en condicional" contiene <(printf '%s' "$RESUMEN_CF_SKYWAY") "si Skyway ya tenía uno guardado"
+  fi
 done
 reiniciar
 
@@ -624,6 +673,10 @@ comprobar "actualiza las del instalador" contiene <(cuerpo_put) '"MAILWAY_WEBMAI
 comprobar "retira MAILWAY_SMTP_ALLOW_SELF_SIGNED con certificado" no_contiene <(cuerpo_put) "MAILWAY_SMTP_ALLOW_SELF_SIGNED"
 comprobar "deploy/.env guarda la clave que de verdad usa" contiene "$SALIDA" "ENV_SECRET=MAILWAY_SECRET='$FAKE_CLAVE_VOLUMEN'"
 comprobar "despliega ese servicio" contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/services/svc_panel/deploy"
+comprobar "el PATCH conserva sus dominios y añade el del panel" \
+  contiene "$REGISTRO" '"domains":["correo.ejemplo.test"'
+comprobar "y dice de qué dominios parte (Skyway no devuelve los que otro quite entretanto)" \
+  contiene "$REGISTRO" '"domainsBase":["correo.ejemplo.test"]'
 
 echo "# Con el token temporal que ya creó la detección, no se pregunta por otro"
 reiniciar_panel
@@ -801,6 +854,72 @@ comprobar "no manda conectarla a mano" no_contiene "$SALIDA" "conecta una cuenta
 ) >"$SALIDA" 2>&1
 comprobar "sin cuenta conectada, sí lo manda" contiene "$SALIDA" "conecta una cuenta para publicar el DNS"
 comprobar "y no hay línea de Cloudflare" no_contiene "$SALIDA" "Cloudflare (panel)"
+(
+  datos_instalacion
+  CON_SKYWAY=1 RESUMEN_SKYWAY=x RESUMEN_EMPAREJADO=x RESUMEN_DNS=x RESUMEN_PTR=x RESUMEN_P25=x RESUMEN_CERT=x
+  EMPAREJADO_ADMIN_EMAIL=admin@ejemplo.test EMPAREJADO_OK=1 PANEL_CONTENEDOR=panel-c ACTUALIZAR=1
+  CF_PANEL_CONECTADA=0 RESUMEN_CF_PANEL="" RESUMEN_CF_SKYWAY="" CF_TOKEN=""
+  cloudflare_sin_token
+  resumen
+) >"$SALIDA" 2>&1
+comprobar "--actualizar sin token: no afirma que haya una cuenta" no_contiene "$SALIDA" "la cuenta ya conectada se conserva"
+comprobar "y mantiene el paso de Conexiones → Cloudflare" contiene "$SALIDA" "En Conexiones → Cloudflare, comprueba que hay una cuenta conectada"
+
+# --------------------------------------------- registros de la plataforma --
+
+# API de Cloudflare simulada para cf_registro: el GET devuelve los registros
+# de FAKE_CF_EXISTENTES; cualquier escritura queda en el registro.
+FAKE_CF_EXISTENTES='[]'
+cf_api() {
+  printf 'cf_api %s %s %s\n' "$1" "$2" "${3:-}" >>"$REGISTRO"
+  RESP_CODE=200
+  case "$1" in
+    GET) RESP_BODY="{\"success\":true,\"result\":$FAKE_CF_EXISTENTES}" ;;
+    *) RESP_BODY='{"success":true,"result":{"id":"nuevo"}}' ;;
+  esac
+}
+escrituras_cf() { grep -E '^cf_api (POST|PUT|PATCH|DELETE) ' "$REGISTRO" || true; }
+CF_ZONA_ID=zona1
+A_OTRA_IP='[{"id":"rec1","type":"A","name":"mail.ejemplo.test","content":"198.51.100.9","proxied":false}]'
+A_CON_PROXY='[{"id":"rec1","type":"A","name":"mail.ejemplo.test","content":"203.0.113.7","proxied":true}]'
+CNAME_AJENO='[{"id":"rec2","type":"CNAME","name":"autodiscover.ejemplo.test","content":"autodiscover.outlook.com","proxied":false}]'
+
+echo "# Sin terminal, un registro de la plataforma que ya existe no se modifica"
+for caso in "$A_OTRA_IP" "$A_CON_PROXY"; do
+  : >"$REGISTRO"
+  FAKE_CF_EXISTENTES=$caso
+  (INTERACTIVO=0 && unset MAILWAY_DNS_REEMPLAZAR && cf_registro A mail.ejemplo.test 203.0.113.7 s) >"$SALIDA" 2>&1
+  comprobar "no escribe nada en Cloudflare" igual "$(escrituras_cf)" ""
+  comprobar "lo informa como conflicto" contiene "$SALIDA" "no se modifica sin confirmación"
+done
+comprobar "y explica el proxy" contiene "$SALIDA" "tiene el proxy de Cloudflare activado"
+
+echo "# Sin terminal y con MAILWAY_DNS_REEMPLAZAR=1: solo los A de la plataforma, nunca un autodiscover ajeno"
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES=$A_OTRA_IP
+(INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s) >"$SALIDA" 2>&1
+comprobar "cambia el A" contiene <(escrituras_cf) "cf_api PUT /zones/zona1/dns_records/rec1"
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES=$CNAME_AJENO
+(INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro CNAME autodiscover.ejemplo.test mail.ejemplo.test n) >"$SALIDA" 2>&1
+comprobar "no toca el autodiscover de otro proveedor" igual "$(escrituras_cf)" ""
+
+echo "# Con terminal se pregunta, también para quitar el proxy"
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES=$A_CON_PROXY
+(INTERACTIVO=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s <<<"n") >"$SALIDA" 2>&1
+comprobar "respondiendo que no, no escribe nada" igual "$(escrituras_cf)" ""
+comprobar "lo deja como está" contiene "$SALIDA" "se deja como está"
+: >"$REGISTRO"
+(INTERACTIVO=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s <<<"s") >"$SALIDA" 2>&1
+comprobar "respondiendo que sí, quita el proxy" contiene <(escrituras_cf) '"proxied":false'
+
+echo "# Lo que falta se crea siempre, también sin terminal"
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES='[]'
+(INTERACTIVO=0 && cf_registro A webmail.ejemplo.test 203.0.113.7 s) >"$SALIDA" 2>&1
+comprobar "lo crea" contiene <(escrituras_cf) "cf_api POST /zones/zona1/dns_records"
+comprobar "sin proxy" contiene <(escrituras_cf) '"proxied":false'
 
 echo "# Instalación autónoma: no se busca nada en Skyway"
 reiniciar_panel

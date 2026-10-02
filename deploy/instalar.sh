@@ -160,8 +160,9 @@ Si el emparejado falla, la instalación no se interrumpe: repítelo con --empare
 Con un token de Cloudflare, el instalador lo pasa también al panel (como cuenta de la
 instancia) y a Skyway por la entrada estándar de sus herramientas: los dominios que da de
 alta el administrador configuran su DNS solos, sin modificar los registros existentes. Las
-acciones de los clientes nunca usan esa cuenta. --actualizar y --emparejar no tienen el token
-(no se guarda en deploy/.env) y conservan la cuenta ya conectada.
+acciones de los clientes nunca usan esa cuenta. --actualizar y --emparejar sin
+CLOUDFLARE_API_TOKEN no tienen el token (no se guarda en deploy/.env) y no tocan la cuenta
+que hubiera conectada; con un token nuevo, --actualizar lo sustituye en esa cuenta.
 
 Variables de entorno (ejecución desatendida):
   MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
@@ -194,6 +195,9 @@ Variables de entorno (ejecución desatendida):
                             choca con otra red del servidor.
   MAILWAY_MAIL_INTERNAL_IP  IP del motor en esa red (por defecto 10.203.53.10).
   MAILWAY_ESPERA_DNS        Segundos máximos de espera a que propague el DNS (por defecto 300).
+  MAILWAY_DNS_REEMPLAZAR    1 = sin terminal, permite cambiar los registros A de mail., webmail. y
+                            panel. que ya existan con otra IP o con el proxy de Cloudflare. Sin ella,
+                            una ejecución desatendida no modifica ningún registro existente.
   MAILWAY_ENV_FILE          Fichero de configuración con los secretos (por defecto deploy/.env).
   MAILWAY_COMPOSE_EXTRA     Fichero de Compose adicional que se aplica sobre el del instalador
                             (ajustes locales; lo usa la prueba de la pila en la CI).
@@ -1204,8 +1208,14 @@ configurar_cloudflare() {
 }
 
 # Crea o corrige un registro sin proxy (el proxy de Cloudflare rompe SMTP/IMAP
-# y la validación de certificados).
-#   cf_registro <tipo> <nombre> <contenido> <s|n: cambiar sin preguntar si apunta a otro sitio>
+# y la validación de certificados). Lo que falta se crea siempre; lo que ya
+# existe con otro valor o con el proxy activado solo se modifica con permiso:
+# con terminal, preguntando (<s|n> es la respuesta por defecto si apunta a otro
+# sitio); sin terminal (ejecución desatendida, --actualizar), nunca, salvo con
+# MAILWAY_DNS_REEMPLAZAR=1 y solo en los registros cuya respuesta por defecto
+# es «s» (los A de la plataforma): un autodiscover hacia Microsoft 365 no se
+# cambia nunca sin preguntar.
+#   cf_registro <tipo> <nombre> <contenido> <s|n>
 cf_registro() {
   local tipo=$1 nombre=$2 contenido=$3 cambiar_def=$4 existente id actual proxied otro cuerpo total
   cf_api GET "/zones/$CF_ZONA_ID/dns_records?name=$nombre&per_page=100"
@@ -1244,9 +1254,22 @@ cf_registro() {
     ok "$tipo $nombre → $contenido (ya correcto)"
     return 0
   fi
-  if [ "$actual" != "$contenido" ] &&
-    ! confirmar "$nombre apunta a $actual. ¿Cambiarlo a $contenido?" "$cambiar_def"; then
-    aviso "$nombre se deja apuntando a $actual."
+  local que="apunta a $actual" pregunta="¿Cambiarlo a $contenido (sin proxy)?"
+  if [ "$actual" = "$contenido" ]; then
+    que="tiene el proxy de Cloudflare activado, que impide el correo y la validación del certificado"
+    pregunta="¿Desactivar el proxy («Solo DNS»)?"
+    # Con el mismo destino, quitar el proxy es lo único que se haría.
+    cambiar_def=s
+  fi
+  if [ "$INTERACTIVO" = 1 ]; then
+    if ! confirmar "$nombre $que. $pregunta" "$cambiar_def"; then
+      aviso "$nombre se deja como está ($que)."
+      return 0
+    fi
+  elif [ "${MAILWAY_DNS_REEMPLAZAR:-0}" != 1 ] || [ "$cambiar_def" != s ]; then
+    # Sin nadie a quien preguntar, un registro existente es un conflicto: se
+    # informa y no se toca.
+    aviso "$nombre $que: no se modifica sin confirmación. Cámbialo en Cloudflare o repite la instalación con terminal (o con MAILWAY_DNS_REEMPLAZAR=1)."
     return 0
   fi
   cf_api PUT "/zones/$CF_ZONA_ID/dns_records/$id" "$cuerpo"
@@ -2126,7 +2149,9 @@ desplegar_en_skyway() {
   # Volumen /data (sin él, la base de datos del panel se perdería en cada
   # despliegue), comprobación de salud y dominio. Se parte de la
   # configuración actual: PATCH sustituye listas enteras y no deben perderse
-  # volúmenes o dominios que se hayan añadido a mano.
+  # volúmenes o dominios que se hayan añadido a mano. domainsBase son los
+  # dominios leídos: si cambian entre la lectura y el PATCH, Skyway no
+  # devuelve los quitados (y solo así aplica su DNS automático a los nuevos).
   local parche
   sky_api GET "/api/services/$servicio_id"
   [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el servicio del panel: $(sky_error)."
@@ -2134,7 +2159,7 @@ desplegar_en_skyway() {
       volumes: (($c.volumes // []) | map({containerPath}) | if any(.[]; .containerPath == "/data") then . else . + [{containerPath: "/data"}] end),
       healthcheckPath: ($c.healthcheckPath // "/api/health"),
       domains: (($c.domains // []) | if any(.[]; . == $d) then . else . + [$d] end)
-    }}')
+    }, domainsBase: ($c.domains // [])}')
   [ -n "$parche" ] || fallo "Respuesta inesperada de Skyway al leer el servicio del panel."
   sky_api PATCH "/api/services/$servicio_id" "$parche"
   [ "$RESP_CODE" = "200" ] || fallo "No se pudo configurar el volumen del panel: $(sky_error)."
@@ -2314,8 +2339,8 @@ skyway_con_otro_panel() {
 cloudflare_sin_token() {
   [ -z "$CF_TOKEN" ] || return 1
   if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then
-    RESUMEN_CF_PANEL="sin cambios: esta ejecución no tiene el token (no se guarda en deploy/.env); la cuenta ya conectada se conserva"
-    info "Cloudflare: esta ejecución no tiene el token; la cuenta que ya tenga conectada el panel se conserva."
+    RESUMEN_CF_PANEL="sin cambios: esta ejecución no tiene el token (no se guarda en deploy/.env); si el panel ya tenía una cuenta conectada, la conserva"
+    info "Cloudflare: esta ejecución no tiene el token; si el panel ya tenía una cuenta conectada, la conserva."
   fi
   return 0
 }
@@ -2325,8 +2350,9 @@ cloudflare_sin_token() {
 # resumen y se explica cómo conectarla a mano.
 #   conectar_cloudflare_en_panel <contenedor del panel>
 conectar_cloudflare_en_panel() {
-  local contenedor=$1 salida="" etiqueta="" zonas="" creada=""
+  local contenedor=$1 salida="" etiqueta="" zonas="" creada="" sustituida=""
   local re_etiqueta='"label":"([^"\\[:cntrl:]]{1,80})"' re_zonas='"zones":([0-9]{1,6})' re_creada='"creada":(true|false)'
+  local re_sustituida='"sustituida":(true|false)'
   local a_mano="conéctala en el panel, en Conexiones → Cloudflare, con el ámbito «Toda la instancia»."
   if cloudflare_sin_token; then return 0; fi
   if ! docker exec "$contenedor" test -f server/dist/tools/cloudflare.js 2>/dev/null; then
@@ -2347,6 +2373,7 @@ conectar_cloudflare_en_panel() {
   if [[ $salida =~ $re_etiqueta ]]; then etiqueta=${BASH_REMATCH[1]}; fi
   if [[ $salida =~ $re_zonas ]]; then zonas=${BASH_REMATCH[1]}; fi
   if [[ $salida =~ $re_creada ]]; then creada=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_sustituida ]]; then sustituida=${BASH_REMATCH[1]}; fi
   salida=""
   if [ -z "$creada" ]; then
     RESUMEN_CF_PANEL="pendiente: respuesta inesperada de la herramienta del panel"
@@ -2356,6 +2383,8 @@ conectar_cloudflare_en_panel() {
   CF_PANEL_CONECTADA=1
   if [ "$creada" = true ]; then
     RESUMEN_CF_PANEL="cuenta de la instancia conectada («${etiqueta:-Cloudflare}», ${zonas:-?} zonas)"
+  elif [ "$sustituida" = true ]; then
+    RESUMEN_CF_PANEL="token de la cuenta de la instancia sustituido por el nuevo («${etiqueta:-Cloudflare}», ${zonas:-?} zonas)"
   else
     RESUMEN_CF_PANEL="cuenta de la instancia ya conectada («${etiqueta:-Cloudflare}», ${zonas:-?} zonas)"
   fi
@@ -2377,13 +2406,34 @@ conectar_cloudflare_autonoma() {
   conectar_cloudflare_en_panel mailway-panel
 }
 
+# Junto a Skyway: la cuenta del panel no depende del emparejado (que se omite
+# si Skyway está conectado con otro panel, si Skyway no tiene su herramienta o
+# si la del panel falla): con el panel desplegado y sano, recibe el token
+# igual. Va aparte también para no mezclar sus avisos con los de la puesta en
+# marcha, que el emparejado resume por su cuenta.
+conectar_cloudflare_junto_a_skyway() {
+  if cloudflare_sin_token; then return 0; fi
+  titulo "Cuenta de Cloudflare del panel"
+  if [ -z "$PANEL_CONTENEDOR" ]; then
+    RESUMEN_CF_PANEL="pendiente: no se ha localizado el panel desplegado en Skyway"
+    aviso "No se ha localizado el panel desplegado en Skyway: conecta la cuenta de Cloudflare en Conexiones → Cloudflare."
+    return 0
+  fi
+  if ! esperar_sano "$PANEL_CONTENEDOR" 180; then
+    RESUMEN_CF_PANEL="pendiente: el panel no está sano"
+    aviso "El panel ($PANEL_CONTENEDOR) no está sano: conecta la cuenta de Cloudflare en Conexiones → Cloudflare cuando arranque."
+    return 0
+  fi
+  conectar_cloudflare_en_panel "$PANEL_CONTENEDOR"
+}
+
 # Guarda el token en Skyway para los dominios de servicios del administrador.
 # La herramienta llegó con una versión de Skyway posterior: si no está, se
 # avisa y se sigue.
 conectar_cloudflare_en_skyway() {
   if [ -z "$CF_TOKEN" ]; then
     if [ "$ACTUALIZAR" = 1 ]; then
-      RESUMEN_CF_SKYWAY="sin cambios: esta ejecución no tiene el token; el que ya tenga guardado Skyway se conserva"
+      RESUMEN_CF_SKYWAY="sin cambios: esta ejecución no tiene el token; si Skyway ya tenía uno guardado, lo conserva"
     fi
     return 0
   fi
@@ -2476,9 +2526,6 @@ emparejar_con_skyway() {
   else
     ok "El panel ya tenía cuenta de administración ($correo)."
   fi
-  # El panel está sano y su puesta en marcha, hecha: es el momento de darle
-  # la cuenta de Cloudflare de la instancia (nada de esto interrumpe).
-  conectar_cloudflare_en_panel "$PANEL_CONTENEDOR"
   # Los avisos de la herramienta (arriba) dicen qué ha quedado pendiente: el
   # asistente del panel lo retoma al entrar y --emparejar lo vuelve a intentar.
   if [ "$HERRAMIENTA_CON_AVISOS" = 1 ]; then
@@ -2542,6 +2589,7 @@ emparejar_solo() {
   fi
   info "Panel: $PANEL_CONTENEDOR (https://$PANEL_HOSTNAME)"
   emparejar_con_skyway
+  conectar_cloudflare_junto_a_skyway
   titulo "Resumen"
   printf '\n'
   info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
@@ -2782,12 +2830,15 @@ resumen() {
   else
     info "  $((paso += 1)). Abre el panel con el enlace de arriba y completa la puesta en marcha."
   fi
-  # Con la cuenta ya conectada (o conservada en una actualización), no se
-  # manda conectarla a mano: el estado está en la línea «Cloudflare (panel)».
-  if [ "$CF_PANEL_CONECTADA" = 0 ] && [ -z "$RESUMEN_CF_PANEL" ]; then
-    info "  $((paso += 1)). En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
-  elif [ "$CF_PANEL_CONECTADA" = 0 ] && [ "${RESUMEN_CF_PANEL#pendiente}" != "$RESUMEN_CF_PANEL" ]; then
-    info "  $((paso += 1)). En Conexiones → Cloudflare, conecta la cuenta de la instancia (ámbito «Toda la instancia»)."
+  # Con la cuenta conectada en esta ejecución, no se manda conectarla a mano.
+  # Sin el token (--actualizar), esta ejecución no sabe si la hay: se pide
+  # comprobarlo, sin darla por hecha.
+  if [ "$CF_PANEL_CONECTADA" = 0 ]; then
+    case "$RESUMEN_CF_PANEL" in
+      pendiente*) info "  $((paso += 1)). En Conexiones → Cloudflare, conecta la cuenta de la instancia (ámbito «Toda la instancia»)." ;;
+      "sin cambios"*) info "  $((paso += 1)). En Conexiones → Cloudflare, comprueba que hay una cuenta conectada para publicar el DNS de los dominios de los clientes (si no, conéctala)." ;;
+      *) info "  $((paso += 1)). En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes." ;;
+    esac
   fi
   info "  $((paso += 1)). En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
   if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ]; then
@@ -3048,6 +3099,7 @@ main() {
     # Lo último que puede fallar: así la contraseña del administrador que
     # crea el emparejado llega al resumen sin que nada la interrumpa.
     emparejar_al_terminar
+    conectar_cloudflare_junto_a_skyway
     conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway
   fi

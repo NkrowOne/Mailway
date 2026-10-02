@@ -177,8 +177,26 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     con su herramienta equivalente) por la entrada estándar, nunca como
     argumento ni en `deploy/.env`. Desde entonces, las altas de dominios del
     administrador (panel, alta de cliente con dominio o Skyway con `autoDns`
-    explícito) configuran el DNS solas sin pisar nada. `POST /api/domains` sin
-    `autoDns` sigue sin tocar Cloudflare: quien llama decide.
+    explícito) configuran el DNS solas: **solo crean** lo que falta (ni
+    completan el SPF, ni quitan un proxy, ni actualizan un registro; eso queda
+    para «Aplicar» tras revisar el plan). `POST /api/domains` sin `autoDns`
+    sigue sin tocar Cloudflare: quien llama decide. Repetir el instalador con
+    otro token sustituye el de su cuenta en vez de añadir otra.
+
+    **Lo que la administración escribe en una zona del operador queda
+    reservado.** Los registros de un dominio (MX, TXT de verificación) siguen
+    en la zona aunque el dominio se borre, y bastarían a otro cliente para
+    probar la propiedad. Por eso, si se escribieron con una cuenta de la
+    instancia, el dominio queda reservado al cliente para el que se
+    escribieron (`cloudflare_reservas`): otro cliente, o Skyway con
+    `soloCliente=1`, recibe `409 domain_reserved`; la administración puede
+    darlo de alta para otro cliente, y la reserva pasa a ese cliente.
+
+    **Registros propios con la huella de la instancia.** Mailway marca lo que
+    crea con `Mailway (instancia <huella>)` (HMAC del secreto, que no lo
+    revela) y solo actualiza sin confirmación los registros con exactamente
+    ese comentario: los de otra instalación que gestione la misma zona son
+    conflictos.
 
 ### 3.4 Autoconfiguración y Traefik
 
@@ -289,6 +307,7 @@ edita una ya publicada.
 | `005-idempotencia-de-envios` | `send_idempotency`: respuesta de cada envío con `Idempotency-Key`, 24 h por clave de API. |
 | `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
 | `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
+| `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)

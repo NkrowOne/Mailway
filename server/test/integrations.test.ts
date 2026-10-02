@@ -80,6 +80,8 @@ test('info: datos de la instancia; el token de Traefik solo para administradores
   assert.equal(typeof info.features.cloudflare, 'boolean');
   assert.equal(typeof info.features.autoconfig, 'boolean');
   assert.equal(info.features.portal, true);
+  // Skyway solo pide el DNS automático del correo a un Mailway que lo declara.
+  assert.equal(info.features.cloudflareSoloCrear, true);
   assert.equal(info.traefik.configPath, '/api/traefik/config');
   assert.ok(info.traefik.token.length > 10);
 

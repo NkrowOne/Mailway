@@ -154,6 +154,18 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   cuentas; las rutas que solo trabajan con la cuenta de la instancia (DNS de
   la plataforma y certificado del motor) responden
   `403 cloudflare_instance_admin_only`.
+- **Dominios en zonas del operador**: si la administración escribió el DNS de
+  un dominio con una cuenta de la instancia, sus registros (MX, TXT de
+  verificación) siguen en la zona del operador aunque el dominio se borre, y
+  probarían la propiedad a cualquiera que lo diera de alta. El dominio queda
+  reservado al cliente para el que se escribió (`cloudflare_reservas`): otro
+  cliente, o Skyway con `soloCliente=1`, recibe `409 domain_reserved`. Solo la
+  administración (sin `soloCliente`) puede darlo de alta para otro cliente, y
+  entonces la reserva pasa a ese cliente.
+- **El alta automática solo crea** (`autoDns`): no modifica ni borra ningún
+  registro existente; las actualizaciones (SPF, proxy, registros propios) solo
+  las aplica «Aplicar» tras revisar el plan, y solo sobre registros con el
+  comentario exacto de esta instancia.
 - **Lo que el cliente no ve de la administración**: las notas internas del
   cliente (`notes`: acuerdos, incidencias, precios) solo las recibe la
   administración, y en **Actividad** no ve el correo ni la IP de quien

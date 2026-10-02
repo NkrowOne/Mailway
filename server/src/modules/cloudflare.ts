@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { domainToUnicode } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config';
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret, randomId } from '../core/crypto';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors';
@@ -384,9 +386,23 @@ export function deseadoDe(record: EngineDnsRecord): Deseado | null {
   return null;
 }
 
-/** Cuerpo del registro para la API: sin proxy, TTL automático y marcado como de Mailway. */
-export function cuerpoRegistro(d: Deseado): CfRegistroNuevo {
-  const base = { type: d.type, name: d.name, ttl: 1, proxied: false, comment: COMENTARIO_MAILWAY };
+/**
+ * Comentario con el que ESTA instancia marca los registros que crea:
+ * «Mailway» y una huella derivada de su secreto (no lo revela). Solo un
+ * registro con exactamente este comentario cuenta como propio y se puede
+ * actualizar (una clave DKIM nueva, un SRV que cambia de puerto). Uno de
+ * otra instalación de Mailway que gestione la misma zona (pruebas, un
+ * servidor anterior) o con un comentario que solo menciona «Mailway» es
+ * ajeno: sale como conflicto y solo se sustituye con confirmación.
+ */
+export function comentarioPropio(): string {
+  const huella = crypto.createHmac('sha256', config.secret).update('cloudflare:comentario').digest('hex').slice(0, 10);
+  return `${COMENTARIO_MAILWAY} (instancia ${huella})`;
+}
+
+/** Cuerpo del registro para la API: sin proxy, TTL automático y marcado como de esta instancia. */
+export function cuerpoRegistro(d: Deseado, comentario: string = comentarioPropio()): CfRegistroNuevo {
+  const base = { type: d.type, name: d.name, ttl: 1, proxied: false, comment: comentario };
   if (d.type === 'MX') return { ...base, content: d.content, priority: d.priority ?? 10 };
   if (d.type === 'SRV' && d.data) return { ...base, data: { ...d.data } };
   if (d.type === 'TXT') return { ...base, content: trocearTxt(d.content) };
@@ -404,8 +420,9 @@ function describir(r: CfRegistro): string {
   return `${r.type} ${valor}${r.proxied ? ' (con proxy)' : ''}`;
 }
 
-function esMailway(r: CfRegistro): boolean {
-  return (r.comment || '').toLowerCase().includes(COMENTARIO_MAILWAY.toLowerCase());
+/** ¿Lo creó esta instancia? Comparación exacta con su comentario, nunca «contiene Mailway». */
+function esPropio(r: CfRegistro, comentario: string): boolean {
+  return (r.comment || '').trim() === comentario;
 }
 
 function txtDe(r: CfRegistro): string {
@@ -472,7 +489,7 @@ function esHostEmailRouting(host: string): boolean {
 export function planificar(
   deseados: Deseado[],
   existentes: CfRegistro[],
-  ctx: { apex: string; publicIp?: string },
+  ctx: ContextoPlan,
 ): CambioInterno[] {
   const porNombre = new Map<string, CfRegistro[]>();
   for (const r of existentes) {
@@ -483,11 +500,19 @@ export function planificar(
   return deseados.map((d) => planificarUno(d, porNombre.get(d.name) || [], ctx));
 }
 
-function planificarUno(
-  d: Deseado,
-  aqui: CfRegistro[],
-  ctx: { apex: string; publicIp?: string },
-): CambioInterno {
+/**
+ * Contexto del plan: el vértice de la zona, la IP pública y el comentario con
+ * el que esta instancia marca sus registros (por defecto, `comentarioPropio`).
+ */
+export interface ContextoPlan {
+  apex: string;
+  publicIp?: string;
+  comentario?: string;
+}
+
+function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): CambioInterno {
+  const comentario = ctx.comentario ?? comentarioPropio();
+  const esMailway = (r: CfRegistro) => esPropio(r, comentario);
   const base = {
     type: d.type,
     name: d.name,
@@ -499,7 +524,7 @@ function planificarUno(
     ...base,
     action: 'create',
     reason,
-    operaciones: { ...vacias(), posts: [cuerpoRegistro(d)] },
+    operaciones: { ...vacias(), posts: [cuerpoRegistro(d, comentario)] },
     reemplazo: null,
   });
   const conservar = (reason: string, actual?: CfRegistro[]): CambioInterno => ({
@@ -522,7 +547,7 @@ function planificarUno(
   const borrarYCrear = (aBorrar: CfRegistro[]): Operaciones => ({
     ...vacias(),
     deletes: aBorrar.map((r) => r.id),
-    posts: [cuerpoRegistro(d)],
+    posts: [cuerpoRegistro(d, comentario)],
   });
 
   // Un CNAME no admite otros registros con su mismo nombre (salvo en el
@@ -612,7 +637,7 @@ function planificarUno(
       return enConflicto(reason, ajenos, {
         ...vacias(),
         deletes: ajenos.map((r) => r.id),
-        posts: propio ? [] : [cuerpoRegistro(d)],
+        posts: propio ? [] : [cuerpoRegistro(d, comentario)],
       });
     }
 
@@ -696,7 +721,7 @@ function planificarUno(
             action: 'update',
             reason: 'La clave DKIM ha cambiado en el servidor de correo; se actualizará el registro creado por Mailway.',
             current: describir(txts[0]!),
-            operaciones: { ...vacias(), puts: [{ id: txts[0]!.id, ...cuerpoRegistro(d) }] },
+            operaciones: { ...vacias(), puts: [{ id: txts[0]!.id, ...cuerpoRegistro(d, comentario) }] },
             reemplazo: null,
           };
         }
@@ -723,7 +748,7 @@ function planificarUno(
           action: 'update',
           reason: 'El valor ha cambiado en el servidor de correo; se actualizará el registro creado por Mailway.',
           current: describir(mismos[0]!),
-          operaciones: { ...vacias(), puts: [{ id: mismos[0]!.id, ...cuerpoRegistro(d) }] },
+          operaciones: { ...vacias(), puts: [{ id: mismos[0]!.id, ...cuerpoRegistro(d, comentario) }] },
           reemplazo: null,
         };
       }
@@ -747,7 +772,7 @@ function planificarUno(
           operaciones: {
             ...vacias(),
             deletes: srvs.slice(1).map((r) => r.id),
-            puts: [{ id: srvs[0]!.id, ...cuerpoRegistro(d) }],
+            puts: [{ id: srvs[0]!.id, ...cuerpoRegistro(d, comentario) }],
           },
           reemplazo: null,
         };
@@ -822,6 +847,7 @@ const ERRORES_GLOBALES = new Set([
   'cloudflare_token_invalid',
   'cloudflare_token_malformed',
   'cloudflare_token_unreadable',
+  'cloudflare_token_ip_restricted',
   'cloudflare_forbidden',
   'cloudflare_rate_limited',
   'cloudflare_timeout',
@@ -884,15 +910,26 @@ export async function ejecutarPlan(
   cliente: CloudflareClient,
   zoneId: string,
   cambios: CambioInterno[],
-  opts: { replaceConflicts: boolean },
+  opts: { replaceConflicts: boolean; soloCrear?: boolean },
 ): Promise<ResultadoAplicacion> {
   const skipped: ResultadoAplicacion['skipped'] = [];
   const aplicar: { cambio: CambioInterno; accion: string; ops: Operaciones }[] = [];
   for (const cambio of cambios) {
+    if (opts.soloCrear && cambio.action === 'update') {
+      // Alta automática: solo se crea lo que falta. Fusionar el SPF, quitar
+      // un proxy o actualizar un registro existente es modificarlo, y eso
+      // queda para «Aplicar» en la ficha del dominio, después de revisar el plan.
+      skipped.push({
+        type: cambio.type,
+        name: cambio.name,
+        reason: `Ya existe y el alta automática no modifica registros existentes. ${cambio.reason} Revisa el cambio y aplícalo desde la ficha del dominio.`,
+      });
+      continue;
+    }
     if ((cambio.action === 'create' || cambio.action === 'update') && cambio.operaciones) {
       aplicar.push({ cambio, accion: cambio.action, ops: cambio.operaciones });
     } else if (cambio.action === 'conflict') {
-      if (opts.replaceConflicts && cambio.reemplazo) {
+      if (opts.replaceConflicts && !opts.soloCrear && cambio.reemplazo) {
         aplicar.push({ cambio, accion: 'replace', ops: cambio.reemplazo });
       } else {
         skipped.push({
@@ -1118,13 +1155,49 @@ export interface ResultadoDominio extends ResultadoAplicacion {
   zone: ZonaPublica;
 }
 
+/* ------------------- Reservas de los dominios del operador ----------------- */
+
+interface ReservaRow {
+  domain: string;
+  client_id: string | null;
+}
+
+/** Cliente para el que el administrador escribió el DNS del dominio con una cuenta de la instancia. */
+export function reservaDeDominio(domain: string): ReservaRow | undefined {
+  return db.prepare('SELECT domain, client_id FROM cloudflare_reservas WHERE domain = ?').get(domain) as
+    | ReservaRow
+    | undefined;
+}
+
+/**
+ * Anota (o actualiza) la reserva: los registros escritos en una zona del
+ * operador siguen ahí aunque el dominio se borre, y un MX o el TXT de
+ * verificación bastan para probar la propiedad. Mientras exista, solo ese
+ * cliente (o el administrador) puede dar de alta el dominio.
+ */
+function reservarDominio(domain: string, clientId: string, r: Resolucion): void {
+  db.prepare(
+    `INSERT INTO cloudflare_reservas (domain, client_id, account_id, zone_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(domain) DO UPDATE SET client_id = excluded.client_id, account_id = excluded.account_id,
+       zone_id = excluded.zone_id, updated_at = excluded.updated_at`,
+  ).run(domain, clientId, r.cuenta.id, r.zona.id, now(), now());
+}
+
+/** El administrador da de alta un dominio reservado para un cliente: la reserva pasa a ese cliente. */
+export function moverReservaDominio(domain: string, clientId: string): void {
+  db.prepare('UPDATE cloudflare_reservas SET client_id = ?, updated_at = ? WHERE domain = ?').run(clientId, now(), domain);
+}
+
 /**
  * Aplica el DNS de correo de un dominio en Cloudflare. Devuelve null si
  * ninguna cuenta accesible contiene la zona (el alta con «autoDns» lo usa así).
+ * `soloCrear` (el alta automática) crea lo que falta y no modifica nada de lo
+ * que existe: ni fusiona el SPF, ni quita un proxy, ni actualiza un registro.
  */
 export async function aplicarDnsDominio(
   domainId: string,
-  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia: boolean },
+  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia: boolean; soloCrear?: boolean },
 ): Promise<ResultadoDominio | { unavailable: string }> {
   const domain = getDomain(domainId);
   // Quien llama decide expresamente si se pueden usar las cuentas de la
@@ -1135,8 +1208,10 @@ export async function aplicarDnsDominio(
   const r = plan.resolucion;
   const resultado = await ejecutarPlan(r.cliente, r.zona.id, plan.changes, {
     replaceConflicts: opts.replaceConflicts,
+    soloCrear: opts.soloCrear,
   });
   guardarAsociacion(domainId, r);
+  if (r.cuenta.client_id === null && resultado.applied.length > 0) reservarDominio(domain.domain, domain.clientId, r);
   if (resultado.applied.length > 0) {
     db.prepare('UPDATE domains SET dns_applied_at = ? WHERE id = ?').run(now(), domainId);
   }
@@ -1280,6 +1355,8 @@ export interface ConexionCloudflare {
   cuenta: CuentaCloudflare;
   /** false si el mismo token ya estaba conectado en ese ámbito (modo idempotente). */
   creada: boolean;
+  /** true si se ha sustituido el token de la cuenta del instalador (modo idempotente). */
+  sustituida: boolean;
 }
 
 /**
@@ -1292,6 +1369,14 @@ export interface ConexionCloudflare {
  * instancia con `clientId` null), `siYaExiste: 'error'` responde 409 (la
  * ruta: así el formulario lo explica) y `'devolver'` devuelve la existente
  * sin tocarla (la herramienta del instalador, que puede repetirse).
+ *
+ * En modo `'devolver'` con un token DISTINTO para la instancia, si ya hay una
+ * cuenta de la instancia creada desde la terminal (sin `created_by`: la del
+ * instalador), se le sustituye el token en vez de añadir otra: el operador
+ * rota su token repitiendo el instalador, y una segunda cuenta dejaría la
+ * antigua (que se prueba primero) en uso, o fallando en cada alta si se
+ * revocó. La cuenta conserva su identificador, así que los dominios
+ * asociados a ella siguen asociados.
  */
 export async function conectarCuentaCloudflare(opts: {
   token: string;
@@ -1318,7 +1403,7 @@ export async function conectarCuentaCloudflare(opts: {
     // Se refrescan sus zonas: si el token ha dejado de valer, la cuenta lo
     // muestra (last_error) y quien la conecta de nuevo lo ve en el resultado.
     const cache = await zonasDeCuenta(existente, true);
-    return { cuenta: toCuenta(cuentaRow(existente.id) || existente, cache), creada: false };
+    return { cuenta: toCuenta(cuentaRow(existente.id) || existente, cache), creada: false, sustituida: false };
   }
 
   const cliente = new CloudflareClient(token);
@@ -1330,6 +1415,27 @@ export async function conectarCuentaCloudflare(opts: {
       'cloudflare_no_zones',
     );
   }
+  const nombres = zonas.map((z) => z.name).sort((a, b) => a.localeCompare(b));
+  const cache: CacheZonas = { zones: nombres.slice(0, 500), total: nombres.length, at: now() };
+
+  // Rotación del token del instalador: misma cuenta, token nuevo (solo tras
+  // verificarlo: un token que no vale deja la cuenta como estaba).
+  const delInstalador = opts.siYaExiste === 'devolver' && clientId === null ? mismas.find((f) => f.created_by === null) : undefined;
+  if (delInstalador) {
+    const label = etiqueta || delInstalador.label;
+    db.prepare(
+      `UPDATE cloudflare_accounts SET token_enc = ?, token_hint = ?, label = ?, last_verified_at = ?, last_error = ''
+       WHERE id = ?`,
+    ).run(encryptSecret(token), pistaToken(token), label, now(), delInstalador.id);
+    setJsonSetting(claveCache(delInstalador.id), cache);
+    opts.auditar('cloudflare.account_token_replaced', {
+      id: delInstalador.id,
+      label,
+      clientId: null,
+      zones: nombres.length,
+    });
+    return { cuenta: toCuenta(cuentaRow(delInstalador.id)!, cache), creada: false, sustituida: true };
+  }
 
   const id = randomId('cf');
   const label = etiqueta || zonas[0]!.accountName || 'Cloudflare';
@@ -1338,12 +1444,10 @@ export async function conectarCuentaCloudflare(opts: {
        created_at, last_verified_at, last_error)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
   ).run(id, clientId, label, encryptSecret(token), pistaToken(token), opts.createdBy, now(), now());
-  const nombres = zonas.map((z) => z.name).sort((a, b) => a.localeCompare(b));
-  const cache: CacheZonas = { zones: nombres.slice(0, 500), total: nombres.length, at: now() };
   setJsonSetting(claveCache(id), cache);
 
   opts.auditar('cloudflare.account_connected', { id, label, clientId, zones: nombres.length });
-  return { cuenta: toCuenta(cuentaRow(id)!, cache), creada: true };
+  return { cuenta: toCuenta(cuentaRow(id)!, cache), creada: true, sustituida: false };
 }
 
 /* ---------------------------------- Rutas --------------------------------- */
@@ -1359,6 +1463,15 @@ const aplicarSchema = z
   .nullish();
 
 const reemplazoSchema = z.object({ replaceConflicts: booleano('replaceConflicts') }).nullish();
+
+/**
+ * Registro de un dominio de marca blanca. `soloCrear` lo pide quien lo crea
+ * automáticamente al dar de alta el webmail (Skyway, para su administrador):
+ * se crea si falta y nunca se modifica uno existente, ni para quitarle el proxy.
+ */
+const marcaBlancaSchema = z
+  .object({ replaceConflicts: booleano('replaceConflicts'), soloCrear: booleano('soloCrear') })
+  .nullish();
 
 export function registerCloudflareRoutes(app: FastifyInstance): void {
   /**
@@ -1493,7 +1606,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const destino = getClientDomain(id);
     requireClientAccess(req, destino.clientId);
-    const body = reemplazoSchema.parse(req.body) || {};
+    const body = marcaBlancaSchema.parse(req.body) || {};
 
     const inst = getInstanceSettings();
     const mail = sinPunto(inst.mailHostname || '');
@@ -1523,6 +1636,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     });
     const resultado = await ejecutarPlan(resolucion.cliente, resolucion.zona.id, cambios, {
       replaceConflicts: body.replaceConflicts === true,
+      soloCrear: body.soloCrear === true,
     });
     const domain: ClientDomain = await refreshClientDomain(id).catch(() => getClientDomain(id));
     audit(req, 'cloudflare.dns_applied', {

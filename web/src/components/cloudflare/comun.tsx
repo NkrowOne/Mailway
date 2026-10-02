@@ -154,7 +154,9 @@ export function ResultadoCloudflare({ resultado, apex }: { resultado: ResultadoA
         </BandaError>
       )}
       {omitidos.length > 0 && (
-        <BandaAviso titulo={`Sin modificar: ${omitidos.length} en conflicto`}>
+        <BandaAviso
+          titulo={`Sin modificar: ${omitidos.length} ${omitidos.length === 1 ? 'registro existente' : 'registros existentes'}`}
+        >
           <ul className="flex flex-col gap-1">
             {omitidos.map((s, i) => (
               <li key={`${s.type}-${s.name}-${i}`}>

@@ -21,11 +21,14 @@
  * «Sistema», sin el token.
  *
  * Es idempotente: si el mismo token ya está conectado como cuenta de la
- * instancia, devuelve esa cuenta sin cambiarla (`creada: false`).
+ * instancia, devuelve esa cuenta sin cambiarla (`creada: false`). Con otro
+ * token, si ya hay una cuenta de la instancia conectada desde la terminal (la
+ * del instalador), le sustituye el token tras verificarlo (`sustituida:
+ * true`): así se rota repitiendo el instalador, sin dejar la antigua en uso.
  *
  * Imprime por la salida estándar UNA línea JSON
- * `{"ok":true,"id","label","zones","creada"}` (zones: número de zonas que ve
- * el token). Los avisos van a la salida de errores con el prefijo «Aviso: »;
+ * `{"ok":true,"id","label","zones","creada","sustituida"}` (zones: número de
+ * zonas que ve el token). Los avisos van a la salida de errores con el prefijo «Aviso: »;
  * un fallo termina con código 1 y el motivo en la salida de errores.
  */
 // Antes que cualquier otro módulo: deja de ser root antes de abrir la base.
@@ -138,7 +141,7 @@ async function conectar(argv: readonly string[], io: EntradaSalidaCloudflare): P
   const { nombre } = leerArgumentos(argv);
   const token = tokenDeEntrada(await io.leerEntrada());
   try {
-    const { cuenta, creada } = await conectarCuentaCloudflare({
+    const { cuenta, creada, sustituida } = await conectarCuentaCloudflare({
       token,
       label: nombre,
       clientId: null,
@@ -150,7 +153,7 @@ async function conectar(argv: readonly string[], io: EntradaSalidaCloudflare): P
       io.err(`Aviso: La cuenta «${cuenta.label}» ya estaba conectada, pero Cloudflare no la ha aceptado ahora: ${cuenta.lastError}`);
     }
     io.out(
-      JSON.stringify({ ok: true, id: cuenta.id, label: cuenta.label, zones: cuenta.zonesTotal ?? 0, creada }),
+      JSON.stringify({ ok: true, id: cuenta.id, label: cuenta.label, zones: cuenta.zonesTotal ?? 0, creada, sustituida }),
     );
   } catch (err) {
     // Los mensajes de Cloudflare ya están traducidos y no llevan el token,
