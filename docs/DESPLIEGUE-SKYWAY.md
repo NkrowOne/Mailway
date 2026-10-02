@@ -166,10 +166,12 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     ya tiene certificado, retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` de las
     variables del panel (sección 5.4).
 12. **Traefik**: con Skyway 0.34 o posterior no instala nada, porque el
-    puente ya viene incluido (sección 4.2); si encuentra el
-    `docker-compose.override.yml` que generó una versión anterior del
-    instalador, ofrece retirarlo (lo conserva como
-    `docker-compose.override.yml.mailway-retirado`) y recrear Traefik. Con
+    puente ya viene incluido (sección 4.2); si encuentra un
+    `docker-compose.override.yml` de Mailway (el que generó una versión
+    anterior del instalador o el copiado a mano de Ajustes → Marca blanca),
+    ofrece retirarlo (lo conserva como
+    `docker-compose.override.yml.mailway-retirado`) y recrear Traefik, y
+    solo da el paso por bueno si Traefik corre después con el puente. Con
     Skyway anterior a 0.34, si su Traefik no consulta todavía ningún
     proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
     (sección 4.3).
@@ -411,8 +413,9 @@ Traefik** y **Ajustes → Autoconfiguración de dispositivos**.
 > `docker-compose.override.yml` para Mailway en la carpeta de Skyway,
 > **elimínalo** y ejecuta `docker compose up -d traefik` en esa carpeta: el
 > fichero sustituye los parámetros de Traefik de la 0.34 (Traefik solo admite
-> un proveedor HTTP) y dejaría sin efecto el puente. Si lo generó el
-> instalador, `deploy/instalar.sh --actualizar` lo retira por ti.
+> un proveedor HTTP) y dejaría sin efecto el puente. `deploy/instalar.sh
+> --actualizar` lo retira por ti, también si lo copiaste a mano de Ajustes →
+> Marca blanca (sección 8.2).
 
 ### 4.3 Skyway anterior a 0.34 o Traefik propio
 
@@ -492,7 +495,8 @@ recarga de certificados.
 > retira del volumen esas copias; la carpeta que dejaba el volcado para
 > `MAIL_HOSTNAME` pasa a ser una versión propia, con las mismas rutas.
 > `deploy/instalar.sh --actualizar` hace el cambio sin tocar la configuración
-> del motor.
+> del motor. Si el motor seguía con el `certificate.default` de la guía 0.x,
+> el instalador lo pasa a `certificate.mailway` (sección 8.2).
 
 Para recargar los certificados usa la contraseña **vigente** del
 administrador del motor (`STALWART_ADMIN_PASSWORD` de `deploy/.env`). Si el
@@ -778,6 +782,42 @@ ese panel**, sin crear otro:
 - Si Skyway despliega varios paneles, se detiene sin tocar nada y pide cuál
   con `MAILWAY_PANEL_SERVICIO=<id del servicio>`.
 
+El instalador también resuelve lo que dejaba configurado la guía anterior:
+
+- **Certificado de IMAP y SMTP.** La guía 0.x arrancaba `traefik-certs-dumper`
+  y apuntaba `certificate.default` a los ficheros que volcaba
+  (`/opt/stalwart/certs/<servidor de correo>/cert.pem` y `key.pem`). La
+  migración retira ese volcador, y sin él nadie renovaría el certificado. Por
+  eso el instalador lo pasa a `certificate.mailway`, con las mismas rutas, y
+  borra `certificate.default`. Después arranca el extractor (sección 5.2),
+  que lo renueva y retira del volumen las claves privadas de los demás
+  dominios que había copiado el volcador. Si el motor emite su propio
+  certificado por ACME (con Cloudflare o configurado antes), solo borra
+  `certificate.default` y limpia el volumen. Un certificado propio con otras
+  rutas no se toca.
+- **Webmail.** El webmail anterior entraba al motor por su nombre público
+  (`ssl://<servidor de correo>`); el de la 1.0 entra por la red interna
+  (`ssl://mailway-mail`). Roundcube identifica a cada usuario por su
+  dirección y por ese servidor (`users.mail_host`). Sin más, cada titular
+  vería el webmail vacío: sin contactos, identidades, firmas ni
+  preferencias, aunque siguen en la base. El instalador cambia ese servidor
+  en la base del webmail con el contenedor antiguo ya retirado y antes de
+  levantar el nuevo. El usuario que ya hubiera entrado con la 1.0 conserva
+  ese usuario y el instalador lo indica. Si el cambio falla, avisa y la
+  instalación sigue: hazlo a mano (abajo).
+- **Override de Traefik.** Con la guía 0.x, el bloque de Ajustes → Marca
+  blanca se copiaba a `docker-compose.override.yml` en la carpeta de Skyway.
+  Con Skyway 0.34 o posterior, ese fichero deja sin efecto el puente de
+  Skyway (sección 4.2). El instalador lo reconoce aunque se copiara a mano
+  (lleva `/api/traefik/config` o `X-Mailway-Token`), ofrece retirarlo (lo
+  conserva como `docker-compose.override.yml.mailway-retirado`) y recrea
+  Traefik. Solo confirma el resultado si Traefik corre después con el
+  proveedor de Skyway (`api/traefik/mailway`); si no, avisa. Si añadiste
+  otros ajustes a ese fichero, recupéralos de la copia. Con Skyway anterior
+  a la 0.34, si el panel guarda su propio token de Traefik, no genera el
+  fichero: copia el bloque de Ajustes → Rutas de Traefik del panel (sección
+  4.3).
+
 **A mano:**
 
 ```bash
@@ -790,7 +830,36 @@ docker volume ls | grep mailway                         # localiza los volúmene
 docker rm -f mailway-webmail mailway-certs-dumper mailway-mail   # los volúmenes se conservan
 #   (en la instalación autónoma, retira también mailway-panel y usa docker-compose.standalone.yml)
 docker network rm mailway-internal                               # se recrea con la subred fija
+
+# Usuarios del webmail: del servidor público al interno, con el webmail parado.
+# Sustituye mail.miempresa.com por el nombre de tu servidor de correo.
+docker run --rm -v deploy_mailway-webmail-db:/var/roundcube/db --entrypoint php \
+  roundcube/roundcubemail:1.7.x-apache -r '
+    $db = new PDO("sqlite:/var/roundcube/db/sqlite.db", null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $q = $db->prepare("UPDATE OR IGNORE users SET mail_host = ? WHERE lower(mail_host) = ?");
+    $q->execute(["mailway-mail", $argv[1]]);
+    echo $q->rowCount(), " usuarios trasladados\n";' mail.miempresa.com
+
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d
+```
+
+Si el motor usaba el certificado del volcador (`certificate.default` con las
+rutas de `/opt/stalwart/certs/`), sigue los pasos 2 a 4 de la sección 5.2 y,
+antes de recargar los certificados, borra `certificate.default`:
+
+```bash
+docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
+  -X POST http://mailway-mail:8080/api/settings -H 'Content-Type: application/json' \
+  -d '[{"type":"clear","prefix":"certificate.default."}]'
+```
+
+Con Skyway 0.34 o posterior, retira el override de Traefik de la guía 0.x:
+
+```bash
+cd /ruta/a/Skyway
+mv docker-compose.override.yml docker-compose.override.yml.mailway-retirado
+docker compose up -d traefik
+docker inspect -f '{{json .Config.Cmd}}' skyway-traefik | grep -o 'api/traefik/mailway'
 ```
 
 Después, en el panel, **Ajustes → Servidor de correo → Aplicar ajustes
@@ -1097,7 +1166,13 @@ menor):
    Skyway» cuando su API no responde (token temporal revocado, IP del
    contenedor, sin interrumpir la instalación) y con un panel que Skyway ya
    despliega (se actualiza sin duplicarlo ni cambiar su clave maestra). Solo
-   necesita bash y `jq`.
+   necesita bash y `jq`. `deploy/prueba-migracion.sh`, igual, comprueba la
+   migración desde la 0.x (sección 8.2): el certificado del volcador pasa al
+   extractor, los usuarios del webmail cambian de servidor sobre una base
+   SQLite con el esquema de Roundcube (necesita php con `pdo_sqlite`) y el
+   override de Traefik copiado a mano se retira; y también que no cambia un
+   certificado propio, un webmail que ya usaba `mailway-mail` ni un override
+   ajeno.
 2. **Con contenedores reales** (`deploy/prueba-stack.py`): monta con
    `deploy/instalar.sh --actualizar` Stalwart v0.15.5, Roundcube y el
    extractor con la topología de producción (subred interna fija, un Skyway
