@@ -45,11 +45,73 @@ muestra el prefijo para reconocerla; en la base de datos solo queda su hash.
 | `replyTo` | cadena | no | Dirección de respuesta |
 | `cc`, `bcc` | lista de cadenas | no | Hasta 20 direcciones cada una |
 | `headers` | objeto | no | Cabeceras adicionales (p. ej. `X-Campaign`), valores de hasta 500 caracteres |
+| `attachments` | lista de objetos | no | Hasta 5 adjuntos y 10 MB en total una vez decodificados (sección 1.3) |
 
 El remitente (`From`) es siempre el buzón asociado a la clave: `fromName` solo
-cambia el nombre visible. La petición completa no puede superar 5 MB.
+cambia el nombre visible. La petición completa no puede superar 20 MB (los
+adjuntos en base64 ocupan un tercio más que el fichero).
 
-### 1.3 Ejemplos
+### 1.3 Adjuntos
+
+Cada elemento de `attachments` es `{ filename, contentType, content }`:
+
+| Campo | Contenido |
+|---|---|
+| `filename` | Nombre del fichero. Se sanea: se quitan rutas, caracteres de control, marcas de dirección (U+202E y similares), `" < > : * ? \|` y puntos al principio o al final, y se recorta a 120 caracteres conservando la extensión. Sin extensión, se añade la del tipo. |
+| `contentType` | Uno de los tipos admitidos (debajo). De los parámetros solo se conservan `charset` y, en un calendario, `method` (`REQUEST`, `CANCEL`…), que convierte el `.ics` en una invitación con botones de respuesta. |
+| `content` | El fichero en base64 (estándar o URL; se admiten saltos de línea). |
+
+Tipos admitidos y extensiones válidas:
+
+| Tipo | Extensiones |
+|---|---|
+| `application/pdf` | `pdf` |
+| `text/calendar` | `ics`, `ical`, `ifb` |
+| `text/plain` · `text/csv` · `application/json` | `txt`, `text`, `log` · `csv` · `json` |
+| `image/png` · `image/jpeg` · `image/gif` · `image/webp` | `png` · `jpg`, `jpeg` · `gif` · `webp` |
+| Office (`…wordprocessingml.document`, `…spreadsheetml.sheet`, `…presentationml.presentation`) | `docx` · `xlsx` · `pptx` |
+| OpenDocument (`application/vnd.oasis.opendocument.text`, `.spreadsheet`, `.presentation`) | `odt` · `ods` · `odp` |
+
+Reglas:
+
+- La extensión del nombre debe ser una de las del tipo: `factura.pdf.exe`
+  declarado como PDF se rechaza (`400 attachment_type_not_allowed`).
+- El contenido debe corresponder al tipo: un PDF empieza por `%PDF-`, una
+  imagen por su firma, un calendario por `BEGIN:VCALENDAR`, los documentos de
+  Office y OpenDocument son ZIP y los textos no contienen bytes nulos
+  (`400 attachment_invalid`).
+- No se admiten ejecutables, scripts, HTML ni comprimidos: salen con el
+  dominio y la IP del cliente, y son la vía habitual del *phishing*.
+- El tamaño de los adjuntos cuenta en el `sizeBytes` del historial.
+
+### 1.4 Reintentos sin duplicados: `Idempotency-Key`
+
+Si la aplicación no recibe la respuesta (un corte de red, un *timeout*) no
+sabe si el mensaje salió. Con la cabecera opcional `Idempotency-Key` puede
+reintentar sin riesgo de enviarlo dos veces:
+
+```
+Idempotency-Key: 0b8f2c1e-4d5a-4f7e-9a61-3c2d1e0f9b8a
+```
+
+- Valor de 1 a 200 caracteres ASCII imprimibles; un UUID por mensaje es lo
+  más sencillo. Si no, `400 invalid_idempotency_key`.
+- Se guarda **por clave de API** durante **24 horas**: el mismo valor con la
+  misma clave devuelve la respuesta original (mismo `id`, mismo `status`) con
+  la cabecera `Idempotent-Replayed: true`, sin volver a enviar ni gastar cupo.
+  Con otra clave de API, el mismo valor es independiente.
+- Si llega con el mismo valor un mensaje **distinto** (otro destinatario,
+  asunto, contenido o adjuntos), `409 idempotency_conflict`. El orden de los
+  campos del JSON no cuenta.
+- Mientras la primera petición está en curso, otra con el mismo valor recibe
+  `409 idempotency_in_progress`: reintenta en unos segundos.
+- Solo se guardan los envíos que se ejecutaron (`status: "sent"` o
+  `"failed"`). Un rechazo por límites (`429`), autenticación o validación no
+  reserva el valor, así que el reintento con la misma clave funciona. Para
+  reintentar un envío con `status: "failed"`, usa un valor nuevo.
+- Del valor solo se guarda su hash.
+
+### 1.5 Ejemplos
 
 **curl (código OTP):**
 
@@ -115,10 +177,83 @@ if r.status_code != 200 or data.get("status") != "sent":
     raise RuntimeError(data.get("code") or data.get("status"), data.get("error"))
 ```
 
+**curl (invitación de calendario y PDF adjuntos):**
+
+```bash
+ICS=$(base64 -w0 invitacion.ics)   # en macOS: base64 -i invitacion.ics
+PDF=$(base64 -w0 orden-del-dia.pdf)
+curl -sS -X POST https://panel.miempresa.com/v1/send \
+  -H "Authorization: Bearer $MAILWAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: reunion-2026-10-10-ana" \
+  -d @- <<JSON
+{
+  "to": "ana@ejemplo.com",
+  "subject": "Invitación: revisión trimestral",
+  "text": "Te enviamos la invitación y el orden del día.",
+  "attachments": [
+    { "filename": "invitacion.ics", "contentType": "text/calendar; method=REQUEST", "content": "$ICS" },
+    { "filename": "orden-del-dia.pdf", "contentType": "application/pdf", "content": "$PDF" }
+  ]
+}
+JSON
+```
+
+**Node.js (ICS generado en el momento, con `Idempotency-Key`):**
+
+```js
+import { randomUUID } from 'node:crypto';
+
+const ics = [
+  'BEGIN:VCALENDAR',
+  'VERSION:2.0',
+  'PRODID:-//Mi empresa//Citas//ES',
+  'METHOD:REQUEST',
+  'BEGIN:VEVENT',
+  `UID:${randomUUID()}@miempresa.com`,
+  'DTSTAMP:20261002T080000Z',
+  'DTSTART:20261010T090000Z',
+  'DTEND:20261010T100000Z',
+  'SUMMARY:Revisión trimestral',
+  'ORGANIZER:mailto:agenda@miempresa.com',
+  'ATTENDEE;RSVP=TRUE:mailto:ana@ejemplo.com',
+  'END:VEVENT',
+  'END:VCALENDAR',
+].join('\r\n');
+
+// Un valor por mensaje, guardado junto al pedido o la cita: si hay que
+// reintentar, se reutiliza el mismo y el mensaje no sale dos veces.
+const idempotencyKey = randomUUID();
+
+const res = await fetch(`${process.env.MAILWAY_API_URL}/v1/send`, {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.MAILWAY_API_KEY}`,
+    'Content-Type': 'application/json',
+    'Idempotency-Key': idempotencyKey,
+  },
+  body: JSON.stringify({
+    to: 'ana@ejemplo.com',
+    subject: 'Invitación: revisión trimestral',
+    text: 'Te enviamos la invitación. Acéptala desde tu calendario.',
+    attachments: [
+      {
+        filename: 'invitacion.ics',
+        contentType: 'text/calendar; method=REQUEST',
+        content: Buffer.from(ics).toString('base64'),
+      },
+    ],
+  }),
+});
+const data = await res.json();
+if (!res.ok || data.status !== 'sent') throw new Error(`${data.code ?? data.status}: ${data.error}`);
+// res.headers.get('idempotent-replayed') === 'true' si era un reintento.
+```
+
 Las aplicaciones conectadas desde Skyway reciben `MAILWAY_API_URL` (URL del
 panel), `MAILWAY_API_KEY` y `MAIL_FROM` como variables de entorno.
 
-### 1.4 Respuestas
+### 1.6 Respuestas
 
 Todas las respuestas son JSON. Los errores tienen la forma
 `{ "error": "<mensaje en español>", "code": "<código>" }`; los de validación
@@ -128,22 +263,29 @@ añaden `issues: [{ path, message }]`.
 |---|---|---|---|
 | `200` | — | `{ id, status: "sent", messageId }`: entregado al motor | Nada |
 | `200` | — | `{ id, status: "failed", error }`: el servidor SMTP rechazó el mensaje | Revisar `error`. El envío queda en el historial y **cuenta** para el cupo diario |
-| `400` | `validation` | Algún campo no es válido; `error` indica cuál | Corregir la petición |
+| `200` | — | Con la cabecera `Idempotent-Replayed: true`: repetición de un envío ya hecho con la misma `Idempotency-Key` | Nada: es la respuesta original |
+| `400` | `validation` | Algún campo no es válido (también más de 5 adjuntos); `error` indica cuál | Corregir la petición |
 | `400` | `bad_request` | Falta el contenido (`html` o `text`), o el cuerpo no es JSON válido | Corregir la petición |
+| `400` | `attachment_type_not_allowed` | Tipo de adjunto no admitido o extensión que no corresponde al tipo | Usar un tipo de la sección 1.3 |
+| `400` | `attachment_invalid` | Adjunto vacío, sin base64 válido o cuyo contenido no es del tipo declarado | Revisar la codificación y el tipo |
+| `400` | `invalid_idempotency_key` | `Idempotency-Key` vacía, de más de 200 caracteres o con caracteres no ASCII | Usar, por ejemplo, un UUID |
 | `401` | `missing_api_key` | No hay cabecera `Authorization` | Añadirla |
 | `401` | `invalid_api_key` | La cabecera no tiene el formato `Bearer mw_…` o la clave no existe | Revisar la clave |
 | `401` | `revoked_api_key` | La clave fue revocada | Crear una nueva |
 | `403` | `client_suspended` | La cuenta del cliente está suspendida | Contactar con quien administra el servicio |
 | `403` | `sender_suspended` | El buzón remitente de la clave está suspendido | Reactivarlo en el panel o usar otra clave |
 | `403` | `sender_missing` | El buzón remitente ya no existe | Crear una clave con otro remitente |
-| `413` | `bad_request` | La petición supera 5 MB | Reducir el contenido |
+| `409` | `idempotency_conflict` | La `Idempotency-Key` ya se usó con esta clave para un mensaje distinto | Usar un valor nuevo por mensaje |
+| `409` | `idempotency_in_progress` | Otra petición con la misma `Idempotency-Key` está en curso | Reintentar en unos segundos |
+| `413` | `attachments_too_large` | Los adjuntos superan 10 MB una vez decodificados | Reducirlos o enviar un enlace de descarga |
+| `413` | `bad_request` | La petición supera 20 MB | Reducir el contenido |
 | `429` | `rate_limited` | Límite de envíos por minuto del plan, contado por cliente (todas sus claves) | Reintentar con espera exponencial |
 | `429` | `daily_limit_reached` | Límite diario del plan (por cliente, todas sus claves) o de la clave | Esperar al reinicio: medianoche UTC |
 
-Los rechazos por `401`, `403` y los datos no válidos **no gastan** cupo diario
-ni la ventana por minuto.
+Los rechazos por `401`, `403`, `409`, `413` y los datos no válidos **no
+gastan** cupo diario ni la ventana por minuto.
 
-### 1.5 Límites
+### 1.7 Límites
 
 - Los límites **por minuto** y **por día** los define el plan del cliente y se
   aplican **al cliente en conjunto**: todas sus claves comparten el mismo
@@ -159,7 +301,7 @@ ni la ventana por minuto.
   cupo del plan suma, en cambio, los envíos admitidos de todas las claves del
   cliente, por lo que puede agotarse aunque `usedToday` de una clave sea bajo.
 
-### 1.6 Historial
+### 1.8 Historial
 
 Cada envío queda registrado con su estado, destinatarios, asunto, tamaño y
 `messageId`. En el panel: **API de envío**. Por API de gestión:
@@ -201,6 +343,10 @@ dailyLimit, lastUsedAt, revokedAt, createdAt, usedToday }`.
 - Incluye siempre la versión `text` además de `html`: mejora la entrega.
 - Ante `429 rate_limited`, reintenta con espera exponencial (2 s, 4 s, 8 s…).
   Ante `429 daily_limit_reached`, no reintentes hasta el día siguiente.
+- Envía una `Idempotency-Key` por mensaje y reutilízala en los reintentos: un
+  corte de red nunca duplicará un correo.
+- Para ficheros grandes, envía un enlace de descarga en lugar de un adjunto:
+  los adjuntos pesados empeoran la entrega.
 - Trata `200` con `status: "failed"` como un error: el mensaje no salió.
 - Revoca de inmediato cualquier clave que se haya podido filtrar; crear una
   nueva lleva segundos.

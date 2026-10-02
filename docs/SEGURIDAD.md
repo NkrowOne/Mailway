@@ -73,6 +73,15 @@ cliente puede usar la API directamente, no solo la interfaz.
 tiempo constante; revocación inmediata (también se cierra su conexión SMTP y
 se retira su credencial del motor). Solo valen en `/v1/send`.
 
+- **Adjuntos**: lista cerrada de tipos (PDF, calendario, imágenes, texto,
+  CSV, JSON y documentos de Office u OpenDocument), con la extensión del
+  nombre comprobada contra el tipo y el contenido contra su firma: un
+  ejecutable no sale etiquetado como PDF ni como `factura.pdf.exe`. El nombre
+  se sanea (sin rutas, controles ni marcas de dirección como U+202E). Máximo
+  5 adjuntos y 10 MB decodificados; la petición, 20 MB.
+- **Idempotency-Key**: se guarda por clave de API, solo su hash, durante
+  24 horas. Una clave nunca ve ni reutiliza la respuesta guardada de otra.
+
 ### 3.4 Titulares de buzones
 
 - La contraseña se comprueba **en el panel**, contra el hash `$6$` que guarda

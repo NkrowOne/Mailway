@@ -13,7 +13,7 @@ import {
   newApiKey,
   randomId,
 } from '../core/crypto';
-import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from '../core/errors';
+import { HttpError, badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from '../core/errors';
 import { isInternalHost } from '../core/hostnames';
 import { getEngine } from '../engine';
 import type { EngineSettings } from '../engine/types';
@@ -557,6 +557,282 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
   });
 }
 
+/* -------------------------------- Adjuntos -------------------------------- */
+
+export const MAX_ADJUNTOS = 5;
+/** Tope de los adjuntos de un mensaje, sumados y ya decodificados. */
+export const MAX_ADJUNTOS_BYTES = 10 * 1024 * 1024;
+/**
+ * Tope de la petición de /v1/send: 10 MB de adjuntos ocupan unos 13,4 MB en
+ * base64, más los dos cuerpos de 2 MB. El resto de la API sigue en 5 MB.
+ */
+export const MAX_PETICION_ENVIO_BYTES = 20 * 1024 * 1024;
+
+const ZIP = (b: Buffer) => b.length >= 4 && b.readUInt32BE(0) === 0x504b0304;
+/** Un texto no lleva bytes nulos: así no pasa un ejecutable con la etiqueta text/plain. */
+const SIN_NULOS = (b: Buffer) => !b.subarray(0, 64 * 1024).includes(0);
+
+/**
+ * Tipos admitidos, sus extensiones y la firma que debe tener el contenido.
+ * Lista cerrada a propósito: lo que viaja por la API sale con el dominio y la
+ * IP del cliente, y un ejecutable o un HTML adjunto hunden la reputación de
+ * ambos (y son la vía clásica del phishing). La primera extensión es la que
+ * se añade si el nombre no trae ninguna.
+ */
+const TIPOS_ADJUNTO: Record<string, { extensiones: string[]; firma: (b: Buffer) => boolean }> = {
+  'application/pdf': { extensiones: ['pdf'], firma: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
+  'text/calendar': {
+    extensiones: ['ics', 'ical', 'ifb'],
+    firma: (b) =>
+      SIN_NULOS(b) &&
+      /^(\ufeff)?\s*BEGIN:VCALENDAR/i.test(b.subarray(0, 256).toString('utf8')),
+  },
+  'text/plain': { extensiones: ['txt', 'text', 'log'], firma: SIN_NULOS },
+  'text/csv': { extensiones: ['csv'], firma: SIN_NULOS },
+  'application/json': { extensiones: ['json'], firma: SIN_NULOS },
+  'image/png': {
+    extensiones: ['png'],
+    firma: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  },
+  'image/jpeg': { extensiones: ['jpg', 'jpeg'], firma: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  'image/gif': { extensiones: ['gif'], firma: (b) => /^GIF8[79]a/.test(b.subarray(0, 6).toString('latin1')) },
+  'image/webp': {
+    extensiones: ['webp'],
+    firma: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
+  },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { extensiones: ['docx'], firma: ZIP },
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { extensiones: ['xlsx'], firma: ZIP },
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': { extensiones: ['pptx'], firma: ZIP },
+  'application/vnd.oasis.opendocument.text': { extensiones: ['odt'], firma: ZIP },
+  'application/vnd.oasis.opendocument.spreadsheet': { extensiones: ['ods'], firma: ZIP },
+  'application/vnd.oasis.opendocument.presentation': { extensiones: ['odp'], firma: ZIP },
+};
+
+const TIPOS_LEGIBLES =
+  'PDF, calendario (.ics), imágenes PNG, JPEG, GIF y WebP, texto, CSV, JSON y documentos de Office (docx, xlsx, pptx) u OpenDocument (odt, ods, odp)';
+
+export interface AdjuntoPreparado {
+  filename: string;
+  contentType: string;
+  content: Buffer;
+}
+
+/**
+ * Nombre de fichero que se puede poner en una cabecera y mostrar sin engaños:
+ * sin rutas, sin caracteres de control ni marcas de dirección (U+202E
+ * convierte «fdp.exe» en algo que se lee como «exe.pdf»), sin caracteres
+ * reservados en Windows y sin puntos al principio o al final. Puede quedar
+ * vacío: quien llama decide el nombre por defecto.
+ */
+export function sanearNombreAdjunto(nombre: string): string {
+  let n = nombre.normalize('NFC');
+  n = n.split(/[\\/]/).pop() ?? '';
+  n = n.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '');
+  n = n.replace(/["<>:*?|]/g, '_');
+  n = n.replace(/\s+/g, ' ').trim();
+  n = n.replace(/^[.\s]+/, '').replace(/[.\s]+$/, '');
+  if (n.length > 120) {
+    const punto = n.lastIndexOf('.');
+    const ext = punto > 0 && n.length - punto <= 12 ? n.slice(punto) : '';
+    n = n.slice(0, 120 - ext.length).replace(/[.\s]+$/, '') + ext;
+  }
+  return n;
+}
+
+/**
+ * Tipo de contenido admitido, reescrito en forma canónica. De los parámetros
+ * solo se conservan `charset` y, en un calendario, `method` (REQUEST, CANCEL…:
+ * es lo que convierte un .ics en una invitación con botones de respuesta).
+ */
+function tipoAdjunto(declarado: string, nombre: string): string {
+  const [base = '', ...parametros] = declarado.split(';');
+  const tipo = base.trim().toLowerCase();
+  if (!TIPOS_ADJUNTO[tipo]) {
+    throw badRequest(
+      `El tipo «${tipo.slice(0, 80)}» del adjunto «${nombre}» no está admitido. Tipos admitidos: ${TIPOS_LEGIBLES}.`,
+      'attachment_type_not_allowed',
+    );
+  }
+  const extra: string[] = [];
+  for (const parametro of parametros) {
+    const [clave = '', valor = ''] = parametro.split('=').map((s) => s.trim().replace(/^"|"$/g, ''));
+    if (clave.toLowerCase() === 'charset' && /^[A-Za-z0-9._-]{1,40}$/.test(valor)) {
+      extra.push(`charset=${valor.toLowerCase()}`);
+    } else if (clave.toLowerCase() === 'method' && tipo === 'text/calendar' && /^[A-Za-z-]{1,20}$/.test(valor)) {
+      extra.push(`method=${valor.toUpperCase()}`);
+    }
+  }
+  return [tipo, ...extra].join('; ');
+}
+
+const BASE64_RE = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+/**
+ * Valida y decodifica los adjuntos de /v1/send. Lanza el error que verá la
+ * aplicación: 400 si un adjunto no es válido y 413 si entre todos superan
+ * MAX_ADJUNTOS_BYTES. El tamaño se estima antes de decodificar, para no
+ * reservar memoria de más con una petición que se va a rechazar.
+ */
+export function prepararAdjuntos(
+  lista: { filename: string; contentType: string; content: string }[],
+): { adjuntos: AdjuntoPreparado[]; bytes: number } {
+  const limpios = lista.map((a) => ({ ...a, content: a.content.replace(/\s+/g, '') }));
+  const estimado = limpios.reduce((total, a) => total + Math.floor((a.content.length * 3) / 4), 0);
+  const demasiado = () =>
+    new HttpError(
+      413,
+      `Los adjuntos superan el máximo de ${MAX_ADJUNTOS_BYTES / (1024 * 1024)} MB por mensaje (sumados y una vez decodificados).`,
+      'attachments_too_large',
+    );
+  if (estimado > MAX_ADJUNTOS_BYTES + 3 * limpios.length) throw demasiado();
+
+  const adjuntos: AdjuntoPreparado[] = [];
+  let bytes = 0;
+  for (const adjunto of limpios) {
+    const saneado = sanearNombreAdjunto(adjunto.filename);
+    const visible = saneado || 'adjunto';
+    const contentType = tipoAdjunto(adjunto.contentType, visible);
+    const tipo = TIPOS_ADJUNTO[contentType.split(';')[0]!]!;
+    const punto = saneado.lastIndexOf('.');
+    const extension = punto > 0 ? saneado.slice(punto + 1).toLowerCase() : '';
+    let filename = saneado;
+    if (!extension || !saneado) {
+      filename = `${saneado || 'adjunto'}.${tipo.extensiones[0]}`;
+    } else if (!tipo.extensiones.includes(extension)) {
+      // Sin esta comprobación, «factura.pdf.exe» declarado como PDF llegaría
+      // al destinatario con la extensión que de verdad decide qué se ejecuta.
+      throw badRequest(
+        `El nombre «${saneado}» no corresponde al tipo ${contentType.split(';')[0]}: usa la extensión .${tipo.extensiones[0]}.`,
+        'attachment_type_not_allowed',
+      );
+    }
+    if (!BASE64_RE.test(adjunto.content) || adjunto.content.length % 4 === 1) {
+      throw badRequest(
+        `El contenido del adjunto «${filename}» no está codificado en base64.`,
+        'attachment_invalid',
+      );
+    }
+    const content = Buffer.from(adjunto.content, 'base64');
+    if (content.length === 0) {
+      throw badRequest(`El adjunto «${filename}» está vacío.`, 'attachment_invalid');
+    }
+    if (!tipo.firma(content)) {
+      throw badRequest(
+        `El contenido del adjunto «${filename}» no es un fichero de tipo ${contentType.split(';')[0]}.`,
+        'attachment_invalid',
+      );
+    }
+    bytes += content.length;
+    if (bytes > MAX_ADJUNTOS_BYTES) throw demasiado();
+    adjuntos.push({ filename, contentType, content });
+  }
+  return { adjuntos, bytes };
+}
+
+/* ----------------------------- Idempotencia ------------------------------- */
+
+/** Lo que dura guardada la respuesta de un envío con Idempotency-Key. */
+export const IDEMPOTENCIA_MS = 24 * 3600_000;
+/** De 1 a 200 caracteres ASCII imprimibles (los espacios de los extremos los quita Node). */
+const IDEMPOTENCY_KEY_RE = /^[\x20-\x7e]{1,200}$/;
+
+function leerIdempotencyKey(req: FastifyRequest): string | null {
+  const raw = req.headers['idempotency-key'];
+  if (raw === undefined) return null;
+  const valor = Array.isArray(raw) ? raw.join(', ') : raw;
+  if (!valor.trim() || !IDEMPOTENCY_KEY_RE.test(valor)) {
+    throw badRequest(
+      'La cabecera Idempotency-Key debe tener entre 1 y 200 caracteres ASCII imprimibles (por ejemplo, un UUID).',
+      'invalid_idempotency_key',
+    );
+  }
+  return valor;
+}
+
+/** JSON con las claves ordenadas: el orden de los campos no hace distinto un cuerpo. */
+function jsonEstable(valor: unknown): string {
+  if (Array.isArray(valor)) return `[${valor.map(jsonEstable).join(',')}]`;
+  if (valor && typeof valor === 'object') {
+    const objeto = valor as Record<string, unknown>;
+    return `{${Object.keys(objeto)
+      .filter((k) => objeto[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${jsonEstable(objeto[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(valor) ?? 'null';
+}
+
+function sha256(texto: string): string {
+  return crypto.createHash('sha256').update(texto).digest('hex');
+}
+
+let ultimaPodaIdempotencia = 0;
+
+function podarIdempotencia(t: number): void {
+  if (t - ultimaPodaIdempotencia < VENTANA_MINUTO_MS) return;
+  ultimaPodaIdempotencia = t;
+  db.prepare('DELETE FROM send_idempotency WHERE expires_at <= ?').run(t);
+}
+
+type ResultadoIdempotencia =
+  | { tipo: 'repeticion'; status: number; respuesta: unknown }
+  | { tipo: 'reserva'; completar: (status: number, respuesta: unknown) => void; anular: () => void };
+
+/**
+ * Reserva la Idempotency-Key de una clave de API o devuelve la respuesta ya
+ * guardada. Comprobar e insertar es síncrono (better-sqlite3), así que dos
+ * reintentos simultáneos no pasan los dos: el segundo ve la fila en curso.
+ * Solo se guardan los envíos que llegaron a ejecutarse (enviados o
+ * rechazados por el SMTP); un 429 o un error interno anulan la reserva para
+ * que el reintento con la misma clave funcione.
+ */
+function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: string): ResultadoIdempotencia {
+  const t = now();
+  podarIdempotencia(t);
+  const keyHash = sha256(clave);
+  const fila = db
+    .prepare('SELECT * FROM send_idempotency WHERE api_key_id = ? AND key_hash = ?')
+    .get(apiKeyId, keyHash) as
+    | { request_hash: string; status_code: number | null; response_json: string | null; expires_at: number }
+    | undefined;
+  if (fila && fila.expires_at > t) {
+    if (!mismaHuella(fila.request_hash, cuerpoHash)) {
+      throw conflict(
+        'Esta Idempotency-Key ya se usó con esta clave de API para un mensaje distinto. Usa una clave nueva para cada mensaje.',
+        'idempotency_conflict',
+      );
+    }
+    if (fila.response_json === null) {
+      throw conflict(
+        'Hay otra petición con la misma Idempotency-Key en curso. Reintenta en unos segundos.',
+        'idempotency_in_progress',
+      );
+    }
+    return { tipo: 'repeticion', status: fila.status_code ?? 200, respuesta: JSON.parse(fila.response_json) };
+  }
+  if (fila) {
+    db.prepare('DELETE FROM send_idempotency WHERE api_key_id = ? AND key_hash = ?').run(apiKeyId, keyHash);
+  }
+  db.prepare(
+    `INSERT INTO send_idempotency (api_key_id, key_hash, request_hash, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(apiKeyId, keyHash, cuerpoHash, t, t + IDEMPOTENCIA_MS);
+  return {
+    tipo: 'reserva',
+    completar: (status, respuesta) => {
+      db.prepare(
+        'UPDATE send_idempotency SET status_code = ?, response_json = ? WHERE api_key_id = ? AND key_hash = ?',
+      ).run(status, JSON.stringify(respuesta), apiKeyId, keyHash);
+    },
+    anular: () => {
+      db.prepare(
+        'DELETE FROM send_idempotency WHERE api_key_id = ? AND key_hash = ? AND response_json IS NULL',
+      ).run(apiKeyId, keyHash);
+    },
+  };
+}
+
 /* ------------------------- API pública de envío --------------------------- */
 
 /** Límite de cada cuerpo, en bytes como anuncia la documentación (2 MB). */
@@ -583,6 +859,22 @@ const sendSchema = z.object({
   cc: z.array(z.string().email()).max(20).optional(),
   bcc: z.array(z.string().email()).max(20).optional(),
   headers: z.record(z.string().max(500)).optional(),
+  attachments: z
+    .array(
+      z.object({
+        filename: z
+          .string({ required_error: 'Cada adjunto necesita un nombre de fichero («filename»).' })
+          .max(255, 'El nombre de un adjunto admite como máximo 255 caracteres.'),
+        contentType: z
+          .string({ required_error: 'Cada adjunto necesita su tipo («contentType»), por ejemplo application/pdf.' })
+          .max(200),
+        content: z
+          .string({ required_error: 'Cada adjunto necesita su contenido en base64 («content»).' })
+          .min(1, 'El contenido de un adjunto no puede estar vacío.'),
+      }),
+    )
+    .max(MAX_ADJUNTOS, `Se admiten como máximo ${MAX_ADJUNTOS} adjuntos por mensaje.`)
+    .optional(),
 });
 
 /** Comparación en tiempo constante de dos huellas hexadecimales. */
@@ -643,7 +935,9 @@ function resolveSender(keyRow: ApiKeyRow): Mailbox {
 }
 
 export function registerSendRoutes(app: FastifyInstance): void {
-  app.post('/v1/send', async (req) => {
+  // Tope propio: los adjuntos (hasta 10 MB decodificados) no caben en los
+  // 5 MB del resto de la API.
+  app.post('/v1/send', { bodyLimit: MAX_PETICION_ENVIO_BYTES }, async (req, reply) => {
     const keyRow = resolveApiKey(req);
     const client = getClient(keyRow.client_id);
     // La clave es válida (no es un 401): es la cuenta la que no puede enviar.
@@ -662,29 +956,52 @@ export function registerSendRoutes(app: FastifyInstance): void {
     if (!body.html && !body.text) {
       throw badRequest('Incluye «html», «text» o ambos con el contenido del mensaje.');
     }
+    const adjuntos = prepararAdjuntos(body.attachments ?? []);
 
-    // Los límites del plan son del cliente (todas sus claves suman); el
-    // límite diario propio de una clave, si lo tiene, la acota además a ella.
-    checkPerMinute(`cliente:${client.id}`, plan.apiPerMinuteLimit);
-    const liberarCupoCliente = reservarCupoCliente(client.id, plan.apiDailyLimit);
-
-    // Reserva atómica del cupo de la clave: incrementar y comprobar de forma
-    // síncrona cierra la carrera con el await del envío.
-    const effectiveDaily = effectiveDailyLimit(plan.apiDailyLimit, keyRow.daily_limit);
-    const reserved = reserveDailyUsage(keyRow.id);
-    if (effectiveDaily > 0 && reserved > effectiveDaily) {
-      releaseDailyUsage(keyRow.id);
-      liberarCupoCliente();
-      throw tooMany(
-        `Se ha alcanzado el límite diario de ${effectiveDaily} envíos de esta clave. El contador se reinicia a medianoche UTC.`,
-        'daily_limit_reached',
-      );
+    // Un reintento con la misma Idempotency-Key recibe la respuesta original
+    // sin volver a enviar ni gastar cupo. Va después de validar: un cuerpo no
+    // válido no reserva nada.
+    const idempotencyKey = leerIdempotencyKey(req);
+    let reserva: Extract<ResultadoIdempotencia, { tipo: 'reserva' }> | null = null;
+    if (idempotencyKey) {
+      const resultado = reservarIdempotencia(keyRow.id, idempotencyKey, sha256(jsonEstable(body)));
+      if (resultado.tipo === 'repeticion') {
+        reply.header('Idempotent-Replayed', 'true');
+        reply.status(resultado.status);
+        return resultado.respuesta;
+      }
+      reserva = resultado;
     }
 
     try {
-      return await enviar(req, keyRow, mailbox, body);
-    } finally {
-      liberarCupoCliente();
+      // Los límites del plan son del cliente (todas sus claves suman); el
+      // límite diario propio de una clave, si lo tiene, la acota además a ella.
+      checkPerMinute(`cliente:${client.id}`, plan.apiPerMinuteLimit);
+      const liberarCupoCliente = reservarCupoCliente(client.id, plan.apiDailyLimit);
+
+      // Reserva atómica del cupo de la clave: incrementar y comprobar de forma
+      // síncrona cierra la carrera con el await del envío.
+      const effectiveDaily = effectiveDailyLimit(plan.apiDailyLimit, keyRow.daily_limit);
+      const reserved = reserveDailyUsage(keyRow.id);
+      if (effectiveDaily > 0 && reserved > effectiveDaily) {
+        releaseDailyUsage(keyRow.id);
+        liberarCupoCliente();
+        throw tooMany(
+          `Se ha alcanzado el límite diario de ${effectiveDaily} envíos de esta clave. El contador se reinicia a medianoche UTC.`,
+          'daily_limit_reached',
+        );
+      }
+
+      try {
+        const respuesta = await enviar(req, keyRow, mailbox, body, adjuntos);
+        reserva?.completar(200, respuesta);
+        return respuesta;
+      } finally {
+        liberarCupoCliente();
+      }
+    } catch (err) {
+      reserva?.anular();
+      throw err;
     }
   });
 }
@@ -695,6 +1012,7 @@ async function enviar(
   keyRow: ApiKeyRow,
   mailbox: Mailbox,
   body: z.infer<typeof sendSchema>,
+  adjuntos: { adjuntos: AdjuntoPreparado[]; bytes: number },
 ): Promise<{ id: string; status: 'sent' | 'failed'; error?: string; messageId?: string }> {
   const from = body.fromName
     ? { name: body.fromName, address: mailbox.email }
@@ -705,7 +1023,7 @@ async function enviar(
   let status: 'sent' | 'failed' = 'sent';
   let error = '';
   let smtpMessageId = '';
-  const sizeBytes = messageSizeBytes(body);
+  const sizeBytes = messageSizeBytes(body) + adjuntos.bytes;
 
   if (engineSettings?.kind === 'demo') {
     smtpMessageId = `<demo-${messageId}@mailway>`;
@@ -732,6 +1050,12 @@ async function enviar(
         text: body.text,
         replyTo: body.replyTo,
         headers: body.headers,
+        attachments: adjuntos.adjuntos.map((a) => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          content: a.content,
+          contentDisposition: 'attachment' as const,
+        })),
       });
       smtpMessageId = result.messageId || '';
     } catch (err) {

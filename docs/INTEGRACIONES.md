@@ -144,7 +144,7 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/plans` | `{ plans }`, cada uno con `clientCount`. |
-| `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit` (≥ 1), `notes`. Los dos límites de envío se aplican al cliente en conjunto, sumando todas sus claves ([API.md](API.md#15-límites)). Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
+| `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit` (≥ 1), `notes`. Los dos límites de envío se aplican al cliente en conjunto, sumando todas sus claves ([API.md](API.md#17-límites)). Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
 | `GET /api/clients` | Clientes con `plan` y `usage` (`{ domains, mailboxes, aliases, apiKeys, messagesLast30d }`). |
 | `POST /api/clients` | `{ name, planId, contactEmail?, notes?, user?: { email, name, password? } }` → `{ client, user?, password? }` (`password` solo si se generó). |
 | `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente, que no recibe `notes`: son notas internas de la administración). |

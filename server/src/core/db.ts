@@ -321,6 +321,27 @@ const migrations: { id: string; sql: string }[] = [
            OR id IN (SELECT domain_id FROM aliases);
     `,
   },
+  {
+    id: '005-idempotencia-de-envios',
+    sql: `
+      -- Cabecera Idempotency-Key de /v1/send: la respuesta de cada envío se
+      -- guarda 24 h POR CLAVE DE API, para que el reintento de una aplicación
+      -- (un corte de red, un timeout) no envíe el mensaje dos veces. Del valor
+      -- de la cabecera solo queda su hash; response_json es NULL mientras el
+      -- envío está en curso.
+      CREATE TABLE send_idempotency (
+        api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        key_hash TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status_code INTEGER,
+        response_json TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (api_key_id, key_hash)
+      );
+      CREATE INDEX idx_send_idempotency_expires ON send_idempotency(expires_at);
+    `,
+  },
 ];
 
 function runMigrations(): void {

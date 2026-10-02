@@ -273,6 +273,7 @@ edita una ya publicada.
 | `002-marca-blanca-y-alertas` | `client_domains`, `alerts`. |
 | `003-integraciones-y-portal` | `management_tokens`, `cloudflare_accounts`, `setup_links`, `mailbox_sessions`, `app_passwords`; columnas `domains.cloudflare_account_id`, `domains.cloudflare_zone_id`, `domains.dns_applied_at`, `mailboxes.used_bytes`, `mailboxes.usage_checked_at`, `clients.external_ref` (índice único parcial). |
 | `004-propiedad-de-dominios` | `domains.owner_verified_at`. Los dominios anteriores ya verificados o con buzones o alias se marcan como comprobados, para no romper nada. |
+| `005-idempotencia-de-envios` | `send_idempotency`: respuesta de cada envío con `Idempotency-Key`, 24 h por clave de API. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -292,6 +293,8 @@ api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP c
                    límite diario opcional, revocación
 messages           registro de cada envío por API (estado, error, message-id, tamaño)
 api_usage          contador diario de envíos
+send_idempotency   Idempotency-Key de /v1/send: hash del valor y del cuerpo, respuesta
+                   guardada 24 h por clave de API
 cloudflare_accounts  cuentas de Cloudflare (token cifrado; client_id NULL = instancia)
 client_domains     dominios de marca blanca (webmail | panel) y su estado
 alerts             incidencias del vigilante (una abierta por dedupe_key, índice parcial)
@@ -342,7 +345,8 @@ usa el mismo mundo con controles táctiles de 44 px y un paso a la vez.
 - Webmail en español con cambio de contraseña, filtros y aviso de ausencia.
 - **Tokens de gestión**, API de integraciones y **Skyway** (correo por
   proyecto y puente de Traefik).
-- API de envío con límites por cliente e historial.
+- API de envío con límites por cliente, historial, **adjuntos** (lista cerrada
+  de tipos con firma comprobada) e **`Idempotency-Key`**.
 - Vigilante (motor, cola, webmail, DNS, marca blanca, autoconfiguración,
   listas negras, certificado) con avisos por Discord, Telegram o webhook.
 - Instalador idempotente con modo desatendido y migración desde 0.x.

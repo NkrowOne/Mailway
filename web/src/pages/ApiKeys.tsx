@@ -127,6 +127,11 @@ const CAMPOS: { campo: string; tipo: string; nota: string }[] = [
   { campo: 'replyTo', tipo: 'dirección', nota: 'Dirección de respuesta.' },
   { campo: 'cc · bcc', tipo: 'lista', nota: 'Hasta 20 direcciones cada uno.' },
   { campo: 'headers', tipo: 'objeto', nota: 'Cabeceras adicionales, por ejemplo X-Campaign.' },
+  {
+    campo: 'attachments',
+    tipo: 'lista',
+    nota: 'Hasta 5 adjuntos y 10 MB en total: { filename, contentType, content en base64 }. PDF, calendario (.ics), imágenes, texto y documentos de Office.',
+  },
 ];
 
 const RESPUESTAS: { codigo: string; nota: string }[] = [
@@ -134,6 +139,8 @@ const RESPUESTAS: { codigo: string; nota: string }[] = [
   { codigo: '400', nota: 'Datos no válidos: el campo error indica cuál.' },
   { codigo: '401', nota: 'Clave ausente, no válida o revocada.' },
   { codigo: '403', nota: 'Cuenta del cliente o buzón remitente suspendidos.' },
+  { codigo: '409', nota: 'La cabecera Idempotency-Key ya se usó con esta clave para otro mensaje, o sigue en curso.' },
+  { codigo: '413', nota: 'Los adjuntos superan 10 MB o la petición, 20 MB.' },
   {
     codigo: '429',
     nota: 'Límite alcanzado: el del plan (por minuto o diario, compartido por todas las claves del cliente) o el diario propio de la clave. El campo error indica cuál. Reintenta con espera exponencial.',
@@ -519,6 +526,12 @@ export default function ApiKeys({ user }: { user: User }) {
                   Los errores devuelven <code className="valor">{'{ error, code }'}</code> con el
                   motivo en español. Los límites del plan son del cliente: todas sus claves suman. El
                   contador diario se reinicia a medianoche UTC.
+                </p>
+                <p className="mt-2 text-sm text-tinta-3">
+                  Para reintentar sin duplicar, envía la cabecera{' '}
+                  <code className="valor">Idempotency-Key</code> con un valor por mensaje (un UUID): durante
+                  24 horas, el mismo valor con la misma clave devuelve la respuesta original sin volver a
+                  enviar.
                 </p>
               </div>
             </div>
