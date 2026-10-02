@@ -7,15 +7,17 @@
  * panel con `docker exec`: quien llega aquí ya es root en el servidor. No abre
  * ningún puerto ni recibe nada por la red. Es idempotente:
  *
- *   1. si no hay administrador, lo crea con ese correo y una contraseña
- *      aleatoria (si ya existe, se usa el que tiene ese correo o, si no, el
- *      primero que se creó);
- *   2. completa la puesta en marcha con el entorno del panel, con los mismos
+ *   1. completa la puesta en marcha con el entorno del panel, con los mismos
  *      pasos que el asistente (`modules/setup.ts`): identidad del servidor
  *      (solo lo que falte), motor (`STALWART_*`) si aún no hay ninguno y
- *      ajustes recomendados del motor;
- *   3. crea el token de gestión de administración «Skyway», sin caducidad,
- *      revocando antes el que hubiera activo con ese nombre.
+ *      ajustes recomendados del motor. Lo que no se pueda hacer queda en los
+ *      avisos, nunca hace fallar el emparejado;
+ *   2. en una sola transacción, y como último paso para que nunca quede una
+ *      cuenta nueva cuya contraseña no se ha mostrado: si no hay
+ *      administrador, lo crea con ese correo y una contraseña aleatoria (si
+ *      ya existe, se usa el que tiene ese correo o, si no, el primero que se
+ *      creó), y crea el token de gestión de administración «Skyway», sin
+ *      caducidad, revocando antes el que hubiera activo con ese nombre.
  *
  * Imprime por la salida estándar UNA línea JSON
  * `{"adminEmail","adminPassword"?,"token"}`: la contraseña solo si acaba de
@@ -32,7 +34,7 @@ import { db } from '../core/db';
 import { HttpError } from '../core/errors';
 import { engineConfigured } from '../engine';
 import { auditSystem } from '../modules/audit';
-import type { AuthedUser } from '../modules/auth';
+import { countUsers, type AuthedUser } from '../modules/auth';
 import {
   applyRecommendedQuietly,
   connectEngine,
@@ -145,6 +147,18 @@ function administrador(email: string): AuthedUser | null {
   return row ? { id: row.id, email: row.email, name: row.name, role: 'admin', clientId: row.client_id } : null;
 }
 
+/**
+ * Antes de tocar nada: si el panel tiene usuarios pero ningún administrador
+ * activo, no hay a quién darle el token y no se crea otro administrador.
+ */
+function comprobarAdministrador(email: string): void {
+  if (!administrador(email) && countUsers() > 0) {
+    throw new ErrorEmparejado(
+      'El panel ya tiene usuarios, pero ningún administrador activo. Restablece el acceso de un administrador antes de emparejar.',
+    );
+  }
+}
+
 /** El administrador que se usará; lo crea si la instancia aún no tiene usuarios. */
 function asegurarAdministrador(email: string, nombre: string): { admin: AuthedUser; password?: string } {
   const existente = administrador(email);
@@ -180,8 +194,17 @@ async function completarPuestaEnMarcha(avisos: string[]): Promise<void> {
   const { patch, warnings } = instanceFromEnv();
   avisos.push(...warnings);
   if (Object.keys(patch).length > 0) {
-    setInstanceSettings(patch);
-    auditSystem('setup.instance_configured', { origen: ORIGEN });
+    try {
+      setInstanceSettings(patch);
+      auditSystem('setup.instance_configured', { origen: ORIGEN });
+    } catch (err) {
+      // instanceFromEnv ya descarta lo que no se puede guardar; si aun así
+      // falla, la identidad se completa en el panel y el emparejado sigue.
+      const motivo = err instanceof HttpError ? ` (${err.message})` : '';
+      avisos.push(
+        `No se ha podido guardar la identidad del servidor del entorno del panel${motivo}. Revísala en Ajustes → Identidad del servidor.`,
+      );
+    }
   }
 
   let recommended: RecommendedOutcome | null = null;
@@ -272,13 +295,25 @@ function renovarTokenSkyway(admin: AuthedUser): string {
   })();
 }
 
+/**
+ * El administrador (si hay que crearlo) y el token «Skyway», a la vez: si
+ * algo falla, no queda ni la cuenta ni el token, y repetir el emparejado
+ * vuelve a empezar. La contraseña sale solo en la línea JSON final.
+ */
+function administradorYToken(email: string, nombre: string): { admin: AuthedUser; password?: string; token: string } {
+  return db.transaction(() => {
+    const { admin, password } = asegurarAdministrador(email, nombre);
+    return { admin, password, token: renovarTokenSkyway(admin) };
+  })();
+}
+
 /** El emparejado completo; la herramienta de terminal solo le añade la entrada y la salida. */
 export async function emparejar(opciones: OpcionesEmparejado): Promise<ResultadoEmparejado> {
   const { email, nombre } = opcionesSchema.parse(opciones);
   const avisos: string[] = [];
-  const { admin, password } = asegurarAdministrador(email, nombre);
+  comprobarAdministrador(email);
   await completarPuestaEnMarcha(avisos);
-  const token = renovarTokenSkyway(admin);
+  const { admin, password, token } = administradorYToken(email, nombre);
   if (config.demoMode) {
     avisos.push('El panel está en modo demostración (MAILWAY_DEMO=1): no gestiona ningún motor de correo real.');
   }

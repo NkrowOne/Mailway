@@ -110,45 +110,65 @@ function releaseDailyUsage(keyId: string): void {
  * también los que el SMTP rechaza) y lo que está saliendo en este momento,
  * en memoria: comprobar y apuntar es síncrono, así que las peticiones
  * simultáneas no se cuelan entre la cuenta y la inserción.
+ *
+ * Los formularios web llevan su propio cupo (ver forms.ts), contado aparte:
+ * los rellena cualquiera desde Internet, y si gastaran este, un formulario
+ * atacado dejaría al cliente sin sus envíos por API (códigos de un solo uso,
+ * recuperación de contraseña) hasta el día siguiente.
  */
 const enviosEnCurso = new Map<string, number>();
 
-function inicioDelDiaUtc(t = now()): number {
+export function inicioDelDiaUtc(t = now()): number {
   const d = new Date(t);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
-/** Envíos del cliente en el día UTC en curso (los ya registrados y los que están saliendo). */
-export function clientSentToday(clientId: string): number {
-  const registrados = (
-    db
-      .prepare('SELECT COUNT(*) AS c FROM messages WHERE client_id = ? AND created_at >= ?')
-      .get(clientId, inicioDelDiaUtc()) as { c: number }
-  ).c;
-  return registrados + (enviosEnCurso.get(clientId) ?? 0);
-}
-
 /**
- * Reserva un envío del cupo diario del plan para el cliente. Devuelve la
- * función que libera la reserva: se llama cuando el envío ya tiene su fila
- * en `messages` (desde ahí cuenta la base) o si se rechaza antes.
+ * Reserva un envío de un cupo diario (0 = sin límite). `registradosHoy` son
+ * los envíos del día que ya tienen su fila en `messages`; los que están
+ * saliendo se cuentan en memoria con `clave`. Devuelve la función que libera
+ * la reserva: se llama cuando el envío ya tiene su fila (desde ahí cuenta la
+ * base) o si se rechaza antes.
  */
-export function reservarCupoCliente(clientId: string, limite: number): () => void {
-  if (limite > 0 && clientSentToday(clientId) >= limite) {
-    throw tooMany(
-      `Se ha alcanzado el límite diario de ${limite} envíos del plan para este cliente (sumando todas sus claves). El contador se reinicia a medianoche UTC.`,
-      'daily_limit_reached',
-    );
-  }
-  enviosEnCurso.set(clientId, (enviosEnCurso.get(clientId) ?? 0) + 1);
+export function reservarCupoDiario(
+  clave: string,
+  registradosHoy: number,
+  limite: number,
+  agotado: () => HttpError,
+): () => void {
+  if (limite > 0 && registradosHoy + (enviosEnCurso.get(clave) ?? 0) >= limite) throw agotado();
+  enviosEnCurso.set(clave, (enviosEnCurso.get(clave) ?? 0) + 1);
   let liberada = false;
   return () => {
     if (liberada) return;
     liberada = true;
-    const quedan = (enviosEnCurso.get(clientId) ?? 1) - 1;
-    if (quedan > 0) enviosEnCurso.set(clientId, quedan);
-    else enviosEnCurso.delete(clientId);
+    const quedan = (enviosEnCurso.get(clave) ?? 1) - 1;
+    if (quedan > 0) enviosEnCurso.set(clave, quedan);
+    else enviosEnCurso.delete(clave);
   };
+}
+
+function enviosApiRegistradosHoy(clientId: string): number {
+  return (
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM messages WHERE client_id = ? AND source = 'api' AND created_at >= ?`)
+      .get(clientId, inicioDelDiaUtc()) as { c: number }
+  ).c;
+}
+
+/** Envíos por API del cliente en el día UTC en curso (los ya registrados y los que están saliendo). */
+export function clientSentToday(clientId: string): number {
+  return enviosApiRegistradosHoy(clientId) + (enviosEnCurso.get(`api:${clientId}`) ?? 0);
+}
+
+/** Reserva un envío por API del cupo diario del plan para el cliente (todas sus claves suman). */
+export function reservarCupoCliente(clientId: string, limite: number): () => void {
+  return reservarCupoDiario(`api:${clientId}`, enviosApiRegistradosHoy(clientId), limite, () =>
+    tooMany(
+      `Se ha alcanzado el límite diario de ${limite} envíos del plan para este cliente (sumando todas sus claves). El contador se reinicia a medianoche UTC.`,
+      'daily_limit_reached',
+    ),
+  );
 }
 
 /**
@@ -551,6 +571,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
       size_bytes: number;
       created_at: number;
       form_id: string | null;
+      source: 'api' | 'form';
     }[];
     return {
       messages: rows.map((r) => ({
@@ -558,6 +579,8 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
         clientId: r.client_id,
         apiKeyId: r.api_key_id,
         formId: r.form_id ?? null,
+        // Se conserva aunque el formulario (o la clave) se elimine después.
+        source: r.source,
         from: r.from_address,
         to: JSON.parse(r.to_json) as string[],
         subject: r.subject,
@@ -747,6 +770,14 @@ export function prepararAdjuntos(
 
 /** Lo que dura guardada la respuesta de un envío con Idempotency-Key. */
 export const IDEMPOTENCIA_MS = 24 * 3600_000;
+/**
+ * Una reserva sin respuesta más antigua que esto se da por abandonada y el
+ * reintento con la misma clave vuelve a enviar. Un envío termina mucho antes
+ * (el SMTP del motor está en la misma red); si sigue sin respuesta, el
+ * proceso que la hizo se detuvo a mitad, y sin este margen cada reintento
+ * recibiría 409 durante 24 horas aunque el mensaje no hubiera salido.
+ */
+export const IDEMPOTENCIA_EN_CURSO_MAX_MS = 15 * 60_000;
 /** De 1 a 200 caracteres ASCII imprimibles (los espacios de los extremos los quita Node). */
 const IDEMPOTENCY_KEY_RE = /^[\x20-\x7e]{1,200}$/;
 
@@ -789,6 +820,16 @@ function podarIdempotencia(t: number): void {
   db.prepare('DELETE FROM send_idempotency WHERE expires_at <= ?').run(t);
 }
 
+/**
+ * Al arrancar el servidor no hay ningún envío en marcha: las reservas que
+ * siguen sin respuesta las dejó un proceso anterior que se detuvo a mitad
+ * (un redespliegue, falta de memoria). Se retiran para que el reintento con
+ * la misma clave funcione al momento. Devuelve cuántas había.
+ */
+export function liberarIdempotenciaInterrumpida(): number {
+  return db.prepare('DELETE FROM send_idempotency WHERE response_json IS NULL').run().changes;
+}
+
 type ResultadoIdempotencia =
   | { tipo: 'repeticion'; status: number; respuesta: unknown }
   | { tipo: 'reserva'; completar: (status: number, respuesta: unknown) => void; anular: () => void };
@@ -799,7 +840,9 @@ type ResultadoIdempotencia =
  * reintentos simultáneos no pasan los dos: el segundo ve la fila en curso.
  * Solo se guardan los envíos que llegaron a ejecutarse (enviados o
  * rechazados por el SMTP); un 429 o un error interno anulan la reserva para
- * que el reintento con la misma clave funcione.
+ * que el reintento con la misma clave funcione. Completar y anular solo
+ * tocan la reserva propia (por su created_at): si se dio por abandonada y
+ * otra petición la sustituyó, no la pisan.
  */
 function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: string): ResultadoIdempotencia {
   const t = now();
@@ -808,7 +851,13 @@ function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: strin
   const fila = db
     .prepare('SELECT * FROM send_idempotency WHERE api_key_id = ? AND key_hash = ?')
     .get(apiKeyId, keyHash) as
-    | { request_hash: string; status_code: number | null; response_json: string | null; expires_at: number }
+    | {
+        request_hash: string;
+        status_code: number | null;
+        response_json: string | null;
+        created_at: number;
+        expires_at: number;
+      }
     | undefined;
   if (fila && fila.expires_at > t) {
     if (!mismaHuella(fila.request_hash, cuerpoHash)) {
@@ -817,13 +866,16 @@ function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: strin
         'idempotency_conflict',
       );
     }
-    if (fila.response_json === null) {
+    if (fila.response_json !== null) {
+      return { tipo: 'repeticion', status: fila.status_code ?? 200, respuesta: JSON.parse(fila.response_json) };
+    }
+    if (t - fila.created_at < IDEMPOTENCIA_EN_CURSO_MAX_MS) {
       throw conflict(
         'Hay otra petición con la misma Idempotency-Key en curso. Reintenta en unos segundos.',
         'idempotency_in_progress',
       );
     }
-    return { tipo: 'repeticion', status: fila.status_code ?? 200, respuesta: JSON.parse(fila.response_json) };
+    // Abandonada: se sustituye por una reserva nueva y el mensaje se envía.
   }
   if (fila) {
     db.prepare('DELETE FROM send_idempotency WHERE api_key_id = ? AND key_hash = ?').run(apiKeyId, keyHash);
@@ -836,13 +888,15 @@ function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: strin
     tipo: 'reserva',
     completar: (status, respuesta) => {
       db.prepare(
-        'UPDATE send_idempotency SET status_code = ?, response_json = ? WHERE api_key_id = ? AND key_hash = ?',
-      ).run(status, JSON.stringify(respuesta), apiKeyId, keyHash);
+        `UPDATE send_idempotency SET status_code = ?, response_json = ?
+         WHERE api_key_id = ? AND key_hash = ? AND created_at = ?`,
+      ).run(status, JSON.stringify(respuesta), apiKeyId, keyHash, t);
     },
     anular: () => {
       db.prepare(
-        'DELETE FROM send_idempotency WHERE api_key_id = ? AND key_hash = ? AND response_json IS NULL',
-      ).run(apiKeyId, keyHash);
+        `DELETE FROM send_idempotency
+         WHERE api_key_id = ? AND key_hash = ? AND created_at = ? AND response_json IS NULL`,
+      ).run(apiKeyId, keyHash, t);
     },
   };
 }

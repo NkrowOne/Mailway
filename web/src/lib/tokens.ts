@@ -100,6 +100,7 @@ const ETIQUETAS: Record<string, string> = {
   'auth.login': 'Inicio de sesión',
   'auth.logout': 'Cierre de sesión',
   'auth.password_changed': 'Cambio de contraseña',
+  'auth.password_reset': 'Contraseña restablecida desde la terminal',
   // Puesta en marcha y ajustes
   'setup.admin_created': 'Administrador creado',
   'setup.engine_configured': 'Motor configurado',

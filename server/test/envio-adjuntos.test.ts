@@ -7,8 +7,10 @@ import { db } from '../src/core/db';
 import { HttpError } from '../src/core/errors';
 import { setEngineSettings } from '../src/modules/settings';
 import {
+  IDEMPOTENCIA_EN_CURSO_MAX_MS,
   IDEMPOTENCIA_MS,
   MAX_ADJUNTOS_BYTES,
+  liberarIdempotenciaInterrumpida,
   prepararAdjuntos,
   sanearNombreAdjunto,
   setTransportFactoryForTests,
@@ -309,25 +311,68 @@ test('un cuerpo distinto con la misma Idempotency-Key responde 409 idempotency_c
   assert.equal(enviosDe(id), 1);
 });
 
-test('una Idempotency-Key en curso responde 409 idempotency_in_progress', async () => {
-  const { key, id } = await crearClave();
+/** Reserva «en curso» (sin respuesta) del cuerpo por defecto de enviar(), creada hace `hace` ms. */
+async function reservaEnCurso(keyId: string, clave: string, hace = 0): Promise<void> {
   const crypto = await import('node:crypto');
   const cuerpo = { to: ['destino@ejemplo.com'], subject: 'Factura', text: 'Adjunta.' };
   const ordenado = JSON.stringify({ subject: cuerpo.subject, text: cuerpo.text, to: cuerpo.to });
+  const creada = Date.now() - hace;
   db.prepare(
     `INSERT INTO send_idempotency (api_key_id, key_hash, request_hash, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(
-    id,
-    crypto.createHash('sha256').update('en-curso').digest('hex'),
+    keyId,
+    crypto.createHash('sha256').update(clave).digest('hex'),
     crypto.createHash('sha256').update(ordenado).digest('hex'),
-    Date.now(),
-    Date.now() + 60_000,
+    creada,
+    creada + IDEMPOTENCIA_MS,
   );
+}
+
+test('una Idempotency-Key en curso responde 409 idempotency_in_progress', async () => {
+  const { key, id } = await crearClave();
+  await reservaEnCurso(id, 'en-curso', IDEMPOTENCIA_EN_CURSO_MAX_MS - 60_000);
   const res = await enviar(key, {}, { 'idempotency-key': 'en-curso' });
   assert.equal(res.statusCode, 409, res.body);
   assert.equal(res.json().code, 'idempotency_in_progress');
   assert.equal(enviosDe(id), 0);
+});
+
+test('una reserva en curso abandonada (el proceso se detuvo a mitad) se vuelve a enviar', async () => {
+  const { key, id } = await crearClave();
+  await reservaEnCurso(id, 'abandonada', IDEMPOTENCIA_EN_CURSO_MAX_MS + 1000);
+  const res = await enviar(key, {}, { 'idempotency-key': 'abandonada' });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(res.headers['idempotent-replayed'], undefined);
+  assert.equal(enviosDe(id), 1);
+
+  // La reserva nueva guarda la respuesta: el siguiente reintento es una repetición.
+  const otra = await enviar(key, {}, { 'idempotency-key': 'abandonada' });
+  assert.equal(otra.headers['idempotent-replayed'], 'true');
+  assert.deepEqual(otra.json(), res.json());
+  assert.equal(enviosDe(id), 1);
+
+  // Abandonada, pero de otro mensaje: sigue siendo un conflicto.
+  await reservaEnCurso(id, 'abandonada-otra', IDEMPOTENCIA_EN_CURSO_MAX_MS + 1000);
+  const distinta = await enviar(key, { subject: 'Otro asunto' }, { 'idempotency-key': 'abandonada-otra' });
+  assert.equal(distinta.statusCode, 409);
+  assert.equal(distinta.json().code, 'idempotency_conflict');
+});
+
+test('al arrancar se liberan las reservas que quedaron a medias y se conservan las respuestas', async () => {
+  const { key, id } = await crearClave();
+  assert.equal((await enviar(key, { subject: 'Guardada' }, { 'idempotency-key': 'completa' })).statusCode, 200);
+  await reservaEnCurso(id, 'interrumpida', 1000);
+  assert.equal((await enviar(key, {}, { 'idempotency-key': 'interrumpida' })).statusCode, 409);
+
+  assert.ok(liberarIdempotenciaInterrumpida() >= 1);
+
+  const reintento = await enviar(key, {}, { 'idempotency-key': 'interrumpida' });
+  assert.equal(reintento.statusCode, 200, reintento.body);
+  assert.equal(reintento.headers['idempotent-replayed'], undefined);
+  const repetida = await enviar(key, { subject: 'Guardada' }, { 'idempotency-key': 'completa' });
+  assert.equal(repetida.headers['idempotent-replayed'], 'true', 'las respuestas ya guardadas no se tocan');
+  assert.equal(enviosDe(id), 2);
 });
 
 test('Idempotency-Key no válida responde 400 sin enviar', async () => {

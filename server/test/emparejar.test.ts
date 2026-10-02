@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,6 +91,22 @@ test('lee --email y --nombre, también con «=», y rechaza lo demás', () => {
 test('un correo no válido no crea nada', async () => {
   await assert.rejects(emparejar({ email: 'no-es-un-correo' }), /correo del administrador no es válido/);
   assert.equal(usuarios(), 0);
+});
+
+test('si falla el último paso no queda una cuenta sin contraseña conocida ni un token', async () => {
+  // El token no se puede guardar: el administrador, que se crea en la misma
+  // transacción, tampoco debe quedar (su contraseña no llegaría a mostrarse).
+  db.exec(`CREATE TRIGGER fallo_simulado BEFORE INSERT ON management_tokens
+           BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END`);
+  try {
+    await assert.rejects(emparejar({ email: ADMIN }), /fallo simulado/);
+  } finally {
+    db.exec('DROP TRIGGER fallo_simulado');
+  }
+  assert.equal(usuarios(), 0, 'sin administrador a medias');
+  assert.equal(activeAdminTokensNamed(NOMBRE_TOKEN_SKYWAY).length, 0);
+  const anotado = db.prepare(`SELECT COUNT(*) AS c FROM audit_log WHERE action = 'setup.admin_created'`).get() as { c: number };
+  assert.equal(anotado.c, 0, 'la actividad no anota una cuenta que no existe');
 });
 
 test('la primera vez crea el administrador y el token aunque el motor aún no responda', async () => {
@@ -265,7 +282,7 @@ test('la auditoría lo anota como el sistema y sin ningún secreto', async () =>
 
 const SERVIDOR = path.resolve(__dirname, '..');
 
-function ejecutar(datos: string, args: string[]) {
+function ejecutar(datos: string, args: string[], entorno: Record<string, string> = {}) {
   return spawnSync(process.execPath, ['--import', 'tsx', 'src/tools/emparejar.ts', ...args], {
     cwd: SERVIDOR,
     encoding: 'utf8',
@@ -277,9 +294,44 @@ function ejecutar(datos: string, args: string[]) {
       MAILWAY_DNS_OFFLINE: '1',
       MAILWAY_WATCHDOG_DISABLED: '1',
       MAILWAY_SECRET: 'clave-maestra-de-la-prueba-0123456789',
+      MAILWAY_PANEL_URL: '',
+      PUBLIC_URL: '',
+      MAILWAY_MAIL_HOSTNAME: '',
+      ...entorno,
     },
   });
 }
+
+test('una URL del panel con parámetros en el entorno se descarta con un aviso y el emparejado termina', () => {
+  // setInstanceSettings rechaza parámetros, credenciales y fragmentos en la
+  // URL del panel: antes, la herramienta terminaba con código 1 justo después
+  // de crear el administrador y su contraseña no se mostraba nunca.
+  const datos = fs.mkdtempSync(path.join(os.tmpdir(), 'mailway-emparejar-url-'));
+  try {
+    const r = ejecutar(datos, ['--email', 'url@emparejado.test'], {
+      MAILWAY_PANEL_URL: 'https://panel.ejemplo.test/?x=secreto-de-la-url',
+      MAILWAY_MAIL_HOSTNAME: 'mail.ejemplo.test',
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const salida = JSON.parse(r.stdout) as Record<string, string>;
+    assert.deepEqual(Object.keys(salida), ['adminEmail', 'adminPassword', 'token']);
+    assert.match(r.stderr, /MAILWAY_PANEL_URL del entorno del panel no es válido/);
+    assert.ok(!r.stderr.includes('secreto-de-la-url'), 'el aviso no repite el valor');
+
+    // El resto de la identidad sí se guarda.
+    const base = new Database(path.join(datos, 'mailway.db'), { readonly: true });
+    try {
+      const fila = base.prepare(`SELECT value FROM settings WHERE key = 'instance'`).get() as { value: string };
+      const instancia = JSON.parse(fila.value) as Record<string, string>;
+      assert.equal(instancia.mailHostname, 'mail.ejemplo.test');
+      assert.ok(!instancia.panelUrl, 'la URL del panel no válida no se guarda');
+    } finally {
+      base.close();
+    }
+  } finally {
+    fs.rmSync(datos, { recursive: true, force: true });
+  }
+});
 
 test('la herramienta imprime una sola línea JSON y falla con código 1 y el motivo', () => {
   const datos = fs.mkdtempSync(path.join(os.tmpdir(), 'mailway-emparejar-'));

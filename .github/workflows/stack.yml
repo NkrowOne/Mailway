@@ -50,6 +50,9 @@ jobs:
           for f in deploy/*.sh; do bash -n "$f"; done
           shellcheck -x -S style deploy/*.sh
 
+      - name: Emparejado y panel en Skyway del instalador (docker y Skyway simulados)
+        run: bash deploy/prueba-emparejado.sh
+
       - name: Compose con un entorno ficticio (con y sin el perfil tls)
         run: |
           cat > "$RUNNER_TEMP/ficticio.env" <<'EOF'

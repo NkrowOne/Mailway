@@ -121,7 +121,8 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     día (SQLite) del plan se cuentan por cliente, sumando todas sus claves:
     crear más claves no amplía el plan. El límite diario de una clave solo
     puede acotar el del plan. El cupo se reserva de forma atómica antes de
-    enviar.
+    enviar. Los formularios web tienen su propio cupo diario por formulario
+    y no gastan el de la API: los rellena cualquiera desde Internet.
 11. **Verificación de la propiedad de los dominios.** Sin ella, un cliente
     podría dar de alta `gmail.com`, crear `victima@gmail.com` y el motor
     entregaría en local el correo que otros clientes del servidor envían a ese
@@ -275,6 +276,7 @@ edita una ya publicada.
 | `004-propiedad-de-dominios` | `domains.owner_verified_at`. Los dominios anteriores ya verificados o con buzones o alias se marcan como comprobados, para no romper nada. |
 | `005-idempotencia-de-envios` | `send_idempotency`: respuesta de cada envío con `Idempotency-Key`, 24 h por clave de API. |
 | `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
+| `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -293,7 +295,7 @@ mailbox_sessions   sesiones de «Mi buzón»
 api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP cifrada,
                    límite diario opcional, revocación
 messages           registro de cada envío por API o formulario (estado, error, message-id,
-                   tamaño, form_id)
+                   tamaño, source api|form, form_id)
 forms              formularios de contacto: clave pública mwf_, buzón destinatario,
                    orígenes permitidos, asunto, credencial SMTP cifrada, Turnstile
                    (secreto cifrado), activo, contador

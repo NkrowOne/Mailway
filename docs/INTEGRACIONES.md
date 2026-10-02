@@ -371,8 +371,9 @@ titulares de sus buzones. La administración lo ve todo.
 
 ### 2.9 Otras rutas
 
-Envíos de la API y de los formularios (`GET /api/messages`; los de un
-formulario llevan `formId`), formularios (sección 9), marca blanca (sección 7), Cloudflare
+Envíos de la API y de los formularios (`GET /api/messages`; cada uno lleva
+`source`, `api` o `form`, y los de un formulario que sigue existiendo,
+`formId`), formularios (sección 9), marca blanca (sección 7), Cloudflare
 (sección 4), alertas (`GET /api/alerts`, `POST /api/alerts/:id/dismiss`),
 canales de aviso (`GET|PUT /api/notify/channels`, `POST /api/notify/test`),
 entregabilidad (`GET /api/deliverability/server`), resúmenes
@@ -993,12 +994,17 @@ Por orden:
    incluido que el `hostname` que devuelve sea el de un origen permitido
    (`400 turnstile_failed`). Si Cloudflare no responde,
    `503 turnstile_unavailable`.
-8. Límite por formulario: **30 mensajes por hora** (`429 rate_limited`) y el
-   **límite diario de envíos del plan**, que comparten los formularios y la API
-   (`429 daily_limit_reached`, con un texto para el visitante sin detalles del
-   plan).
+8. Límite por formulario: **30 mensajes por hora** (`429 rate_limited`) y
+   **200 al día** (UTC; `429 daily_limit_reached`, con un texto para el
+   visitante sin detalles del plan). Ese cupo diario es **propio de cada
+   formulario y no gasta el de la API del plan**: el `Origin` se falsea con
+   curl, y si los formularios gastaran el cupo de `/v1/send`, cualquiera
+   podría dejar al cliente sin sus envíos transaccionales (códigos de un solo
+   uso, recuperación de contraseña) hasta el día siguiente. Con el máximo de
+   20 formularios, acota lo que puede llegar a los buzones del cliente.
 9. Envío al buzón destinatario. Si el servidor de correo lo rechaza,
-   `502 send_failed` (el intento queda en el historial y cuenta para el cupo).
+   `502 send_failed` (el intento queda en el historial y cuenta para el cupo
+   del formulario).
 
 **CORS solo en esta ruta**: la respuesta (también la de error, para que la web
 lea el motivo) lleva `Access-Control-Allow-Origin` con el origen de la
@@ -1018,5 +1024,6 @@ permitido. El resto de la API no responde con CORS.
 - **Cuerpo**: solo texto, con cada campo en una línea (o en un bloque si tiene
   varias), el origen y la hora en UTC. Sin los campos de control (trampa y
   Turnstile). Cabecera `X-Web-Form: mwf_…` para filtrar.
-- Queda en el historial de envíos (`GET /api/messages`, con `formId`) y suma
-  en el contador del formulario.
+- Queda en el historial de envíos (`GET /api/messages`, con
+  `source: "form"`, que se conserva aunque el formulario se elimine, y
+  `formId`) y suma en el contador del formulario.

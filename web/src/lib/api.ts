@@ -236,6 +236,8 @@ export interface Message {
   apiKeyId: string | null;
   /** Formulario del que salió el mensaje, si no vino de la API. */
   formId?: string | null;
+  /** Origen del envío; se conserva aunque el formulario se elimine después. */
+  source?: 'api' | 'form';
   from: string;
   to: string[];
   subject: string;

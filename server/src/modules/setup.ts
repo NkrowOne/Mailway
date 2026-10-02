@@ -27,6 +27,7 @@ import {
   getJsonSetting,
   isSetupComplete,
   markSetupComplete,
+  normalizePanelUrl,
   setEngineSettings,
   setInstanceSettings,
 } from './settings';
@@ -295,6 +296,21 @@ const INSTANCE_FROM_ENV = [
 ] as const;
 
 /**
+ * Lo que setInstanceSettings rechazaría aunque pase el esquema: la URL del
+ * panel no admite credenciales, parámetros ni fragmentos. Se comprueba aquí
+ * para descartar solo ese valor, en lugar de hacer fallar el guardado entero.
+ */
+function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string): boolean {
+  if (field !== 'panelUrl') return true;
+  try {
+    normalizePanelUrl(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Identidad del servidor que trae el entorno (`MAILWAY_MAIL_HOSTNAME`,
  * `MAILWAY_PUBLIC_IP`, `MAILWAY_WEBMAIL_URL`, `MAILWAY_PANEL_URL`), solo para
  * los campos que aún no se han guardado: lo que la administración cambió en
@@ -309,7 +325,7 @@ export function instanceFromEnv(): { patch: InstanceInput; warnings: string[] } 
     const value = read().trim();
     if (!value || (stored[field] ?? '').trim()) continue;
     const parsed = instanceSchema.shape[field].safeParse(value);
-    if (parsed.success && parsed.data) {
+    if (parsed.success && parsed.data && guardable(field, parsed.data)) {
       patch[field] = parsed.data;
     } else {
       warnings.push(`El valor de ${variable} del entorno del panel no es válido y no se ha guardado.`);

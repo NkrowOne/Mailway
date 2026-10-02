@@ -9,12 +9,18 @@ import { clientLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
-import { assertClientActive, getClient, getPlan } from './clients';
+import { assertClientActive, getClient } from './clients';
 import { publicBaseUrl, xmlEscape } from './connection';
 import { assertDomainOwnership } from './domains';
 import { getMailbox, type Mailbox } from './mailboxes';
 import { getEngineSettings, getInstanceSettings } from './settings';
-import { describeSmtpError, forgetTransport, getTransport, reservarCupoCliente } from './transactional';
+import {
+  describeSmtpError,
+  forgetTransport,
+  getTransport,
+  inicioDelDiaUtc,
+  reservarCupoDiario,
+} from './transactional';
 
 /**
  * Formularios de contacto para webs estáticas, sin claves secretas en la web.
@@ -27,7 +33,9 @@ import { describeSmtpError, forgetTransport, getTransport, reservarCupoCliente }
  * - solo acepta peticiones con un `Origin` de la lista (y solo esa ruta
  *   responde con CORS, para ese origen);
  * - descarta en silencio lo que rellena el campo trampa (`mw_web`);
- * - limita por IP, por formulario y por el cupo diario del plan;
+ * - limita por IP, por formulario y hora y por formulario y día; ese cupo
+ *   diario es propio y no gasta el de la API del plan, para que un formulario
+ *   atacado no deje al cliente sin /v1/send;
  * - comprueba Cloudflare Turnstile si el formulario lo tiene configurado,
  *   incluido que el `hostname` que devuelve sea de un origen permitido;
  * - envía al buzón destinatario CON SU PROPIO REMITENTE: lo que escribe el
@@ -52,6 +60,13 @@ const MAX_VALOR = 5000;
 export const LIMITE_POR_IP = { max: 5, ventanaMs: 10 * 60_000 };
 /** Mensajes entregados por formulario cada hora. */
 export const LIMITE_POR_FORMULARIO = { max: 30, ventanaMs: 60 * 60_000 };
+/**
+ * Mensajes entregados por formulario y día UTC. Cupo propio, contado en
+ * `messages` (sobrevive a un reinicio) y separado del de la API del plan.
+ * Con el máximo de formularios por cliente, acota lo que puede llegar a sus
+ * buzones en un día.
+ */
+export const LIMITE_DIARIO_POR_FORMULARIO = 200;
 /** Peticiones de cualquier tipo a /forms por IP y minuto (protege el servidor). */
 const LIMITE_GENERAL = { max: 60, ventanaMs: 60_000 };
 
@@ -577,17 +592,10 @@ async function recibirEnvio(req: FastifyRequest): Promise<{ origen: string }> {
   if (limitePorFormulario.lleno(row.id)) {
     throw tooMany('Este formulario ha recibido muchos mensajes en la última hora. Vuelve a intentarlo más tarde.');
   }
-  // Los mensajes de los formularios cuentan para el cupo diario del plan,
-  // como los de la API: un formulario atacado no puede enviar sin tope.
-  let liberarCupo: () => void;
-  try {
-    liberarCupo = reservarCupoCliente(cliente.id, getPlan(cliente.planId).apiDailyLimit);
-  } catch {
-    throw tooMany(
-      'Este formulario no admite más mensajes por hoy. Vuelve a intentarlo mañana.',
-      'daily_limit_reached',
-    );
-  }
+  // Cupo diario propio del formulario, nunca el de la API del plan: el Origin
+  // se falsea con curl, y si los formularios gastaran ese cupo, cualquiera
+  // podría dejar al cliente sin sus envíos por API hasta el día siguiente.
+  const liberarCupo = reservarCupoFormulario(row.id);
   try {
     limitePorFormulario.apuntar(row.id);
     await entregar(req, row, buzon, campos, origen);
@@ -595,6 +603,18 @@ async function recibirEnvio(req: FastifyRequest): Promise<{ origen: string }> {
     liberarCupo();
   }
   return { origen };
+}
+
+/** Reserva un mensaje del cupo diario del formulario (los ya entregados hoy y los que están saliendo). */
+function reservarCupoFormulario(formId: string): () => void {
+  const registrados = (
+    db
+      .prepare('SELECT COUNT(*) AS c FROM messages WHERE form_id = ? AND created_at >= ?')
+      .get(formId, inicioDelDiaUtc()) as { c: number }
+  ).c;
+  return reservarCupoDiario(`formulario:${formId}`, registrados, LIMITE_DIARIO_POR_FORMULARIO, () =>
+    tooMany('Este formulario no admite más mensajes por hoy. Vuelve a intentarlo mañana.', 'daily_limit_reached'),
+  );
 }
 
 /** Envía por el SMTP del motor con la credencial del formulario y deja la fila en `messages`. */
@@ -638,9 +658,9 @@ async function entregar(
   }
   const t = now();
   db.prepare(
-    `INSERT INTO messages (id, client_id, api_key_id, form_id, from_address, to_json, subject,
+    `INSERT INTO messages (id, client_id, api_key_id, form_id, source, from_address, to_json, subject,
        status, error, smtp_message_id, size_bytes, created_at)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, NULL, ?, 'form', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, row.client_id, row.id, buzon.email, JSON.stringify([buzon.email]), mensaje.subject,
     status, error, smtpMessageId, Buffer.byteLength(mensaje.text, 'utf8'), t,

@@ -18,6 +18,7 @@ import { Botonera, Casilla } from '../components/gestion/comun';
 /** Mismos valores que server/src/modules/forms.ts (se explican en la guía). */
 const LIMITE_IP = 5;
 const LIMITE_HORA = 30;
+const LIMITE_DIA = 200;
 
 interface Borrador {
   clientId: string;
@@ -343,7 +344,7 @@ export default function Formularios({ user }: { user: User }) {
                 {[
                   'Solo se aceptan envíos desde las webs permitidas (https).',
                   'Un campo trampa invisible descarta los envíos automáticos.',
-                  `Como máximo ${plural(LIMITE_IP, 'envío', 'envíos')} por visitante cada 10 minutos y ${LIMITE_HORA} mensajes por hora en cada formulario; además cuentan para el límite diario de envíos del plan.`,
+                  `Como máximo ${plural(LIMITE_IP, 'envío', 'envíos')} por visitante cada 10 minutos, y ${LIMITE_HORA} mensajes por hora y ${LIMITE_DIA} al día en cada formulario. No gastan el límite diario de envíos por API del plan: un formulario atacado no deja sin servicio a tus aplicaciones.`,
                   'Opcional: Cloudflare Turnstile para comprobar que quien envía es una persona.',
                 ].map((texto) => (
                   <li key={texto} className="regla-fila py-2 text-sm text-tinta-2 last:border-b-0">

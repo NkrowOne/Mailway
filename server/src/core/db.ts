@@ -376,6 +376,19 @@ const migrations: { id: string; sql: string }[] = [
       ALTER TABLE messages ADD COLUMN form_id TEXT REFERENCES forms(id) ON DELETE SET NULL;
     `,
   },
+  {
+    id: '007-origen-de-los-envios',
+    sql: `
+      -- Los formularios tienen su propio cupo diario y ya no gastan el de la
+      -- API: si lo gastaran, cualquiera que falsee el Origin dejaría al
+      -- cliente sin /v1/send hasta el día siguiente. El origen de cada envío
+      -- queda en su fila, porque form_id pasa a NULL al eliminar el
+      -- formulario y esos mensajes no deben empezar a contar para la API.
+      ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api', 'form'));
+      UPDATE messages SET source = 'form' WHERE form_id IS NOT NULL;
+      CREATE INDEX idx_messages_form ON messages(form_id, created_at);
+    `,
+  },
 ];
 
 function runMigrations(): void {

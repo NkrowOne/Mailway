@@ -7,6 +7,7 @@ import { db } from '../src/core/db';
 import { getEngine } from '../src/engine';
 import {
   CAMPO_TRAMPA,
+  LIMITE_DIARIO_POR_FORMULARIO,
   LIMITE_POR_FORMULARIO,
   LIMITE_POR_IP,
   MAX_FORMULARIOS_POR_CLIENTE,
@@ -18,7 +19,7 @@ import {
   type RespuestaTurnstile,
 } from '../src/modules/forms';
 import { setEngineSettings } from '../src/modules/settings';
-import { setTransportFactoryForTests } from '../src/modules/transactional';
+import { clientSentToday, setTransportFactoryForTests } from '../src/modules/transactional';
 import {
   adminContext,
   createClient,
@@ -402,38 +403,112 @@ test(`límite por formulario: ${LIMITE_POR_FORMULARIO.max} mensajes por hora`, a
   assert.equal(mensajesDe(form.id).length, LIMITE_POR_FORMULARIO.max);
 });
 
-test('los mensajes de los formularios cuentan para el cupo diario del plan', async () => {
+/** Cliente con un plan de `apiDailyLimit` envíos por API al día, un buzón, un formulario y una clave de API. */
+async function clienteConCupo(apiDailyLimit: number) {
   const plan = await ctx.app.inject({
     method: 'POST',
     url: '/api/plans',
     headers: { cookie: ctx.adminCookie },
     payload: {
-      name: `Formularios ${Date.now()}`,
+      name: `Formularios ${Date.now()}-${Math.random()}`,
       maxDomains: 1,
       maxMailboxes: 5,
       maxAliases: 5,
       mailboxQuotaMb: 1024,
-      apiDailyLimit: 2,
+      apiDailyLimit,
       apiPerMinuteLimit: 100,
     },
   });
   assert.equal(plan.statusCode, 200, plan.body);
   const cliente = await createClient(ctx);
-  await ctx.app.inject({
+  const cambio = await ctx.app.inject({
     method: 'PATCH',
     url: `/api/clients/${cliente.clientId}`,
     headers: { cookie: ctx.adminCookie },
     payload: { planId: plan.json().plan.id },
   });
+  assert.equal(cambio.statusCode, 200, cambio.body);
   const { domainId } = await createDomain(ctx, cliente.clientId);
   const buzon = await createMailbox(ctx, domainId, 'web');
   const form = await crearFormulario({ clientId: cliente.clientId, recipientMailboxId: buzon.mailboxId }, ctx.adminCookie);
-  assert.equal((await enviar(form.publicKey)).statusCode, 200);
-  assert.equal((await enviar(form.publicKey)).statusCode, 200);
-  const tercero = await enviar(form.publicKey);
-  assert.equal(tercero.statusCode, 429);
+  const clave = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/apikeys',
+    headers: { cookie: ctx.adminCookie },
+    payload: { clientId: cliente.clientId, name: 'Aplicación', senderMailboxId: buzon.mailboxId },
+  });
+  assert.equal(clave.statusCode, 200, clave.body);
+  const enviarApi = () =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/v1/send',
+      headers: { authorization: `Bearer ${(clave.json() as { key: string }).key}` },
+      payload: { to: 'usuario@ejemplo.com', subject: 'Código de acceso', text: '123456' },
+    });
+  return { clientId: cliente.clientId, buzon, form, enviarApi };
+}
+
+/** Mensajes de un formulario «ya entregados hoy», sin pasar por los límites en memoria. */
+function simularEntregadosHoy(formId: string, clientId: string, cuantos: number): void {
+  const insertar = db.prepare(
+    `INSERT INTO messages (id, client_id, form_id, source, from_address, to_json, subject, status, created_at)
+     VALUES (?, ?, ?, 'form', 'web@ejemplo.test', '[]', 'Previo', 'sent', ?)`,
+  );
+  db.transaction(() => {
+    for (let i = 0; i < cuantos; i += 1) insertar.run(`msg_previo_${formId}_${i}`, clientId, formId, Date.now());
+  })();
+}
+
+test('los formularios no gastan el cupo diario de la API del plan, ni siquiera tras eliminarlos', async () => {
+  // Plan con 2 envíos por API al día: antes, 2 mensajes anónimos al formulario
+  // dejaban al cliente sin /v1/send hasta medianoche.
+  const { clientId: cliente, form, enviarApi } = await clienteConCupo(2);
+  for (let i = 0; i < 3; i += 1) {
+    const res = await enviar(form.publicKey, { ip: '203.0.113.7' });
+    assert.equal(res.statusCode, 200, res.body);
+  }
+  assert.equal(clientSentToday(cliente), 0, 'los mensajes del formulario no cuentan para la API');
+
+  // Eliminar el formulario deja sus mensajes sin form_id: siguen sin contar.
+  const borrado = await ctx.app.inject({ method: 'DELETE', url: `/api/forms/${form.id}`, headers: { cookie: ctx.adminCookie } });
+  assert.equal(borrado.statusCode, 200, borrado.body);
+  const origenes = db.prepare('SELECT source, form_id FROM messages WHERE client_id = ?').all(cliente) as { source: string; form_id: string | null }[];
+  assert.equal(origenes.length, 3);
+  assert.ok(origenes.every((m) => m.source === 'form' && m.form_id === null));
+
+  assert.equal((await enviarApi()).statusCode, 200);
+  assert.equal((await enviarApi()).statusCode, 200);
+  const tercero = await enviarApi();
+  assert.equal(tercero.statusCode, 429, 'el cupo de la API sigue siendo el del plan');
   assert.equal(tercero.json().code, 'daily_limit_reached');
-  assert.doesNotMatch(tercero.json().error, /plan|clave/, 'el visitante no ve detalles del plan');
+
+  // El historial distingue el origen aunque el formulario ya no exista.
+  const historial = await ctx.app.inject({ method: 'GET', url: `/api/messages?clientId=${cliente}`, headers: { cookie: ctx.adminCookie } });
+  const fuentes = (historial.json() as { messages: { source: string }[] }).messages.map((m) => m.source).sort();
+  assert.deepEqual(fuentes, ['api', 'api', 'form', 'form', 'form']);
+});
+
+test(`cada formulario tiene su propio cupo de ${LIMITE_DIARIO_POR_FORMULARIO} mensajes al día y, agotado, la API sigue enviando`, async () => {
+  const { clientId: cliente, buzon, form, enviarApi } = await clienteConCupo(500);
+  simularEntregadosHoy(form.id, cliente, LIMITE_DIARIO_POR_FORMULARIO - 1);
+  // Los de ayer no cuentan.
+  db.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(Date.now() - 2 * 24 * 3600_000, `msg_previo_${form.id}_0`);
+
+  assert.equal((await enviar(form.publicKey)).statusCode, 200);
+  assert.equal((await enviar(form.publicKey)).statusCode, 200);
+  const agotado = await enviar(form.publicKey);
+  assert.equal(agotado.statusCode, 429);
+  assert.equal(agotado.json().code, 'daily_limit_reached');
+  assert.doesNotMatch(agotado.json().error, /plan|clave/, 'el visitante no ve detalles del plan');
+  assert.equal(agotado.headers['access-control-allow-origin'], ORIGEN);
+  assert.equal(mensajesDe(form.id).length, LIMITE_DIARIO_POR_FORMULARIO + 1);
+
+  // Otro formulario del mismo cliente tiene su propio cupo, y la API, el suyo.
+  const otroForm = await crearFormulario({ clientId: cliente, recipientMailboxId: buzon.mailboxId, name: 'Presupuestos' }, ctx.adminCookie);
+  assert.equal((await enviar(otroForm.publicKey)).statusCode, 200);
+  const api = await enviarApi();
+  assert.equal(api.statusCode, 200, api.body);
+  assert.equal(api.json().status, 'sent');
 });
 
 test('un envío demasiado grande responde 413 con CORS', async () => {

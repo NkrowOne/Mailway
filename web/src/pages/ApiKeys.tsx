@@ -528,8 +528,10 @@ export default function ApiKeys({ user }: { user: User }) {
                       </span>
                       <span className="min-w-0 basis-full text-sm text-tinta-2 [overflow-wrap:anywhere] sm:basis-0 sm:grow">
                         {message.subject}
-                        {/* Los formularios de la web cuentan en el mismo cupo diario. */}
-                        {message.formId && <span className="text-tinta-3"> · formulario web</span>}
+                        {/* Los formularios de la web tienen su propio cupo diario, aparte del de la API. */}
+                        {(message.source === 'form' || message.formId) && (
+                          <span className="text-tinta-3"> · formulario web</span>
+                        )}
                       </span>
                       <span className="shrink-0 whitespace-nowrap text-sm text-tinta-3 sm:basis-28">
                         {formatDate(message.createdAt)}

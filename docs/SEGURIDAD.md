@@ -26,7 +26,7 @@ cliente puede usar la API directamente, no solo la interfaz.
 | API de envío (`/v1/send`) | Aplicaciones con clave `mw_` | Clave hasheada, límites del plan por cliente |
 | «Mi buzón» (`/api/portal/*`) | Titulares con la contraseña del buzón | Cookie propia limitada a `/api/portal`, verificación local, límites de fallos |
 | Enlaces de configuración (`/api/public/setup/*`) | Quien tenga el enlace | Token de 256 bits, caducidad, 60 peticiones por minuto e IP |
-| Formularios de contacto (`/forms/*`) | Visitantes de las webs permitidas | `Origin` en la lista del formulario, campo trampa, límites por IP, por formulario y del plan, Turnstile opcional; destinatario fijo del cliente |
+| Formularios de contacto (`/forms/*`) | Visitantes de las webs permitidas | `Origin` en la lista del formulario, campo trampa, límites por IP y por formulario (cupo diario propio, separado del de la API), Turnstile opcional; destinatario fijo del cliente |
 | Autoconfiguración (`/mail/…`, `/autodiscover/…`, `/.well-known/…`) | Programas de correo | Solo dominios de la instancia; sin datos de cuentas |
 | Cambio de contraseña del webmail (`/api/webmail/password`) | Roundcube, por la red interna | Secreto compartido `MAILWAY_WEBMAIL_TOKEN`; sin él la ruta no existe |
 | Rutas de Traefik (`/api/traefik/config`) | Traefik o el puente de Skyway | `X-Mailway-Token` comparado en tiempo constante |
@@ -264,10 +264,15 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   `https://`); es lo único que responde con CORS, y solo para ese origen. El
   `Origin` frena a otras webs en un navegador, no a un script que lo falsee:
   contra eso están el campo trampa, los límites (5 envíos por IP cada 10
-  minutos, 30 por formulario y hora, el cupo diario del plan y 60 peticiones
+  minutos, 30 por formulario y hora, 200 por formulario y día y 60 peticiones
   por minuto e IP), Turnstile con el `hostname` comprobado y, sobre todo, que
   el destinatario es siempre el buzón del propio cliente: no sirve para enviar
-  correo a terceros. El mensaje sale con el remitente del buzón (nunca con la
+  correo a terceros. El cupo diario de los formularios es **propio y separado
+  del de la API del plan**: si lo compartieran, quien falsee el `Origin`
+  podría agotarlo y dejar al cliente sin `/v1/send` (códigos de un solo uso,
+  recuperación de contraseña) hasta medianoche UTC. Cada envío guarda su
+  origen (`messages.source`), así que eliminar un formulario atacado tampoco
+  pasa sus mensajes al cupo de la API. El mensaje sale con el remitente del buzón (nunca con la
   dirección del visitante, que va saneada en `Reply-To`), en texto plano y con
   el asunto que fija el formulario, así que el visitante no puede inyectar
   cabeceras ni HTML. Envíos de 32 KB como máximo; el widget envía sin cookies

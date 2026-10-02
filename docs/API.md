@@ -105,6 +105,13 @@ Idempotency-Key: 0b8f2c1e-4d5a-4f7e-9a61-3c2d1e0f9b8a
   campos del JSON no cuenta.
 - Mientras la primera petición está en curso, otra con el mismo valor recibe
   `409 idempotency_in_progress`: reintenta en unos segundos.
+- Si el servidor se reinicia a mitad de un envío (un redespliegue, falta de
+  memoria), la reserva no se queda bloqueada: al arrancar se retiran las que
+  quedaron sin respuesta, y una que siga sin respuesta pasados **15 minutos**
+  se da por abandonada. En los dos casos el reintento con el mismo valor
+  **vuelve a enviar** el mensaje: si el servidor llegó a entregarlo al SMTP
+  antes de detenerse, el destinatario puede recibirlo dos veces, que es
+  preferible a no recibirlo nunca.
 - Solo se guardan los envíos que se ejecutaron (`status: "sent"` o
   `"failed"`). Un rechazo por límites (`429`), autenticación o validación no
   reserva el valor, así que el reintento con la misma clave funciona. Para
@@ -278,7 +285,7 @@ añaden `issues: [{ path, message }]`.
 | `403` | `sender_suspended` | El buzón remitente de la clave está suspendido | Reactivarlo en el panel o usar otra clave |
 | `403` | `sender_missing` | El buzón remitente ya no existe | Crear una clave con otro remitente |
 | `409` | `idempotency_conflict` | La `Idempotency-Key` ya se usó con esta clave para un mensaje distinto | Usar un valor nuevo por mensaje |
-| `409` | `idempotency_in_progress` | Otra petición con la misma `Idempotency-Key` está en curso | Reintentar en unos segundos |
+| `409` | `idempotency_in_progress` | Otra petición con la misma `Idempotency-Key` está en curso (como mucho 15 minutos; ver sección 1.4) | Reintentar en unos segundos |
 | `413` | `attachments_too_large` | Los adjuntos superan 10 MB una vez decodificados | Reducirlos o enviar un enlace de descarga |
 | `413` | `bad_request` | La petición supera 20 MB | Reducir el contenido |
 | `429` | `rate_limited` | Límite de envíos por minuto del plan, contado por cliente (todas sus claves) | Reintentar con espera exponencial |
@@ -302,12 +309,18 @@ gastan** cupo diario ni la ventana por minuto.
   aparece en la pestaña **API de envío** del panel (`usedToday` en la API); el
   cupo del plan suma, en cambio, los envíos admitidos de todas las claves del
   cliente, por lo que puede agotarse aunque `usedToday` de una clave sea bajo.
+- Los mensajes de los **formularios web** no gastan este cupo: cada formulario
+  tiene el suyo (200 al día) y lo rellena cualquiera desde Internet, así que
+  un formulario atacado no puede dejar a la API sin envíos
+  ([Integraciones §9.3](INTEGRACIONES.md#93-ruta-pública-post-formsclave)).
 
 ### 1.8 Historial
 
 Cada envío queda registrado con su estado, destinatarios, asunto, tamaño y
 `messageId`. En el panel: **API de envío**. Por API de gestión:
-`GET /api/messages?keyId=<id>&limit=100` (máximo 500).
+`GET /api/messages?keyId=<id>&limit=100` (máximo 500). Cada mensaje lleva
+`source` (`api` o `form`, que se conserva aunque el formulario se elimine) y,
+si salió de un formulario que sigue existiendo, `formId`.
 
 ---
 
