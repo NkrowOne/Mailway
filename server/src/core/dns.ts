@@ -14,6 +14,15 @@ const PUBLIC_RESOLVERS = (process.env.MAILWAY_DNS_RESOLVERS || '1.1.1.1,8.8.8.8'
   .map((s) => s.trim())
   .filter(Boolean);
 
+/**
+ * Modo sin red (pruebas): toda consulta devuelve «no se pudo consultar». Así
+ * las rutas que verifican DNS se ejercitan sin depender de Internet ni de
+ * esperas de varios segundos, y nunca se toma un fallo de red por un «no».
+ */
+export function dnsOffline(): boolean {
+  return process.env.MAILWAY_DNS_OFFLINE === '1';
+}
+
 function publicResolver(): Resolver {
   const resolver = new Resolver({ timeout: 5000, tries: 2 });
   resolver.setServers(PUBLIC_RESOLVERS);
@@ -31,6 +40,7 @@ export interface MxRecord {
 
 /** null = no se pudo consultar (error de red); [] = el registro no existe. */
 export async function lookupMx(domain: string): Promise<MxRecord[] | null> {
+  if (dnsOffline()) return null;
   try {
     const records = await publicResolver().resolveMx(domain);
     return records.sort((a, b) => a.priority - b.priority);
@@ -40,6 +50,7 @@ export async function lookupMx(domain: string): Promise<MxRecord[] | null> {
 }
 
 export async function lookupTxt(name: string): Promise<string[] | null> {
+  if (dnsOffline()) return null;
   try {
     const chunks = await publicResolver().resolveTxt(name);
     return chunks.map((parts) => parts.join(''));
@@ -49,6 +60,7 @@ export async function lookupTxt(name: string): Promise<string[] | null> {
 }
 
 export async function lookupA(name: string): Promise<string[] | null> {
+  if (dnsOffline()) return null;
   try {
     return await publicResolver().resolve4(name);
   } catch (err) {
@@ -56,7 +68,18 @@ export async function lookupA(name: string): Promise<string[] | null> {
   }
 }
 
+/** Direcciones IPv6 (AAAA). Los servidores que tienen IPv6 la prueban antes que la IPv4. */
+export async function lookupAaaa(name: string): Promise<string[] | null> {
+  if (dnsOffline()) return null;
+  try {
+    return await publicResolver().resolve6(name);
+  } catch (err) {
+    return isNoData(err) ? [] : null;
+  }
+}
+
 export async function lookupCname(name: string): Promise<string[] | null> {
+  if (dnsOffline()) return null;
   try {
     return await publicResolver().resolveCname(name);
   } catch (err) {
@@ -67,6 +90,7 @@ export async function lookupCname(name: string): Promise<string[] | null> {
 export async function lookupSrv(
   name: string,
 ): Promise<{ priority: number; weight: number; port: number; name: string }[] | null> {
+  if (dnsOffline()) return null;
   try {
     return await publicResolver().resolveSrv(name);
   } catch (err) {
@@ -76,6 +100,7 @@ export async function lookupSrv(
 
 /** PTR inverso de una IP (imprescindible para enviar por el puerto 25). */
 export async function lookupPtr(ip: string): Promise<string[] | null> {
+  if (dnsOffline()) return null;
   try {
     return await systemResolver().reverse(ip);
   } catch (err) {
@@ -105,6 +130,14 @@ const DNSBL_ZONES: { zone: string; label: string }[] = [
  * (resolutor público o límite excedido): eso se marca como no concluyente.
  */
 export async function checkDnsbl(ip: string): Promise<DnsblResult[]> {
+  if (dnsOffline()) {
+    return DNSBL_ZONES.map(({ zone, label }) => ({
+      zone,
+      label,
+      status: 'inconclusive' as const,
+      detail: 'Consulta desactivada (modo sin red).',
+    }));
+  }
   const reversed = ip.split('.').reverse().join('.');
   const resolver = systemResolver();
   return Promise.all(

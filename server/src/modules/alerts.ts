@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
 import { channelsConfigured, dispatch, getChannels, type Severity } from '../core/notify';
+import { isUniqueViolation, notFound } from '../core/errors';
 import { setJsonSetting } from './settings';
 import { audit } from './audit';
 import { requireAdmin, requireAuth } from './auth';
@@ -86,10 +87,13 @@ export function fireAlert(input: FireInput): boolean {
         input.dedupeKey,
         now(),
       ) as { id: number };
-  } catch {
+  } catch (err) {
     // El índice único parcial rechaza el INSERT: ya hay una alerta abierta
-    // con esta clave. No es un error, es el dedupe funcionando.
-    return false;
+    // con esta clave. No es un error, es el dedupe funcionando. Cualquier
+    // otro fallo (base bloqueada, cliente inexistente…) sí lo es: tragárselo
+    // haría creer que el aviso ya estaba abierto cuando no se ha guardado.
+    if (isUniqueViolation(err)) return false;
+    throw err;
   }
   if (!inserted) return false;
 
@@ -131,8 +135,26 @@ export function resolveAlert(dedupeKey: string, opts: { notify?: boolean; what?:
     void dispatch({
       severity: 'info',
       title: 'Resuelto: ' + (opts.what || first.title),
-      message: 'El problema que se avisó antes ya no está presente.',
+      message: 'El problema notificado anteriormente ya no está presente.',
     }).catch(() => undefined);
+  }
+}
+
+/**
+ * Cierra las alertas abiertas de un tipo, salvo la de la clave `except`. Sirve
+ * para los avisos cuya clave lleva los datos del problema (por ejemplo, los dos
+ * nombres que no coinciden): si el problema cambia, el aviso anterior ya no
+ * describe la situación y no debe quedarse abierto junto al nuevo.
+ */
+export function resolveAlertsOfType(
+  type: string,
+  opts: { except?: string; notify?: boolean; what?: string } = {},
+): void {
+  const keys = db
+    .prepare('SELECT DISTINCT dedupe_key FROM alerts WHERE type = ? AND resolved_at IS NULL AND dedupe_key IS NOT NULL')
+    .all(type) as { dedupe_key: string }[];
+  for (const { dedupe_key: key } of keys) {
+    if (key !== opts.except) resolveAlert(key, { notify: opts.notify, what: opts.what });
   }
 }
 
@@ -149,11 +171,38 @@ export function listAlerts(opts: { clientId?: string; includeResolved?: boolean 
   return (db.prepare(sql).all(...params) as AlertRow[]).map(toAlert);
 }
 
+/**
+ * El vigilante hace POST a estas URL desde el servidor: solo se aceptan
+ * http(s), nunca `file:`, `data:` u otros esquemas que fetch trataría distinto.
+ */
+function esUrlHttp(valor: string): boolean {
+  try {
+    const url = new URL(valor);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+// Un único esquema con refine (y no `.url().or(z.literal(''))`): la unión de
+// zod devuelve el mensaje genérico «Invalid input», en inglés y sin el campo.
+const urlCanal = (campo: string) =>
+  z
+    .string()
+    .trim()
+    .max(2000, `La URL del ${campo} es demasiado larga.`)
+    .refine(
+      (u) => u === '' || esUrlHttp(u),
+      `La URL del ${campo} no es válida: debe empezar por https://.`,
+    );
+
 const channelsSchema = z.object({
-  webhookUrl: z.string().url('URL no válida.').or(z.literal('')),
-  discordUrl: z.string().url('URL no válida.').or(z.literal('')),
+  webhookUrl: urlCanal('webhook genérico'),
+  discordUrl: urlCanal('webhook de Discord'),
   telegramToken: z.string().trim().max(200),
   telegramChat: z.string().trim().max(60),
+  /** Borra el token de Telegram guardado (vacío por sí solo significa «conservarlo»). */
+  clearTelegramToken: z.boolean().optional(),
 });
 
 export function registerAlertRoutes(app: FastifyInstance): void {
@@ -172,11 +221,22 @@ export function registerAlertRoutes(app: FastifyInstance): void {
   app.post('/api/alerts/:id/dismiss', async (req) => {
     requireAdmin(req);
     const { id } = req.params as { id: string };
-    db.prepare('UPDATE alerts SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL').run(
-      now(),
-      Number(id),
-    );
-    audit(req, 'alert.dismissed', { id });
+    const alertId = Number(id);
+    const row = Number.isSafeInteger(alertId)
+      ? (db.prepare('SELECT id, resolved_at FROM alerts WHERE id = ?').get(alertId) as
+          | { id: number; resolved_at: number | null }
+          | undefined)
+      : undefined;
+    if (!row) throw notFound('Aviso no encontrado.');
+    // Descartar dos veces (dos pestañas, doble clic) no es un error, pero solo
+    // la primera cierra el aviso y queda en la auditoría.
+    if (row.resolved_at === null) {
+      db.prepare('UPDATE alerts SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL').run(
+        now(),
+        alertId,
+      );
+      audit(req, 'alert.dismissed', { id: alertId });
+    }
     return { ok: true };
   });
 
@@ -201,9 +261,10 @@ export function registerAlertRoutes(app: FastifyInstance): void {
     // Token vacío = conservar el actual (para poder editar el resto sin
     // tener que volver a escribirlo).
     const current = getChannels();
+    const { clearTelegramToken, ...channels } = body;
     setJsonSetting('notify', {
-      ...body,
-      telegramToken: body.telegramToken || current.telegramToken,
+      ...channels,
+      telegramToken: clearTelegramToken ? '' : channels.telegramToken || current.telegramToken,
     });
     audit(req, 'notify.channels_updated', { configured: channelsConfigured() });
     return { ok: true, configured: channelsConfigured() };
@@ -215,14 +276,14 @@ export function registerAlertRoutes(app: FastifyInstance): void {
     if (configured.length === 0) {
       return {
         ok: false,
-        error: 'No hay ningún canal configurado todavía. Rellena al menos uno y guarda.',
+        error: 'Todavía no hay ningún canal configurado. Completa al menos uno y guarda los cambios.',
       };
     }
     const failures = await dispatch({
       severity: 'info',
       title: 'Aviso de prueba',
-      message: 'Si lees esto, Mailway puede avisarte por este canal cuando algo vaya mal.',
-      remedy: 'No tienes que hacer nada: es solo una prueba.',
+      message: 'Si recibes este mensaje, Mailway podrá avisarte por este canal cuando algo falle.',
+      remedy: 'No es necesario hacer nada: se trata de una prueba.',
     });
     audit(req, 'notify.test_sent', { failures });
     return {

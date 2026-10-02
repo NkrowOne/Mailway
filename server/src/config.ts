@@ -26,8 +26,42 @@ function loadSecret(): string {
   return generated;
 }
 
+const port = Number(process.env.PORT || 4100);
+
+/**
+ * URL interna de este panel para Traefik. Skyway nombra el contenedor
+ * `skyway-<proyecto>-<servicio>` e inyecta ambos nombres en el entorno, así
+ * que desplegado con Skyway se deduce sin que nadie tenga que mirarlo.
+ */
+function detectPanelBackend(): string {
+  const explicit = process.env.MAILWAY_PANEL_BACKEND_URL?.trim();
+  if (explicit) return explicit;
+  const project = process.env.SKYWAY_PROJECT?.trim();
+  const service = process.env.SKYWAY_SERVICE?.trim();
+  if (project && service) return `http://skyway-${project}-${service}:${port}`;
+  return '';
+}
+
+/**
+ * Cuántos proxies hay delante del panel. Con `true`, Fastify se creería la
+ * primera IP de X-Forwarded-For, que la pone el propio cliente: cualquiera
+ * podría cambiar de IP en cada intento y saltarse los límites de intentos.
+ * Por defecto se confía en un salto (Traefik, el despliegue normal).
+ */
+function parseTrustProxy(): boolean | number | string {
+  const raw = process.env.MAILWAY_TRUST_PROXY?.trim();
+  if (!raw) return 1;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return raw; // lista de IPs o CIDR separadas por comas
+}
+
 export const config = {
-  port: Number(process.env.PORT || 4100),
+  /** Versión publicada; va sincronizada con los package.json y la documentación. */
+  version: '1.0.0',
+  port,
+  trustProxy: parseTrustProxy(),
   host: process.env.HOST || '0.0.0.0',
   dataDir,
   dbPath: path.join(dataDir, 'mailway.db'),
@@ -46,6 +80,25 @@ export const config = {
     smtpPort: Number(process.env.STALWART_SMTP_PORT || 587),
   },
   webmailUrlDefault: process.env.MAILWAY_WEBMAIL_URL || '',
+  /**
+   * URL pública del panel (enlaces de configuración, autoconfiguración).
+   * Skyway inyecta PUBLIC_URL en los servicios con dominio.
+   */
+  panelUrlDefault: (process.env.MAILWAY_PANEL_URL || process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
+  /**
+   * Token de puesta en marcha: si se define, crear el primer administrador
+   * lo exige. Evita que el primer visitante de un panel recién publicado se
+   * quede con la instancia. El instalador lo genera y lo muestra.
+   */
+  setupToken: process.env.MAILWAY_SETUP_TOKEN?.trim() || '',
+  /**
+   * Secreto compartido con el webmail (Roundcube) para su complemento de
+   * cambio de contraseña, que llama a /api/webmail/password. Sin él, esa
+   * ruta está desactivada.
+   */
+  webmailToken: process.env.MAILWAY_WEBMAIL_TOKEN?.trim() || '',
+  /** Token fijo para el proveedor HTTP de Traefik (si no, se genera y se guarda). */
+  traefikTokenOverride: process.env.MAILWAY_TRAEFIK_TOKEN?.trim() || '',
   mailHostnameDefault: process.env.MAILWAY_MAIL_HOSTNAME || '',
   publicIpDefault: process.env.MAILWAY_PUBLIC_IP || '',
   sessionTtlHours: Number(process.env.MAILWAY_SESSION_TTL_HOURS || 24 * 7),
@@ -63,7 +116,7 @@ export const config = {
      * Contenedor de este mismo panel. Como lo despliega Skyway, su nombre lo
      * genera Skyway: sin este valor, los dominios de tipo "panel" se desactivan.
      */
-    panelBackend: process.env.MAILWAY_PANEL_BACKEND_URL || '',
+    panelBackend: detectPanelBackend(),
     /** Nombre del certresolver de Traefik. En Skyway es "le". */
     certResolver: process.env.MAILWAY_TRAEFIK_CERTRESOLVER || 'le',
   },

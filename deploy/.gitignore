@@ -1,0 +1,8 @@
+# Configuración con secretos que genera deploy/instalar.sh: deploy/.env, su
+# copia de la ejecución anterior (.env.anterior) y los temporales (.env.XXXXXX).
+.env
+.env.*
+!.env.example
+
+# Caché de Python que dejan las pruebas del extractor (deploy/tls).
+__pycache__/

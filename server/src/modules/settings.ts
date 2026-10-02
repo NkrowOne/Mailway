@@ -1,5 +1,7 @@
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret } from '../core/crypto';
+import { badRequest } from '../core/errors';
+import { normalizeHostname } from '../core/hostnames';
 import { config } from '../config';
 import type { EngineSettings } from '../engine/types';
 
@@ -45,6 +47,50 @@ export interface InstanceSettings {
   webmailUrl: string;
   /** Dirección desde la que el panel envía avisos (opcional). */
   systemFrom: string;
+  /** URL pública de este panel, p. ej. https://panel.miempresa.com */
+  panelUrl: string;
+}
+
+/**
+ * Normaliza la URL pública del panel: esquema y host en minúsculas, sin barra
+ * final. Con ella se construyen los enlaces que reciben los titulares (perfil
+ * de Apple, «Mi buzón», enlaces de configuración): una barra de más o unas
+ * credenciales incrustadas producirían enlaces rotos o que filtran datos.
+ * Sin esquema se asume https, que es como se publica siempre tras Traefik.
+ */
+export function normalizePanelUrl(input: string): string {
+  const raw = input.trim();
+  if (!raw) return '';
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw badRequest(
+      'La URL del panel no es válida. Ejemplo: https://panel.tuempresa.com',
+      'invalid_panel_url',
+    );
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw badRequest('La URL del panel debe empezar por https://', 'invalid_panel_url');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw badRequest(
+      'La URL del panel no puede incluir usuario, contraseña, parámetros ni fragmentos.',
+      'invalid_panel_url',
+    );
+  }
+  const path = url.pathname.replace(/\/+$/, '');
+  return `${url.protocol}//${url.host}${path}`;
+}
+
+/** Igual que normalizePanelUrl, pero sin lanzar: para valores heredados del entorno. */
+function panelUrlOrEmpty(input: string): string {
+  try {
+    return normalizePanelUrl(input);
+  } catch {
+    return '';
+  }
 }
 
 export function getInstanceSettings(): InstanceSettings {
@@ -55,11 +101,17 @@ export function getInstanceSettings(): InstanceSettings {
     publicIp: stored.publicIp || config.publicIpDefault,
     webmailUrl: stored.webmailUrl || config.webmailUrlDefault,
     systemFrom: stored.systemFrom || '',
+    panelUrl: panelUrlOrEmpty(stored.panelUrl || config.panelUrlDefault),
   };
 }
 
 export function setInstanceSettings(patch: Partial<InstanceSettings>): InstanceSettings {
-  const merged = { ...getInstanceSettings(), ...patch };
+  const clean: Partial<InstanceSettings> = { ...patch };
+  if (clean.panelUrl !== undefined) clean.panelUrl = normalizePanelUrl(clean.panelUrl);
+  // El nombre del servidor se compara con CNAME y MX leídos del DNS, que
+  // llegan en minúsculas y a veces con punto final.
+  if (clean.mailHostname !== undefined) clean.mailHostname = normalizeHostname(clean.mailHostname);
+  const merged = { ...getInstanceSettings(), ...clean };
   setJsonSetting('instance', merged);
   return merged;
 }

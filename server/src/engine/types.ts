@@ -25,9 +25,48 @@ export interface MailEngine {
   updateMailbox(email: string, patch: UpdateMailboxPatch): Promise<void>;
   deleteMailbox(email: string): Promise<void>;
 
-  /** Crea o reemplaza un alias (lista de redirección). */
-  upsertAlias(alias: string, destinations: string[]): Promise<void>;
+  /**
+   * Crea o reemplaza un alias (lista de redirección). `destinations` son
+   * buzones de esta instancia; `externalDestinations`, direcciones de fuera
+   * (reenvío a Gmail, a otro proveedor…).
+   */
+  upsertAlias(alias: string, destinations: string[], externalDestinations?: string[]): Promise<void>;
   deleteAlias(alias: string): Promise<void>;
+
+  /**
+   * Comprueba la contraseña de un buzón SIN pedirle al motor que autentique
+   * (los fallos contarían para su baneo automático de IPs). true = correcta,
+   * false = incorrecta o buzón suspendido, null = no se pudo comprobar.
+   */
+  verifyCredentials(email: string, password: string): Promise<boolean | null>;
+
+  /**
+   * Bytes ocupados por cada buzón, en una sola consulta. Las claves van en
+   * minúsculas; un buzón ausente del mapa es «desconocido», no «vacío».
+   */
+  getMailboxUsage(): Promise<Map<string, number>>;
+
+  /**
+   * Escribe ajustes del servidor del motor (clave → valor) y los recarga.
+   * Lo usa la puesta en marcha para fijar el nombre del servidor, la
+   * confianza en el proxy y los rangos exentos de baneo.
+   */
+  applyServerSettings(values: Record<string, string>): Promise<EngineReloadResult>;
+
+  /** Lee ajustes del servidor del motor por prefijo (p. ej. "server.hostname"). */
+  getServerSettings(keys: string[]): Promise<Record<string, string>>;
+
+  /**
+   * Nombre con el que el motor se anuncia DE VERDAD: el destino del MX de los
+   * registros que genera para los dominios, en minúsculas y sin punto final.
+   * Puede no coincidir con el `server.hostname` guardado: una recarga
+   * pendiente o la configuración local del motor lo fijan a otro. null si no
+   * propone ningún MX.
+   */
+  getRunningHostname(): Promise<string | null>;
+
+  /** Recarga los certificados TLS (tras una renovación). */
+  reloadCertificates(): Promise<void>;
 
   /**
    * Añade una contraseña de aplicación al buzón (para el envío por API sin
@@ -65,6 +104,11 @@ export interface UpdateMailboxPatch {
   quotaBytes?: number;
   /** true = cuenta suspendida (no puede iniciar sesión). */
   suspended?: boolean;
+}
+
+export interface EngineReloadResult {
+  errors: string[];
+  warnings: string[];
 }
 
 export interface QueueSummary {

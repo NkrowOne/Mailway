@@ -1,5 +1,10 @@
+# Imagen del panel de Mailway (servidor Node + web compilada).
+# Skyway la construye desde este Dockerfile; el compose autónomo también.
+
 # ---------- build: compila la web y el servidor ----------
 FROM node:22-alpine AS build
+# Compilador por si better-sqlite3 no tiene binario precompilado para la
+# arquitectura (p. ej. algunos ARM); solo vive en esta etapa.
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -16,27 +21,40 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/
-RUN npm ci -w server --omit=dev --no-audit --no-fund
+RUN npm ci -w server --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---------- runtime ----------
 FROM node:22-alpine
-RUN apk add --no-cache curl ca-certificates
+# su-exec: el contenedor arranca como root solo para dejar /data a nombre
+# del usuario «node» (instalaciones anteriores escribían como root) y cede
+# los privilegios antes de arrancar el servidor.
+RUN apk add --no-cache su-exec tini \
+  && mkdir -p /data \
+  && chown node:node /data
 
 WORKDIR /app
 ENV NODE_ENV=production \
     MAILWAY_DATA_DIR=/data \
     PORT=4100
 
+# El código queda a nombre de root (solo lectura para el servidor): un fallo
+# en el proceso no puede reescribir el propio panel. Solo /data es de «node».
 COPY package.json ./
 COPY server/package.json server/
 COPY --from=prod-deps /app/node_modules node_modules
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/web/dist web/dist
+COPY deploy/docker-entrypoint.sh /usr/local/bin/mailway-entrypoint
 
 VOLUME /data
 EXPOSE 4100
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD curl -fsS http://localhost:4100/api/health || exit 1
+# Sin curl en la imagen: el propio Node consulta /api/health.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4100)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
+# tini reenvía las señales (parada limpia de SQLite) y recoge procesos huérfanos.
+# Con «sh» delante no depende del bit de ejecución (el constructor clásico de
+# Docker, que Skyway usa si falta buildx, no admite COPY --chmod).
+ENTRYPOINT ["/sbin/tini", "--", "/bin/sh", "/usr/local/bin/mailway-entrypoint"]
 CMD ["node", "server/dist/index.js"]

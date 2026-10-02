@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import { db } from '../src/core/db';
 import { HttpError } from '../src/core/errors';
 import { setInstanceSettings, getSetting, setSetting } from '../src/modules/settings';
+import { registerAutoconfigRoutes } from '../src/modules/autoconfig';
 import { registerDashboardRoutes } from '../src/modules/dashboard';
 import {
   checkHttps, getClientWebmailUrl, setPrimaryWebmail,
@@ -38,6 +39,8 @@ function appFor(clientId: string | null = 'web_a') {
   });
   registerWhitelabelRoutes(app);
   registerDashboardRoutes(app);
+  // Los datos de conexión de un buzón viven con la autoconfiguración.
+  registerAutoconfigRoutes(app);
   return app;
 }
 
@@ -127,6 +130,14 @@ test('la conexión con Skyway solo se registra tras una consulta autenticada', a
 });
 
 test('404, 5xx y errores TLS no pasan por HTTPS operativo', async (t) => {
+  // fetch está simulado: no hay red real, así que se desactiva el modo sin
+  // red de las pruebas para que checkHttps llegue a llamarlo.
+  const offline = process.env.MAILWAY_DNS_OFFLINE;
+  process.env.MAILWAY_DNS_OFFLINE = '0';
+  t.after(() => {
+    if (offline === undefined) delete process.env.MAILWAY_DNS_OFFLINE;
+    else process.env.MAILWAY_DNS_OFFLINE = offline;
+  });
   const fakeFetch = t.mock.method(globalThis, 'fetch');
   for (const status of [404, 500, 502, 503]) {
     fakeFetch.mock.mockImplementation(async () => new Response(null, { status }));

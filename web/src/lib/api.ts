@@ -36,6 +36,16 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   return data as T;
 }
 
+/**
+ * Credenciales rechazadas. El panel y «Mi buzón» muestran el mismo texto, sea
+ * cual sea la redacción de cada ruta del servidor.
+ */
+export function esCredencialIncorrecta(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'bad_credentials';
+}
+
+export const TEXTO_CREDENCIALES_INCORRECTAS = 'El correo electrónico o la contraseña no son correctos.';
+
 export const api = {
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: unknown) => request<T>('POST', url, body),
@@ -64,6 +74,8 @@ export interface Plan {
   apiDailyLimit: number;
   apiPerMinuteLimit: number;
   notes: string;
+  /** Clientes que usan el plan (solo en GET /api/plans). */
+  clientCount?: number;
 }
 
 export interface ClientUsage {
@@ -83,6 +95,8 @@ export interface Client {
   suspended: boolean;
   notes: string;
   createdAt: number;
+  /** Referencia en un sistema externo; «skyway:…» si lo gestiona Skyway. */
+  externalRef: string | null;
   plan?: Plan;
   usage?: ClientUsage;
   users?: { id: string; email: string; name: string; disabled: boolean; lastLoginAt: number | null }[];
@@ -100,6 +114,8 @@ export interface DnsCheck {
   status: CheckStatus;
   required: boolean;
   help: string;
+  /** El motor no ha generado este registro obligatorio: no hay valor que copiar. */
+  engineMissing?: boolean;
 }
 
 export interface DomainRecord {
@@ -117,6 +133,20 @@ export interface DomainRecord {
   };
   lastCheckedAt: number | null;
   verifiedAt: number | null;
+  /** Nombre legible si es un dominio internacional (se guarda en punycode). */
+  domainUnicode?: string;
+  /** Zona de Cloudflare donde Mailway gestiona su DNS, si la hay. */
+  cloudflare?: { accountId: string; zoneId: string } | null;
+  dnsAppliedAt?: number | null;
+  /**
+   * Cuándo se comprobó que el cliente controla el dominio (registro TXT).
+   * null = pendiente: el servidor rechaza buzones y alias con 409
+   * `domain_ownership_pending`. Sin el campo (servidor anterior), se da por
+   * comprobada.
+   */
+  ownershipVerifiedAt?: number | null;
+  /** Registro TXT que demuestra la propiedad del dominio. */
+  ownershipRecord?: { type: 'TXT'; name: string; content: string };
   createdAt: number;
 }
 
@@ -130,6 +160,11 @@ export interface Mailbox {
   quotaMb: number;
   status: 'active' | 'suspended';
   createdAt: number;
+  /** Bytes ocupados según el motor; null = sin dato. */
+  usedBytes: number | null;
+  usageCheckedAt?: number | null;
+  clientId?: string;
+  clientName?: string;
 }
 
 export interface Alias {
@@ -137,7 +172,13 @@ export interface Alias {
   domainId: string;
   localPart: string;
   email: string;
+  /** Todos los destinos, en minúsculas (internos y externos). */
   destinations: string[];
+  /** Los destinos que no son buzones de esta instancia (reenvío externo). */
+  externalDestinations?: string[];
+  domain?: string;
+  clientId?: string;
+  clientName?: string;
   createdAt: number;
 }
 
@@ -155,10 +196,48 @@ export interface ApiKeyInfo {
   usedToday: number;
 }
 
+/**
+ * Bloque listo para copiar que acompaña a una credencial recién creada
+ * (POST /api/apikeys, POST …/app-passwords). Solo llega en esa respuesta.
+ */
+export interface BloqueVariables {
+  id: 'env' | 'node' | 'laravel' | 'django';
+  label: string;
+  language: 'dotenv' | 'javascript' | 'php' | 'python';
+  filename: string;
+  content: string;
+}
+
+/** Formulario de contacto para webs estáticas (GET /api/forms). */
+export interface FormInfo {
+  id: string;
+  clientId: string;
+  name: string;
+  /** Clave pública (mwf_…): va en el HTML de la web. */
+  publicKey: string;
+  recipientMailboxId: string;
+  recipientEmail: string;
+  allowedOrigins: string[];
+  subject: string;
+  /** Solo la clave de sitio; el secreto nunca llega al navegador. */
+  turnstile: { siteKey: string } | null;
+  enabled: boolean;
+  submissionsCount: number;
+  lastSubmissionAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  endpoint: string;
+  embedHtml: string;
+}
+
 export interface Message {
   id: string;
   clientId: string;
   apiKeyId: string | null;
+  /** Formulario del que salió el mensaje, si no vino de la API. */
+  formId?: string | null;
+  /** Origen del envío; se conserva aunque el formulario se elimine después. */
+  source?: 'api' | 'form';
   from: string;
   to: string[];
   subject: string;
@@ -186,6 +265,10 @@ export interface ServerHealth {
   publicIp: string;
   hostnameResolves: boolean | null;
   hostnameIps: string[];
+  /** AAAA del nombre del servidor: null = no se pudo consultar; [] = solo IPv4. */
+  hostnameIpv6?: string[] | null;
+  /** Las IPv6 del nombre son de este servidor (su inverso apunta a él); null = sin dato. */
+  ipv6Ok?: boolean | null;
   ptr: string[] | null;
   ptrOk: boolean | null;
   dnsbl: { zone: string; label: string; status: 'clean' | 'listed' | 'inconclusive'; detail: string }[];
@@ -194,19 +277,28 @@ export interface ServerHealth {
   checkedAt: number;
 }
 
+/**
+ * GET /api/setup/status. Con la instalación terminada y sin sesión, el
+ * servidor solo devuelve `setupComplete`, `hasAdmin`, `requiresSetupToken` y
+ * la marca: el resto de campos es opcional y cada vista debe tolerar que falte.
+ */
 export interface SetupStatus {
   setupComplete: boolean;
   hasAdmin: boolean;
-  engineConfigured: boolean;
-  demoMode: boolean;
-  engineDefaults: {
+  /** El instalador fijó un token que exige el alta del administrador. */
+  requiresSetupToken?: boolean;
+  /** Hay un motor definido en el entorno que se puede conectar con un clic. */
+  engineFromEnv?: boolean;
+  engineConfigured?: boolean;
+  demoMode?: boolean;
+  engineDefaults?: {
     url: string;
     adminUser: string;
     hasPassword: boolean;
     smtpHost: string;
     smtpPort: number;
   };
-  instance: InstanceSettings;
+  instance: Partial<InstanceSettings> & { brandName: string };
 }
 
 export interface InstanceSettings {
@@ -215,6 +307,7 @@ export interface InstanceSettings {
   publicIp: string;
   webmailUrl: string;
   systemFrom: string;
+  panelUrl: string;
 }
 
 export interface AdminDashboard {
@@ -255,6 +348,9 @@ export interface AuditEntry {
   detail: Record<string, unknown>;
   ip: string;
   createdAt: number;
+  /** Autor legible (el correo solo lo ve la administración). */
+  actor?: { name: string; email: string | null; role: string };
+  clientName?: string | null;
 }
 
 export type WhitelabelStatus = 'pending_dns' | 'issuing' | 'active' | 'error';
@@ -316,4 +412,8 @@ export interface ConnectionInfo {
   smtp: { host: string; port: number; security: string };
   smtpAlt: { host: string; port: number; security: string };
   webmailUrl: string;
+  /** Direcciones de autoconfiguración y perfil de Apple (ruta autenticada). */
+  autoconfig?: { thunderbird: string; outlook: string; appleProfileUrl: string };
+  /** «Mi buzón» del titular. */
+  portalUrl?: string;
 }

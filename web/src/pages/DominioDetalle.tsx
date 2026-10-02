@@ -1,10 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type CheckStatus, type DnsCheck, type DomainRecord } from '../lib/api';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { api, ApiError, type CheckStatus, type DnsCheck, type User } from '../lib/api';
+import {
+  invalidarTrasAltaOBaja,
+  lecturaDominio,
+  medicionIlegible,
+  nombreVisible,
+  propiedadPendiente,
+  type DominioCorreo,
+  type EstadoAltaDominio,
+  type RegistroPropiedad,
+} from '../lib/cloudflare';
+import type { ConflictoDominio } from '../lib/dominios';
+import { BloqueCloudflare } from '../components/cloudflare/BloqueCloudflare';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
+  AvisoError,
   CabeceraMedidas,
   Dialogo,
   Hoja,
@@ -37,7 +50,7 @@ const etiquetaDe: Record<CheckStatus, string> = {
   ok: 'En rango',
   missing: 'Falta',
   mismatch: 'No coincide',
-  unknown: 'Sin medir',
+  unknown: 'Sin dato',
 };
 
 /** Orden de lectura del informe: primero lo que reclama una acción. */
@@ -49,141 +62,302 @@ function porVeredicto(checks: DnsCheck[]): DnsCheck[] {
   );
 }
 
-/** Valores largos: se desplazan en horizontal, nunca se parten a mitad de palabra. */
-const cinta =
-  'block overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
+/**
+ * MTA-STS y TLS-RPT endurecen la entrega pero exigen publicar una política:
+ * se miden aparte para que no cuenten como autoconfiguración pendiente.
+ */
+function esEndurecimiento(check: DnsCheck): boolean {
+  return (
+    check.id.startsWith('mtasts:') ||
+    check.id.startsWith('tlsrpt:') ||
+    check.name.startsWith('mta-sts.') ||
+    check.name.startsWith('_mta-sts.') ||
+    check.name.startsWith('_smtp._tls.')
+  );
+}
+
+/** Los valores largos (claves DKIM) se parten; en móvil nunca se desplaza en horizontal. */
+const partible = 'block break-all';
+
+/** Invalidaciones tras borrar un dominio: arrastra sus buzones, alias y claves. */
+const CONSULTAS_DEL_DOMINIO = [['mailboxes'], ['aliases'], ['apikeys']];
+
+/** De dónde sale la medición: el botón del membrete o el de la propiedad. */
+type OrigenMedicion = 'dns' | 'propiedad';
+
+/**
+ * ¿Recibe ya el dominio en otro proveedor y anuncia el motor un MX interno?
+ * La comparten la ficha (aviso del servidor) y la descarga del fichero de
+ * zona: con la misma clave, React Query hace una sola petición.
+ */
+function useConflicto(domainId: string) {
+  return useQuery({
+    queryKey: ['domain-conflicto', domainId],
+    queryFn: () => api.get<ConflictoDominio>(`/api/domains/${domainId}/conflicto`),
+    enabled: Boolean(domainId),
+  });
+}
 
 export default function DominioDetalle() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const toast = useToast();
   const [justVerified, setJustVerified] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  // Resultado del alta con DNS automático (llega desde Dominios al navegar).
+  const [alta] = useState<EstadoAltaDominio | null>(
+    () => (location.state as { alta?: EstadoAltaDominio } | null)?.alta ?? null,
+  );
+  // Se consume una sola vez: al recargar la página no debe repetirse el
+  // resultado del alta ni volver a empezar la comprobación.
+  useEffect(() => {
+    if (location.state) navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
+  });
 
   const domain = useQuery({
     queryKey: ['domain', id],
-    queryFn: () => api.get<{ domain: DomainRecord }>(`/api/domains/${id}`),
+    queryFn: () => api.get<{ domain: DominioCorreo }>(`/api/domains/${id}`),
   });
 
+  const conflicto = useConflicto(id);
+
   const verify = useMutation({
-    mutationFn: () => api.post<{ domain: DomainRecord }>(`/api/domains/${id}/verify`),
-    onSuccess: async (data) => {
+    mutationFn: (_origen: OrigenMedicion) => api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`),
+    onSuccess: async (data, origen) => {
+      const antes = queryClient.getQueryData<{ domain: DominioCorreo }>(['domain', id])?.domain;
       queryClient.setQueryData(['domain', id], data);
       await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      // Medir de nuevo también relee lo que propone el motor (su MX, por si
+      // se acaba de corregir el nombre del servidor).
+      void queryClient.invalidateQueries({ queryKey: ['domain-conflicto', id] });
       setJustVerified(true);
-      const report = data.domain.dnsStatus;
+      const d = data.domain;
+      const report = d.dnsStatus;
+      const propiedadNueva = antes ? propiedadPendiente(antes) && !propiedadPendiente(d) : false;
+      // El aviso dice qué ha pasado: un DNS que no se pudo leer no es una
+      // medición completada, y la propiedad recién comprobada se anuncia.
       if (report.allRequiredOk) {
-        toast('ok', '¡Dominio verificado! Ya está en reparto.');
+        toast('ok', 'Dominio verificado. Ya puede enviar y recibir correo.');
+      } else if (propiedadNueva) {
+        toast(
+          'ok',
+          'Propiedad del dominio comprobada: ya puedes crear buzones y alias. Para enviar y recibir correo, completa los registros obligatorios.',
+        );
+      } else if (origen === 'propiedad' && propiedadPendiente(d)) {
+        toast(
+          'error',
+          'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acabas de crearlo, espera unos minutos y vuelve a verificar.',
+        );
+      } else if (medicionIlegible(d)) {
+        toast('error', 'No se ha podido consultar el DNS del dominio. Vuelve a medir en unos minutos.');
       } else {
         toast(
           'ok',
-          `Verificación hecha: ${report.requiredOk ?? 0} de ${report.requiredTotal ?? 0} registros obligatorios correctos.`,
+          `Medición completada: ${report.requiredOk ?? 0} de ${report.requiredTotal ?? 0} registros obligatorios en rango.`,
         );
       }
     },
     onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo verificar.'),
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido medir el DNS.'),
   });
+
+  /**
+   * El motor no generó la clave DKIM (la ficha la marca como pendiente): se
+   * pide de nuevo y se vuelve a medir, para ver ya el registro que publicar.
+   */
+  const generarDkim = useMutation({
+    mutationFn: async () => {
+      await api.post(`/api/domains/${id}/dkim`);
+      return api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`);
+    },
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], data);
+      await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      const sigue = (data.domain.dnsStatus.checks ?? []).some((c) => c.engineMissing && c.id === 'motor:dkim');
+      toast(
+        sigue ? 'error' : 'ok',
+        sigue
+          ? 'El servidor de correo sigue sin devolver la clave DKIM. Revisa su registro de errores.'
+          : 'Clave DKIM generada. Publica su registro en el DNS y vuelve a medir.',
+      );
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido generar la clave DKIM.'),
+  });
+
+  const clientId = domain.data?.domain.clientId;
+  const invalidarTodo = () =>
+    Promise.all([
+      invalidarTrasAltaOBaja(queryClient, clientId),
+      ...CONSULTAS_DEL_DOMINIO.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+    ]);
+
+  // La confirmación admite el nombre legible (con «ñ» o acentos) o el
+  // técnico; al servidor siempre se envía el técnico, que es el que compara.
+  const nombreTecnico = domain.data?.domain.domain ?? '';
+  const escrito = confirmText.trim().toLowerCase();
+  const confirmado =
+    Boolean(nombreTecnico) &&
+    (escrito === nombreTecnico || (domain.data ? escrito === nombreVisible(domain.data.domain).toLowerCase() : false));
 
   const remove = useMutation({
     mutationFn: () =>
-      api.delete(`/api/domains/${id}?confirm=${encodeURIComponent(confirmText.trim().toLowerCase())}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['domains'] });
-      toast('ok', 'Dominio eliminado.');
+      api.delete<{ ok: boolean; apiKeysRevoked?: number }>(
+        `/api/domains/${id}?confirm=${encodeURIComponent(nombreTecnico)}`,
+      ),
+    onSuccess: async (data) => {
+      queryClient.removeQueries({ queryKey: ['domain', id] });
+      queryClient.removeQueries({ queryKey: ['domain-cloudflare', id] });
+      await invalidarTodo();
+      const claves = data?.apiKeysRevoked ?? 0;
+      toast(
+        'ok',
+        claves > 0
+          ? `Dominio eliminado. ${claves === 1 ? 'Se ha revocado 1 clave de API' : `Se han revocado ${claves} claves de API`} que enviaba${claves === 1 ? '' : 'n'} desde sus buzones.`
+          : 'Dominio eliminado.',
+      );
       navigate('/dominios');
     },
-    onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo eliminar.'),
+    onError: async (err) => {
+      // Un borrado parcial ya ha retirado parte de los buzones: las listas
+      // deben reflejarlo aunque la operación no haya terminado.
+      await invalidarTodo();
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido eliminar.');
+    },
   });
+
+  function abrirEliminar() {
+    // Cada apertura empieza de cero: un nombre escrito antes dejaría el botón
+    // «Eliminar definitivamente» ya habilitado.
+    setConfirmText('');
+    remove.reset();
+    setConfirmOpen(true);
+  }
 
   if (domain.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Cargando el dominio…" />
+        <Midiendo label="Cargando la ficha del dominio…" />
       </Hoja>
     );
   }
   if (domain.isError || !domain.data) {
+    const noExiste = domain.error instanceof ApiError && domain.error.status === 404;
     return (
       <Hoja>
-        <p role="alert" className="text-base text-tinta-2">
-          <span className="text-fuera">No se encontró el dominio.</span>{' '}
-          <Link className="text-laboratorio underline" to="/dominios">
-            Volver a dominios
-          </Link>
-        </p>
+        {noExiste ? (
+          <p role="alert" className="text-base text-tinta-2">
+            <span className="text-fuera">No se ha encontrado el dominio.</span>{' '}
+            <Link className="text-laboratorio underline" to="/dominios">
+              Volver a dominios
+            </Link>
+          </p>
+        ) : (
+          <AvisoError onRetry={() => void domain.refetch()} retrying={domain.isFetching}>
+            No se ha podido cargar la ficha del dominio.
+          </AvisoError>
+        )}
       </Hoja>
     );
   }
 
   const record = domain.data.domain;
+  const isAdmin = me.data?.user?.role === 'admin';
   const checks = record.dnsStatus.checks ?? [];
   const required = checks.filter((c) => c.required);
-  const optional = checks.filter((c) => !c.required);
+  const optional = checks.filter((c) => !c.required && !esEndurecimiento(c));
+  const endurecimiento = checks.filter((c) => !c.required && esEndurecimiento(c));
   const requiredOk = record.dnsStatus.requiredOk ?? required.filter((c) => c.status === 'ok').length;
   const requiredTotal = record.dnsStatus.requiredTotal ?? required.length;
   const optionalOk = optional.filter((c) => c.status === 'ok').length;
+  const endurecimientoOk = endurecimiento.filter((c) => c.status === 'ok').length;
   const medido = Boolean(record.lastCheckedAt);
-  const enReparto = record.status === 'active';
+  const ilegible = medido && medicionIlegible(record);
+  const lectura = lecturaDominio(record);
+  const visible = nombreVisible(record);
+  const conPropiedad = record.ownershipVerifiedAt !== undefined;
+  const pendientePropiedad = propiedadPendiente(record);
+  // MX interno que anuncia el motor: ni el fichero de zona ni Cloudflare.
+  const avisoServidor = conflicto.data?.avisoServidor ?? null;
+  const accionDe = (check: DnsCheck): ReactNode =>
+    check.engineMissing && check.id === 'motor:dkim' ? (
+      <Button variant="perfil" busy={generarDkim.isPending} onClick={() => generarDkim.mutate()}>
+        Generar la clave DKIM
+      </Button>
+    ) : undefined;
+
+  const veredictoObligatorios: Veredicto = !medido
+    ? 'sin-dato'
+    : requiredOk >= requiredTotal
+      ? 'normal'
+      : ilegible
+        ? 'sin-dato'
+        : 'fuera';
 
   return (
     <>
       <Membrete
         title={
-          <span className="valor text-xl font-semibold normal-case tracking-normal">
-            {record.domain}
+          <span className="valor break-all text-xl font-semibold normal-case tracking-normal">
+            {visible}
           </span>
         }
         meta={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <MarcaFondo veredicto={enReparto ? 'normal' : medido ? 'fuera' : 'sin-dato'}>
-              {enReparto ? 'En reparto' : 'Esperando DNS'}
-            </MarcaFondo>
+            <MarcaFondo veredicto={lectura.veredicto}>{lectura.etiqueta}</MarcaFondo>
+            {conPropiedad && (
+              <span className="text-white/85">
+                Propiedad: {pendientePropiedad ? 'pendiente' : 'comprobada'}
+              </span>
+            )}
             <span className="text-white/70">Última medición: {formatDate(record.lastCheckedAt)}</span>
+            {visible !== record.domain && (
+              <span className="valor break-all text-white/75">{record.domain}</span>
+            )}
           </span>
         }
         actions={
-          <>
-            <Button variant="peligro" onClick={() => setConfirmOpen(true)}>
-              Eliminar
-            </Button>
-            <Button variant="campo" busy={verify.isPending} onClick={() => verify.mutate()}>
-              Medir el DNS ahora
-            </Button>
-          </>
+          <Button variant="campo" busy={verify.isPending} onClick={() => verify.mutate('dns')}>
+            Medir el DNS ahora
+          </Button>
         }
       />
 
-      {checks.length === 0 ? (
-        <Hoja title="DNS sin comprobar">
-          <p className="max-w-[75ch] text-base text-tinta-2">
-            Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
-            que debes crear.
-          </p>
-        </Hoja>
-      ) : (
-        <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4">
+        {checks.length === 0 ? (
+          <Hoja title="DNS sin comprobar">
+            <p className="max-w-[75ch] text-base text-tinta-2">
+              Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
+              que debes crear.
+            </p>
+          </Hoja>
+        ) : (
           <Hoja title="Resumen de la comprobación" meta={formatDate(record.lastCheckedAt)}>
             <CabeceraMedidas />
             <Medida
               concepto="Registros obligatorios en rango"
-              valor={`${requiredOk}/${requiredTotal}`}
+              valor={ilegible ? '—' : `${requiredOk}/${requiredTotal}`}
               referencia={`${requiredTotal}/${requiredTotal}`}
-              veredicto={
-                !medido ? 'sin-dato' : requiredOk >= requiredTotal ? 'normal' : 'fuera'
-              }
+              veredicto={veredictoObligatorios}
               nota={
-                requiredOk >= requiredTotal && medido
+                veredictoObligatorios === 'normal'
                   ? undefined
-                  : 'Mientras falte alguno, el dominio no reparte correo.'
+                  : ilegible
+                    ? 'No se ha podido consultar el DNS. Vuelve a medir en unos minutos.'
+                    : 'Mientras falte alguno, el dominio no puede enviar ni recibir correo.'
               }
             />
             {optional.length > 0 && (
               <Medida
-                concepto="Registros recomendados en rango"
+                concepto="Registros de autoconfiguración en rango"
                 valor={`${optionalOk}/${optional.length}`}
                 referencia={`${optional.length}/${optional.length}`}
                 veredicto={
@@ -191,65 +365,145 @@ export default function DominioDetalle() {
                 }
               />
             )}
+            {conPropiedad && (
+              <Medida
+                concepto="Propiedad del dominio"
+                valor={pendientePropiedad ? 'Pendiente' : 'Comprobada'}
+                veredicto={pendientePropiedad ? 'vigilar' : 'normal'}
+                nota={
+                  pendientePropiedad
+                    ? 'Hasta comprobarla no se pueden crear buzones ni alias en este dominio.'
+                    : undefined
+                }
+              />
+            )}
           </Hoja>
+        )}
 
-          <DescargaZona domainId={id} domain={record.domain} />
+        {avisoServidor && (
+          <div role="alert" className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-4 py-3">
+            <p className="rotulo text-fuera">Revisa el nombre del servidor de correo</p>
+            <p className="mt-1 max-w-[75ch] text-base text-tinta">{avisoServidor}</p>
+          </div>
+        )}
 
-          <p className="max-w-[75ch] text-base text-tinta-2">
-            Si prefieres crearlos a mano, copia cada muestra tal cual en el panel DNS de tu
-            proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a
-            medir cuando los tengas.
-          </p>
+        {pendientePropiedad && record.ownershipRecord && (
+          <BloquePropiedad
+            registro={record.ownershipRecord}
+            midiendo={verify.isPending}
+            onVerificar={() => verify.mutate('propiedad')}
+          />
+        )}
 
+        {checks.length > 0 && (
           <Hoja
             title="Registros obligatorios"
-            meta={`${requiredOk} de ${requiredTotal} en rango`}
+            meta={ilegible ? 'Sin dato' : `${requiredOk} de ${requiredTotal} en rango`}
             flush
           >
+            <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
+              Para crearlos manualmente, copia cada valor de referencia en el panel DNS de tu
+              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a medir
+              cuando estén creados.
+            </p>
             <ul>
               {porVeredicto(required).map((check) => (
-                <RegistroMedido key={check.id} check={check} recien={justVerified} />
+                <RegistroMedido key={check.id} check={check} recien={justVerified} accion={accionDe(check)} />
               ))}
             </ul>
           </Hoja>
+        )}
 
-          {optional.length > 0 && (
-            <Hoja
-              title="Recomendados (autoconfiguración y endurecimiento)"
-              meta={`${optionalOk} de ${optional.length} en rango`}
-              flush
-            >
-              <ul>
-                {porVeredicto(optional).map((check) => (
-                  <RegistroMedido key={check.id} check={check} recien={justVerified} />
-                ))}
-              </ul>
-            </Hoja>
-          )}
-        </div>
-      )}
+        <BloqueCloudflare
+          key={record.id}
+          dominio={record}
+          isAdmin={isAdmin}
+          alta={alta}
+          bloqueo={avisoServidor}
+        />
+
+        {checks.length > 0 && (
+          <>
+            <DescargaZona domainId={id} domain={record.domain} />
+
+            {optional.length > 0 && (
+              <Hoja
+                title="Recomendados (autoconfiguración)"
+                meta={`${optionalOk} de ${optional.length} en rango`}
+                flush
+              >
+                <ul>
+                  {porVeredicto(optional).map((check) => (
+                    <RegistroMedido key={check.id} check={check} recien={justVerified} />
+                  ))}
+                </ul>
+              </Hoja>
+            )}
+
+            {endurecimiento.length > 0 && (
+              <Hoja
+                title="Opcionales (endurecimiento)"
+                meta={`${endurecimientoOk} de ${endurecimiento.length} en rango`}
+                flush
+              >
+                <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
+                  MTA-STS exige que el correo entrante llegue cifrado y requiere publicar un
+                  fichero de política en la web del dominio. Se recomienda activarlo cuando el
+                  resto de registros esté en rango.
+                </p>
+                <ul>
+                  {porVeredicto(endurecimiento).map((check) => (
+                    <RegistroMedido key={check.id} check={check} recien={justVerified} />
+                  ))}
+                </ul>
+              </Hoja>
+            )}
+          </>
+        )}
+
+        {/* La acción destructiva, lejos de la principal y sobre papel: en el
+            membrete, el carmín sobre petróleo apenas se leía. */}
+        <Hoja title="Eliminar el dominio" flush>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+            <p className="min-w-0 max-w-[75ch] flex-1 basis-60 text-sm text-tinta-3">
+              Se eliminan el dominio, sus buzones con su correo y sus alias. Los registros DNS no se
+              modifican.
+            </p>
+            <Button variant="peligro" onClick={abrirEliminar}>
+              Eliminar el dominio
+            </Button>
+          </div>
+        </Hoja>
+      </div>
 
       <Dialogo open={confirmOpen} onClose={() => setConfirmOpen(false)} title="Eliminar dominio">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
             Se eliminarán el dominio, <strong className="text-tinta">todos sus buzones con su
-            correo dentro</strong> y sus alias, tanto de Mailway como del motor de correo. Esta
-            acción no tiene vuelta atrás.
+            correo</strong> y sus alias, tanto de Mailway como del servidor de correo. Las claves de
+            API que envían desde estos buzones dejarán de funcionar, y los alias de otros dominios
+            que reenvían a ellos dejarán de hacerlo. Esta acción no se puede deshacer. Los registros
+            DNS no se modifican.
           </p>
           <Input
-            label={`Escribe ${record.domain} para confirmar`}
+            label={`Escribe ${visible} para confirmar`}
             mono
             value={confirmText}
             onChange={(e) => setConfirmText(e.target.value)}
-            placeholder={record.domain}
+            placeholder={visible}
           />
+          {remove.isError && (
+            <AvisoError>
+              {remove.error instanceof ApiError ? remove.error.message : 'No se ha podido eliminar.'}
+            </AvisoError>
+          )}
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="plano" onClick={() => setConfirmOpen(false)}>
               Cancelar
             </Button>
             <Button
               variant="peligro"
-              disabled={confirmText.trim().toLowerCase() !== record.domain}
+              disabled={!confirmado}
               busy={remove.isPending}
               onClick={() => remove.mutate()}
             >
@@ -263,15 +517,73 @@ export default function DominioDetalle() {
 }
 
 /**
- * Una medición: el valor de referencia que hay que crear (la muestra que el
- * usuario se lleva a su proveedor) y, debajo, lo que el DNS devuelve ahora.
+ * Propiedad pendiente: el TXT que la prueba sin tocar el MX. Sirve para
+ * preparar los buzones antes de trasladar el correo desde otro proveedor.
  */
-function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean }) {
+function BloquePropiedad({
+  registro,
+  midiendo,
+  onVerificar,
+}: {
+  registro: RegistroPropiedad;
+  midiendo: boolean;
+  onVerificar: () => void;
+}) {
+  return (
+    <Hoja
+      title="Comprobar la propiedad sin cambiar el MX"
+      meta="Propiedad pendiente"
+      actions={
+        <Button variant="perfil" busy={midiendo} onClick={onVerificar}>
+          Verificar
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <p className="max-w-[75ch] text-base text-tinta-2">
+          Antes de crear buzones o alias es necesario comprobar que el dominio es tuyo. Queda
+          comprobado en cuanto el registro MX apunta a este servidor. Si el correo del dominio
+          todavía llega a otro proveedor (por ejemplo, para preparar los buzones antes del
+          traslado), crea este registro TXT, que no afecta al correo actual, y pulsa «Verificar».
+        </p>
+        <Muestra rotulo="Registro TXT de verificación" copiar={registro.content}>
+          <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+            <dt className="rotulo sm:pt-px">Tipo</dt>
+            <dd className="valor min-w-0 text-sm text-tinta">{registro.type}</dd>
+            <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Nombre</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{registro.name}</dd>
+            <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{registro.content}</dd>
+          </dl>
+        </Muestra>
+        <p className="max-w-[75ch] text-sm text-tinta-3">
+          Si el DNS del dominio está en Cloudflare, «Revisar cambios» en la configuración automática
+          lo crea junto con el resto de registros. Mailway comprueba la propiedad en cada medición.
+        </p>
+      </div>
+    </Hoja>
+  );
+}
+
+/**
+ * Una medición: el valor de referencia que hay que crear (lo que el usuario
+ * se lleva a su proveedor) y, debajo, lo que el DNS devuelve ahora.
+ */
+function RegistroMedido({
+  check,
+  recien,
+  accion,
+}: {
+  check: DnsCheck;
+  recien: boolean;
+  /** Acción que resuelve el registro desde la propia fila (p. ej. generar la clave DKIM). */
+  accion?: ReactNode;
+}) {
   const veredicto = veredictoDe[check.status];
   const fuera = veredicto === 'fuera';
 
   return (
-    <li className="regla-fila px-4 py-3.5 last:border-b-0">
+    <li className={`regla-fila px-4 py-3.5 last:border-b-0 ${fuera ? 'fila-fuera' : ''}`}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h3 className="min-w-0 basis-full text-base font-medium text-tinta sm:basis-0 sm:grow">
           {check.label}
@@ -282,35 +594,40 @@ function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean })
         </span>
       </div>
 
-      <Muestra
-        rotulo="Valor de referencia"
-        copiar={check.expected}
-        className="mt-2.5"
-      >
-        {/* Las pistas se acotan a minmax(0,…) para que un valor largo se
-            desplace dentro de su celda en vez de ensanchar la hoja. */}
-        <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
-          <dt className="rotulo sm:pt-px">Nombre</dt>
-          <dd className={`valor min-w-0 text-sm text-tinta ${cinta}`}>{check.name}</dd>
-          <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
-          <dd className={`valor min-w-0 text-sm text-tinta ${cinta}`}>{check.expected}</dd>
-        </dl>
-      </Muestra>
+      {check.engineMissing ? (
+        // Sin valor que copiar: el motor todavía no ha generado el registro.
+        <p className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="rotulo shrink-0">Valor de referencia</span>
+          <span className="text-sm text-tinta-3">pendiente de generar en el servidor de correo</span>
+        </p>
+      ) : (
+        <Muestra rotulo="Valor de referencia" copiar={check.expected} className="mt-2.5">
+          <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+            <dt className="rotulo sm:pt-px">Nombre</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.name}</dd>
+            <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.expected}</dd>
+          </dl>
+        </Muestra>
+      )}
 
-      {check.status !== 'ok' && (
+      {check.status !== 'ok' && !check.engineMissing && (
         <p className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="rotulo shrink-0">Ahora mismo el DNS devuelve</span>
+          <span className="rotulo shrink-0">El DNS devuelve ahora</span>
           <span
-            className={`valor min-w-0 basis-full text-sm sm:basis-0 sm:grow ${cinta} ${
+            className={`valor min-w-0 basis-full text-sm sm:basis-0 sm:grow ${partible} ${
               check.found ? (fuera ? 'text-fuera' : 'text-tinta-2') : 'text-tinta-3'
             }`}
           >
-            {check.found || (check.status === 'unknown' ? 'sin lectura' : 'ningún registro')}
+            {/* null es «no se pudo consultar» aunque el veredicto sea definitivo
+                (un MX interno está fuera de rango mida lo que mida el DNS). */}
+            {check.found || (check.found === null ? 'no se ha podido consultar' : 'ningún registro')}
           </span>
         </p>
       )}
 
       <p className="mt-2 max-w-[75ch] text-sm text-tinta-2">{check.help}</p>
+      {accion && <div className="mt-2.5">{accion}</div>}
     </li>
   );
 }
@@ -327,14 +644,42 @@ const NIVELES = [
     id: 'recomendados' as const,
     titulo: 'Recomendado',
     descripcion:
-      'Lo anterior más la autoconfiguración: el móvil y Thunderbird se configuran solos.',
+      'Lo anterior más la autoconfiguración (el móvil y Thunderbird configuran la cuenta automáticamente) y el registro de verificación de la propiedad.',
   },
   {
     id: 'completo' as const,
     titulo: 'Todo',
-    descripcion: 'Añade MTA-STS y TLS-RPT. Exigen publicar un fichero en tu web.',
+    descripcion: 'Añade MTA-STS y TLS-RPT. Requieren publicar un fichero en la web del dominio.',
   },
 ];
+
+/**
+ * Descarga con fetch y no con un enlace: si la sesión caducó o el motor no
+ * responde, un enlace descargaría el JSON del error como si fuera la zona.
+ */
+async function descargarZona(url: string, nombre: string): Promise<void> {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) {
+    let mensaje = `Error ${res.status} del servidor.`;
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) mensaje = data.error;
+    } catch {
+      // cuerpo no JSON: se queda el mensaje genérico
+    }
+    throw new Error(mensaje);
+  }
+  const blob = await res.blob();
+  const enlace = document.createElement('a');
+  const objeto = URL.createObjectURL(blob);
+  enlace.href = objeto;
+  enlace.download = nombre;
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
+  // Se libera después: algunos navegadores leen la URL tras el clic.
+  window.setTimeout(() => URL.revokeObjectURL(objeto), 10_000);
+}
 
 /**
  * Descarga del fichero de zona. Antes de ofrecerlo se comprueba si el dominio
@@ -343,27 +688,52 @@ const NIVELES = [
  */
 function DescargaZona({ domainId, domain }: { domainId: string; domain: string }) {
   const [nivel, setNivel] = useState<(typeof NIVELES)[number]['id']>('recomendados');
+  const toast = useToast();
+  const nombre = `${domain}-mailway-${nivel}.txt`;
 
-  const conflicto = useQuery({
-    queryKey: ['domain-conflicto', domainId],
-    queryFn: () =>
-      api.get<{ hayOtroProveedor: boolean; mxActuales: string[]; aviso: string | null }>(
-        `/api/domains/${domainId}/conflicto`,
-      ),
+  const conflicto = useConflicto(domainId);
+
+  const descarga = useMutation({
+    mutationFn: () => descargarZona(`/api/domains/${domainId}/zonefile?nivel=${nivel}`, nombre),
+    onError: (err) => toast('error', (err as Error).message || 'No se ha podido descargar el fichero.'),
   });
 
   const hayConflicto = conflicto.data?.hayOtroProveedor ?? false;
+  // Con un MX interno, el servidor rechaza la descarga (409): el botón no se ofrece.
+  const mxInterno = Boolean(conflicto.data?.avisoServidor);
 
   return (
     <Hoja
-      title="Importar en tu proveedor de DNS"
+      title="Importar en el proveedor de DNS"
       meta="Fichero de zona"
       actions={
-        <a href={`/api/domains/${domainId}/zonefile?nivel=${nivel}`} download>
-          <Button variant="tinta">Descargar</Button>
-        </a>
+        <Button
+          variant="perfil"
+          busy={descarga.isPending}
+          disabled={mxInterno}
+          onClick={() => descarga.mutate()}
+        >
+          Descargar
+        </Button>
       }
     >
+      {conflicto.isError && (
+        <AvisoError
+          className="mb-4"
+          onRetry={() => void conflicto.refetch()}
+          retrying={conflicto.isFetching}
+        >
+          No se ha podido comprobar si el dominio ya recibe correo en otro proveedor. Compruébalo
+          antes de importar el fichero.
+        </AvisoError>
+      )}
+      {mxInterno && (
+        <p className="mb-4 max-w-[75ch] text-base text-fuera">
+          No se puede descargar mientras el servidor de correo anuncie un MX interno: el fichero
+          publicaría un destino que no existe en Internet. Antes hay que corregir el nombre del
+          servidor.
+        </p>
+      )}
       {hayConflicto && conflicto.data?.aviso && (
         <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
           <p className="rotulo text-fuera">No lo importes todavía</p>
@@ -372,9 +742,10 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       )}
 
       <p className="max-w-[75ch] text-base text-tinta-2">
-        En Cloudflare: <span className="valor">DNS → Records → Import and Export → Import</span>{' '}
-        y sube el fichero. Al terminar, comprueba que los registros quedan en{' '}
-        <strong>gris (DNS only)</strong>: con la nube naranja el correo no funciona.
+        Para otros proveedores, o para importarlo manualmente en Cloudflare:{' '}
+        <span className="valor">DNS → Records → Import and Export → Import</span>. Al terminar,
+        comprueba que los registros quedan en <strong>gris (DNS only)</strong>: con la nube naranja
+        el correo no funciona.
       </p>
 
       <fieldset className="mt-4">
@@ -407,8 +778,8 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       </fieldset>
 
       <p className="mt-3 text-sm text-tinta-3">
-        El fichero se llamará <span className="valor">{domain}-mailway-{nivel}.txt</span> y lleva
-        dentro las instrucciones y los avisos.
+        El fichero se llamará <span className="valor break-all">{nombre}</span> e incluye las
+        instrucciones y los avisos.
       </p>
     </Hoja>
   );

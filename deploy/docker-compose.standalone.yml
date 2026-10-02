@@ -1,45 +1,88 @@
 # ============================================================================
 # Mailway completo SIN Skyway — panel + motor + webmail en un solo compose
 # ----------------------------------------------------------------------------
-# Para un servidor limpio (sin Traefik ni Skyway). El panel queda en el
-# puerto 4100 y el webmail en el 8000, ambos en HTTP: ponles delante tu
-# proxy con TLS (Caddy, Nginx, Traefik) o usa docker-compose.mail.yml si ya
-# tienes Skyway. Los puertos de correo van directos al host.
+# Para un servidor sin Skyway. Forma recomendada:
+#   sudo bash deploy/instalar.sh --sin-skyway
 #
-# Uso:
-#   cp .env.example .env    # y rellena las variables
-#   docker compose -f docker-compose.standalone.yml up -d
+# A mano:
+#   cp deploy/.env.example deploy/.env      # y rellena las variables
+#   docker compose -f deploy/docker-compose.standalone.yml --profile proxy up -d --build
+#
+# Con el perfil `proxy` se levanta además un Traefik propio en 80/443 que da
+# HTTPS (Let's Encrypt) al panel, al webmail y a la web del motor, y sirve los
+# dominios de marca blanca de los clientes. Sin ese perfil, el panel
+# (127.0.0.1:4100), el webmail (127.0.0.1:8000) y la web del motor
+# (127.0.0.1:8080) solo escuchan en local, para ponerles delante un proxy
+# propio (Caddy, Nginx…) con TLS. No se publican en HTTP hacia Internet: por
+# ellos viajan contraseñas.
+#
+# Los puertos de correo (25, 465, 587, 993, 4190) van directos al host.
+#
+# Diagnóstico de la pila (no cambia nada) y prueba de acceso a un buzón:
+#   sudo bash deploy/instalar.sh --comprobar
+#   sudo bash deploy/instalar.sh --probar-acceso
 # ============================================================================
+
+name: mailway
 
 services:
   mailway-panel:
     build: ..
+    image: mailway-panel:local
     container_name: mailway-panel
     restart: unless-stopped
     ports:
-      - '4100:4100'
+      - '127.0.0.1:4100:4100'
     environment:
       STALWART_URL: http://mailway-mail:8080
       STALWART_ADMIN_USER: admin
-      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en .env}
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
       STALWART_SMTP_HOST: mailway-mail
       STALWART_SMTP_PORT: '587'
-      MAILWAY_MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en .env}
-      MAILWAY_WEBMAIL_URL: http://localhost:8000
-      # La conexión SMTP interna usa el certificado del motor (autofirmado
-      # hasta configurar TLS): se permite explícitamente por ir por la red
-      # interna de Docker.
-      MAILWAY_SMTP_ALLOW_SELF_SIGNED: '1'
+      # La API de envío entra por el SMTP interno (mailway-mail:587) y
+      # verifica su certificado contra MAIL_HOSTNAME. Solo mientras el motor
+      # no tenga certificado válido (sin proxy ni Cloudflare) puede ponerse a
+      # 1 en deploy/.env para aceptar el autofirmado; retíralo después.
+      MAILWAY_SMTP_ALLOW_SELF_SIGNED: ${MAILWAY_SMTP_ALLOW_SELF_SIGNED:-}
+      MAILWAY_SECRET: ${MAILWAY_SECRET:-}
+      MAILWAY_SETUP_TOKEN: ${MAILWAY_SETUP_TOKEN:-}
+      MAILWAY_TRAEFIK_TOKEN: ${MAILWAY_TRAEFIK_TOKEN:-}
+      MAILWAY_WEBMAIL_TOKEN: ${MAILWAY_WEBMAIL_TOKEN:-}
+      MAILWAY_MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en deploy/.env}
+      MAILWAY_PUBLIC_IP: ${MAILWAY_PUBLIC_IP:-}
+      MAILWAY_PANEL_URL: ${MAILWAY_PANEL_URL:-https://${PANEL_HOSTNAME}}
+      MAILWAY_WEBMAIL_URL: ${MAILWAY_WEBMAIL_URL:-https://${WEBMAIL_HOSTNAME}}
+      # Destinos de las rutas de marca blanca que el panel publica a Traefik.
+      MAILWAY_PANEL_BACKEND_URL: http://mailway-panel:4100
+      MAILWAY_WEBMAIL_BACKEND_URL: http://mailway-webmail:80
+      MAILWAY_TRAEFIK_CERTRESOLVER: le
+      MAILWAY_ENGINE_TRUSTED_NETWORK: ${MAILWAY_INTERNAL_SUBNET:-10.203.53.0/24}
     volumes:
       - mailway-panel-data:/data
     networks:
       - mailway-internal
+      - mailway-edge
     depends_on:
-      - mailway-mail
+      mailway-mail:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=mailway-edge
+      - traefik.http.routers.mailway-panel.rule=Host(`${PANEL_HOSTNAME:?Define PANEL_HOSTNAME en deploy/.env}`)
+      - traefik.http.routers.mailway-panel.entrypoints=web
+      - traefik.http.middlewares.mailway-panel-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-panel-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-panel.middlewares=mailway-panel-https
+      - traefik.http.routers.mailway-panel-secure.rule=Host(`${PANEL_HOSTNAME}`)
+      - traefik.http.routers.mailway-panel-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-panel-secure.tls.certresolver=le
+      - traefik.http.services.mailway-panel.loadbalancer.server.port=4100
 
   mailway-mail:
     image: stalwartlabs/stalwart:v0.15.5
     container_name: mailway-mail
+    # Sin esto Stalwart se identifica con el ID del contenedor.
+    hostname: ${MAIL_HOSTNAME}
     restart: unless-stopped
     ports:
       - '25:25'
@@ -47,45 +90,200 @@ services:
       - '587:587'
       - '993:993'
       - '4190:4190'
-      # Webadmin del motor, solo accesible desde el propio servidor:
+      # Web del motor, solo desde el propio servidor (o por el proxy).
       - '127.0.0.1:8080:8080'
     environment:
+      # Solo se aplica en el PRIMER arranque.
       STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD}
     volumes:
       - mailway-mail-data:/opt/stalwart
+      # Certificado de MAIL_HOSTNAME que escribe el extractor (perfil `tls`).
+      - mailway-mail-certs:/opt/stalwart/certs:ro
     networks:
-      - mailway-internal
+      mailway-internal:
+        ipv4_address: ${MAILWAY_MAIL_INTERNAL_IP:-10.203.53.10}
+      mailway-edge: {}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=mailway-edge
+      - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail.entrypoints=web
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https
+      - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
+      - traefik.http.services.mailway-mail.loadbalancer.server.port=8080
+    healthcheck:
+      # Sin wget ni curl en la imagen: /dev/tcp de bash contra /healthz/live.
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz/live HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200'"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   mailway-webmail:
     image: roundcube/roundcubemail:1.7.x-apache
     container_name: mailway-webmail
     restart: unless-stopped
     ports:
-      - '8000:80'
+      - '127.0.0.1:8000:80'
+    depends_on:
+      mailway-mail:
+        condition: service_healthy
     environment:
-      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://mailway-mail
       ROUNDCUBEMAIL_DEFAULT_PORT: '993'
-      ROUNDCUBEMAIL_SMTP_SERVER: ssl://${MAIL_HOSTNAME}
+      ROUNDCUBEMAIL_SMTP_SERVER: ssl://mailway-mail
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,mailway_theme
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+      ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Define ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
+      MAILWAY_BRAND: ${MAILWAY_BRAND:-Webmail}
+      MAILWAY_PANEL_URL: ${MAILWAY_PANEL_URL:-https://${PANEL_HOSTNAME}}
+      MAILWAY_PANEL_INTERNAL_URL: ${MAILWAY_PANEL_INTERNAL_URL:-http://mailway-panel:4100}
+      MAILWAY_WEBMAIL_TOKEN: ${MAILWAY_WEBMAIL_TOKEN:-}
+    extra_hosts:
+      # Siempre por la subred interna, la exenta del bloqueo automático.
+      - mailway-mail:${MAILWAY_MAIL_INTERNAL_IP:-10.203.53.10}
     volumes:
       - mailway-webmail-db:/var/roundcube/db
-      - mailway-webmail-config:/var/roundcube/config
+      - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
+      # Capa visual de Mailway sobre Elastic (solo CSS; ver roundcube/README.md).
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
+      # Diagnóstico de instalar.sh --comprobar y --probar-acceso (fuera de la
+      # raíz web y de /var/roundcube/config).
+      - ./roundcube/diagnostico:/opt/mailway:ro
+    networks:
+      - mailway-internal
+      - mailway-edge
+    labels:
+      - traefik.enable=true
+      # Huella de roundcube/mailway.php (la pone el instalador): se monta como
+      # fichero suelto y, tras «git pull», el contenedor seguiría leyendo la
+      # versión anterior. Si cambia, Compose recrea el webmail.
+      - mailway.roundcube-config=${MAILWAY_ROUNDCUBE_CONFIG_HASH:-}
+      - traefik.docker.network=mailway-edge
+      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Define WEBMAIL_HOSTNAME en deploy/.env}`)
+      - traefik.http.routers.mailway-webmail.entrypoints=web
+      - traefik.http.middlewares.mailway-webmail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-webmail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-webmail.middlewares=mailway-webmail-https
+      - traefik.http.routers.mailway-webmail-secure.rule=Host(`${WEBMAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-webmail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-webmail-secure.tls.certresolver=le
+      - traefik.http.services.mailway-webmail.loadbalancer.server.port=80
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  # --------------------------------------------------------------------------
+  # OPCIONAL (perfil `proxy`): Traefik propio con Let's Encrypt en 80/443.
+  # --------------------------------------------------------------------------
+  mailway-proxy:
+    image: traefik:v3.7
+    container_name: mailway-proxy
+    restart: unless-stopped
+    profiles: ['proxy']
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=mailway-edge
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL:-}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      # Marca blanca: el panel publica las rutas de los dominios propios de
+      # los clientes (solo los que ya apuntan aquí).
+      - --providers.http.endpoint=http://mailway-panel:4100/api/traefik/config
+      - --providers.http.pollInterval=15s
+      - --providers.http.headers.X-Mailway-Token=${MAILWAY_TRAEFIK_TOKEN:-}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - mailway-letsencrypt:/letsencrypt
+    networks:
+      - mailway-edge
+
+  # --------------------------------------------------------------------------
+  # OPCIONAL (perfil `tls`): extractor del certificado de MAIL_HOSTNAME que
+  # obtuvo el Traefik del perfil `proxy`, para IMAP y SMTP. Solo si no se usa
+  # el ACME del propio motor (Ajustes → Servidor de correo, vía preferida).
+  # Escribe en el volumen del motor únicamente ese par, lo recarga, comprueba
+  # 993 y 465 y vuelve al anterior si falla. Detalle en
+  # docker-compose.mail.yml y en la sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.
+  # --------------------------------------------------------------------------
+  certs-dumper:
+    image: python:3.13-alpine
+    container_name: mailway-certs-dumper
+    restart: unless-stopped
+    profiles: ['tls']
+    command: ['python', '/app/extractor.py']
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    tmpfs:
+      - /tmp:size=8m
+    environment:
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en deploy/.env}
+      STALWART_URL: http://mailway-mail:8080
+      STALWART_ADMIN_USER: admin
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+    extra_hosts:
+      - mailway-mail:${MAILWAY_MAIL_INTERNAL_IP:-10.203.53.10}
+    volumes:
+      - mailway-letsencrypt:/traefik:ro
+      - mailway-mail-certs:/output
+      - ./tls:/app:ro
     networks:
       - mailway-internal
     depends_on:
-      - mailway-mail
+      mailway-mail:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'python', '/app/extractor.py', 'salud']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
 networks:
+  # Subred fija y poco común: el motor exime de su bloqueo automático solo
+  # este rango (webmail y panel). La red del proxy (mailway-edge) no se
+  # exime: por ella entra el tráfico de Internet. Ver docker-compose.mail.yml.
   mailway-internal:
     name: mailway-internal
+    ipam:
+      config:
+        - subnet: ${MAILWAY_INTERNAL_SUBNET:-10.203.53.0/24}
+  mailway-edge:
+    name: mailway-edge
 
 volumes:
   mailway-panel-data:
+    name: ${MAILWAY_PANEL_VOLUME:-mailway-panel-data}
   mailway-mail-data:
+    name: ${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
   mailway-webmail-db:
-  mailway-webmail-config:
+    name: ${MAILWAY_WEBMAIL_DB_VOLUME:-mailway-webmail-db}
+  mailway-mail-certs:
+    name: mailway-mail-certs
+  mailway-letsencrypt:
+    name: mailway-letsencrypt

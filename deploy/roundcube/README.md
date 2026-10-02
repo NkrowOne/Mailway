@@ -1,23 +1,37 @@
 # Apariencia Mailway para Roundcube
 
-`mailway_theme` añade una capa visual a Elastic 1.7 mediante la API de plugins.
-Los dos archivos Compose de Mailway montan el plugin como solo lectura y lo
-incluyen en `ROUNDCUBEMAIL_PLUGINS`. No modifica autenticación, contenido de
-mensajes, atajos ni la estructura responsive de Elastic. El modo oscuro conserva
-los estilos nativos. Tampoco sustituye el logotipo de marca blanca configurado.
+`mailway_theme` añade una capa visual a Elastic 1.7 mediante la API de
+complementos. Los dos ficheros Compose de Mailway montan el complemento en
+solo lectura y lo incluyen en `ROUNDCUBEMAIL_PLUGINS`. No modifica la
+autenticación, el contenido de los mensajes, los atajos ni la estructura
+adaptable de Elastic. El modo oscuro conserva los estilos nativos y no
+sustituye el logotipo de marca blanca configurado.
 
-Después de actualizar el repositorio, recrea únicamente el servicio webmail con
-el mismo Compose y archivo de entorno que utilizas habitualmente:
+`mailway.php` es la configuración de Mailway para Roundcube (servidores,
+complemento de contraseña, ManageSieve, marca); el compose lo monta en
+`/var/roundcube/config/`.
+
+`diagnostico/comprobar.php` es el diagnóstico de línea de órdenes que usan
+`deploy/instalar.sh --comprobar` y `--probar-acceso`: abre IMAP y SMTP con la
+configuración efectiva de Roundcube, verifica el certificado público del
+motor y, con `--probar-acceso`, inicia sesión una sola vez con la biblioteca
+IMAP de Roundcube. Los compose montan esa carpeta en `/opt/mailway`, fuera de
+la raíz web y de `/var/roundcube/config/` (cuyos `.php` se cargarían como
+configuración).
+
+Después de actualizar el repositorio, aplica los cambios con el instalador
+(`sudo bash deploy/instalar.sh --actualizar`) o recrea solo el webmail con el
+mismo Compose y el mismo fichero de entorno de siempre:
 
 ```sh
-docker compose -f deploy/docker-compose.mail.yml up -d --force-recreate mailway-webmail
+docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d --force-recreate mailway-webmail
 ```
 
-En el despliegue autónomo usa `deploy/docker-compose.standalone.yml`.
-Comprueba acceso, carpetas, selección de mensajes, lectura, redacción, adjuntos,
-contactos, ajustes, teclado, móvil y modo oscuro antes de publicarlo a clientes.
-La compilación React no valida esta capa PHP/CSS: requiere una instancia de
-Roundcube para la prueba visual y funcional.
+En la instalación autónoma, usa `deploy/docker-compose.standalone.yml`.
+Comprueba el acceso, las carpetas, la selección y lectura de mensajes, la
+redacción, los adjuntos, los contactos, los ajustes, el teclado, el móvil y el
+modo oscuro antes de ofrecerlo a los clientes: la compilación de la web no
+valida esta capa PHP/CSS y la prueba requiere una instancia de Roundcube.
 
-Para volver al aspecto original, elimina `mailway_theme` de la variable de
-plugins y recrea solo el servicio. No hay cambios de esquema ni de datos.
+Para volver al aspecto original, retira `mailway_theme` de la variable de
+complementos y recrea solo el servicio. No hay cambios de esquema ni de datos.

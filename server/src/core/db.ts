@@ -199,11 +199,194 @@ const migrations: { id: string; sql: string }[] = [
     `,
   },
   {
+    // Publicada en main antes de la 1.0: va antes que las de esta versión.
+    // Los identificadores se comparan completos, así que dos «003-» conviven.
     id: '003-webmail-principal',
     sql: `
       ALTER TABLE client_domains ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
       CREATE UNIQUE INDEX idx_client_webmail_primary
         ON client_domains(client_id) WHERE is_primary = 1 AND kind = 'webmail';
+    `,
+  },
+  {
+    id: '003-integraciones-y-portal',
+    sql: `
+      -- Tokens de gestión: acceso por API (Skyway, scripts, agentes) con los
+      -- mismos permisos que el usuario que los crea. Solo se guarda el hash.
+      CREATE TABLE management_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        prefix TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        last_used_at INTEGER,
+        last_used_ip TEXT NOT NULL DEFAULT '',
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_management_tokens_user ON management_tokens(user_id);
+
+      -- Cuentas de Cloudflare conectadas. client_id NULL = cuenta de la
+      -- instancia (del administrador), utilizable para cualquier dominio cuya
+      -- zona vea el token. El token va cifrado; token_hint son sus 4 últimos.
+      CREATE TABLE cloudflare_accounts (
+        id TEXT PRIMARY KEY,
+        client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        token_enc TEXT NOT NULL,
+        token_hint TEXT NOT NULL DEFAULT '',
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        last_verified_at INTEGER,
+        last_error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX idx_cloudflare_accounts_client ON cloudflare_accounts(client_id);
+
+      -- Dónde vive el DNS de cada dominio, cuando Mailway lo gestiona.
+      ALTER TABLE domains ADD COLUMN cloudflare_account_id TEXT
+        REFERENCES cloudflare_accounts(id) ON DELETE SET NULL;
+      ALTER TABLE domains ADD COLUMN cloudflare_zone_id TEXT;
+      ALTER TABLE domains ADD COLUMN dns_applied_at INTEGER;
+
+      -- Ocupación de cada buzón, leída del motor (el motor es la fuente).
+      ALTER TABLE mailboxes ADD COLUMN used_bytes INTEGER;
+      ALTER TABLE mailboxes ADD COLUMN usage_checked_at INTEGER;
+
+      -- Referencia a un sistema externo (p. ej. un proyecto de Skyway), para
+      -- que las integraciones localicen «su» cliente sin duplicarlo.
+      ALTER TABLE clients ADD COLUMN external_ref TEXT;
+      CREATE UNIQUE INDEX idx_clients_external_ref
+        ON clients(external_ref) WHERE external_ref IS NOT NULL;
+
+      -- Enlaces de configuración de dispositivos: una URL que se envía al
+      -- titular del buzón (o se abre con un QR) para configurar su correo.
+      -- password_enc solo existe si se adjuntó la contraseña recién generada;
+      -- se borra al caducar o al revocar el enlace.
+      CREATE TABLE setup_links (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        password_enc TEXT,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_setup_links_mailbox ON setup_links(mailbox_id);
+
+      -- Sesiones del portal «Mi buzón»: el titular entra con su dirección y
+      -- la contraseña del buzón (verificada contra el motor).
+      CREATE TABLE mailbox_sessions (
+        token_hash TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        ip TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX idx_mailbox_sessions_mailbox ON mailbox_sessions(mailbox_id);
+
+      -- Contraseñas de aplicación de un buzón (móvil, una app de Skyway…):
+      -- se revocan una a una sin tocar la contraseña principal. stored_secret
+      -- es el secreto tal y como quedó en el motor ($app$…$<hash>), necesario
+      -- para retirarlo; la contraseña en claro no se guarda nunca.
+      CREATE TABLE app_passwords (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        stored_secret TEXT NOT NULL,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_app_passwords_mailbox ON app_passwords(mailbox_id);
+    `,
+  },
+  {
+    id: '004-propiedad-de-dominios',
+    sql: `
+      -- Prueba de que el dominio es de quien lo da de alta (MX apuntando a
+      -- este servidor o TXT de verificación). Sin ella no se crean buzones
+      -- ni alias: si no, un cliente podría dar de alta un dominio ajeno y
+      -- quedarse con el correo que otros clientes del servidor le envían.
+      ALTER TABLE domains ADD COLUMN owner_verified_at INTEGER;
+
+      -- Los dominios anteriores a esta versión que ya funcionaban o ya
+      -- tenían buzones se consideran verificados, para no romper nada.
+      UPDATE domains SET owner_verified_at = COALESCE(verified_at, created_at)
+        WHERE verified_at IS NOT NULL
+           OR id IN (SELECT domain_id FROM mailboxes)
+           OR id IN (SELECT domain_id FROM aliases);
+    `,
+  },
+  {
+    id: '005-idempotencia-de-envios',
+    sql: `
+      -- Cabecera Idempotency-Key de /v1/send: la respuesta de cada envío se
+      -- guarda 24 h POR CLAVE DE API, para que el reintento de una aplicación
+      -- (un corte de red, un timeout) no envíe el mensaje dos veces. Del valor
+      -- de la cabecera solo queda su hash; response_json es NULL mientras el
+      -- envío está en curso.
+      CREATE TABLE send_idempotency (
+        api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        key_hash TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status_code INTEGER,
+        response_json TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (api_key_id, key_hash)
+      );
+      CREATE INDEX idx_send_idempotency_expires ON send_idempotency(expires_at);
+    `,
+  },
+  {
+    id: '006-formularios-web',
+    sql: `
+      -- Formularios de contacto para webs estáticas. La web publica una
+      -- clave pública (mwf_…, no es un secreto) y el panel entrega cada
+      -- mensaje en un buzón del propio cliente, con su remitente. Como las
+      -- claves de API, cada formulario envía con una contraseña de aplicación
+      -- propia del buzón (smtp_password_enc, cifrada). El secreto de
+      -- Turnstile va cifrado: hay que recuperarlo para verificar cada envío.
+      CREATE TABLE forms (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        public_key TEXT NOT NULL UNIQUE,
+        recipient_mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        allowed_origins_json TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        smtp_password_enc TEXT NOT NULL,
+        turnstile_site_key TEXT,
+        turnstile_secret_enc TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        submissions_count INTEGER NOT NULL DEFAULT 0,
+        last_submission_at INTEGER,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_forms_client ON forms(client_id);
+
+      -- Los mensajes de los formularios cuentan para el cupo diario del plan
+      -- como los de la API; form_id dice de qué formulario salieron.
+      ALTER TABLE messages ADD COLUMN form_id TEXT REFERENCES forms(id) ON DELETE SET NULL;
+    `,
+  },
+  {
+    id: '007-origen-de-los-envios',
+    sql: `
+      -- Los formularios tienen su propio cupo diario y ya no gastan el de la
+      -- API: si lo gastaran, cualquiera que falsee el Origin dejaría al
+      -- cliente sin /v1/send hasta el día siguiente. El origen de cada envío
+      -- queda en su fila, porque form_id pasa a NULL al eliminar el
+      -- formulario y esos mensajes no deben empezar a contar para la API.
+      ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api', 'form'));
+      UPDATE messages SET source = 'form' WHERE form_id IS NOT NULL;
+      CREATE INDEX idx_messages_form ON messages(form_id, created_at);
     `,
   },
 ];

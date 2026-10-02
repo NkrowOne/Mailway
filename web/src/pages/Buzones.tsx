@@ -1,29 +1,57 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type ConnectionInfo, type DomainRecord, type Mailbox } from '../lib/api';
+import { Link, useSearchParams } from 'react-router-dom';
+import { api, type Alias, type DomainRecord, type Mailbox } from '../lib/api';
+import { plural } from '../lib/format';
+import {
+  errorNombreBuzon,
+  formatBytes,
+  formatQuota,
+  mensajeDe,
+  ordenVeredicto,
+  veredictoUso,
+  type BulkResponse,
+} from '../lib/gestion';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
+import { Dialogo, Hoja, MarcaFondo, Membrete, Midiendo, Vacio } from '../ui/kit';
+import { AltaMasiva } from '../components/gestion/AltaMasiva';
 import {
-  Dialogo,
-  Hoja,
-  MarcaFondo,
-  Membrete,
-  Midiendo,
-  Muestra,
-  Vacio,
-} from '../ui/kit';
-import { useToast } from '../ui/toast';
-import { formatMb, plural } from '../lib/format';
+  BandaAviso,
+  BandaError,
+  Botonera,
+  dominioInicialDisponible,
+  Opcion,
+  SelectorDominio,
+  type MotivoBloqueoDominio,
+} from '../components/gestion/comun';
+import { useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
+import { esPropiedadPendiente } from '../lib/dominios';
+import { FichaBuzon, type VistaFicha } from '../components/gestion/FichaBuzon';
+
+interface FichaAbierta {
+  id: string;
+  vista: VistaFicha;
+  password?: string;
+  /** Copia del buzón por si la lista aún no lo incluye (recién creado). */
+  mailbox: Mailbox;
+  n: number;
+}
 
 /**
- * Registro de buzones: una tabla reglada agrupada por dominio. Cada fila es un
- * buzón medido — dirección, cuota y veredicto de servicio.
+ * Registro de buzones: tabla reglada agrupada por dominio, con búsqueda y
+ * filtros (cliente y dominio, en la URL para poder enlazarlos), ocupación
+ * medida contra la cuota y una ficha por buzón con todas sus acciones.
  */
 export default function Buzones() {
-  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const toast = useToast();
+  const user = useUsuario();
+  const isAdmin = user?.role === 'admin';
+  const { clientes } = useClientes(user);
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const filtroCliente = isAdmin ? (params.get('cliente') ?? '') : '';
+  const filtroDominio = params.get('dominio') ?? '';
 
   const domains = useQuery({
     queryKey: ['domains'],
@@ -33,18 +61,440 @@ export default function Buzones() {
     queryKey: ['mailboxes'],
     queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
   });
+  const aliases = useQuery({
+    queryKey: ['aliases'],
+    queryFn: () => api.get<{ aliases: Alias[] }>('/api/aliases'),
+  });
 
+  const [ficha, setFicha] = useState<FichaAbierta | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [altaOpen, setAltaOpen] = useState(false);
+  const [altaResultado, setAltaResultado] = useState<{ dominio: string; respuesta: BulkResponse } | null>(null);
+
+  function setFiltro(clave: 'q' | 'cliente' | 'dominio', valor: string) {
+    const next = new URLSearchParams(params);
+    if (valor) next.set(clave, valor);
+    else next.delete(clave);
+    // Al cambiar de cliente, el dominio elegido puede no ser suyo.
+    if (clave === 'cliente') next.delete('dominio');
+    setParams(next, { replace: true });
+  }
+
+  function abrirFicha(mailbox: Mailbox, vista: VistaFicha = 'resumen', password?: string) {
+    setFicha((prev) => ({ id: mailbox.id, vista, password, mailbox, n: (prev?.n ?? 0) + 1 }));
+  }
+
+  const domainList = useMemo(() => domains.data?.domains ?? [], [domains.data]);
+  const all = useMemo(() => mailboxes.data?.mailboxes ?? [], [mailboxes.data]);
+
+  const dominiosVisibles = useMemo(
+    () => (filtroCliente ? domainList.filter((d) => d.clientId === filtroCliente) : domainList),
+    [domainList, filtroCliente],
+  );
+
+  const filtrados = useMemo(() => {
+    const texto = q.trim().toLowerCase();
+    return all.filter(
+      (m) =>
+        (!filtroCliente || m.clientId === filtroCliente) &&
+        (!filtroDominio || m.domainId === filtroDominio) &&
+        (!texto || m.email.toLowerCase().includes(texto) || m.displayName.toLowerCase().includes(texto)),
+    );
+  }, [all, q, filtroCliente, filtroDominio]);
+
+  // Por dominio y, dentro de cada uno, «fuera de rango primero» (DESIGN.md).
+  const grouped = useMemo(() => {
+    const groups = new Map<string, Mailbox[]>();
+    for (const mailbox of filtrados) {
+      const group = groups.get(mailbox.domain) || [];
+      group.push(mailbox);
+      groups.set(mailbox.domain, group);
+    }
+    for (const group of groups.values()) {
+      group.sort(
+        (a, b) =>
+          ordenVeredicto[veredictoUso(a.usedBytes, a.quotaMb)] - ordenVeredicto[veredictoUso(b.usedBytes, b.quotaMb)] ||
+          a.localPart.localeCompare(b.localPart),
+      );
+    }
+    return [...groups.entries()];
+  }, [filtrados]);
+
+  const etiquetaDominio = (d: DomainRecord) => {
+    const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
+    return cliente ? `${d.domain} · ${cliente}` : d.domain;
+  };
+  // Un dominio de un cliente suspendido o sin plazas no admite buzones: se
+  // dice en el selector, no al enviar el formulario.
+  const motivoBloqueo: MotivoBloqueoDominio = (d) => bloqueoCliente(clientes.get(d.clientId));
+
+  const fichaMailbox = ficha ? (all.find((m) => m.id === ficha.id) ?? ficha.mailbox) : null;
+  const fichaCliente = fichaMailbox?.clientId ? clientes.get(fichaMailbox.clientId) : undefined;
+  const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
+  const limiteAlcanzado = clientePropio ? clientePropio.usage.mailboxes >= clientePropio.plan.maxMailboxes : false;
+  // Crear está vetado con el plan lleno o la cuenta suspendida: el botón lo
+  // dice antes de rellenar el formulario, no el servidor al enviarlo.
+  const altaBloqueada = domainList.length === 0 || limiteAlcanzado || Boolean(clientePropio?.suspended);
+  const hayFiltros = Boolean(q || filtroCliente || filtroDominio);
+  const cargando = mailboxes.isPending || domains.isPending;
+
+  return (
+    <>
+      <Membrete
+        title="Buzones"
+        meta={
+          <>
+            <p>Cuentas de correo con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.</p>
+            {!cargando && all.length > 0 && (
+              <p className="rotulo mt-1.5 text-white/70">
+                {plural(all.length, 'buzón', 'buzones')}
+                {clientePropio && ` de ${clientePropio.plan.maxMailboxes} del plan`} ·{' '}
+                {plural(new Set(all.map((m) => m.domainId)).size, 'dominio', 'dominios')}
+              </p>
+            )}
+          </>
+        }
+        actions={
+          <Button variant="campo" onClick={() => setCreateOpen(true)} disabled={altaBloqueada}>
+            Crear buzón
+          </Button>
+        }
+      />
+
+      {altaResultado && !altaOpen && (
+        <div className="mb-4">
+          <BandaAviso>
+            Hay credenciales de la última alta masiva sin confirmar.{' '}
+            <button type="button" className="underline" onClick={() => setAltaOpen(true)}>
+              Ver las credenciales
+            </button>
+          </BandaAviso>
+        </div>
+      )}
+      {limiteAlcanzado && !clientePropio?.suspended && (
+        <div className="mb-4">
+          <BandaAviso>
+            Se ha alcanzado el máximo de buzones del plan ({clientePropio!.plan.maxMailboxes}). Para crear más,
+            elimina alguno o solicita una ampliación del plan.
+          </BandaAviso>
+        </div>
+      )}
+      {clientePropio?.suspended && (
+        <div className="mb-4">
+          <BandaError>
+            La cuenta está suspendida: sus buzones no pueden iniciar sesión y no es posible crear buzones
+            nuevos. Ponte en contacto con tu proveedor.
+          </BandaError>
+        </div>
+      )}
+
+      {cargando ? (
+        <Hoja flush>
+          <Midiendo label="Cargando los buzones…" />
+        </Hoja>
+      ) : mailboxes.isError || domains.isError ? (
+        <BandaError
+          onRetry={() => {
+            void mailboxes.refetch();
+            void domains.refetch();
+          }}
+        >
+          {mensajeDe(mailboxes.error ?? domains.error, 'No se han podido cargar los buzones.')} Comprueba la
+          conexión y vuelve a intentarlo.
+        </BandaError>
+      ) : domainList.length === 0 ? (
+        <Hoja flush>
+          <Vacio
+            title="Primero se necesita un dominio"
+            action={
+              <Link to="/dominios" className="text-sm text-laboratorio underline">
+                Ir a Dominios
+              </Link>
+            }
+          >
+            Da de alta un dominio en «Dominios»; después podrás crear buzones como nombre@tudominio.com.
+          </Vacio>
+        </Hoja>
+      ) : all.length === 0 ? (
+        <Hoja flush>
+          <Vacio
+            title="Aún no hay buzones"
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="perfil" disabled={altaBloqueada} onClick={() => setCreateOpen(true)}>
+                  Crear el primero
+                </Button>
+                <Button variant="plano" disabled={altaBloqueada} onClick={() => setAltaOpen(true)}>
+                  Alta masiva
+                </Button>
+              </div>
+            }
+          >
+            Crea cuentas como hola@{domainList[0]?.domain}. La contraseña se genera automáticamente y se muestra
+            una sola vez.
+          </Vacio>
+        </Hoja>
+      ) : (
+        <Hoja
+          title="Registro de buzones"
+          meta={hayFiltros ? `${filtrados.length} de ${all.length}` : undefined}
+          actions={
+            <Button variant="perfil" disabled={altaBloqueada} onClick={() => setAltaOpen(true)}>
+              Alta masiva
+            </Button>
+          }
+          flush
+        >
+          <div className="regla-fila grid gap-3 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Input
+              label="Buscar"
+              type="search"
+              value={q}
+              onChange={(e) => setFiltro('q', e.target.value)}
+              placeholder="Dirección o nombre visible"
+            />
+            {isAdmin && (
+              <Select label="Cliente" value={filtroCliente} onChange={(e) => setFiltro('cliente', e.target.value)}>
+                <option value="">Todos los clientes</option>
+                {[...clientes.values()]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </Select>
+            )}
+            <Select label="Dominio" value={filtroDominio} onChange={(e) => setFiltro('dominio', e.target.value)}>
+              <option value="">Todos los dominios</option>
+              {dominiosVisibles.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.domain}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {filtrados.length === 0 ? (
+            <Vacio
+              title="Ningún buzón coincide con la búsqueda"
+              action={
+                <Button variant="perfil" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
+                  Quitar filtros
+                </Button>
+              }
+            />
+          ) : (
+            <>
+              {/* Cabecera de columnas: en pantalla estrecha cada dato lleva su rótulo. */}
+              <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 lg:flex">
+                <span className="rotulo min-w-0 grow basis-0">Buzón</span>
+                {isAdmin && <span className="rotulo w-28 shrink-0">Cliente</span>}
+                <span className="rotulo w-32 shrink-0">Ocupación</span>
+                <span className="rotulo w-32 shrink-0">Estado</span>
+                <span className="rotulo w-44 shrink-0 text-right">Acciones</span>
+              </div>
+
+              {grouped.map(([domainName, group]) => (
+                <div key={domainName}>
+                  <div className="regla-fila flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 bg-hoja-3 px-4 py-1.5">
+                    <span className="valor break-all text-sm font-medium text-tinta">{domainName}</span>
+                    <span className="rotulo">{plural(group.length, 'buzón', 'buzones')}</span>
+                  </div>
+                  {group.map((mailbox) => (
+                    <FilaBuzon
+                      key={mailbox.id}
+                      mailbox={mailbox}
+                      isAdmin={isAdmin}
+                      clienteSuspendido={mailbox.clientId ? clientes.get(mailbox.clientId)?.suspended : undefined}
+                      onAbrir={(vista) => abrirFicha(mailbox, vista)}
+                    />
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
+        </Hoja>
+      )}
+
+      {createOpen && (
+        <CrearBuzon
+          domains={dominiosVisibles.length > 0 ? dominiosVisibles : domainList}
+          dominioInicial={filtroDominio}
+          etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
+          onClose={() => setCreateOpen(false)}
+          onCreado={(mailbox, password) => {
+            setCreateOpen(false);
+            abrirFicha(mailbox, password ? 'credenciales' : 'conectar', password);
+          }}
+        />
+      )}
+
+      {altaOpen && (
+        <AltaMasiva
+          open
+          onClose={() => {
+            setAltaOpen(false);
+            void queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+          }}
+          domains={dominiosVisibles.length > 0 ? dominiosVisibles : domainList}
+          dominioInicial={filtroDominio}
+          resultado={altaResultado}
+          onResultado={setAltaResultado}
+          etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
+        />
+      )}
+
+      <FichaBuzon
+        key={ficha ? `${ficha.id}-${ficha.n}` : 'ninguna'}
+        mailbox={fichaMailbox}
+        vistaInicial={ficha?.vista}
+        passwordInicial={ficha?.password}
+        planQuotaMb={fichaCliente?.plan.mailboxQuotaMb}
+        clienteSuspendido={fichaCliente?.suspended}
+        aliases={aliases.data?.aliases ?? []}
+        onClose={() => setFicha(null)}
+      />
+    </>
+  );
+}
+
+/**
+ * Motivo por el que un cliente no admite buzones nuevos, o null. El servidor
+ * aplica las mismas reglas; aquí se adelantan para no dejar rellenar en vano.
+ */
+function bloqueoCliente(cliente: FichaCliente | undefined): string | null {
+  if (!cliente) return null;
+  if (cliente.suspended) return 'Cliente suspendido';
+  if (cliente.usage.mailboxes >= cliente.plan.maxMailboxes) return 'Límite de buzones del plan alcanzado';
+  return null;
+}
+
+/* ---------------------------------- Fila ---------------------------------- */
+
+const rellenoUso = {
+  normal: 'bg-normal',
+  vigilar: 'bg-vigilar',
+  fuera: 'bg-fuera',
+  'sin-dato': 'bg-tinta-3',
+} as const;
+
+function FilaBuzon({
+  mailbox,
+  isAdmin,
+  clienteSuspendido,
+  onAbrir,
+}: {
+  mailbox: Mailbox;
+  isAdmin: boolean;
+  clienteSuspendido?: boolean;
+  onAbrir: (vista: VistaFicha) => void;
+}) {
+  const veredicto = veredictoUso(mailbox.usedBytes, mailbox.quotaMb);
+  const ratio = mailbox.usedBytes !== null ? Math.min(1, mailbox.usedBytes / (mailbox.quotaMb * 1024 * 1024)) : 0;
+  // El veredicto de ocupación tiñe la fila entera (DESIGN.md).
+  const tinte = veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
+  return (
+    <div
+      className={`regla-fila flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 transition-colors duration-100
+        last:border-b-0 hover:bg-hoja-2 ${tinte}`}
+    >
+      {/* El dato que identifica la fila: línea propia en móvil, nunca truncado. */}
+      <div className="min-w-0 grow basis-full lg:basis-0">
+        <button
+          type="button"
+          onClick={() => onAbrir('resumen')}
+          className="valor break-all text-left text-base text-tinta hover:text-laboratorio hover:underline"
+        >
+          {mailbox.email}
+        </button>
+        <p className="text-sm text-tinta-3">{mailbox.displayName || 'Sin nombre visible'}</p>
+      </div>
+
+      {isAdmin && (
+        <div className="flex min-w-0 shrink-0 items-baseline gap-1.5 lg:w-28">
+          <span className="rotulo lg:hidden">Cliente</span>
+          {mailbox.clientId ? (
+            <Link
+              to={`/clientes/${mailbox.clientId}`}
+              className="min-w-0 break-words text-sm text-tinta-2 hover:text-laboratorio hover:underline"
+            >
+              {mailbox.clientName}
+            </Link>
+          ) : (
+            <span className="text-sm text-tinta-3">—</span>
+          )}
+        </div>
+      )}
+
+      <div className="flex shrink-0 flex-col gap-1 lg:w-32">
+        <div className="flex items-baseline gap-1.5">
+          <span className="rotulo lg:hidden">Ocupación</span>
+          <span className={`valor text-sm ${veredicto === 'fuera' ? 'text-fuera' : veredicto === 'vigilar' ? 'text-vigilar' : 'text-tinta-2'}`}>
+            {mailbox.usedBytes === null ? '—' : formatBytes(mailbox.usedBytes)}
+            <span className="text-tinta-3"> / {formatQuota(mailbox.quotaMb)}</span>
+          </span>
+        </div>
+        <div
+          role="meter"
+          aria-label={`Ocupación de ${mailbox.email}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(ratio * 100)}
+          className="h-1 w-32 bg-hoja-3"
+        >
+          <div className={`h-full ${rellenoUso[veredicto]}`} style={{ width: `${Math.max(ratio * 100, ratio > 0 ? 2 : 0)}%` }} />
+        </div>
+      </div>
+
+      <div className="shrink-0 lg:w-32">
+        {mailbox.status === 'suspended' ? (
+          <MarcaFondo veredicto="fuera">Suspendido</MarcaFondo>
+        ) : clienteSuspendido ? (
+          <MarcaFondo veredicto="fuera">Cliente suspendido</MarcaFondo>
+        ) : (
+          <MarcaFondo veredicto="normal">Activo</MarcaFondo>
+        )}
+      </div>
+
+      <div className="flex w-full flex-wrap items-center gap-1 lg:w-44 lg:flex-nowrap lg:justify-end">
+        <Button variant="plano" className="px-2" onClick={() => onAbrir('conectar')}>
+          Conectar
+        </Button>
+        <Button variant="perfil" className="px-2" onClick={() => onAbrir('resumen')}>
+          Gestionar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- Crear buzón ------------------------------ */
+
+function CrearBuzon({
+  domains,
+  dominioInicial,
+  etiquetaDominio,
+  motivoBloqueo,
+  onClose,
+  onCreado,
+}: {
+  domains: DomainRecord[];
+  dominioInicial: string;
+  etiquetaDominio: (d: DomainRecord) => string;
+  motivoBloqueo: MotivoBloqueoDominio;
+  onClose: () => void;
+  onCreado: (mailbox: Mailbox, password?: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [domainId, setDomainId] = useState(() => dominioInicialDisponible(domains, dominioInicial, motivoBloqueo));
   const [localPart, setLocalPart] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [domainId, setDomainId] = useState('');
-  const [customPassword, setCustomPassword] = useState('');
+  const [modo, setModo] = useState<'generar' | 'propia'>('generar');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-
-  /** Credencial recién generada: se enseña UNA vez, como una muestra recortable. */
-  const [revealed, setRevealed] = useState<{ email: string; password: string } | null>(null);
-  const [connection, setConnection] = useState<ConnectionInfo | null>(null);
-  const [toDelete, setToDelete] = useState<Mailbox | null>(null);
 
   const create = useMutation({
     mutationFn: () =>
@@ -52,373 +502,123 @@ export default function Buzones() {
         domainId,
         localPart,
         displayName,
-        password: customPassword || undefined,
+        password: modo === 'propia' ? password : undefined,
       }),
     onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
-      await queryClient.invalidateQueries({ queryKey: ['client-dashboard'] });
-      setCreateOpen(false);
-      setLocalPart('');
-      setDisplayName('');
-      setCustomPassword('');
-      setError('');
-      if (data.password) {
-        setRevealed({ email: data.mailbox.email, password: data.password });
-      } else {
-        toast('ok', `Buzón ${data.mailbox.email} creado.`);
-      }
-    },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'No se pudo crear.'),
-  });
-
-  const resetPassword = useMutation({
-    mutationFn: (mailbox: Mailbox) =>
-      api
-        .post<{ password?: string }>(`/api/mailboxes/${mailbox.id}/password`, {})
-        .then((r) => ({ mailbox, password: r.password })),
-    onSuccess: ({ mailbox, password }) => {
-      if (password) setRevealed({ email: mailbox.email, password });
-    },
-    onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo restablecer.'),
-  });
-
-  const suspend = useMutation({
-    mutationFn: (mailbox: Mailbox) =>
-      api.patch(`/api/mailboxes/${mailbox.id}`, {
-        status: mailbox.status === 'active' ? 'suspended' : 'active',
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
-      toast('ok', 'Estado del buzón actualizado.');
-    },
-    onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se pudo cambiar.'),
-  });
-
-  const remove = useMutation({
-    mutationFn: (mailbox: Mailbox) => api.delete(`/api/mailboxes/${mailbox.id}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
-      await queryClient.invalidateQueries({ queryKey: ['client-dashboard'] });
-      setToDelete(null);
-      toast('ok', 'Buzón eliminado.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['mailboxes'] }),
+        queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['clients'] }),
+        // Uso frente al plan en la ficha del cliente.
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
+      ]);
+      onCreado(data.mailbox, data.password);
     },
     onError: (err) => {
-      setToDelete(null);
-      toast('error', err instanceof ApiError ? err.message : 'No se pudo eliminar.');
+      if (esPropiedadPendiente(err)) void queryClient.invalidateQueries({ queryKey: ['domains'] });
+      setError(mensajeDe(err, 'No se ha podido crear el buzón.'));
     },
   });
-
-  async function showConnection(mailbox: Mailbox) {
-    try {
-      const info = await api.get<ConnectionInfo>(`/api/mailboxes/${mailbox.id}/connection`);
-      setConnection(info);
-    } catch {
-      toast('error', 'No se pudieron cargar los datos de conexión.');
-    }
-  }
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    const errorNombre = errorNombreBuzon(localPart.trim().toLowerCase());
+    if (!domainId) {
+      setError('Selecciona un dominio que admita buzones.');
+      return;
+    }
+    if (errorNombre) {
+      setError(`Nombre del buzón: ${errorNombre}`);
+      return;
+    }
+    if (modo === 'propia' && password.length < 10) {
+      setError('La contraseña debe tener al menos 10 caracteres.');
+      return;
+    }
+    setError('');
     create.mutate();
   }
 
-  const domainList = domains.data?.domains ?? [];
-  const searchTerm = searchParams.get('q')?.trim().toLocaleLowerCase('es') ?? '';
-  const list = (mailboxes.data?.mailboxes ?? []).filter(m => !searchTerm || m.email.toLocaleLowerCase('es').includes(searchTerm));
-  const grouped = useMemo(() => {
-    const groups = new Map<string, Mailbox[]>();
-    for (const mailbox of list) {
-      const group = groups.get(mailbox.domain) || [];
-      group.push(mailbox);
-      groups.set(mailbox.domain, group);
-    }
-    return [...groups.entries()];
-  }, [list]);
-
-  const cargando = mailboxes.isPending || domains.isPending;
+  // Un error ya mostrado deja de ser cierto en cuanto se corrige el formulario.
+  function limpiar<T>(set: (v: T) => void) {
+    return (v: T) => {
+      setError('');
+      set(v);
+    };
+  }
 
   return (
-    <>
-      {searchTerm && <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-base"><span>Resultados para <strong>{searchTerm}</strong></span><button className="text-laboratorio underline" onClick={() => setSearchParams({})}>Mostrar todos los buzones</button></div>}
-      <Membrete
-        title="Buzones"
-        meta={
-          <>
-            <p>Cuentas de correo reales con IMAP, SMTP y webmail.</p>
-            {!cargando && list.length > 0 && (
-              <p className="rotulo mt-1.5">
-                {plural(list.length, 'buzón', 'buzones')} ·{' '}
-                {plural(grouped.length, 'dominio', 'dominios')}
-              </p>
-            )}
-          </>
-        }
-        actions={
-          <Button
-            variant="tinta"
-            onClick={() => {
-              setDomainId(domainList[0]?.id ?? '');
-              setCreateOpen(true);
-            }}
-            disabled={domainList.length === 0}
-          >
+    <Dialogo open onClose={onClose} title="Crear buzón">
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <SelectorDominio
+          domains={domains}
+          value={domainId}
+          onChange={limpiar(setDomainId)}
+          etiquetaDominio={etiquetaDominio}
+          motivoBloqueo={motivoBloqueo}
+          uso="buzones"
+        />
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[10rem] flex-1">
+            <Input
+              label="Nombre del buzón"
+              mono
+              autoComplete="off"
+              value={localPart}
+              onChange={(e) => limpiar(setLocalPart)(e.target.value)}
+              placeholder="hola"
+            />
+          </div>
+          <span className="valor break-all pb-2.5 text-sm text-tinta-3">
+            @{domains.find((d) => d.id === domainId)?.domain || '…'}
+          </span>
+        </div>
+        <Input
+          label="Nombre visible (opcional)"
+          maxLength={80}
+          value={displayName}
+          onChange={(e) => limpiar(setDisplayName)(e.target.value)}
+          placeholder="Equipo de soporte"
+        />
+        <fieldset className="flex flex-col gap-2.5">
+          <legend className="rotulo mb-2">Contraseña</legend>
+          <Opcion
+            name="crear-modo"
+            checked={modo === 'generar'}
+            onChange={() => limpiar(setModo)('generar')}
+            label="Generar una contraseña segura"
+            help="Se mostrará una sola vez, junto con los datos para conectar dispositivos."
+          />
+          <Opcion
+            name="crear-modo"
+            checked={modo === 'propia'}
+            onChange={() => limpiar(setModo)('propia')}
+            label="Escribir una contraseña"
+          />
+        </fieldset>
+        {modo === 'propia' && (
+          <Input
+            label="Contraseña"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => limpiar(setPassword)(e.target.value)}
+            help="Mínimo 10 caracteres."
+          />
+        )}
+        <p className="text-sm text-tinta-3">
+          La cuota es la máxima del plan; se puede reducir después desde «Gestionar».
+        </p>
+        {error && <BandaError>{error}</BandaError>}
+        <Botonera>
+          <Button type="button" variant="plano" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button type="submit" variant="tinta" busy={create.isPending} disabled={!domainId}>
             Crear buzón
           </Button>
-        }
-      />
-
-      {cargando ? (
-        <Hoja flush>
-          <Midiendo label="Cargando buzones…" />
-        </Hoja>
-      ) : domainList.length === 0 ? (
-        <Hoja flush>
-          <Vacio title="Primero necesitas un dominio">
-            Da de alta un dominio en la pestaña «Dominios»; después podrás crear buzones
-            como nombre@tudominio.com.
-          </Vacio>
-        </Hoja>
-      ) : list.length === 0 ? (
-        <Hoja flush>
-          <Vacio
-            title="Aún no hay buzones"
-            action={
-              <Button
-                variant="perfil"
-                onClick={() => {
-                  setDomainId(domainList[0]?.id ?? '');
-                  setCreateOpen(true);
-                }}
-              >
-                Crear el primero
-              </Button>
-            }
-          >
-            Crea cuentas como hola@{domainList[0]?.domain}. La contraseña se genera sola y
-            se muestra una única vez.
-          </Vacio>
-        </Hoja>
-      ) : (
-        <Hoja flush>
-          {/* Cabecera de columnas: en pantalla estrecha cada dato lleva su rótulo. */}
-          <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 sm:flex">
-            <span className="rotulo min-w-0 grow basis-0">Buzón</span>
-            <span className="rotulo w-24 shrink-0">Cuota</span>
-            <span className="rotulo w-28 shrink-0">Estado</span>
-            <span className="rotulo shrink-0 text-right">Acciones</span>
-          </div>
-
-          {grouped.map(([domainName, group]) => (
-            <div key={domainName}>
-              <div className="regla-fila flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 bg-hoja-3 px-4 py-1.5">
-                <span className="valor break-all text-sm font-medium text-tinta">{domainName}</span>
-                <span className="rotulo">{plural(group.length, 'buzón', 'buzones')}</span>
-              </div>
-
-              {group.map((mailbox) => (
-                <div
-                  key={mailbox.id}
-                  className="regla-fila flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5
-                    transition-colors duration-100 last:border-b-0 hover:bg-hoja-2"
-                >
-                  {/* El dato que identifica la fila: línea propia en móvil, nunca truncado. */}
-                  <div className="min-w-0 grow basis-full sm:basis-0">
-                    <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
-                    <p className="text-sm text-tinta-3">
-                      {mailbox.displayName || 'Sin nombre visible'}
-                    </p>
-                  </div>
-
-                  <div className="flex shrink-0 items-baseline gap-1.5 sm:w-24">
-                    <span className="rotulo sm:hidden">Cuota</span>
-                    <span className="valor text-sm text-tinta-2">{formatMb(mailbox.quotaMb)}</span>
-                  </div>
-
-                  <div className="shrink-0 sm:w-28">
-                    {mailbox.status === 'suspended' ? (
-                      <MarcaFondo veredicto="fuera">Suspendido</MarcaFondo>
-                    ) : (
-                      <MarcaFondo veredicto="normal">Activo</MarcaFondo>
-                    )}
-                  </div>
-
-                  <div className="flex w-full flex-wrap items-center gap-1 sm:w-auto sm:justify-end">
-                    <Button
-                      variant="plano"
-                      className="px-2"
-                      onClick={() => void showConnection(mailbox)}
-                    >
-                      Conexión
-                    </Button>
-                    <Button
-                      variant="plano"
-                      className="px-2"
-                      busy={resetPassword.isPending && resetPassword.variables?.id === mailbox.id}
-                      onClick={() => resetPassword.mutate(mailbox)}
-                    >
-                      Nueva contraseña
-                    </Button>
-                    <Button
-                      variant="plano"
-                      className="px-2"
-                      onClick={() => suspend.mutate(mailbox)}
-                    >
-                      {mailbox.status === 'active' ? 'Suspender' : 'Reactivar'}
-                    </Button>
-                    <Button variant="peligro" className="px-2" onClick={() => setToDelete(mailbox)}>
-                      Eliminar
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </Hoja>
-      )}
-
-      {/* Crear buzón */}
-      <Dialogo open={createOpen} onClose={() => setCreateOpen(false)} title="Crear buzón">
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <Select label="Dominio" required value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-            {domainList.map((domain) => (
-              <option key={domain.id} value={domain.id}>
-                {domain.domain}
-              </option>
-            ))}
-          </Select>
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[10rem] flex-1">
-              <Input
-                label="Nombre del buzón"
-                required
-                mono
-                value={localPart}
-                onChange={(e) => setLocalPart(e.target.value)}
-                placeholder="hola"
-              />
-            </div>
-            <span className="valor break-all pb-2.5 text-sm text-tinta-3">
-              @{domainList.find((d) => d.id === domainId)?.domain || '…'}
-            </span>
-          </div>
-          <Input
-            label="Nombre visible (opcional)"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Equipo de soporte"
-          />
-          <Input
-            label="Contraseña (opcional)"
-            type="password"
-            minLength={10}
-            value={customPassword}
-            onChange={(e) => setCustomPassword(e.target.value)}
-            help="Déjala vacía para generar una segura automáticamente (se muestra una sola vez)."
-          />
-          {error && (
-            <p
-              role="alert"
-              className="border border-[rgb(var(--fuera)/0.4)] bg-fuera-fondo px-3 py-2 text-sm text-fuera"
-            >
-              {error}
-            </p>
-          )}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="plano" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="tinta" busy={create.isPending}>
-              Crear buzón
-            </Button>
-          </div>
-        </form>
-      </Dialogo>
-
-      {/* Credencial: una sola lectura */}
-      <Dialogo open={revealed !== null} onClose={() => setRevealed(null)} title="Credenciales del buzón">
-        {revealed && (
-          <div className="flex flex-col gap-4">
-            <p className="text-base text-tinta-2">
-              Esta contraseña <strong className="font-semibold text-tinta">solo se muestra ahora</strong>.
-              Entrégasela al usuario del buzón por un canal seguro.
-            </p>
-            <Muestra rotulo="Usuario" copiar={revealed.email}>
-              <p className="valor break-all text-base text-tinta">{revealed.email}</p>
-            </Muestra>
-            <Muestra rotulo="Contraseña" copiar={revealed.password}>
-              <p className="valor break-all text-base text-tinta">{revealed.password}</p>
-            </Muestra>
-            <Button variant="tinta" onClick={() => setRevealed(null)}>
-              Ya la he guardado
-            </Button>
-          </div>
-        )}
-      </Dialogo>
-
-      {/* Datos de conexión */}
-      <Dialogo open={connection !== null} onClose={() => setConnection(null)} title="Configurar en un dispositivo">
-        {connection && (
-          <div className="flex flex-col gap-4">
-            <p className="text-base text-tinta-2">
-              Para Thunderbird, Outlook, iPhone o Android. Usuario y contraseña son los del
-              buzón (el usuario es la dirección completa).
-            </p>
-            <Muestra rotulo="Usuario" copiar={connection.username}>
-              <p className="valor break-all text-base text-tinta">{connection.username}</p>
-            </Muestra>
-            <div className="border border-regla bg-hoja-2">
-              <FilaConexion
-                rotulo="Entrante (IMAP)"
-                valor={`${connection.imap.host} · ${connection.imap.port} · ${connection.imap.security}`}
-              />
-              <FilaConexion
-                rotulo="Saliente (SMTP)"
-                valor={`${connection.smtp.host} · ${connection.smtp.port} · ${connection.smtp.security}`}
-              />
-              <FilaConexion
-                rotulo="Alternativa SMTP"
-                valor={`${connection.smtpAlt.host} · ${connection.smtpAlt.port} · ${connection.smtpAlt.security}`}
-              />
-            </div>
-            {connection.webmailUrl && (
-              <a href={connection.webmailUrl} target="_blank" rel="noreferrer" className="self-start">
-                <Button variant="perfil">Abrir webmail</Button>
-              </a>
-            )}
-          </div>
-        )}
-      </Dialogo>
-
-      {/* Confirmar borrado */}
-      <Dialogo open={toDelete !== null} onClose={() => setToDelete(null)} title="Eliminar buzón">
-        {toDelete && (
-          <div className="flex flex-col gap-4">
-            <p className="text-base text-tinta-2">
-              Se eliminará <strong className="valor break-all font-medium text-tinta">{toDelete.email}</strong>{' '}
-              y todo el correo que contiene, también del motor. No hay vuelta atrás.
-            </p>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="plano" onClick={() => setToDelete(null)}>
-                Cancelar
-              </Button>
-              <Button variant="peligro" busy={remove.isPending} onClick={() => remove.mutate(toDelete)}>
-                Eliminar definitivamente
-              </Button>
-            </div>
-          </div>
-        )}
-      </Dialogo>
-    </>
-  );
-}
-
-/** Fila de un ajuste de conexión: rótulo a la izquierda, valor exacto a la derecha. */
-function FilaConexion({ rotulo, valor }: { rotulo: string; valor: string }) {
-  return (
-    <div className="regla-fila flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 px-3 py-2 last:border-b-0">
-      <span className="rotulo">{rotulo}</span>
-      <span className="valor break-all text-sm text-tinta">{valor}</span>
-    </div>
+        </Botonera>
+      </form>
+    </Dialogo>
   );
 }

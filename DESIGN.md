@@ -152,6 +152,15 @@ components:
   boton-peligro-hover:
     backgroundColor: "{colors.fuera-fondo}"
     textColor: "{colors.fuera}"
+  boton-contorno:
+    textColor: "{colors.hoja}"
+    typography: "{typography.cuerpo}"
+    rounded: "{rounded.recto}"
+    height: "32px"
+    padding: "0 12px"
+  boton-contorno-hover:
+    backgroundColor: "rgb(255 255 255 / 0.1)"
+    textColor: "{colors.hoja}"
   boton-copiar:
     textColor: "{colors.tinta-2}"
     typography: "{typography.veredicto}"
@@ -244,6 +253,29 @@ components:
     rounded: "{rounded.recto}"
     padding: "20px"
     width: "min(520px, calc(100vw - 32px))"
+  dialogo-amplio:
+    backgroundColor: "{colors.hoja}"
+    textColor: "{colors.tinta}"
+    rounded: "{rounded.recto}"
+    padding: "20px"
+    width: "min(720px, calc(100vw - 32px))"
+  aviso-error:
+    backgroundColor: "{colors.fuera-fondo}"
+    textColor: "{colors.fuera}"
+    typography: "{typography.cuerpo}"
+    rounded: "{rounded.recto}"
+    padding: "8px 12px"
+  aviso-hecho:
+    backgroundColor: "{colors.normal-fondo}"
+    textColor: "{colors.normal}"
+    typography: "{typography.cuerpo}"
+    rounded: "{rounded.recto}"
+    padding: "8px 12px"
+  boton-tactil:
+    typography: "{typography.cuerpo}"
+    rounded: "{rounded.recto}"
+    height: "44px"
+    padding: "0 16px"
 ---
 
 # Design System: Mailway
@@ -355,7 +387,8 @@ fondo tenue de la misma familia y, en una fila de medición, su tinte de fila.
 - **Ámbar vigilar** (`vigilar` / `vigilar-fondo`): «Vigilar». Zona de aviso previo: escala al
   80 % o más, cola de salida ≥ 20 mensajes, puntuación de entregabilidad entre 50 y 79, dominios
   verificados incompletos, envíos fallidos en 24 h. 4.9:1 sobre hoja.
-- **Carmín fuera de rango** (`fuera` / `fuera-fondo`): «Fuera de rango». Escala agotada (≥ 100 %),
+- **Carmín fuera de rango** (`fuera` / `fuera-fondo`): «Fuera de rango». Escala superada (o agotada con
+  `limiteEsFuera`),
   cola ≥ 50, puntuación < 50, PTR o registro A que no cuadran, IP listada en una DNSBL, cliente
   suspendido, recuento de avisos abiertos en la navegación, banda de error de página, botón
   destructivo y filete superior del aviso fallido. 6.1:1 sobre hoja.
@@ -479,7 +512,8 @@ es la excepción declarada: versalitas de gran cuerpo con interletrado ceñido, 
 membrete superior es un bloque de `.campo-lab` con 16px de relleno. Por debajo de `lg` la barra
 desaparece y se sustituye por una cabecera **también sobre `.campo-lab`**, con 16px laterales y 10px
 verticales, el nombre de la instancia invertido en versalitas y un botón de menú de 32px enmarcado en
-filete blanco al 30 %; el menú abre un cajón de 256px sobre un velo de `rgb(var(--tinta) / 0.4)`. Entre
+filete blanco al 30 %; el menú abre un cajón de 256px (entrada `cajon`) sobre un velo de
+`rgb(var(--tinta) / 0.4)` (entrada `velo`), con el foco atrapado dentro mientras está abierto. Entre
 ese bloque de marca y el membrete de la página, la banda oscura recorre el borde superior completo.
 
 **Página.** El contenido vive en `main` con 16px de aire lateral y 20px vertical, que pasan a 24px y
@@ -508,7 +542,8 @@ referencia a 112px y veredicto a 128px alineado a la derecha.
 se **pliega**. La fila de cabecera se oculta (`hidden … sm:flex`), el dato identificador ocupa una línea
 propia a ancho completo (`basis-full sm:basis-0`) y se parte por palabras en vez de truncarse
 (`break-words` / `break-all`), y cada celda secundaria muestra su propio `.rotulo` en línea
-(`.rotulo sm:hidden`). Ningún dato desaparece al estrechar.
+(`.rotulo sm:hidden`). Ningún dato desaparece al estrechar. `Medida` no depende de la ventana sino del ancho
+de su hoja (consulta de contenedor a 36rem; ver su apartado).
 
 **Medida de lectura.** La prosa explicativa se corta a 70–75ch; la línea de contexto del membrete, a
 `max-w-2xl`. La portada de acceso es una hoja de 25rem centrada sobre la mesa, y la puesta en marcha una
@@ -580,7 +615,7 @@ Las barras de la escala son rectas y de 6px de alto, con una marca de referencia
 
 ### Buttons
 
-Cinco variantes (`Button`), todas de 32px de alto, 12px de aire lateral, cuerpo 14px, sin radio,
+Seis variantes (`Button`, tipo `VarianteBoton`), todas de 32px de alto, 12px de aire lateral, cuerpo 14px, sin radio,
 `transition-colors` de 100ms y un desplazamiento de 1px al pulsar. Desactivado: 35 % de opacidad (40 % en
 la variante de campo). Ocupado (`busy`): un círculo de 12px con trazo de 1.5px girando, y el botón bloqueado.
 
@@ -591,6 +626,9 @@ la variante de campo). Ocupado (`busy`): un círculo de 12px con trazo de 1.5px 
   blanco, texto en petróleo, peso 600; hover a `laboratorio-claro`. Es la forma normal de la acción de página
   desde que el membrete es una región oscura; `tinta` queda para las acciones que viven sobre papel (formularios,
   diálogos, portada).
+- **`contorno` (secundaria sobre el campo oscuro):** filete blanco al 40 %, sin relleno, texto blanco;
+  hover a blanco al 10 %; desactivado al 40 %. Es la segunda acción del `Membrete` (y de cualquier región
+  `.campo-lab`): `perfil` o `plano` ahí serían tinta sobre petróleo, un botón que no se ve.
 - **`perfil` (secundaria, por defecto):** solo filete `regla-fuerte`, sin relleno, texto en tinta; hover a `hoja-3`.
 - **`plano` (terciaria):** solo texto en `tinta-2`; hover a `hoja-3` con texto en tinta.
 - **`peligro` (destructiva):** filete de carmín al 40 % y texto en carmín de fuera de rango, hover sobre
@@ -598,6 +636,11 @@ la variante de campo). Ocupado (`busy`): un círculo de 12px con trazo de 1.5px 
 
 Los enlaces de navegación dentro de una hoja («Ver informe completo», «Ver todo») van en petróleo, a 12px,
 subrayados con 2px de separación, y viran a tinta en hover.
+
+**`estiloBoton(variante, clases)`** devuelve las clases de un botón para aplicarlas a otro elemento. Todo lo
+que **navega** con aspecto de botón (un `Link` de React Router, un `<a>` de descarga o un `mailto:`) usa
+`estiloBoton` sobre el propio enlace, nunca un `<Button>` dentro de un `<a>`: es HTML no válido y crea dos
+paradas de tabulación para una sola acción.
 
 ### Cards / Containers — `Hoja`
 
@@ -627,13 +670,24 @@ subrayados con 2px de separación, y viran a tinta en hover.
 Índice del informe. Arriba, el **membrete del índice**: un bloque de `.campo-lab` de 16px con el logotipo de
 escala en petróleo vivo y el nombre de la instancia invertido en versalitas de 17px con `0.14em` —no un filete
 bajo un título, sino la misma región oscura que el membrete de página—. Debajo, sobre hoja, los enlaces se
-agrupan bajo secciones rotuladas —«Parte diario», «Registro», «Instrumentos» para el administrador; «Tu correo»,
-«Automatización», «Cuenta» para el cliente— con el rótulo en `.rotulo`. Cada enlace: icono de 16px + etiqueta de
-14px, 8px de aire lateral y 6px vertical. Inactivo en `tinta-2` con icono en `tinta-3`; hover a `hoja-3`;
+agrupan bajo secciones rotuladas con el rótulo en `.rotulo`:
+
+- **administrador**: «Vista general» (Resumen, Avisos, Entregabilidad), «Gestión» (Clientes, Dominios,
+  Buzones, Alias, Marca blanca), «Configuración» (API de envío, Conexiones, Planes, Actividad, Ajustes) y
+  «Cuenta» (Mi cuenta);
+- **cliente**: «Tu correo» (Resumen, Dominios, Buzones, Alias, Marca blanca), «Automatización» (API de
+  envío, Conexiones) y «Cuenta» (Actividad, Mi cuenta).
+
+Cada enlace: icono de 16px + etiqueta de 14px, 8px de aire lateral y 6px vertical. Inactivo en `tinta-2` con
+icono en `tinta-3`; hover a `hoja-3`;
 **activo** sobre `laboratorio-claro`, con texto e icono en petróleo y peso 600 —sin barra lateral de acento ni
 relleno sólido—. El recuento de avisos abiertos se imprime al final del enlace en `.valor` sobre `fuera-fondo`.
 Al pie, identidad: avatar cuadrado de 28px con las dos primeras letras en versalitas sobre petróleo, nombre a
 12px, rol en `.rotulo`, y salir como botón de icono de 28px.
+
+El título de la pestaña del navegador sigue la vista («Buzones · <marca>»). Al cambiar de vista, la página
+vuelve arriba (salvo al retroceder, donde el navegador restaura la posición), entra con `vista` y el foco pasa
+al contenido, para que el teclado y el lector de pantalla empiecen por la página nueva y no por el índice.
 
 ### Signature Component — `Membrete`
 
@@ -642,7 +696,7 @@ completo**: `.campo-lab` (petróleo con degradado a 160° hacia `laboratorio-hon
 `sm`— y 20px de aire por debajo. Dentro, invertido: el título en `.titular` a 34px que suben a 46px desde `sm`,
 en blanco; una línea de contexto opcional a `max-w-2xl` en blanco al 70 % (los identificadores, en `.valor` al
 75 %); y a la derecha la acción de la vista, normalmente un `Button variant="campo"` o una `MarcaFondo` con el
-veredicto global. Ningún filete: el color es superficie.
+veredicto global; si hay una segunda acción, va en `variant="contorno"`. Ningún filete: el color es superficie.
 
 ### Signature Component — `Medida` + `CabeceraMedidas`
 
@@ -665,6 +719,13 @@ vigilancia, sin tinte para en rango y sin dato. Bajo la fila, una **nota** opcio
 paso. La `CabeceraMedidas` imprime los cuatro rótulos de columna sobre la regla pesada; la columna de
 referencia puede omitirse.
 
+**Plegado por el ancho de su hoja, no de la ventana.** `Medida` y `CabeceraMedidas` son contenedores
+(`container-type: inline-size`) y deciden su forma con `@container (min-width: 36rem)`: por encima, las
+cuatro columnas fijas; por debajo, la fila se pliega en dos líneas, la cabecera de columnas se oculta y la
+referencia lleva su propio `.rotulo` «Referencia», con el veredicto aún en el margen derecho. Así una hoja
+estrecha a 1280px (la columna de Entregabilidad) se pliega igual que en un móvil. El valor admite
+`overflow-wrap: anywhere`: un PTR o un nombre de host largo baja de línea en vez de desbordar a 360px.
+
 `MarcaFondo` es la misma marca sobre su fondo tenue, con 2px de radio: se usa en listados densos donde el
 veredicto es la última celda de una fila larga (clientes, listas negras, buzones) y en la acción del membrete.
 
@@ -672,8 +733,10 @@ veredicto es la última celda de una fila larga (clientes, listas negras, buzone
 
 Medición con escala para uso frente a límite de plan. Etiqueta a la izquierda, `usado/máximo` a la derecha
 en `.valor` (el denominador en `tinta-3`), y debajo un carril de 6px sobre `hoja-3` con relleno del color
-del veredicto: en rango por debajo del 80 %, vigilar a partir del 80 %, fuera de rango al alcanzar el
-límite. Una marca de referencia de 1px al 80 % avisa antes de agotarlo. El relleno anima solo su anchura
+del veredicto: en rango por debajo del 80 %, vigilar a partir del 80 % y también al 100 % (el plan está
+lleno, no incumplido), y fuera de rango solo si se supera. Con `limiteEsFuera` alcanzar el máximo ya es
+fuera de rango: se usa donde llegar al límite corta el servicio (envíos diarios de una clave, espacio de un
+buzón). Una marca de referencia de 1px al 80 % avisa antes de agotarlo. El relleno anima solo su anchura
 (500ms). Expone `role="meter"` con sus valores.
 
 ### `Muestra`
@@ -694,27 +757,41 @@ durante 1600ms; luego vuelve. No hay aviso emergente para una copia.
 Elemento `<dialog>` nativo con `showModal`. Anchura `min(520px, 100vw − 32px)`, fondo de hoja, filete
 `regla-fuerte`, **la única sombra del sistema**, velo de fondo `rgb(var(--tinta) / 0.45)`. Cabecera con título
 en versalitas sobre la regla pesada y botón de cierre de 28px; cuerpo a 20px. Entra con `aparecer` (220ms).
-Cierra con Escape, con el aspa y al pulsar fuera. Es también la única superficie donde conviven una acción
-principal y una secundaria.
+Cierra con Escape, con el aspa y al pulsar fuera (solo si el clic empieza y acaba en el velo: arrastrar una
+selección desde un campo no pierde el formulario). Variante `ancho="amplio"` de `min(720px, 100vw − 32px)`
+para instrucciones largas o listas de varias columnas. Al abrir enfoca el elemento con `data-autofocus`, el
+primer campo o el cuerpo; al cerrar devuelve el foco a quien lo abrió. Mientras está abierto, la página no se
+desplaza (`useBloqueoDesplazamiento`, un contador compartido con el cajón móvil). Es también la única
+superficie donde conviven una acción principal y una secundaria.
+
+Dos props para los secretos que se muestran una sola vez (contraseñas, claves, tokens):
+`confirmarCierre` hace que Escape y el aspa pregunten «¿Has guardado la contraseña? No se podrá volver a ver.»
+(«Volver» / «Cerrar sin guardar») y que el clic en el velo no cierre; `pie` fija una botonera al pie del
+diálogo para que la acción «Ya la he guardado» se vea en móvil sin desplazar. Si el título cambia (el
+diálogo pasa a otra vista), el foco vuelve al contenido.
 
 ### Estados — `Vacio`, `Midiendo`, error
 
 - **`Vacio`:** centrado, 48px de aire vertical, el glifo de la escala sin lectura en `tinta-3`, título a
   15px peso 600, explicación a 14px `tinta-2` de menos de 448px, y una acción opcional —normalmente
   `perfil`, no principal—.
-- **`Midiendo`:** el instrumento barriendo la muestra, nunca un spinner: un filete de 1px y 192px de ancho
-  sobre el que corre un barrido de petróleo al 55 % (1.25s), y debajo la leyenda en versalitas de 11px con
+- **`Midiendo`:** el instrumento barriendo la muestra, nunca un spinner. Entra con `entrada-diferida`: si la
+  lectura acaba en menos de 160ms no llega a verse, así que no hay parpadeo. Es un filete de 1px y 192px de
+  ancho sobre el que corre un barrido de petróleo al 55 % (1.25s), y debajo la leyenda en versalitas de 11px con
   `0.1em`. El texto nombra lo que se está midiendo («Midiendo las constantes…», «Consultando PTR y listas
   negras…»). Expone `role="status"`.
-- **Error de página:** banda de 14px carmín sobre `fuera-fondo` con filete, que nombra el problema y el
-  arreglo. No se ilustra.
+- **Error — `AvisoError`:** banda de 14px carmín sobre `fuera-fondo` con filete carmín al 40 %,
+  `role="alert"` (se anuncia al aparecer) y entrada con `revelar`. Nombra el problema y el arreglo y, si la
+  operación se puede repetir, lleva a la derecha el botón «Reintentar» (`onRetry`, con estado ocupado
+  mientras se repite). Es la forma de error de toda vista y de toda hoja que no ha podido cargar. No se
+  ilustra.
 - **Aviso al margen (toast):** hoja de 360px máximo, abajo a la derecha, filete superior de 2px del color
   del veredicto, rótulo «Hecho» / «No se pudo» y el texto debajo; se apila hasta 4 y se retira a los 4200ms;
   `aria-live="polite"`.
 
 ### Motion
 
-Tres movimientos, y ninguno decorativo:
+Siete movimientos, y ninguno decorativo:
 
 - **`aparecer`** (220ms, `cubic-bezier(0.16, 1, 0.3, 1)`): 6px de desplazamiento vertical y opacidad. Entrada
   de diálogo, aviso y portada de acceso.
@@ -723,10 +800,19 @@ Tres movimientos, y ninguno decorativo:
   la navegación.
 - **`medir`** (1.25s en bucle, `cubic-bezier(0.4, 0, 0.6, 1)`): el barrido del instrumento, exclusivo de
   `Midiendo`.
+- **`entrada-diferida`** (`.entrada-diferida`, 180ms `ease-out` tras 160ms de espera): opacidad de 0 a 1. Solo
+  para indicadores de carga: una lectura rápida termina antes de que aparezcan.
+- **`vista`** (`.vista-entrada`, 160ms `ease-out`): fundido desde 55 % de opacidad, sin desplazamiento, al
+  cambiar de vista. Relleno `backwards`, no `both`: al terminar no deja una animación aplicada que convierta
+  la vista en contexto de apilamiento.
+- **`cajon`** (`.cajon-entrada`, 220ms, `cubic-bezier(0.16, 1, 0.3, 1)`): el cajón de navegación móvil entra
+  desde el borde izquierdo (`translateX(-100%)` a 0).
+- **`velo`** (`.velo-entrada`, 220ms `ease-out`): el velo bajo el cajón aparece por opacidad.
 
 Los cambios de estado (hover, foco, veredicto) usan `transition-colors` de 100ms; la escala anima solo su
-anchura (500ms). `@media (prefers-reduced-motion: reduce)` anula `revelar` y el barrido de `medir`; toda
-animación nueva debe añadirse a ese bloque.
+anchura (500ms). `@media (prefers-reduced-motion: reduce)` anula `revelar`, el barrido de `medir`, `vista`,
+`cajon`, `velo` y `aparecer`, y deja `entrada-diferida` como un salto de 1ms tras la espera (sin fundido, pero
+sin parpadeo); toda animación nueva debe añadirse a ese bloque.
 
 ### Superficies del navegador
 
@@ -734,9 +820,36 @@ También son del diseño y ya están tematizadas: selección de texto en petról
 `caret-color` y `accent-color` en petróleo; foco visible como anillo de 2px en petróleo con 2px de separación
 y 2px de radio, aplicado a enlaces, botones, campos y cualquier elemento con `tabindex`; barra de
 desplazamiento fina (11px en WebKit), pulgar en tinta al 24 % (40 % en hover) con 3px de borde en color de mesa
-y 99px de radio, carril transparente; enlaces con subrayado a 1px y 3px de separación. El `theme-color` del
-documento sigue declarado como `#f0eee8`, valor de la mesa **anterior** a la amplificación: la mesa actual es
-`rgb(238 236 229)`, así que ese meta va por detrás del token.
+y 99px de radio, carril transparente; enlaces con subrayado a 1px y 3px de separación.
+
+**`theme-color`.** `web/index.html` declara `#eeece5`, el color de la mesa (`rgb(238 236 229)`): es lo que se
+ve en la portada de acceso, la puesta en marcha y el portal del titular. Dentro del panel, `AppShell` lo
+cambia a `#0a3e45` (`laboratorio`), de modo que en el móvil la barra del navegador continúa la banda oscura de
+identidad; al salir del panel restaura el valor anterior.
+
+### Portal del titular
+
+`/conectar/<token>` y `/mi-buzon` son del mismo mundo, pero para el móvil de alguien que no sabe de correo:
+controles grandes, frases cortas y un paso a la vez (`web/src/pages/portal/comun.tsx`).
+
+- **`MarcoPortal`:** una sola región `.campo-lab` continua lleva el logotipo, la marca de la instancia y el
+  titular de la página; debajo, una columna de `max-w-3xl` sobre la mesa con las hojas apiladas a 16px.
+- **Altura táctil (`TACTIL`):** 44px mínimos en móvil (`min-h-11`), la altura normal del kit desde `sm`. Se
+  aplica como `min-height` porque siempre se impone a la altura del control.
+- **`BotonCopiarTactil`:** la versión táctil de `BotonCopiar`. Solo dice «Copiado» si la copia ha funcionado;
+  si no, «Cópialo manualmente», en carmín.
+- **`Pasos` / `Paso`:** lista numerada con la cifra en `.valor` dentro de un cuadrado de 24px con filete; el
+  texto a 14px y máximo 70ch. `Nota` para el contexto que no es un paso y `Ui` para citar un elemento de otra
+  aplicación entre comillas angulares y en negrita («Permitir», «Ajustes»).
+- **`AvisoHecho`:** la confirmación de una acción completada, en verde de conformidad sobre `normal-fondo` y
+  `role="status"`; la pareja de `AvisoError`.
+- **`PaginaEstado`:** hoja única de 28rem centrada sobre la mesa, para enlaces caducados o errores que impiden
+  mostrar la página.
+- **Guías por dispositivo:** pestañas iPhone/iPad, Mac, Android, Outlook, Thunderbird y Otros; se abre la del
+  dispositivo detectado. En escritorio, el enlace al perfil de Apple se ofrece además como código `QR`
+  (SVG generado en el navegador, sin servicios externos, con la zona de silencio de 4 módulos).
+- Los enlaces con aspecto de botón usan `estiloBoton` (o su equivalente táctil), nunca un botón dentro de un
+  enlace.
 
 ## Do's and Don'ts
 
@@ -749,7 +862,8 @@ documento sigue declarado como `#f0eee8`, valor de la mesa **anterior** a la amp
 3. **Tabla reglada, no tarjeta.** Datos comparables van en tabla con cabecera de columnas y hairlines. La
    rejilla de tarjetas iguales es el patrón que este mundo rechaza.
 4. **Una sola acción principal por vista.** Un botón de relleno por pantalla: `campo` si vive en el membrete,
-   `tinta` si vive sobre papel. El resto, `perfil` o `plano`. Los diálogos tienen la suya propia.
+   `tinta` si vive sobre papel. El resto, `perfil` o `plano` (`contorno` sobre el campo). Los diálogos tienen
+   la suya propia.
 5. **Sombra solo en lo que flota.** `shadow-flotante` es la única sombra y solo la llevan diálogo, cajón
    móvil y aviso. Todo lo demás es plano y se estructura con filetes y regiones.
 6. **Color solo como veredicto.** Verde, ámbar y carmín califican valores fuera de rango; el petróleo es
@@ -764,8 +878,10 @@ documento sigue declarado como `#f0eee8`, valor de la mesa **anterior** a la amp
 
 - **Do** construir cualquier vista nueva con `Membrete` (campo oscuro) → tabla de mediciones → hojas de
   detalle, en ese orden.
-- **Do** poner la acción de la página dentro del `Membrete` como `Button variant="campo"`, y reservar
-  `variant="tinta"` para las acciones que viven sobre papel.
+- **Do** poner la acción de la página dentro del `Membrete` como `Button variant="campo"` (y la secundaria
+  como `variant="contorno"`), y reservar `variant="tinta"` para las acciones que viven sobre papel.
+- **Do** dar aspecto de botón a un enlace con `estiloBoton`, y mostrar los errores con `AvisoError` (con
+  `onRetry` cuando la operación se puede repetir).
 - **Do** expresar cada dato con `Medida` (concepto, valor a 21px, referencia, veredicto) y encabezarlo con
   `CabeceraMedidas`.
 - **Do** ordenar filas por veredicto antes que por nombre o fecha: fuera de rango, vigilar, sin dato, en rango.
@@ -781,8 +897,8 @@ documento sigue declarado como `#f0eee8`, valor de la mesa **anterior** a la amp
   error.
 - **Do** usar `sin-dato` —guion y `tinta-3`— cuando algo no se ha podido medir; no fingir un veredicto.
 - **Do** mantener el foco visible de 2px en petróleo y el contraste AA; el texto más tenue admitido es `tinta-3`.
-- **Do** escribir toda la interfaz en español, con la terminología fijada: buzón, alias, clave de API, plan,
-  entregabilidad.
+- **Do** escribir toda la interfaz en español profesional y neutro, tratando al lector de tú, con la
+  terminología fijada: buzón, alias, clave de API, plan, entregabilidad.
 
 ### Don't:
 
@@ -800,6 +916,8 @@ documento sigue declarado como `#f0eee8`, valor de la mesa **anterior** a la amp
 - **Don't** añadir sombras, brillos, cristales, texturas de papel fingidas ni bordes redondeados: el único
   degradado del sistema es el del campo de identidad, y el radio es 0 salvo las tres excepciones funcionales.
 - **Don't** poner dos botones de relleno en la misma vista, ni convertir un enlace de navegación en botón principal.
+- **Don't** envolver un `<Button>` en un `<a>` o un `Link`, ni usar `perfil` o `plano` sobre el campo oscuro
+  (para eso existe `contorno`).
 - **Don't** usar `<table>` con bordes de celda ni rejillas de tarjetas para datos comparables.
 - **Don't** truncar identificadores con elipsis en móvil ni esconder columnas sin trasladar su rótulo a la celda.
 - **Don't** emplear emoji, iconos de colores ni ilustraciones como glifo de estado: el veredicto es geometría de

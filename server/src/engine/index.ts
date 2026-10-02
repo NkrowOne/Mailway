@@ -23,7 +23,7 @@ export function getEngine(): MailEngine {
   const settings = getEngineSettings();
   if (!settings) {
     throw badRequest(
-      'El motor de correo aún no está configurado. Completa el asistente en Ajustes → Motor.',
+      'El motor de correo aún no está configurado. Completa la puesta en marcha o revisa Ajustes → Servidor de correo.',
       'engine_not_configured',
     );
   }

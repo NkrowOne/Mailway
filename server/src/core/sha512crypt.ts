@@ -101,3 +101,20 @@ export function sha512Crypt(password: string, saltInput?: string, rounds = DEFAU
   const roundsPrefix = rounds === DEFAULT_ROUNDS ? '' : `rounds=${rounds}$`;
   return `$6$${roundsPrefix}${saltStr}$${encodeDigest(digestC)}`;
 }
+
+/**
+ * Comprueba una contraseña contra un hash `$6$` (con o sin `rounds=`).
+ * Permite verificar a los titulares de buzón en el propio panel, sin pedirle
+ * al motor que autentique: los fallos de autenticación cuentan para el
+ * baneo automático de Stalwart, y un titular que se equivoca varias veces
+ * no puede acabar bloqueando la IP del panel.
+ */
+export function verifySha512Crypt(password: string, stored: string): boolean {
+  const match = /^\$6\$(?:rounds=(\d+)\$)?([^$]{0,16})\$([./0-9A-Za-z]+)$/.exec(stored);
+  if (!match) return false;
+  const rounds = match[1] ? Number(match[1]) : DEFAULT_ROUNDS;
+  if (!Number.isFinite(rounds) || rounds < 1000 || rounds > 999_999_999) return false;
+  const expected = Buffer.from(stored);
+  const actual = Buffer.from(sha512Crypt(password, match[2]!, rounds));
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}

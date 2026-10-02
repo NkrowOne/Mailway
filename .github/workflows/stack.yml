@@ -1,0 +1,87 @@
+name: Pila de correo
+
+# Prueba el despliegue con contenedores reales: Stalwart v0.15.5, Roundcube y
+# el extractor del certificado (perfil «tls») con la topología de
+# deploy/docker-compose.mail.yml (red interna con subred fija), montados por
+# deploy/instalar.sh, con certificados de laboratorio y credenciales
+# desechables. Complementa a ci.yml; no lo sustituye.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/stack.yml'
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/stack.yml'
+  workflow_dispatch:
+  # Las imágenes de Roundcube (1.7.x) y de Python (3.13) siguen su versión
+  # menor: una ejecución semanal detecta a tiempo una actualización que rompa
+  # la pila.
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pila-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  estatica:
+    name: Extractor, diagnóstico y Compose (sin contenedores)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pruebas unitarias del extractor del certificado
+        run: python3 -m unittest discover -s deploy/tls -v
+
+      - name: Sintaxis de Python, PHP y Bash
+        run: |
+          python3 -m py_compile deploy/tls/extractor.py deploy/tls/laboratorio.py \
+            deploy/tls/test_extractor.py deploy/prueba-stack.py
+          php -l deploy/roundcube/diagnostico/comprobar.php
+          php -l deploy/roundcube/mailway.php
+          for f in deploy/*.sh; do bash -n "$f"; done
+          shellcheck -x -S style deploy/*.sh
+
+      - name: Emparejado y panel en Skyway del instalador (docker y Skyway simulados)
+        run: bash deploy/prueba-emparejado.sh
+
+      - name: Compose con un entorno ficticio (con y sin el perfil tls)
+        run: |
+          cat > "$RUNNER_TEMP/ficticio.env" <<'EOF'
+          MAILWAY_INSTALACION='skyway'
+          MAIL_HOSTNAME='mail.ejemplo.test'
+          WEBMAIL_HOSTNAME='webmail.ejemplo.test'
+          PANEL_HOSTNAME='panel.ejemplo.test'
+          STALWART_ADMIN_PASSWORD='solo-para-validar'
+          ROUNDCUBE_DES_KEY='0123456789abcdef01234567'
+          TRAEFIK_ACME_VOLUME='skyway_traefik-letsencrypt'
+          EOF
+          for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
+            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
+            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+          done
+
+  pila:
+    name: Stalwart y Roundcube reales (TLS, IMAP, SMTP y renovación)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
+      # comprueba TLS en 993/465, IMAP (webmail y directo), SMTP AUTH en
+      # 465/587, la renovación con el extractor, --comprobar y --probar-acceso,
+      # y lo retira todo al terminar. Ver deploy/prueba-stack.py.
+      - name: Pila completa montada por el instalador
+        env:
+          MAILWAY_PRUEBA_DESECHABLE: '1'
+        run: python3 deploy/prueba-stack.py
