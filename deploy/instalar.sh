@@ -452,17 +452,28 @@ motor_api() {
     -sS --max-time 30 -X "$metodo" -K - "http://mailway-mail:8080$ruta"
 }
 
-# Inserta ajustes (pares clave valor) en el motor y lo recarga. Devuelve 1 si
-# el motor informa de errores.
-motor_ajustes() {
-  local valores="" primero=1 respuesta errores
+# Operación «insert» de /api/settings con los pares clave valor indicados.
+motor_op_insertar() {
+  local valores="" primero=1
   while [ $# -gt 1 ]; do
     if [ "$primero" = 0 ]; then valores+=","; fi
     primero=0
     valores+=$(printf '["%s","%s"]' "$(json_escape "$1")" "$(json_escape "$2")")
     shift 2
   done
-  respuesta=$(motor_api POST /api/settings "[{\"type\":\"insert\",\"prefix\":null,\"values\":[$valores],\"assert_empty\":false}]") || return 1
+  printf '{"type":"insert","prefix":null,"values":[%s],"assert_empty":false}' "$valores"
+}
+
+# Inserta ajustes (pares clave valor) en el motor y lo recarga. Devuelve 1 si
+# el motor informa de errores.
+motor_ajustes() { motor_cambios "[$(motor_op_insertar "$@")]"; }
+
+# Aplica en el motor una lista JSON de operaciones de /api/settings (las
+# procesa en orden y se detiene en la primera que falla) y lo recarga.
+# Devuelve 1 si el motor informa de errores.
+motor_cambios() {
+  local respuesta errores
+  respuesta=$(motor_api POST /api/settings "$1") || return 1
   if ! printf '%s' "$respuesta" | grep -q '"data"'; then
     # El motor no repite los valores en sus errores, pero el token de
     # Cloudflare nunca debe acabar en pantalla: se tapa por si acaso.
@@ -884,12 +895,19 @@ migrar_instalacion_anterior() {
 # tiempo posible): retira los contenedores del proyecto anterior y recrea la
 # red interna si no tiene la subred fija, que el motor exime de su bloqueo.
 retirar_contenedores_anteriores() {
-  local c
+  local c servidor_webmail="" imagen_webmail=""
   if [ "$MIGRAR_CONTENEDORES" = 1 ]; then
+    # Antes de retirar el webmail: el servidor por el que entraba al motor y
+    # su imagen (ya descargada y con php y SQLite), para trasladar sus usuarios.
+    if docker inspect --type container mailway-webmail >/dev/null 2>&1; then
+      servidor_webmail=$(servidor_webmail_anterior)
+      imagen_webmail=$(docker inspect --type container -f '{{.Image}}' mailway-webmail 2>/dev/null || true)
+    fi
     for c in mailway-webmail mailway-certs-dumper mailway-mail mailway-panel; do
       if docker inspect "$c" >/dev/null 2>&1; then docker rm -f "$c" >/dev/null; fi
     done
     ok "Contenedores de la instalación anterior retirados; los volúmenes se conservan."
+    migrar_usuarios_webmail "$servidor_webmail" "$imagen_webmail"
   fi
 
   if docker network inspect mailway-internal >/dev/null 2>&1; then
@@ -908,6 +926,83 @@ retirar_contenedores_anteriores() {
       ok "Red mailway-internal recreada con la subred $INTERNAL_SUBNET."
     fi
   fi
+}
+
+# Servidor IMAP del webmail de la 1.0 (ROUNDCUBEMAIL_DEFAULT_HOST de los dos
+# compose, ssl://mailway-mail), como lo guarda Roundcube: sin esquema ni puerto.
+SERVIDOR_WEBMAIL="mailway-mail"
+
+# Servidor IMAP del webmail actual (ROUNDCUBEMAIL_DEFAULT_HOST), como lo
+# guarda Roundcube en users.mail_host: sin esquema ni puerto y en minúsculas.
+# Se lee con bash: el entorno del contenedor lleva secretos.
+servidor_webmail_anterior() {
+  local linea
+  while IFS= read -r linea; do
+    case "$linea" in
+      ROUNDCUBEMAIL_DEFAULT_HOST=*)
+        host_de_url "${linea#*=}"
+        return 0
+        ;;
+    esac
+  done <<<"$(entorno_contenedor mailway-webmail)"
+}
+
+# Cambia en la base SQLite de Roundcube (MAILWAY_RC_BASE) el servidor de los
+# usuarios de MAILWAY_RC_ANTERIOR a MAILWAY_RC_NUEVO. «OR IGNORE»: el índice
+# único es (username, mail_host), y el usuario que ya entró con el servidor
+# nuevo conserva esa fila. Escribe «<cambiados> <pendientes>»; sin base, «0 0»
+# (abrirla con PDO la crearía vacía).
+PHP_MIGRAR_WEBMAIL='$base = getenv("MAILWAY_RC_BASE");
+if (!is_file($base)) { echo "0 0\n"; exit(0); }
+$db = new PDO("sqlite:" . $base, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 30]);
+$antes = getenv("MAILWAY_RC_ANTERIOR");
+$cambio = $db->prepare("UPDATE OR IGNORE users SET mail_host = ? WHERE lower(mail_host) = ?");
+$cambio->execute([getenv("MAILWAY_RC_NUEVO"), $antes]);
+$quedan = $db->prepare("SELECT COUNT(*) FROM users WHERE lower(mail_host) = ?");
+$quedan->execute([$antes]);
+echo $cambio->rowCount(), " ", $quedan->fetchColumn(), "\n";'
+
+# El webmail anterior a la 1.0 entraba al motor por su nombre público
+# (ssl://<MAIL_HOSTNAME>); el de la 1.0, por la red interna (ssl://mailway-mail).
+# Roundcube identifica a cada usuario por su dirección y por ese servidor
+# (users.mail_host): sin trasladarlos, cada titular entraría en un usuario
+# nuevo y vacío, sin sus contactos, identidades, firmas ni preferencias,
+# aunque sigan en la base. Se hace con el webmail antiguo ya retirado y antes
+# de levantar el nuevo, en un contenedor efímero sin red. Si falla, avisa y
+# la instalación sigue.
+#   migrar_usuarios_webmail <servidor del webmail anterior> <su imagen>
+migrar_usuarios_webmail() {
+  local anterior=$1 imagen=$2 volumen=${MAILWAY_WEBMAIL_DB_VOLUME:-mailway-webmail-db}
+  local salida="" resultado cambiados pendientes re='^([0-9]+) ([0-9]+)$'
+  if [ -z "$anterior" ] || [ "$anterior" = "$SERVIDOR_WEBMAIL" ]; then return 0; fi
+  if [ "$anterior" != "$MAIL_HOSTNAME" ]; then
+    info "El webmail anterior entraba al motor por $anterior, que no es $MAIL_HOSTNAME: sus usuarios no se trasladan."
+    return 0
+  fi
+  if [ -z "$imagen" ] || ! docker volume inspect "$volumen" >/dev/null 2>&1; then return 0; fi
+  # Como root (el usuario de la imagen): la base puede ser de root, según
+  # quién la creara. Sin secretos: los valores pueden ir en el entorno.
+  if salida=$(docker run --rm --network none -v "$volumen:/var/roundcube/db" \
+    -e MAILWAY_RC_BASE=/var/roundcube/db/sqlite.db -e "MAILWAY_RC_ANTERIOR=$anterior" \
+    -e "MAILWAY_RC_NUEVO=$SERVIDOR_WEBMAIL" --entrypoint php "$imagen" -r "$PHP_MIGRAR_WEBMAIL" 2>&1); then
+    resultado=${salida##*$'\n'}
+  else
+    resultado=""
+  fi
+  if ! [[ $resultado =~ $re ]]; then
+    aviso "No se pudo trasladar a los usuarios del webmail al servidor $SERVIDOR_WEBMAIL: ${salida:0:300}"
+    aviso "Hasta hacerlo, los titulares verán el webmail sin sus contactos ni preferencias (sección 8.2 de docs/DESPLIEGUE-SKYWAY.md)."
+    return 0
+  fi
+  cambiados=${BASH_REMATCH[1]}
+  pendientes=${BASH_REMATCH[2]}
+  if [ "$cambiados" -gt 0 ]; then
+    ok "Usuarios del webmail trasladados de $anterior a $SERVIDOR_WEBMAIL: $cambiados. Conservan sus contactos, identidades y preferencias."
+  fi
+  if [ "$pendientes" -gt 0 ]; then
+    aviso "Usuarios del webmail que ya habían entrado por $SERVIDOR_WEBMAIL y conservan ese usuario: $pendientes. Sus datos anteriores siguen en la base."
+  fi
+  return 0
 }
 
 escribir_env() {
@@ -1243,14 +1338,20 @@ configurar_motor() {
   fi
 
   # Lo ya configurado (por el panel o por una ejecución anterior) se respeta.
-  local existentes con_volcado=0
-  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,certificate.mailway.cert,certificate.mailway.subjects.0,certificate.default.cert' 2>/dev/null || true)
+  local existentes con_volcado=0 volcado_antiguo=0
+  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,certificate.mailway.cert,certificate.mailway.subjects.0,certificate.default.cert,certificate.default.private-key' 2>/dev/null || true)
   if printf '%s' "$existentes" | grep -q '"certificate.mailway.cert"'; then con_volcado=1; fi
+  if certificado_del_volcado_antiguo "$existentes"; then volcado_antiguo=1; fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"acme.mailway.directory"'; then
     CERT_CONFIGURADO=1
     RESUMEN_CERT="Let's Encrypt emitido por el propio motor (configurado antes)"
     ok "El motor ya emite su certificado con Let's Encrypt."
-    extractor_con_acme "$con_volcado"
+    if [ "$volcado_antiguo" = 1 ]; then retirar_certificado_antiguo; fi
+    extractor_con_acme "$con_volcado" "$volcado_antiguo"
+    return 0
+  fi
+  if [ -z "$CF_TOKEN" ] && [ "$volcado_antiguo" = 1 ]; then
+    pasar_volcado_antiguo_al_extractor
     return 0
   fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"certificate.default.cert"'; then
@@ -1288,7 +1389,8 @@ configurar_motor() {
       CERT_CONFIGURADO=1
       RESUMEN_CERT="Let's Encrypt emitido por el propio motor (DNS-01 en Cloudflare); tarda unos minutos"
       ok "Certificado de IMAP/SMTP solicitado a Let's Encrypt por DNS-01."
-      extractor_con_acme "$con_volcado"
+      if [ "$volcado_antiguo" = 1 ]; then retirar_certificado_antiguo; fi
+      extractor_con_acme "$con_volcado" "$volcado_antiguo"
     else
       aviso "No se pudo configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
     fi
@@ -1366,6 +1468,58 @@ comprobar_extractor() {
   fi
 }
 
+# La guía 0.x arrancaba traefik-certs-dumper y apuntaba certificate.default
+# a los ficheros que volcaba para el servidor de correo: las mismas rutas en
+# las que escribe hoy el extractor. La migración retira ese volcador, así que
+# un certificate.default así no es un certificado propio: sin el extractor,
+# nadie lo renovaría. Uno con otras rutas sí lo es, y se respeta.
+#   certificado_del_volcado_antiguo <respuesta de /api/settings/keys>
+certificado_del_volcado_antiguo() {
+  local ruta="/opt/stalwart/certs/$MAIL_HOSTNAME" cert clave
+  printf '%s' "$1" | grep -q '"certificate.default.cert"' || return 1
+  cert=$(printf '%s' "$1" | jqr -r '.data["certificate.default.cert"] // "" | gsub("^\\s+|\\s+$"; "")' 2>/dev/null || true)
+  clave=$(printf '%s' "$1" | jqr -r '.data["certificate.default.private-key"] // "" | gsub("^\\s+|\\s+$"; "")' 2>/dev/null || true)
+  [ "$cert" = "%{file:$ruta/cert.pem}%" ] && [ "$clave" = "%{file:$ruta/key.pem}%" ]
+}
+
+# Borra certificate.default.* (con el punto: no toca otros identificadores
+# que empiecen igual).
+OP_RETIRAR_CERT_ANTIGUO='{"type":"clear","prefix":"certificate.default."}'
+
+# Instalación de la guía 0.x sin Cloudflare: el mismo certificado pasa a
+# certificate.mailway (las rutas que mantiene el extractor, con el nombre del
+# servidor como sujeto explícito) y certificate.default se borra en la misma
+# petición, después: el motor no se queda sin certificado en ningún momento.
+# El extractor sustituye al volcado antiguo y retira del volumen las claves de
+# los demás dominios que este copiaba.
+pasar_volcado_antiguo_al_extractor() {
+  local ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
+  info "El motor usa el certificado que volcaba traefik-certs-dumper (instalación anterior): pasa al extractor, que lo renueva."
+  CERT_CONFIGURADO=1
+  if ! motor_cambios "[$(motor_op_insertar \
+    certificate.mailway.cert "%{file:$ruta/cert.pem}%" \
+    certificate.mailway.private-key "%{file:$ruta/key.pem}%" \
+    certificate.mailway.default true \
+    certificate.mailway.subjects.0 "$MAIL_HOSTNAME"),$OP_RETIRAR_CERT_ANTIGUO]"; then
+    RESUMEN_CERT="el de la instalación anterior, SIN RENOVACIÓN: no se pudo pasar al extractor (repite con --actualizar)"
+    aviso "No se pudo pasar el certificado al extractor: el motor sigue con el de la instalación anterior, que nadie renueva. Repite con --actualizar."
+    return 0
+  fi
+  motor_api GET /api/reload/certificate >/dev/null || true
+  ok "Certificado del motor en certificate.mailway; retirado certificate.default."
+  aplicar_extractor
+}
+
+# Con el ACME del motor, el certificate.default de la guía 0.x sobra: apunta a
+# ficheros que ya nadie renueva y competiría con el certificado de ACME.
+retirar_certificado_antiguo() {
+  if motor_cambios "[$OP_RETIRAR_CERT_ANTIGUO]"; then
+    ok "Retirado certificate.default, el certificado de la instalación anterior: el motor pasa a usar el de Let's Encrypt."
+  else
+    aviso "No se pudo retirar certificate.default, el certificado de la instalación anterior, que ya nadie renueva. Bórralo en la web del motor (Settings → TLS → Certificates)."
+  fi
+}
+
 aplicar_extractor() {
   if ! arrancar_extractor; then
     RESUMEN_CERT="el de Traefik, pero el extractor no arranca (docker logs mailway-certs-dumper)"
@@ -1378,7 +1532,10 @@ aplicar_extractor() {
 # Con el ACME del motor, el extractor solo sigue si el motor conserva además
 # certificate.mailway: el motor vuelve a cargar esos ficheros en cada recarga
 # de certificados y no deben caducar. Si no, se retira y se limpian del
-# volumen las claves de otros dominios que dejó el volcado antiguo.
+# volumen las claves de otros dominios que dejó el volcado antiguo: también
+# sin contenedor del extractor si el motor venía de ese volcado ($2 = 1), ya
+# que la migración retira el contenedor de traefik-certs-dumper.
+#   extractor_con_acme <con certificate.mailway: 0|1> [con el volcado antiguo: 0|1]
 extractor_con_acme() {
   if [ "$1" = 1 ]; then
     if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then return 0; fi
@@ -1389,12 +1546,15 @@ extractor_con_acme() {
     fi
     return 0
   fi
-  docker inspect mailway-certs-dumper >/dev/null 2>&1 || return 0
-  docker rm -f mailway-certs-dumper >/dev/null
+  if docker inspect mailway-certs-dumper >/dev/null 2>&1; then
+    docker rm -f mailway-certs-dumper >/dev/null
+  elif [ "${2:-0}" != 1 ]; then
+    return 0
+  fi
   if compose_q --profile tls run --rm --no-deps -T certs-dumper python /app/extractor.py purgar; then
-    ok "Extractor del certificado retirado (el motor usa su propio ACME) y volumen de certificados limpio."
+    ok "El motor usa su propio ACME: sin extractor del certificado y con el volumen de certificados limpio."
   else
-    aviso "Extractor retirado, pero no se pudo limpiar su volumen. A mano: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
+    aviso "No se pudo limpiar el volumen de certificados del motor. A mano: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
   fi
 }
 
@@ -2233,6 +2393,18 @@ MARCA_OVERRIDE="# Generado por el instalador de Mailway"
 
 confirmar_traefik() { [ "${MAILWAY_TRAEFIK_PROVEEDOR:-}" = 1 ] || confirmar "$1" s; }
 
+# ¿Es de Mailway el override de Traefik de la carpeta de Skyway? El que genera
+# este instalador lleva MARCA_OVERRIDE en la primera línea. El que se copiaba
+# a mano de Ajustes → Marca blanca con la guía 0.x («# docker-compose.override.yml
+# — en la carpeta de Skyway.») no la lleva, pero sí el proveedor HTTP del
+# panel (/api/traefik/config) o su cabecera X-Mailway-Token.
+override_de_mailway() {
+  [[ $(head -n 1 "$1") == "$MARCA_OVERRIDE"* ]] || grep -Eq '/api/traefik/config|X-Mailway-Token' "$1"
+}
+
+# Parámetros con los que corre ahora el Traefik de Skyway (JSON).
+argumentos_traefik() { docker inspect -f '{{json .Config.Cmd}}' skyway-traefik 2>/dev/null || printf '[]'; }
+
 recrear_traefik() {
   local salida
   # Sin la LETSENCRYPT_EMAIL del instalador: Traefik debe tomar la del .env
@@ -2253,7 +2425,7 @@ configurar_proveedor_traefik() {
     return 0
   fi
   local argumentos override="" compose_skyway=""
-  argumentos=$(docker inspect -f '{{json .Config.Cmd}}' skyway-traefik 2>/dev/null || printf '[]')
+  argumentos=$(argumentos_traefik)
   if [ -n "$SKYWAY_DIR" ] && [ -f "$SKYWAY_DIR/docker-compose.yml" ]; then
     compose_skyway="$SKYWAY_DIR/docker-compose.yml"
     override="$SKYWAY_DIR/docker-compose.override.yml"
@@ -2283,6 +2455,14 @@ configurar_proveedor_traefik() {
   fi
   if [ -f "$override" ]; then
     aviso "Ya existe $override y no se modifica. Añade a mano las líneas de deploy/skyway-traefik-override.yml."
+    return 0
+  fi
+  # El panel de una instalación anterior guarda su propio token de Traefik en
+  # su base de datos: con el de deploy/.env, Traefik recibiría un 401 en cada
+  # consulta. El bloque con el token bueno lo muestra el propio panel.
+  if [ "${TRAEFIK_TOKEN_PROPIO:-1}" = 0 ]; then
+    aviso "El panel usa su propio token de Traefik, que el instalador no conoce: no se genera $override."
+    aviso "Copia el bloque de Ajustes → Rutas de Traefik del panel (antes, Ajustes → Marca blanca) en $override y ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
     return 0
   fi
   confirmar_traefik "¿Configurar el Traefik de Skyway para los dominios de los clientes? Traefik se reinicia unos segundos." ||
@@ -2318,33 +2498,46 @@ configurar_proveedor_traefik() {
   ok "Traefik consulta $endpoint."
 }
 
-# Skyway con el puente de Mailway: solo hay que retirar lo que instalaron
-# versiones anteriores de este instalador y asegurarse de que Traefik corre
-# con la configuración de Skyway.
+# Skyway con el puente de Mailway: solo hay que retirar el override de
+# Mailway que dejó una instalación anterior (el del instalador o el copiado a
+# mano con la guía 0.x) y asegurarse de que Traefik corre con la
+# configuración de Skyway. El «ok» final sale de los parámetros con los que
+# corre Traefik, no de que se haya recreado.
 traefik_con_puente() {
-  local argumentos=$1 compose_skyway=$2 override=$3
+  local argumentos=$1 compose_skyway=$2 override=$3 queda_override=0
   if [ -n "$override" ] && [ -f "$override" ]; then
-    if head -n 1 "$override" | grep -q "^$MARCA_OVERRIDE"; then
-      if confirmar_traefik "Skyway ya lee las rutas de Mailway y $override (de una instalación anterior) sobra. ¿Retirarlo y recrear Traefik?"; then
+    if override_de_mailway "$override"; then
+      if confirmar_traefik "Skyway ya lee las rutas de Mailway y $override (de una instalación anterior de Mailway) sobra. ¿Retirarlo y recrear Traefik?"; then
         mv "$override" "$override.mailway-retirado"
         ok "Retirado $override (se conserva como $override.mailway-retirado)."
+        if [[ $(head -n 1 "$override.mailway-retirado") != "$MARCA_OVERRIDE"* ]]; then
+          info "Si añadiste en él otros ajustes propios, recupéralos de esa copia."
+        fi
         recrear_traefik || return 0
-        argumentos=$(docker inspect -f '{{json .Config.Cmd}}' skyway-traefik 2>/dev/null || printf '[]')
+        argumentos=$(argumentos_traefik)
       else
-        aviso "Se mantiene $override: fija los flags antiguos de Traefik. Bórralo cuando puedas."
+        queda_override=1
+        aviso "Se mantiene $override: fija los flags antiguos de Traefik y deja sin efecto el puente de Skyway. Bórralo cuando puedas."
       fi
     elif grep -q 'command' "$override"; then
       aviso "$override redefine opciones de Traefik: comprueba que no sustituye el «command» de Skyway ni añade otro proveedor HTTP."
     fi
   fi
+  # Recrear Traefik con el override de Mailway aún en su sitio no cambiaría nada.
+  if [ "$queda_override" = 0 ] && ! printf '%s' "$argumentos" | grep -q 'api/traefik/mailway' &&
+    [ -n "$compose_skyway" ] && grep -q 'api/traefik/mailway' "$compose_skyway" &&
+    confirmar_traefik "El Traefik de Skyway aún no usa la configuración actual de Skyway. ¿Recrearlo ahora?"; then
+    recrear_traefik || return 0
+    argumentos=$(argumentos_traefik)
+  fi
   if ! printf '%s' "$argumentos" | grep -q 'api/traefik/mailway'; then
-    if [ -n "$compose_skyway" ] && grep -q 'api/traefik/mailway' "$compose_skyway" &&
-      confirmar_traefik "El Traefik de Skyway aún no usa la configuración actual de Skyway. ¿Recrearlo ahora?"; then
-      recrear_traefik || return 0
+    aviso "El Traefik de Skyway no lee las rutas de Mailway: sus parámetros no incluyen el proveedor de Skyway (api/traefik/mailway)."
+    if [ -n "$override" ] && [ -f "$override" ] && grep -q 'command' "$override"; then
+      aviso "Los sustituye el «command» de $override: retíralo y ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
     else
-      aviso "El Traefik de Skyway aún no lee las rutas de Mailway: ejecuta «docker compose up -d traefik» en la carpeta de Skyway."
-      return 0
+      aviso "Ejecuta «docker compose up -d traefik» en la carpeta de Skyway y comprueba que Skyway es la 0.34 o posterior."
     fi
+    return 0
   fi
   ok "Skyway sirve a Traefik las rutas de Mailway: no hace falta ningún fichero adicional."
   info "Las lee a través de la conexión con el panel que deja el emparejado (siguiente paso)."
