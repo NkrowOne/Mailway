@@ -108,7 +108,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
       {/* 1. Lo que más ahorra: que el titular lo configure solo. */}
       <Seccion titulo="Enviar al titular">
         <p className="text-base text-tinta-2">
-          Cree un enlace con las instrucciones para configurar <span className="valor break-words">{email}</span> en el
+          Crea un enlace con las instrucciones para configurar <span className="valor break-words">{email}</span> en el
           móvil o en el ordenador. El titular no necesita cuenta en el panel.
         </p>
 
@@ -124,10 +124,10 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
                 <p>Válido hasta el {fechaLarga(creado.expiresAt)}.</p>
                 {creado.hasPassword && (
                   <p>
-                    Incluye la contraseña del buzón: envíelo solo al titular, preferiblemente por un canal privado.
+                    Incluye la contraseña del buzón: envíalo solo al titular, preferiblemente por un canal privado.
                   </p>
                 )}
-                <p>El enlace solo se muestra ahora; si lo pierde, cree otro.</p>
+                <p>El enlace solo se muestra ahora; si lo pierdes, crea otro.</p>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -152,7 +152,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
               // La contraseña no se guarda en claro: solo se puede incluir la
               // que se acaba de generar. Se dice, en lugar de ocultar la opción.
               <p className="text-sm text-tinta-3">
-                Para incluir la contraseña en el enlace, restablézcala desde la ficha del buzón: solo se puede
+                Para incluir la contraseña en el enlace, restablécela desde la ficha del buzón: solo se puede
                 incluir justo después de generarla.
               </p>
             )}

@@ -258,13 +258,13 @@ export function registerAlertRoutes(app: FastifyInstance): void {
     if (configured.length === 0) {
       return {
         ok: false,
-        error: 'Todavía no hay ningún canal configurado. Complete al menos uno y guarde los cambios.',
+        error: 'Todavía no hay ningún canal configurado. Completa al menos uno y guarda los cambios.',
       };
     }
     const failures = await dispatch({
       severity: 'info',
       title: 'Aviso de prueba',
-      message: 'Si recibe este mensaje, Mailway podrá avisarle por este canal cuando algo falle.',
+      message: 'Si recibes este mensaje, Mailway podrá avisarte por este canal cuando algo falle.',
       remedy: 'No es necesario hacer nada: se trata de una prueba.',
     });
     audit(req, 'notify.test_sent', { failures });

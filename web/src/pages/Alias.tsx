@@ -126,7 +126,7 @@ export default function Alias() {
         <div className="mb-4">
           <BandaAviso>
             Se ha alcanzado el máximo de alias del plan ({clientePropio!.plan.maxAliases}). Para crear más,
-            elimine alguno o solicite una ampliación del plan.
+            elimina alguno o solicita una ampliación del plan.
           </BandaAviso>
         </div>
       )}
@@ -142,7 +142,7 @@ export default function Alias() {
             void domains.refetch();
           }}
         >
-          {mensajeDe(error, 'No se han podido cargar los alias.')} Compruebe la conexión y vuelva a intentarlo.
+          {mensajeDe(error, 'No se han podido cargar los alias.')} Comprueba la conexión y vuelve a intentarlo.
         </BandaError>
       ) : domainList.length === 0 ? (
         <Hoja flush>
@@ -154,7 +154,7 @@ export default function Alias() {
               </Link>
             }
           >
-            Los alias son direcciones de sus dominios, como ventas@sudominio.com.
+            Los alias son direcciones de tus dominios, como ventas@tudominio.com.
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
@@ -398,7 +398,7 @@ function FormularioAlias({
     e.preventDefault();
     if (!editando) {
       if (!domainId) {
-        setError('Seleccione un dominio que admita alias.');
+        setError('Selecciona un dominio que admita alias.');
         return;
       }
       const errorNombre = errorNombreBuzon(localPart.trim().toLowerCase());
@@ -409,7 +409,7 @@ function FormularioAlias({
     }
     const limpios = externos.map((x) => x.trim().toLowerCase()).filter(Boolean);
     if (internos.size + limpios.length === 0) {
-      setError('Seleccione al menos un buzón o añada una dirección externa.');
+      setError('Selecciona al menos un buzón o añade una dirección externa.');
       return;
     }
     if (internos.size + limpios.length > MAX_DESTINOS) {
@@ -423,11 +423,11 @@ function FormularioAlias({
     }
     const propia = limpios.find((x) => dominiosInstancia.has(x.split('@')[1] ?? ''));
     if (propia) {
-      // Solo se puede indicar «selecciónela en la lista» si está en la lista:
+      // Solo se puede indicar «selecciónala en la lista» si está en la lista:
       // un buzón de otro cliente no se ofrece y el servidor lo rechazaría.
       setError(
         correosCandidatos.has(propia)
-          ? `${propia} es de un dominio de esta plataforma: selecciónela en la lista de buzones.`
+          ? `${propia} es de un dominio de esta plataforma: selecciónala en la lista de buzones.`
           : `${propia} pertenece a otro cliente de esta plataforma y no puede usarse como destino.`,
       );
       return;
@@ -488,10 +488,10 @@ function FormularioAlias({
         <fieldset className="flex flex-col gap-2">
           <legend className="rotulo mb-1">Buzones de destino</legend>
           {mailboxesError ? (
-            <BandaError>No se han podido cargar los buzones. Cierre el diálogo y vuelva a intentarlo.</BandaError>
+            <BandaError>No se han podido cargar los buzones. Cierra el diálogo y vuelve a intentarlo.</BandaError>
           ) : candidatos.length === 0 ? (
             <p className="text-sm text-tinta-3">
-              Este cliente aún no tiene buzones. Puede reenviar a una dirección externa o crear antes un buzón.
+              Este cliente aún no tiene buzones. Puedes reenviar a una dirección externa o crear antes un buzón.
             </p>
           ) : (
             <>

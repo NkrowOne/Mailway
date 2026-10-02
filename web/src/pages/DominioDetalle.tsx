@@ -130,15 +130,15 @@ export default function DominioDetalle() {
       } else if (propiedadNueva) {
         toast(
           'ok',
-          'Propiedad del dominio comprobada: ya puede crear buzones y alias. Para enviar y recibir correo, complete los registros obligatorios.',
+          'Propiedad del dominio comprobada: ya puedes crear buzones y alias. Para enviar y recibir correo, completa los registros obligatorios.',
         );
       } else if (origen === 'propiedad' && propiedadPendiente(d)) {
         toast(
           'error',
-          'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acaba de crearlo, espere unos minutos y vuelva a verificar.',
+          'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acabas de crearlo, espera unos minutos y vuelve a verificar.',
         );
       } else if (medicionIlegible(d)) {
-        toast('error', 'No se ha podido consultar el DNS del dominio. Vuelva a medir en unos minutos.');
+        toast('error', 'No se ha podido consultar el DNS del dominio. Vuelve a medir en unos minutos.');
       } else {
         toast(
           'ok',
@@ -300,7 +300,7 @@ export default function DominioDetalle() {
                 veredictoObligatorios === 'normal'
                   ? undefined
                   : ilegible
-                    ? 'No se ha podido consultar el DNS. Vuelva a medir en unos minutos.'
+                    ? 'No se ha podido consultar el DNS. Vuelve a medir en unos minutos.'
                     : 'Mientras falte alguno, el dominio no puede enviar ni recibir correo.'
               }
             />
@@ -344,8 +344,8 @@ export default function DominioDetalle() {
             flush
           >
             <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
-              Para crearlos manualmente, copie cada valor de referencia en el panel DNS de su
-              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelva a medir
+              Para crearlos manualmente, copia cada valor de referencia en el panel DNS de tu
+              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a medir
               cuando estén creados.
             </p>
             <ul>
@@ -422,7 +422,7 @@ export default function DominioDetalle() {
             DNS no se modifican.
           </p>
           <Input
-            label={`Escriba ${visible} para confirmar`}
+            label={`Escribe ${visible} para confirmar`}
             mono
             value={confirmText}
             onChange={(e) => setConfirmText(e.target.value)}
@@ -477,10 +477,10 @@ function BloquePropiedad({
     >
       <div className="flex flex-col gap-3">
         <p className="max-w-[75ch] text-base text-tinta-2">
-          Antes de crear buzones o alias es necesario comprobar que el dominio es suyo. Queda
+          Antes de crear buzones o alias es necesario comprobar que el dominio es tuyo. Queda
           comprobado en cuanto el registro MX apunta a este servidor. Si el correo del dominio
           todavía llega a otro proveedor (por ejemplo, para preparar los buzones antes del
-          traslado), cree este registro TXT, que no afecta al correo actual, y pulse «Verificar».
+          traslado), crea este registro TXT, que no afecta al correo actual, y pulsa «Verificar».
         </p>
         <Muestra rotulo="Registro TXT de verificación" copiar={registro.content}>
           <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
@@ -634,7 +634,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
     >
       {hayConflicto && conflicto.data?.aviso && (
         <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
-          <p className="rotulo text-fuera">No lo importe todavía</p>
+          <p className="rotulo text-fuera">No lo importes todavía</p>
           <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.aviso}</p>
         </div>
       )}
@@ -642,7 +642,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       <p className="max-w-[75ch] text-base text-tinta-2">
         Para otros proveedores, o para importarlo manualmente en Cloudflare:{' '}
         <span className="valor">DNS → Records → Import and Export → Import</span>. Al terminar,
-        compruebe que los registros quedan en <strong>gris (DNS only)</strong>: con la nube naranja
+        comprueba que los registros quedan en <strong>gris (DNS only)</strong>: con la nube naranja
         el correo no funciona.
       </p>
 

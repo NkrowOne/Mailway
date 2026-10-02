@@ -147,8 +147,8 @@ function GuiaIphone(props: GuiasDispositivoProps & { enEsteDispositivo: boolean 
         <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
           <QR texto={props.appleProfileUrl} etiqueta="Código QR para descargar el perfil en el iPhone o iPad" />
           <Nota>
-            Escanee este código con la cámara del iPhone o iPad: se abrirá Safari y descargará el perfil. Después,
-            siga los pasos a partir del segundo.
+            Escanea este código con la cámara del iPhone o iPad: se abrirá Safari y descargará el perfil. Después,
+            sigue los pasos a partir del segundo.
           </Nota>
         </div>
       )}
@@ -156,34 +156,34 @@ function GuiaIphone(props: GuiasDispositivoProps & { enEsteDispositivo: boolean 
         Instalar perfil
       </a>
       <p className="max-w-[70ch] border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta">
-        <strong className="font-semibold">Importante:</strong> abra esta página en Safari; otros navegadores no
+        <strong className="font-semibold">Importante:</strong> abre esta página en Safari; otros navegadores no
         permiten instalar perfiles. El perfil descargado caduca si no se instala en 8 minutos.
       </p>
       <Pasos>
         <Paso n={1}>
-          Pulse <Ui>Instalar perfil</Ui>. Cuando Safari pregunte si desea descargar un perfil de configuración, pulse{' '}
+          Pulsa <Ui>Instalar perfil</Ui>. Cuando Safari pregunte si quieres descargar un perfil de configuración, pulsa{' '}
           <Ui>Permitir</Ui> y después <Ui>Cerrar</Ui>.
         </Paso>
         <Paso n={2}>
-          Abra la app <Ui>Ajustes</Ui> y pulse <Ui>Perfil descargado</Ui>, que aparece justo debajo de su nombre. Si no
+          Abre la app <Ui>Ajustes</Ui> y pulsa <Ui>Perfil descargado</Ui>, que aparece justo debajo de tu nombre. Si no
           aparece, está en Ajustes → General → VPN y gestión de dispositivos.
         </Paso>
         <Paso n={3}>
-          Pulse <Ui>Instalar</Ui> (arriba a la derecha), introduzca el código de desbloqueo del dispositivo y vuelva a
+          Pulsa <Ui>Instalar</Ui> (arriba a la derecha), introduce el código de desbloqueo del dispositivo y vuelve a
           pulsar <Ui>Instalar</Ui> para confirmar.
         </Paso>
         <Paso n={4}>
           {props.perfilIncluyeContrasena
             ? 'La contraseña del buzón ya va incluida en el perfil: no es necesario escribirla.'
-            : 'Cuando se solicite, introduzca la contraseña del buzón.'}
+            : 'Cuando se solicite, introduce la contraseña del buzón.'}
         </Paso>
         <Paso n={5}>
-          Abra la app <Ui>Mail</Ui>. El buzón aparecerá en unos segundos.
+          Abre la app <Ui>Mail</Ui>. El buzón aparecerá en unos segundos.
         </Paso>
       </Pasos>
       <Nota>
         El sistema puede indicar que el perfil «No está verificado». Es habitual en los perfiles de correo y no impide
-        instalarlo. Para quitar la cuenta más adelante, elimine el perfil desde el mismo apartado de Ajustes.
+        instalarlo. Para quitar la cuenta más adelante, elimina el perfil desde el mismo apartado de Ajustes.
       </Nota>
     </>
   );
@@ -193,29 +193,29 @@ function GuiaMac(props: GuiasDispositivoProps) {
   return (
     <>
       <p className="max-w-[70ch] text-base text-tinta-2">
-        Para la app Mail del Mac. Si utiliza Outlook o Thunderbird, consulte su pestaña.
+        Para la app Mail del Mac. Si utilizas Outlook o Thunderbird, consulta su pestaña.
       </p>
       <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('tinta')} self-stretch sm:self-start`}>
         Descargar perfil
       </a>
       <Pasos>
         <Paso n={1}>
-          Pulse <Ui>Descargar perfil</Ui> y abra el archivo descargado (normalmente en la carpeta Descargas).
+          Pulsa <Ui>Descargar perfil</Ui> y abre el archivo descargado (normalmente en la carpeta Descargas).
         </Paso>
         <Paso n={2}>
-          Abra <Ui>Ajustes del Sistema</Ui> → General → <Ui>Gestión de dispositivos</Ui>. En macOS Sonoma o versiones
+          Abre <Ui>Ajustes del Sistema</Ui> → General → <Ui>Gestión de dispositivos</Ui>. En macOS Sonoma o versiones
           anteriores: Ajustes del Sistema → Privacidad y seguridad → <Ui>Perfiles</Ui>.
         </Paso>
         <Paso n={3}>
-          Haga doble clic en el perfil de correo, pulse <Ui>Instalar</Ui> e introduzca la contraseña del Mac.
+          Haz doble clic en el perfil de correo, pulsa <Ui>Instalar</Ui> e introduce la contraseña del Mac.
         </Paso>
         <Paso n={4}>
           {props.perfilIncluyeContrasena
             ? 'La contraseña del buzón ya va incluida en el perfil.'
-            : 'Cuando se solicite, introduzca la contraseña del buzón.'}
+            : 'Cuando se solicite, introduce la contraseña del buzón.'}
         </Paso>
         <Paso n={5}>
-          Abra la app <Ui>Mail</Ui>: el buzón aparecerá en la barra lateral.
+          Abre la app <Ui>Mail</Ui>: el buzón aparecerá en la barra lateral.
         </Paso>
       </Pasos>
     </>
@@ -229,26 +229,26 @@ function GuiaAndroid(props: GuiasDispositivoProps) {
       <Subtitulo>Thunderbird para Android (recomendado)</Subtitulo>
       <Pasos>
         <Paso n={1}>
-          Instale la aplicación <Ui>Thunderbird</Ui> desde Google Play.
+          Instala la aplicación <Ui>Thunderbird</Ui> desde Google Play.
         </Paso>
         <Paso n={2}>
-          Ábrala, escriba su dirección de correo y pulse <Ui>Siguiente</Ui>. La configuración se detecta
+          Ábrela, escribe tu dirección de correo y pulsa <Ui>Siguiente</Ui>. La configuración se detecta
           automáticamente.
         </Paso>
-        <Paso n={3}>Introduzca la contraseña del buzón y continúe hasta terminar.</Paso>
+        <Paso n={3}>Introduce la contraseña del buzón y continúa hasta terminar.</Paso>
       </Pasos>
       {props.thunderbirdAndroidQr &&
         (movil ? (
           <Nota>
-            Si abre esta página en un ordenador, verá además un código QR para importar la configuración en
+            Si abres esta página en un ordenador, verás además un código QR para importar la configuración en
             Thunderbird.
           </Nota>
         ) : (
           <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
             <QR texto={props.thunderbirdAndroidQr} etiqueta="Código QR de importación para Thunderbird para Android" />
             <Nota>
-              También puede importar la configuración escaneando este código: en la pantalla de bienvenida de
-              Thunderbird, pulse <Ui>Importar ajustes</Ui> y después <Ui>Escanear código QR</Ui>. La aplicación pedirá la
+              También puedes importar la configuración escaneando este código: en la pantalla de bienvenida de
+              Thunderbird, pulsa <Ui>Importar ajustes</Ui> y después <Ui>Escanear código QR</Ui>. La aplicación pedirá la
               contraseña al terminar.
             </Nota>
           </div>
@@ -258,8 +258,8 @@ function GuiaAndroid(props: GuiasDispositivoProps) {
 
       <Subtitulo>Gmail, Samsung Email u otras aplicaciones</Subtitulo>
       <p className="max-w-[70ch] text-base text-tinta-2">
-        Estas aplicaciones no detectan la configuración automáticamente. Añada una cuenta de tipo <Ui>Otra</Ui> o{' '}
-        <Ui>IMAP</Ui> (en Gmail: Ajustes → Añadir cuenta → Otra → <Ui>Personal (IMAP)</Ui>) y copie estos datos:
+        Estas aplicaciones no detectan la configuración automáticamente. Añade una cuenta de tipo <Ui>Otra</Ui> o{' '}
+        <Ui>IMAP</Ui> (en Gmail: Ajustes → Añadir cuenta → Otra → <Ui>Personal (IMAP)</Ui>) y copia estos datos:
       </p>
       <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
     </>
@@ -271,22 +271,22 @@ function GuiaOutlook(props: GuiasDispositivoProps) {
     <>
       <p className="max-w-[70ch] text-base text-tinta-2">
         Outlook no siempre detecta automáticamente las cuentas IMAP. Si al escribir la dirección la cuenta no se
-        configura sola, elija la configuración manual de tipo IMAP y copie los datos siguientes.
+        configura sola, elige la configuración manual de tipo IMAP y copia los datos siguientes.
       </p>
       <Pasos>
         <Paso n={1}>
-          En Outlook, abra Configuración → Cuentas → <Ui>Agregar cuenta</Ui>. En Outlook clásico: Archivo →{' '}
+          En Outlook, abre Configuración → Cuentas → <Ui>Agregar cuenta</Ui>. En Outlook clásico: Archivo →{' '}
           <Ui>Agregar cuenta</Ui>.
         </Paso>
         <Paso n={2}>
-          Escriba su dirección de correo y pulse <Ui>Continuar</Ui>.
+          Escribe tu dirección de correo y pulsa <Ui>Continuar</Ui>.
         </Paso>
         <Paso n={3}>
-          Si Outlook solicita el tipo de cuenta, elija <Ui>IMAP</Ui> y abra la configuración avanzada o de
+          Si Outlook solicita el tipo de cuenta, elige <Ui>IMAP</Ui> y abre la configuración avanzada o de
           sincronización.
         </Paso>
         <Paso n={4}>
-          Complete los servidores con los datos siguientes y pulse <Ui>Continuar</Ui>.
+          Completa los servidores con los datos siguientes y pulsa <Ui>Continuar</Ui>.
         </Paso>
       </Pasos>
       <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
@@ -303,23 +303,23 @@ function GuiaThunderbird(props: GuiasDispositivoProps) {
   return (
     <>
       <p className="max-w-[70ch] text-base text-tinta-2">
-        Thunderbird obtiene la configuración automáticamente: solo necesita la dirección y la contraseña.
+        Thunderbird obtiene la configuración automáticamente: solo necesitas la dirección y la contraseña.
       </p>
       <Pasos>
         <Paso n={1}>
-          Abra Thunderbird. Si es la primera vez, se abrirá el asistente de cuentas; si no, abra el menú → Nuevo →{' '}
+          Abre Thunderbird. Si es la primera vez, se abrirá el asistente de cuentas; si no, abre el menú → Nuevo →{' '}
           <Ui>Cuenta de correo existente</Ui>.
         </Paso>
         <Paso n={2}>
-          Escriba su nombre, la dirección <span className="valor break-words">{props.email}</span> y la contraseña del
-          buzón, y pulse <Ui>Continuar</Ui>.
+          Escribe tu nombre, la dirección <span className="valor break-words">{props.email}</span> y la contraseña del
+          buzón, y pulsa <Ui>Continuar</Ui>.
         </Paso>
         <Paso n={3}>
-          Compruebe que la configuración encontrada es de tipo IMAP y pulse <Ui>Hecho</Ui>.
+          Comprueba que la configuración encontrada es de tipo IMAP y pulsa <Ui>Hecho</Ui>.
         </Paso>
       </Pasos>
       <Nota>
-        Si la configuración no se detecta, pulse «Configurar manualmente» y utilice los datos de la pestaña «Otros».
+        Si la configuración no se detecta, pulsa «Configurar manualmente» y utiliza los datos de la pestaña «Otros».
       </Nota>
     </>
   );
@@ -329,7 +329,7 @@ function GuiaOtros(props: GuiasDispositivoProps) {
   return (
     <>
       <p className="max-w-[70ch] text-base text-tinta-2">
-        Para cualquier otro programa, configure una cuenta IMAP con estos datos. El usuario es siempre la dirección de
+        Para cualquier otro programa, configura una cuenta IMAP con estos datos. El usuario es siempre la dirección de
         correo completa.
       </p>
       <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
@@ -383,7 +383,7 @@ export function DatosManuales({
       <FilaDato
         {...fila}
         rotulo="Autenticación"
-        nota="Contraseña normal. No active la autenticación de contraseña segura (SPA)."
+        nota="Contraseña normal. No actives la autenticación de contraseña segura (SPA)."
       />
     </div>
   );

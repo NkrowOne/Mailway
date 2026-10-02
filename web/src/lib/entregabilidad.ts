@@ -20,4 +20,4 @@ export function medicionCompleta(health: ServerHealth): boolean {
 }
 
 export const TEXTO_MEDICION_INCOMPLETA =
-  'Medición incompleta: no se ha podido consultar el PTR, el registro A o las listas negras. Vuelva a medir en unos minutos.';
+  'Medición incompleta: no se ha podido consultar el PTR, el registro A o las listas negras. Vuelve a medir en unos minutos.';

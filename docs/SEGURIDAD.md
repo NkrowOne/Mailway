@@ -98,7 +98,8 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 ## 4. Autorización y aislamiento entre clientes
 
 - Cada ruta declara su nivel: `requireAuth`, `requireAdmin`,
-  `requireClientAccess(clientId)` o `requireSession`. Un usuario de cliente
+  `requireClientAccess(clientId)`, `requireSession` o `requireAdminSession`
+  (cambiar la conexión con el motor: sesión de administración, nunca un token). Un usuario de cliente
   recibe `403` al pedir un recurso de otro cliente, exista o no, sin poder
   enumerar identificadores.
 - **Propiedad de los dominios**: nadie crea buzones ni alias en un dominio sin
@@ -146,13 +147,13 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   del panel.
 - `MAILWAY_TRUST_PROXY` (por defecto `1`: un salto, el Traefik) decide qué
   parte de `X-Forwarded-For` se cree. Con `true`, cualquiera podría elegir su
-  IP en cada intento y esquivar los límites. Cámbielo solo si hay más proxies
+  IP en cada intento y esquivar los límites. Cámbialo solo si hay más proxies
   delante.
 
 ## 6. Secretos
 
 - **Clave maestra** (`MAILWAY_SECRET` o `/data/.secret`): firma sesiones, cifra
-  secretos y deriva los tokens de verificación de propiedad. **No la cambie**
+  secretos y deriva los tokens de verificación de propiedad. **No la cambies**
   en una instalación en uso: invalidaría sesiones, tokens de gestión, claves de
   API, enlaces, los secretos cifrados y los TXT de verificación.
 - **Cifrado en reposo** (AES-256-GCM) de lo que hay que recuperar: contraseña
@@ -176,7 +177,7 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 - **API de gestión**: el puerto 8080 no se publica en el host; el panel la usa
   por la red `skyway-edge` y el instalador por la red interna. Traefik publica
   la web del motor en `https://mail.<dominio>`, protegida por la contraseña de
-  administración del motor: use una larga y aleatoria (el instalador la
+  administración del motor: usa una larga y aleatoria (el instalador la
   genera).
 - **Conexión del panel con el motor**: conectarlo, cambiarlo o probarlo
   (`POST /api/setup/engine`, `PUT /api/settings/engine`,
@@ -256,17 +257,17 @@ pertenece a `node` tras actualizar desde imágenes antiguas.
 
 ## 11. Recomendaciones operativas
 
-- Mantenga cerrados en el cortafuegos todos los puertos salvo 22, 25, 80, 443,
+- Mantén cerrados en el cortafuegos todos los puertos salvo 22, 25, 80, 443,
   465, 587, 993 y 4190.
-- Conecte a Cloudflare tokens con los permisos mínimos (*Zona → Zona → Leer* y
+- Conecta a Cloudflare tokens con los permisos mínimos (*Zona → Zona → Leer* y
   *Zona → DNS → Editar*) y limitados a las zonas necesarias; nunca la clave
   global.
-- Dé a cada integración su propio token de gestión, con caducidad si es
-  temporal, y revoque los que no se usen. Para Skyway, un token de
+- Da a cada integración su propio token de gestión, con caducidad si es
+  temporal, y revoca los que no se usen. Para Skyway, un token de
   administración dedicado.
-- Retire `MAILWAY_SMTP_ALLOW_SELF_SIGNED` en cuanto el motor tenga
+- Retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` en cuanto el motor tenga
   certificado.
-- Revise **Actividad** y **Avisos** con regularidad y configure al menos un
+- Revisa **Actividad** y **Avisos** con regularidad y configura al menos un
   canal de aviso.
-- Guarde cifradas las copias de `/data`, del volumen del motor y de
+- Guarda cifradas las copias de `/data`, del volumen del motor y de
   `deploy/.env`.

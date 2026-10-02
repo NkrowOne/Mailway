@@ -40,7 +40,7 @@ export default function MiBuzon() {
   if (me.isPending) {
     return (
       <PaginaEstado>
-        <Midiendo label="Cargando su buzón…" />
+        <Midiendo label="Cargando tu buzón…" />
       </PaginaEstado>
     );
   }
@@ -57,7 +57,7 @@ export default function MiBuzon() {
           <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">
             No se ha podido cargar la página
           </h1>
-          <AvisoError>{mensajeError(err, 'Compruebe la conexión a Internet y vuelva a intentarlo.')}</AvisoError>
+          <AvisoError>{mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}</AvisoError>
           <Button variant="tinta" className={TACTIL} onClick={() => void me.refetch()}>
             Volver a intentarlo
           </Button>
@@ -88,7 +88,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
   async function entrar(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
-      setError('Indique la dirección de correo y la contraseña del buzón.');
+      setError('Indica la dirección de correo y la contraseña del buzón.');
       return;
     }
     setBusy(true);
@@ -128,7 +128,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
             <div>
               <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">Mi buzón</h1>
               <p className="mt-1 text-base text-tinta-2">
-                Entre con su dirección de correo y la contraseña del buzón para configurar sus dispositivos o cambiar la
+                Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
                 contraseña.
               </p>
             </div>
@@ -165,7 +165,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
           </form>
         </section>
         <p className="mt-3 text-center text-sm text-tinta-3">
-          Si no recuerda la contraseña, solicite un restablecimiento a la persona que administra su correo.
+          Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.
         </p>
       </div>
     </div>
@@ -230,7 +230,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       <Hoja title="Correo web">
         <div className="flex flex-col gap-3">
           <p className="max-w-[70ch] text-base text-tinta-2">
-            Lea y envíe correo desde cualquier navegador con su dirección y su contraseña.
+            Lee y envía correo desde cualquier navegador con tu dirección y tu contraseña.
           </p>
           <BotonWebmail url={me.webmailUrl} />
         </div>
@@ -268,7 +268,7 @@ function HojaEspacio({ me }: { me: PortalMe }) {
           <Escala label="Correo guardado" usado={usado} maximo={maximo} unidad={enGb ? 'GB' : 'MB'} limiteEsFuera />
           <Nota>
             {me.usedBytes !== null && `Ocupa ${formatoBytes(me.usedBytes)}. `}
-            Si se acerca al límite, elimine mensajes antiguos o con adjuntos grandes y vacíe la papelera.
+            Si se acerca al límite, elimina mensajes antiguos o con adjuntos grandes y vacía la papelera.
           </Nota>
         </div>
       )}
@@ -326,9 +326,9 @@ function HojaContrasenasAplicacion() {
     <Hoja title="Contraseñas de aplicación" flush>
       <div className="flex flex-col gap-4 p-4">
         <p className="max-w-[70ch] text-base text-tinta-2">
-          Cree una contraseña distinta para cada dispositivo o programa (el móvil, el portátil, Outlook…) y utilícela
-          en lugar de la contraseña principal. Si pierde el móvil, revoque solo la suya: el resto seguirá funcionando y
-          no tendrá que cambiar la contraseña principal.
+          Crea una contraseña distinta para cada dispositivo o programa (el móvil, el portátil, Outlook…) y utilízala
+          en lugar de la contraseña principal. Si pierdes el móvil, revoca solo la suya: el resto seguirá funcionando y
+          no tendrás que cambiar la contraseña principal.
         </p>
 
         {nueva ? (
@@ -340,7 +340,7 @@ function HojaContrasenasAplicacion() {
               </div>
             </Muestra>
             <Nota>
-              Escríbala ahora en el dispositivo, en el campo de la contraseña. Por seguridad, no se volverá a mostrar.
+              Escríbela ahora en el dispositivo, en el campo de la contraseña. Por seguridad, no se volverá a mostrar.
             </Nota>
             <Button variant="perfil" className={`${TACTIL} self-stretch sm:self-start`} onClick={() => setNueva(null)}>
               Hecho
@@ -386,7 +386,7 @@ function HojaContrasenasAplicacion() {
       ) : todas.length === 0 ? (
         <div className="border-t border-regla">
           <Vacio title="Aún no hay contraseñas de aplicación">
-            Cree la primera para el dispositivo que vaya a configurar.
+            Crea la primera para el dispositivo que vayas a configurar.
           </Vacio>
         </div>
       ) : apps.length === 0 ? (
@@ -493,7 +493,7 @@ function HojaCambioContrasena() {
   function enviar(e: FormEvent) {
     e.preventDefault();
     // Las comprobaciones evidentes se hacen aquí para no gastar intentos.
-    if (!actual) return setError('Indique la contraseña actual.');
+    if (!actual) return setError('Indica la contraseña actual.');
     if (nueva.length < 10) return setError('La nueva contraseña debe tener al menos 10 caracteres.');
     if (nueva !== repetida) return setError('Las dos contraseñas nuevas no coinciden.');
     if (nueva === actual) return setError('La nueva contraseña debe ser distinta de la actual.');
@@ -505,7 +505,7 @@ function HojaCambioContrasena() {
     <Hoja title="Cambiar la contraseña">
       <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
         <Nota>
-          Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzca en ellos
+          Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzcas en ellos
           la nueva. Los que utilizan una contraseña de aplicación no se ven afectados.
         </Nota>
         <Input

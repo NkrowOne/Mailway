@@ -375,10 +375,11 @@ export default function PanelAdmin() {
                         <span className="text-sm text-tinta-3"> · {autor.texto}</span>
                       )}
                     </span>
-                    {/* En móvil el detalle baja a su propia línea: encajonado junto
-                        a la fecha quedaba en una columna de pocas letras. */}
+                    {/* El detalle va siempre en su propia línea: esta tarjeta ocupa
+                        media columna también en escritorio, y encajonado junto a
+                        la fecha quedaba en una columna de pocas letras. */}
                     {detalle && (
-                      <span className="valor order-last min-w-0 basis-full text-sm text-tinta-3 [overflow-wrap:anywhere] sm:order-none sm:basis-0 sm:flex-1">
+                      <span className="valor order-last min-w-0 basis-full text-sm text-tinta-3 [overflow-wrap:anywhere]">
                         {detalle}
                       </span>
                     )}

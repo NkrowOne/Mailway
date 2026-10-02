@@ -74,7 +74,7 @@ export function HojaServidorCorreo() {
           texto={
             estado.error instanceof ApiError
               ? estado.error.message
-              : 'No se ha podido leer el estado del servidor de correo. Compruebe que Mailway sigue en marcha.'
+              : 'No se ha podido leer el estado del servidor de correo. Comprueba que Mailway sigue en marcha.'
           }
         />
         <Button variant="perfil" className="mt-3" onClick={() => void estado.refetch()}>
@@ -91,7 +91,7 @@ export function HojaServidorCorreo() {
         <Vacio title={data.engine.kind === 'demo' ? 'Modo demostración' : 'Motor sin conectar'}>
           {data.engine.kind === 'demo'
             ? 'No hay un servidor de correo real. El nombre del servidor y el certificado se configuran al conectar Stalwart en «Motor de correo».'
-            : 'Conecte el motor en «Motor de correo» para configurar el nombre del servidor y el certificado.'}
+            : 'Conecta el motor en «Motor de correo» para configurar el nombre del servidor y el certificado.'}
         </Vacio>
       </Hoja>
     );
@@ -143,7 +143,7 @@ export function HojaServidorCorreo() {
       </div>
       {!data.hostname.expected && (
         <p className="px-4 pb-3 text-sm text-tinta-3">
-          Indique el nombre del servidor de correo en «Identidad del servidor» para poder aplicar los
+          Indica el nombre del servidor de correo en «Identidad del servidor» para poder aplicar los
           ajustes y emitir el certificado.
         </p>
       )}
@@ -232,7 +232,7 @@ function construirFilas(data: EngineStatus): Fila[] {
           : '';
     const via =
       tls.via === 'interno'
-        ? ` Medido por la red interna: el nombre público no respondió desde el panel (${tls.publicError ?? 'sin detalle'}); compruebe que el puerto ${tls.port} está abierto en el cortafuegos.`
+        ? ` Medido por la red interna: el nombre público no respondió desde el panel (${tls.publicError ?? 'sin detalle'}); comprueba que el puerto ${tls.port} está abierto en el cortafuegos.`
         : '';
     notaTls = `${[problema, caducidad].filter(Boolean).join(' ')}${via}`.trim() || undefined;
   }
@@ -331,7 +331,7 @@ function EmisionCertificado({
       } else {
         toast(
           'ok',
-          `Emisión solicitada en la zona ${res.acme.zone}. Let’s Encrypt tarda unos minutos; pulse «Comprobar de nuevo» después.`,
+          `Emisión solicitada en la zona ${res.acme.zone}. Let’s Encrypt tarda unos minutos; pulsa «Comprobar de nuevo» después.`,
         );
         setAbierto(false);
       }
@@ -344,7 +344,7 @@ function EmisionCertificado({
   function enviar(e: FormEvent) {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contacto.trim())) {
-      setErrorContacto('Indique un correo de contacto válido.');
+      setErrorContacto('Indica un correo de contacto válido.');
       return;
     }
     emitir.mutate();

@@ -168,7 +168,7 @@ export function resolveManagementToken(token: string, ip: string): TokenResoluti
   if (row.expires_at !== null && row.expires_at <= at) {
     return {
       ok: false,
-      message: 'El token de gestión ha caducado. Cree uno nuevo en Conexiones.',
+      message: 'El token de gestión ha caducado. Crea uno nuevo en Conexiones.',
       code: 'token_expired',
     };
   }
@@ -224,7 +224,7 @@ export function sessionHook(req: FastifyRequest, _reply: FastifyReply, done: () 
       // Las claves de envío solo valen en /v1/send, que las valida por su cuenta.
       req.authError = {
         message:
-          'Las claves de API (mw_…) solo sirven para enviar correo con /v1/send. Para gestionar Mailway por API, cree un token de gestión (mwt_…) en Conexiones.',
+          'Las claves de API (mw_…) solo sirven para enviar correo con /v1/send. Para gestionar Mailway por API, crea un token de gestión (mwt_…) en Conexiones.',
         code: 'api_key_not_allowed',
       };
     } else {
@@ -298,7 +298,7 @@ export function requireAdmin(req: FastifyRequest): AuthedUser {
 export function requireClientAccess(req: FastifyRequest, clientId: string): AuthedUser {
   const user = requireAuth(req);
   if (user.role === 'admin') return user;
-  if (user.clientId !== clientId) throw forbidden('No tiene permiso para acceder a este cliente.');
+  if (user.clientId !== clientId) throw forbidden('No tienes permiso para acceder a este cliente.');
   return user;
 }
 
@@ -331,7 +331,7 @@ function checkLoginRate(ip: string, email: string): void {
       .get(emailKey, since) as { count: number }
   ).count;
   if (ipCount >= MAX_ATTEMPTS_PER_IP || emailCount >= MAX_ATTEMPTS_PER_EMAIL) {
-    throw tooMany('Demasiados intentos de inicio de sesión. Espere unos minutos y vuelva a intentarlo.');
+    throw tooMany('Demasiados intentos de inicio de sesión. Espera unos minutos y vuelve a intentarlo.');
   }
 }
 
@@ -392,7 +392,7 @@ export function createInitialAdmin(input: {
 }): AuthedUser {
   return db.transaction(() => {
     if (countUsers() > 0) {
-      throw forbidden('Ya existe un administrador. Inicie sesión con esa cuenta.', 'admin_exists');
+      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.', 'admin_exists');
     }
     return createUser({ ...input, role: 'admin' });
   })();
@@ -415,12 +415,12 @@ export function revokeOtherSessions(userId: string, currentToken?: string): void
 /* -------------------------------- Rutas ----------------------------------- */
 
 const loginSchema = z.object({
-  email: z.string().email('Introduzca un correo electrónico válido.'),
-  password: z.string().min(1, 'Introduzca la contraseña.'),
+  email: z.string().email('Introduce un correo electrónico válido.'),
+  password: z.string().min(1, 'Introduce la contraseña.'),
 });
 
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, 'Introduzca la contraseña actual.'),
+  currentPassword: z.string().min(1, 'Introduce la contraseña actual.'),
   newPassword: z.string().min(10, 'La nueva contraseña debe tener al menos 10 caracteres.'),
 });
 

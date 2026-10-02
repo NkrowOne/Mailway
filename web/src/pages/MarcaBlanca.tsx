@@ -143,6 +143,8 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
     (a, b) => ORDEN[a.status] - ORDEN[b.status] || a.hostname.localeCompare(b.hostname),
   );
   const principales = webmailsPrincipales(lista);
+  // El ejemplo es del lector si es un cliente y de un tercero si es la administración.
+  const ejemploDominio = isAdmin ? 'sucliente.com' : 'tuempresa.com';
 
   return (
     <>
@@ -212,8 +214,8 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
             }
           >
             Por omisión, el webmail se abre en la dirección general del servidor. Con un dominio
-            propio —por ejemplo <span className="valor">webmail.suempresa.com</span>, si{' '}
-            <span className="valor">suempresa.com</span> es un dominio de correo con la propiedad comprobada— se abre
+            propio —por ejemplo <span className="valor">webmail.{ejemploDominio}</span>, si{' '}
+            <span className="valor">{ejemploDominio}</span> es un dominio de correo con la propiedad comprobada— se abre
             {isAdmin
               ? ` con la marca del cliente. Máximo ${MAX_DOMINIOS_PROPIOS} por cliente.`
               : ` con tu marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}

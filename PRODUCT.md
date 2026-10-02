@@ -31,7 +31,7 @@ A diferencia de un panel de hosting genérico o de contratar Mailgun/Google Work
 - El flujo real del administrador: ejecutar el instalador → completar la puesta en marcha → dar de alta un cliente con su usuario → el cliente añade su dominio (Cloudflare en un clic o registros para copiar en su proveedor) → la propiedad del dominio queda comprobada → crea buzones y envía a cada titular su enlace de configuración.
 - Desde Skyway ≥ 0.34, el botón «Correo» de cada proyecto activa un cliente vinculado al proyecto, añade dominios y buzones y conecta servicios por SMTP o por la API; el Traefik de Skyway publica las rutas de Mailway a través de un puente que las filtra.
 - Los envíos automatizados del cliente salen por `POST /v1/send` con `Authorization: Bearer mw_...`; la gestión por API usa tokens `mwt_...`.
-- Idioma de toda la interfaz: español con tratamiento de usted (confirmado por el brief y por Skyway), también el webmail.
+- Idioma de toda la interfaz: español profesional y neutro, tratando al lector de tú (decisión del propietario, común a Mailway y Skyway), también el webmail.
 
 ## Capabilities and Constraints
 

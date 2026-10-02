@@ -162,14 +162,14 @@ export function errorDeCloudflare(httpStatus: number, errores: CfMensaje[] = [])
   if (httpStatus === 429 || tiene(971)) {
     return nuevo(
       429,
-      'Cloudflare ha limitado temporalmente las peticiones de este token (1200 cada 5 minutos). Espere unos minutos y vuelva a intentarlo.',
+      'Cloudflare ha limitado temporalmente las peticiones de este token (1200 cada 5 minutos). Espera unos minutos y vuelve a intentarlo.',
       'cloudflare_rate_limited',
     );
   }
   if (tiene(890190, 1046)) {
     return nuevo(
       409,
-      'La zona tiene activado Cloudflare Email Routing, que bloquea los registros MX y SPF. Desactive Email Routing en el panel de Cloudflare (Email → Email Routing → Settings) y vuelva a intentarlo.',
+      'La zona tiene activado Cloudflare Email Routing, que bloquea los registros MX y SPF. Desactiva Email Routing en el panel de Cloudflare (Email → Email Routing → Settings) y vuelve a intentarlo.',
       'cloudflare_email_routing',
     );
   }
@@ -186,33 +186,33 @@ export function errorDeCloudflare(httpStatus: number, errores: CfMensaje[] = [])
   if (tiene(6003, 6111, 6103, 9106)) {
     return nuevo(
       400,
-      'Cloudflare no acepta la credencial. Utilice un token de API (no la clave global de la API) y cópielo completo.',
+      'Cloudflare no acepta la credencial. Utiliza un token de API (no la clave global de la API) y cópialo completo.',
       'cloudflare_token_malformed',
     );
   }
   if (tiene(1000) || httpStatus === 401) {
     return nuevo(
       400,
-      'El token de Cloudflare no es válido. Compruebe que lo ha copiado completo o genere uno nuevo.',
+      'El token de Cloudflare no es válido. Comprueba que lo has copiado completo o genera uno nuevo.',
       'cloudflare_token_invalid',
     );
   }
   if (tiene(9109)) {
     return nuevo(
       400,
-      'El token de Cloudflare no tiene permiso para esta operación o está restringido por dirección IP. Revise los permisos y las restricciones del token.',
+      'El token de Cloudflare no tiene permiso para esta operación o está restringido por dirección IP. Revisa los permisos y las restricciones del token.',
       'cloudflare_forbidden',
     );
   }
   if (tiene(10000) || httpStatus === 403) {
     return nuevo(
       400,
-      'El token de Cloudflare es válido, pero no tiene permiso sobre esta zona. Asigne los permisos «Zone · Zone · Read» y «Zone · DNS · Edit» e incluya la zona en el token.',
+      'El token de Cloudflare es válido, pero no tiene permiso sobre esta zona. Asigna los permisos «Zone · Zone · Read» y «Zone · DNS · Edit» e incluye la zona en el token.',
       'cloudflare_forbidden',
     );
   }
   if (tiene(81044)) {
-    return nuevo(409, 'El registro ya no existe en Cloudflare. Vuelva a revisar los cambios.', 'cloudflare_not_found');
+    return nuevo(409, 'El registro ya no existe en Cloudflare. Vuelve a revisar los cambios.', 'cloudflare_not_found');
   }
   if (tiene(7000, 7003)) {
     return nuevo(400, 'Cloudflare no reconoce el identificador de la zona o del registro.', 'cloudflare_invalid_id');
@@ -362,7 +362,7 @@ export class CloudflareClient {
       if (nombre === 'TimeoutError' || nombre === 'AbortError') {
         throw new CloudflareError(
           504,
-          'Cloudflare no ha respondido en 15 segundos. Vuelva a intentarlo en unos minutos.',
+          'Cloudflare no ha respondido en 15 segundos. Vuelve a intentarlo en unos minutos.',
           'cloudflare_timeout',
         );
       }
@@ -423,7 +423,7 @@ export class CloudflareClient {
     if (esClaveGlobal(this.token)) {
       throw new CloudflareError(
         400,
-        'Ha introducido la clave global de la API de Cloudflare. Por seguridad, cree un token de API con permisos limitados a las zonas y al DNS.',
+        'Has introducido la clave global de la API de Cloudflare. Por seguridad, crea un token de API con permisos limitados a las zonas y al DNS.',
         'cloudflare_global_key',
       );
     }
@@ -451,7 +451,7 @@ export class CloudflareClient {
     if (!cuenta) {
       throw new CloudflareError(
         400,
-        'El token no da acceso a ninguna zona. Asigne el permiso «Zone · Zone · Read» e incluya las zonas de sus dominios.',
+        'El token no da acceso a ninguna zona. Asigna el permiso «Zone · Zone · Read» e incluye las zonas de tus dominios.',
         'cloudflare_no_zones',
       );
     }
@@ -472,7 +472,7 @@ export class CloudflareClient {
     if (info.status !== 'active') {
       throw new CloudflareError(
         400,
-        'El token de Cloudflare está desactivado o ha caducado. Actívelo o genere uno nuevo.',
+        'El token de Cloudflare está desactivado o ha caducado. Actívalo o genera uno nuevo.',
         'cloudflare_token_inactive',
       );
     }

@@ -203,7 +203,7 @@ export function assertDomainOwnership(domainId: string): void {
   if (!row) throw notFound('Dominio no encontrado.');
   if (row.owner_verified_at) return;
   throw conflict(
-    `Antes de crear buzones o alias en ${domainToUnicode(row.domain) || row.domain} es necesario comprobar que el dominio es suyo: apunte el registro MX a este servidor o añada el registro TXT de verificación que se indica en la ficha del dominio y pulse «Verificar» en esa misma ficha.`,
+    `Antes de crear buzones o alias en ${domainToUnicode(row.domain) || row.domain} es necesario comprobar que el dominio es tuyo: apunta el registro MX a este servidor o añade el registro TXT de verificación que se indica en la ficha del dominio y pulsa «Verificar» en esa misma ficha.`,
     'domain_ownership_pending',
   );
 }
@@ -245,7 +245,7 @@ export function normalizeDomain(input: string): string {
   const ascii = limpio ? domainToASCII(limpio) : '';
   if (!ascii || !DOMAIN_RE.test(ascii)) {
     throw badRequest(
-      'El dominio no es válido. Introdúzcalo sin «http://» ni rutas, por ejemplo: miempresa.com',
+      'El dominio no es válido. Introdúcelo sin «http://» ni rutas, por ejemplo: miempresa.com',
     );
   }
   return ascii;
@@ -344,7 +344,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const user = requireAuth(req);
     const body = z
       .object({
-        domain: z.string({ required_error: 'Introduzca el dominio.' }).min(3, 'Introduzca el dominio.'),
+        domain: z.string({ required_error: 'Introduce el dominio.' }).min(3, 'Introduce el dominio.'),
         clientId: z.string().optional(),
         autoDns: z
           .boolean({ invalid_type_error: 'El campo «autoDns» debe ser verdadero o falso.' })
@@ -353,7 +353,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
       .parse(req.body);
 
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
-    if (!clientId) throw badRequest('Indique a qué cliente pertenece el dominio.');
+    if (!clientId) throw badRequest('Indica a qué cliente pertenece el dominio.');
     requireClientAccess(req, clientId);
     const domain = normalizeDomain(body.domain);
     // Todas las altas de dominio van en fila: entre comprobar que el dominio
@@ -441,7 +441,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
               error:
                 err instanceof HttpError
                   ? err.message
-                  : 'No se ha podido aplicar el DNS en Cloudflare. Vuelva a intentarlo desde la ficha del dominio.',
+                  : 'No se ha podido aplicar el DNS en Cloudflare. Vuelve a intentarlo desde la ficha del dominio.',
             },
           ],
           skipped: [],
@@ -603,7 +603,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
             ? ' y 1 clave de API que envía desde sus buzones (dejará de funcionar)'
             : ` y ${apiKeys} claves de API que envían desde sus buzones (dejarán de funcionar)`;
       throw conflict(
-        `Este dominio tiene ${buzones} con su correo${claves}. Para eliminarlo todo definitivamente, confirme escribiendo el nombre del dominio.`,
+        `Este dominio tiene ${buzones} con su correo${claves}. Para eliminarlo todo definitivamente, confirma escribiendo el nombre del dominio.`,
         'needs_confirmation',
       );
     }
@@ -666,7 +666,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
       );
       throw new HttpError(
         502,
-        `No se han podido modificar en el servidor de correo: ${fallidos.join(', ')}. El resto se ha completado. Vuelva a intentarlo para terminar la eliminación del dominio.`,
+        `No se han podido modificar en el servidor de correo: ${fallidos.join(', ')}. El resto se ha completado. Vuelve a intentarlo para terminar la eliminación del dominio.`,
         'partial_delete',
       );
     }

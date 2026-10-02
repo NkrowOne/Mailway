@@ -263,7 +263,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
       return;
     }
     if (conUsuario && !esCorreoValido(correoUsuario)) {
-      setError('Indique el correo del usuario de acceso (o el correo de contacto).');
+      setError('Indica el correo del usuario de acceso (o el correo de contacto).');
       return;
     }
     setError('');
@@ -286,7 +286,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
         onClose={irAFicha}
         title="Cliente dado de alta"
         confirmarCierre={
-          conContrasena ? { pregunta: '¿Ha guardado la contraseña?', detalle: 'No se podrá volver a ver.' } : null
+          conContrasena ? { pregunta: '¿Has guardado la contraseña?', detalle: 'No se podrá volver a ver.' } : null
         }
         pie={
           <>
@@ -315,7 +315,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             <>
               <BandaAviso>
                 La contraseña del usuario <strong className="font-semibold">solo se muestra ahora</strong>.
-                Entréguela por un canal seguro; podrá cambiarla desde «Mi cuenta».
+                Entrégala por un canal seguro; podrá cambiarla desde «Mi cuenta».
               </BandaAviso>
               <Muestra rotulo="Dirección del panel" copiar={panel}>
                 <p className="valor break-all text-base text-tinta">{panel}</p>
@@ -331,12 +331,12 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
           {resultado.dominio &&
             (resultado.dominio.ok ? (
               <p className="text-base text-tinta-2">
-                Dominio <span className="valor">{resultado.dominio.domain.domain}</span> añadido. Configure su DNS
+                Dominio <span className="valor">{resultado.dominio.domain.domain}</span> añadido. Configura su DNS
                 desde la ficha del dominio.
               </p>
             ) : (
               <BandaError>
-                El cliente se ha creado, pero no se ha podido añadir el dominio: {resultado.dominio.error} Puede
+                El cliente se ha creado, pero no se ha podido añadir el dominio: {resultado.dominio.error} Puedes
                 añadirlo después desde «Dominios».
               </BandaError>
             ))}

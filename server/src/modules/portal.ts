@@ -61,7 +61,7 @@ const RETENCION_ENLACES_MS = 30 * 24 * 3600_000;
 function enlaceNoValido(): HttpError {
   return new HttpError(
     404,
-    'Este enlace de configuración no es válido o ha caducado. Solicite uno nuevo a la persona que administra su correo.',
+    'Este enlace de configuración no es válido o ha caducado. Solicita uno nuevo a la persona que administra tu correo.',
     'setup_link_invalid',
   );
 }
@@ -69,7 +69,7 @@ function enlaceNoValido(): HttpError {
 function buzonSuspendido(): HttpError {
   return new HttpError(
     403,
-    'Este buzón está suspendido. Póngase en contacto con la persona que administra su correo.',
+    'Este buzón está suspendido. Ponte en contacto con la persona que administra tu correo.',
     'mailbox_suspended',
   );
 }
@@ -77,7 +77,7 @@ function buzonSuspendido(): HttpError {
 function sinComprobacion(): HttpError {
   return new HttpError(
     503,
-    'No se ha podido comprobar la contraseña en este momento. Vuelva a intentarlo en unos minutos.',
+    'No se ha podido comprobar la contraseña en este momento. Vuelve a intentarlo en unos minutos.',
     'engine_unreachable',
   );
 }
@@ -89,7 +89,7 @@ function credencialesIncorrectas(): HttpError {
 
 function contrasenaDeAplicacion(): HttpError {
   return badRequest(
-    'Ha introducido una contraseña de aplicación. Aquí es necesaria la contraseña principal del buzón.',
+    'Has introducido una contraseña de aplicación. Aquí es necesaria la contraseña principal del buzón.',
     'app_password_not_allowed',
   );
 }
@@ -266,7 +266,7 @@ function comprobarLimite(email: string, ip: string | null): void {
   const porIp = ip === null ? 0 : contarFallos(`buzon-ip:${ip}`);
   if (porBuzon >= MAX_FALLOS_POR_BUZON || porIp >= MAX_FALLOS_POR_IP) {
     throw tooMany(
-      'Se han producido demasiados intentos fallidos. Espere 15 minutos antes de volver a intentarlo.',
+      'Se han producido demasiados intentos fallidos. Espera 15 minutos antes de volver a intentarlo.',
     );
   }
 }
@@ -430,19 +430,19 @@ function crearSesionBuzon(req: FastifyRequest, reply: FastifyReply, mailboxId: s
 
 function sesionBuzon(req: FastifyRequest): { titular: Titular; tokenHash: string } {
   const token = req.cookies?.[COOKIE_BUZON];
-  if (!token) throw unauthorized('Inicie sesión en «Mi buzón» para continuar.', 'portal_unauthorized');
+  if (!token) throw unauthorized('Inicia sesión en «Mi buzón» para continuar.', 'portal_unauthorized');
   const tokenHash = hashToken(token);
   const row = db
     .prepare('SELECT mailbox_id, expires_at FROM mailbox_sessions WHERE token_hash = ?')
     .get(tokenHash) as { mailbox_id: string; expires_at: number } | undefined;
   if (!row || row.expires_at <= now()) {
     if (row) db.prepare('DELETE FROM mailbox_sessions WHERE token_hash = ?').run(tokenHash);
-    throw unauthorized('La sesión ha caducado. Vuelva a iniciar sesión.', 'portal_unauthorized');
+    throw unauthorized('La sesión ha caducado. Vuelve a iniciar sesión.', 'portal_unauthorized');
   }
   const titular = buzonPorId(row.mailbox_id);
   if (!titular) {
     db.prepare('DELETE FROM mailbox_sessions WHERE token_hash = ?').run(tokenHash);
-    throw unauthorized('La sesión ha caducado. Vuelva a iniciar sesión.', 'portal_unauthorized');
+    throw unauthorized('La sesión ha caducado. Vuelve a iniciar sesión.', 'portal_unauthorized');
   }
   // Suspender el buzón o el cliente corta también las sesiones ya abiertas.
   if (!titular.activo) {
@@ -501,12 +501,12 @@ const crearEnlaceSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().email('Introduzca una dirección de correo válida.'),
-  password: z.string().min(1, 'Introduzca la contraseña.').max(200),
+  email: z.string().trim().toLowerCase().email('Introduce una dirección de correo válida.'),
+  password: z.string().min(1, 'Introduce la contraseña.').max(200),
 });
 
 const cambioSchema = z.object({
-  current: z.string().min(1, 'Introduzca la contraseña actual.').max(200),
+  current: z.string().min(1, 'Introduce la contraseña actual.').max(200),
   next: z
     .string()
     .min(MIN_CONTRASENA, `La nueva contraseña debe tener al menos ${MIN_CONTRASENA} caracteres.`)
@@ -517,7 +517,7 @@ const appPasswordSchema = z.object({
   name: z
     .string()
     .trim()
-    .min(1, 'Indique un nombre que identifique el dispositivo, por ejemplo «Móvil».')
+    .min(1, 'Indica un nombre que identifique el dispositivo, por ejemplo «Móvil».')
     .max(60, 'El nombre no puede superar los 60 caracteres.'),
 });
 
@@ -533,7 +533,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
   const limitePublico = crearLimitador(60, 60_000);
   function limitarPublico(req: FastifyRequest): void {
     if (!limitePublico(req.ip || '')) {
-      throw tooMany('Se han realizado demasiadas peticiones. Espere un minuto y vuelva a intentarlo.');
+      throw tooMany('Se han realizado demasiadas peticiones. Espera un minuto y vuelve a intentarlo.');
     }
   }
 
@@ -545,7 +545,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const body = crearEnlaceSchema.parse(req.body ?? {});
     if (titular.suspendido) {
       throw badRequest(
-        'El buzón o su cliente están suspendidos. Reactívelos antes de crear un enlace de configuración.',
+        'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
         'mailbox_suspended',
       );
     }
@@ -554,7 +554,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     if (body.includePassword) {
       if (!body.password) {
         throw badRequest(
-          'Para incluir la contraseña en el enlace, indique la contraseña que se acaba de generar.',
+          'Para incluir la contraseña en el enlace, indica la contraseña que se acaba de generar.',
           'password_required',
         );
       }
@@ -565,7 +565,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       const claveFallos = `buzon-enlace:${titular.id}`;
       if (contarFallos(claveFallos) >= MAX_FALLOS_ENLACE) {
         throw tooMany(
-          'Se han indicado demasiadas contraseñas que no coinciden con la del buzón. Espere 15 minutos o cree el enlace sin la contraseña.',
+          'Se han indicado demasiadas contraseñas que no coinciden con la del buzón. Espera 15 minutos o crea el enlace sin la contraseña.',
         );
       }
       const ok = await getEngine().verifyCredentials(titular.email, body.password);
@@ -573,14 +573,14 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         // Sin comprobarla no se guarda: podría no ser la del buzón.
         throw new HttpError(
           503,
-          'No se ha podido comprobar la contraseña con el servidor de correo, así que no se ha incluido en el enlace. Vuelva a intentarlo en unos minutos o cree el enlace sin la contraseña.',
+          'No se ha podido comprobar la contraseña con el servidor de correo, así que no se ha incluido en el enlace. Vuelve a intentarlo en unos minutos o crea el enlace sin la contraseña.',
           'engine_unreachable',
         );
       }
       if (!ok) {
         db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)').run(claveFallos, now());
         throw badRequest(
-          'La contraseña indicada no es la del buzón. Compruebe que es la última que se ha generado.',
+          'La contraseña indicada no es la del buzón. Comprueba que es la última que se ha generado.',
           'password_mismatch',
         );
       }

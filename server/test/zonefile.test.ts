@@ -260,5 +260,5 @@ test('el TXT de verificación de la propiedad va una sola vez y con lo recomenda
   // Si el motor lo devolviera (no lo hace), no se duplica.
   assert.equal(registrosDelDominio(dominio, [...delMotor, registroPropiedad(dominio)]).filter(esRegistroPropiedad).length, 1);
   const zona = generarZona({ domain: dominio, records: delMotor, nivel: 'recomendados' });
-  assert.match(zona, /demuestra que el dominio es suyo/);
+  assert.match(zona, /demuestra que el dominio es tuyo/);
 });

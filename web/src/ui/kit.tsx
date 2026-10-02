@@ -457,8 +457,8 @@ export function BotonCopiar({
           ? 'Copiado al portapapeles.'
           : estado === 'fallo'
             ? seleccionado
-              ? 'No se ha podido copiar. El texto queda seleccionado: pulse Ctrl+C para copiarlo.'
-              : 'No se ha podido copiar. Seleccione el texto y cópielo manualmente.'
+              ? 'No se ha podido copiar. El texto queda seleccionado: pulsa Ctrl+C para copiarlo.'
+              : 'No se ha podido copiar. Selecciona el texto y cópialo manualmente.'
             : ''}
       </span>
     </>
@@ -498,7 +498,7 @@ const CAMPOS_ENFOCABLES =
  * a generar otro.
  */
 export interface ConfirmarCierre {
-  /** «¿Ha guardado la contraseña?» */
+  /** «¿Has guardado la contraseña?» */
   pregunta: string;
   /** «No se podrá volver a ver.» */
   detalle: string;

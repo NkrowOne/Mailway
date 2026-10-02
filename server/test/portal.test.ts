@@ -194,7 +194,7 @@ test('incluir la contraseña no sirve de oráculo: 5 fallos por buzón bloquean 
   const bloqueado = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
   assert.equal(bloqueado.statusCode, 429, bloqueado.body);
   assert.equal(bloqueado.json().code, 'rate_limited');
-  assert.match(bloqueado.json().error, /cree el enlace sin la contraseña/);
+  assert.match(bloqueado.json().error, /crea el enlace sin la contraseña/);
 
   // El enlace sin contraseña sigue disponible y otro buzón no se ve afectado.
   assert.equal((await crearEnlace(b.mailboxId)).statusCode, 200);

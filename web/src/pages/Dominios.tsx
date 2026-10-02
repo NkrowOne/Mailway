@@ -41,13 +41,13 @@ interface RespuestaAlta {
  * conflictos sin aplicar reclaman atención: no se anuncian como un éxito.
  */
 function avisoAlta(data: RespuestaAlta, pedido: boolean): { tono: 'ok' | 'error'; texto: string } {
-  if (!pedido) return { tono: 'ok', texto: 'Dominio dado de alta. Configure ahora su DNS.' };
+  if (!pedido) return { tono: 'ok', texto: 'Dominio dado de alta. Configura ahora su DNS.' };
   const cf = data.cloudflare;
   if (!cf || data.cloudflareReason) {
     return {
       tono: 'error',
       texto:
-        'Dominio dado de alta, pero no se ha configurado el DNS en Cloudflare. Consulte el motivo en la ficha del dominio.',
+        'Dominio dado de alta, pero no se ha configurado el DNS en Cloudflare. Consulta el motivo en la ficha del dominio.',
     };
   }
   if (cf.errors.length > 0) {
@@ -55,15 +55,15 @@ function avisoAlta(data: RespuestaAlta, pedido: boolean): { tono: 'ok' | 'error'
       tono: 'error',
       texto:
         cf.applied.length > 0
-          ? 'Dominio dado de alta. Parte de los registros no se ha podido aplicar en Cloudflare: consulte el detalle en la ficha del dominio.'
-          : 'Dominio dado de alta, pero no se ha podido aplicar el DNS en Cloudflare. Consulte el detalle en la ficha del dominio.',
+          ? 'Dominio dado de alta. Parte de los registros no se ha podido aplicar en Cloudflare: consulta el detalle en la ficha del dominio.'
+          : 'Dominio dado de alta, pero no se ha podido aplicar el DNS en Cloudflare. Consulta el detalle en la ficha del dominio.',
     };
   }
   if ((cf.skipped ?? []).length > 0) {
     return {
       tono: 'error',
       texto:
-        'Dominio dado de alta. Hay registros en conflicto en Cloudflare que no se han modificado: revíselos en la ficha del dominio.',
+        'Dominio dado de alta. Hay registros en conflicto en Cloudflare que no se han modificado: revísalos en la ficha del dominio.',
     };
   }
   if (cf.applied.length > 0) return { tono: 'ok', texto: 'Dominio dado de alta y DNS aplicado en Cloudflare.' };
@@ -185,7 +185,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
       {clientePropio?.suspended && (
         <div className="mb-4">
           <BandaAviso titulo="Servicio suspendido">
-            Mientras el servicio esté suspendido no se pueden añadir dominios. Póngase en contacto con el
+            Mientras el servicio esté suspendido no se pueden añadir dominios. Ponte en contacto con el
             administrador.
           </BandaAviso>
         </div>
@@ -195,7 +195,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
         <div className="mb-4">
           <BandaAviso titulo="Límite del plan">
             Se ha alcanzado el máximo de dominios del plan ({plural(clientePropio.plan.maxDomains, 'dominio', 'dominios')}).
-            Para añadir otro, elimine alguno o solicite una ampliación del plan.
+            Para añadir otro, elimina alguno o solicita una ampliación del plan.
           </BandaAviso>
         </div>
       )}
@@ -218,7 +218,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
               </Button>
             }
           >
-            Dé de alta un dominio (por ejemplo, miempresa.com) para crear buzones con esa
+            Da de alta un dominio (por ejemplo, miempresa.com) para crear buzones con esa
             dirección.
           </Vacio>
         </Hoja>
@@ -309,7 +309,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
               }}
               error={clients.isError ? 'No se ha podido cargar la lista de clientes.' : undefined}
             >
-              <option value="">Seleccione un cliente…</option>
+              <option value="">Selecciona un cliente…</option>
               {(clients.data?.clients ?? []).map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
@@ -320,8 +320,8 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
           {limiteElegido && elegido && (
             <BandaAviso titulo="Límite del plan">
               {elegido.name} ha alcanzado el máximo de dominios de su plan «{elegido.plan.name}» (
-              {plural(elegido.plan.maxDomains, 'dominio', 'dominios')}). Para añadir otro, cambie el plan del
-              cliente desde su ficha o elimine alguno de sus dominios.
+              {plural(elegido.plan.maxDomains, 'dominio', 'dominios')}). Para añadir otro, cambia el plan del
+              cliente desde su ficha o elimina alguno de sus dominios.
             </BandaAviso>
           )}
           <Input
@@ -356,7 +356,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
                 faltan y se completa el SPF existente; si hay registros en conflicto, no se
-                modifican y podrá revisarlos en la ficha del dominio.
+                modifican y podrás revisarlos en la ficha del dominio.
               </p>
             </div>
           )}

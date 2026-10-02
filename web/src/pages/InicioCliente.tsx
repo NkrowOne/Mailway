@@ -72,7 +72,7 @@ export default function InicioCliente() {
       label: 'Dar de alta el dominio',
       done: onboarding.hasDomain,
       to: '/dominios',
-      hint: 'Registre el dominio con el que enviará y recibirá correo (por ejemplo, su-empresa.com).',
+      hint: 'Registra el dominio con el que enviarás y recibirás correo (por ejemplo, tu-empresa.com).',
       obligatorio: true,
     },
     {
@@ -83,10 +83,10 @@ export default function InicioCliente() {
       hint: (
         <>
           {/* Sin nombrar el producto: el panel del cliente puede ir con marca blanca. */}
-          Publique en el proveedor del dominio los registros que figuran en la ficha del
+          Publica en el proveedor del dominio los registros que figuran en la ficha del
           dominio. Si el dominio está en Cloudflare,{' '}
           <Link to="/conexiones" className={enlacePista}>
-            conecte su cuenta en Conexiones
+            conecta tu cuenta en Conexiones
           </Link>{' '}
           y los registros se crearán automáticamente.
         </>
@@ -98,7 +98,7 @@ export default function InicioCliente() {
       label: 'Crear los buzones',
       done: onboarding.hasMailbox,
       to: '/buzones',
-      hint: 'Las cuentas de correo de su equipo (por ejemplo, info@ o ventas@).',
+      hint: 'Las cuentas de correo de tu equipo (por ejemplo, info@ o ventas@).',
       obligatorio: true,
     },
     {
@@ -108,7 +108,7 @@ export default function InicioCliente() {
       to: '/buzones',
       hint: (
         <>
-          Envíe a cada persona el enlace de configuración de su buzón desde «Buzones», o indíquele
+          Envía a cada persona el enlace de configuración de su buzón desde «Buzones», o indícale
           que acceda a <span className="valor text-sm text-tinta">{portal}</span> con su dirección
           y contraseña: el móvil y el ordenador se configuran solos.
         </>
@@ -120,7 +120,7 @@ export default function InicioCliente() {
       label: 'Crear una clave de API',
       done: onboarding.hasApiKey,
       to: '/api-envio',
-      hint: 'Solo si sus aplicaciones envían correo automático (códigos de acceso, avisos, facturas).',
+      hint: 'Solo si tus aplicaciones envían correo automático (códigos de acceso, avisos, facturas).',
       obligatorio: false,
     },
   ];
@@ -141,7 +141,7 @@ export default function InicioCliente() {
         meta={
           data.client.suspended ? (
             <MarcaFondo veredicto="fuera">
-              Cuenta suspendida: póngase en contacto con su proveedor
+              Cuenta suspendida: ponte en contacto con tu proveedor
             </MarcaFondo>
           ) : (
             <span>
@@ -248,7 +248,7 @@ export default function InicioCliente() {
               </div>
               {messages.failed7d > 0 ? (
                 <p className="mt-1 text-sm text-fuera">
-                  {plural(messages.failed7d, 'envío fallido', 'envíos fallidos')}. Consulte el
+                  {plural(messages.failed7d, 'envío fallido', 'envíos fallidos')}. Consulta el
                   detalle en{' '}
                   <Link to="/api-envio" className="underline underline-offset-2 hover:text-tinta">
                     API de envío
@@ -266,7 +266,7 @@ export default function InicioCliente() {
       </div>
 
       {domains.length > 0 && (
-        <Hoja title="Sus dominios" meta="Pendientes primero" className="mt-4" flush>
+        <Hoja title="Tus dominios" meta="Pendientes primero" className="mt-4" flush>
           <ul>
             {dominiosOrdenados.map((domain) => {
               const estado = lecturaDominio(domain);

@@ -66,7 +66,7 @@ export function normalizePanelUrl(input: string): string {
     url = new URL(withScheme);
   } catch {
     throw badRequest(
-      'La URL del panel no es válida. Ejemplo: https://panel.suempresa.com',
+      'La URL del panel no es válida. Ejemplo: https://panel.tuempresa.com',
       'invalid_panel_url',
     );
   }

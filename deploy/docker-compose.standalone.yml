@@ -5,7 +5,7 @@
 #   sudo bash deploy/instalar.sh --sin-skyway
 #
 # A mano:
-#   cp deploy/.env.example deploy/.env      # y rellene las variables
+#   cp deploy/.env.example deploy/.env      # y rellena las variables
 #   docker compose -f deploy/docker-compose.standalone.yml --profile proxy up -d --build
 #
 # Con el perfil `proxy` se levanta además un Traefik propio en 80/443 que da
@@ -32,19 +32,19 @@ services:
     environment:
       STALWART_URL: http://mailway-mail:8080
       STALWART_ADMIN_USER: admin
-      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Defina STALWART_ADMIN_PASSWORD en deploy/.env}
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
       STALWART_SMTP_HOST: mailway-mail
       STALWART_SMTP_PORT: '587'
       # La API de envío entra por el SMTP interno (mailway-mail:587) y
       # verifica su certificado contra MAIL_HOSTNAME. Solo mientras el motor
       # no tenga certificado válido (sin proxy ni Cloudflare) puede ponerse a
-      # 1 en deploy/.env para aceptar el autofirmado; retírelo después.
+      # 1 en deploy/.env para aceptar el autofirmado; retíralo después.
       MAILWAY_SMTP_ALLOW_SELF_SIGNED: ${MAILWAY_SMTP_ALLOW_SELF_SIGNED:-}
       MAILWAY_SECRET: ${MAILWAY_SECRET:-}
       MAILWAY_SETUP_TOKEN: ${MAILWAY_SETUP_TOKEN:-}
       MAILWAY_TRAEFIK_TOKEN: ${MAILWAY_TRAEFIK_TOKEN:-}
       MAILWAY_WEBMAIL_TOKEN: ${MAILWAY_WEBMAIL_TOKEN:-}
-      MAILWAY_MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Defina MAIL_HOSTNAME en deploy/.env}
+      MAILWAY_MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en deploy/.env}
       MAILWAY_PUBLIC_IP: ${MAILWAY_PUBLIC_IP:-}
       MAILWAY_PANEL_URL: ${MAILWAY_PANEL_URL:-https://${PANEL_HOSTNAME}}
       MAILWAY_WEBMAIL_URL: ${MAILWAY_WEBMAIL_URL:-https://${WEBMAIL_HOSTNAME}}
@@ -64,7 +64,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=mailway-edge
-      - traefik.http.routers.mailway-panel.rule=Host(`${PANEL_HOSTNAME:?Defina PANEL_HOSTNAME en deploy/.env}`)
+      - traefik.http.routers.mailway-panel.rule=Host(`${PANEL_HOSTNAME:?Define PANEL_HOSTNAME en deploy/.env}`)
       - traefik.http.routers.mailway-panel.entrypoints=web
       - traefik.http.middlewares.mailway-panel-https.redirectscheme.scheme=https
       - traefik.http.middlewares.mailway-panel-https.redirectscheme.permanent=true
@@ -140,7 +140,7 @@ services:
       ROUNDCUBEMAIL_SKIN: elastic
       ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
-      ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Defina ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
+      ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Define ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
       MAILWAY_BRAND: ${MAILWAY_BRAND:-Webmail}
       MAILWAY_PANEL_URL: ${MAILWAY_PANEL_URL:-https://${PANEL_HOSTNAME}}
       MAILWAY_PANEL_INTERNAL_URL: ${MAILWAY_PANEL_INTERNAL_URL:-http://mailway-panel:4100}
@@ -159,7 +159,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=mailway-edge
-      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Defina WEBMAIL_HOSTNAME en deploy/.env}`)
+      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Define WEBMAIL_HOSTNAME en deploy/.env}`)
       - traefik.http.routers.mailway-webmail.entrypoints=web
       - traefik.http.middlewares.mailway-webmail-https.redirectscheme.scheme=https
       - traefik.http.middlewares.mailway-webmail-https.redirectscheme.permanent=true

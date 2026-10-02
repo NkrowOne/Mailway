@@ -242,26 +242,26 @@ const displayNameSchema = z
   .max(80, 'El nombre visible no puede superar los 80 caracteres.');
 
 const createSchema = z.object({
-  domainId: z.string({ required_error: 'Seleccione un dominio.' }).min(1, 'Seleccione un dominio.'),
+  domainId: z.string({ required_error: 'Selecciona un dominio.' }).min(1, 'Selecciona un dominio.'),
   localPart: z
-    .string({ required_error: 'Indique el nombre del buzón (lo que va antes de la @).' })
-    .min(1, 'Indique el nombre del buzón (lo que va antes de la @).'),
+    .string({ required_error: 'Indica el nombre del buzón (lo que va antes de la @).' })
+    .min(1, 'Indica el nombre del buzón (lo que va antes de la @).'),
   displayName: displayNameSchema.optional().default(''),
   password: passwordSchema.optional(),
   quotaMb: quotaSchema.optional(),
 });
 
 const bulkSchema = z.object({
-  domainId: z.string({ required_error: 'Seleccione un dominio.' }).min(1, 'Seleccione un dominio.'),
+  domainId: z.string({ required_error: 'Selecciona un dominio.' }).min(1, 'Selecciona un dominio.'),
   entries: z
     .array(
       z.object({
         localPart: z.string({ required_error: 'Falta el nombre del buzón.' }).max(200),
         displayName: displayNameSchema.optional().default(''),
       }),
-      { required_error: 'Añada al menos una dirección.' },
+      { required_error: 'Añade al menos una dirección.' },
     )
-    .min(1, 'Añada al menos una dirección.')
+    .min(1, 'Añade al menos una dirección.')
     .max(100, 'Se pueden crear como máximo 100 buzones por lote.'),
   quotaMb: quotaSchema.optional(),
   /** true = solo validar y devolver la previsión, sin crear nada. */
@@ -288,7 +288,7 @@ async function createMailboxRecord(input: {
   const email = `${localPart}@${domain.domain}`;
   if (mailboxExists(domain.id, localPart)) throw mailboxExistsError(email);
   if (aliasExists(domain.id, localPart)) {
-    throw conflict(`Ya existe un alias ${email}. Elija otro nombre.`, 'alias_exists');
+    throw conflict(`Ya existe un alias ${email}. Elige otro nombre.`, 'alias_exists');
   }
 
   const plan = getPlan(getClient(domain.clientId).planId);
@@ -405,7 +405,7 @@ function classifyDestinations(
     }
     if (!mailboxExists(domainRow.id, local)) {
       throw badRequest(
-        `${dest} no es un buzón existente. Cree antes el buzón o indique otra dirección.`,
+        `${dest} no es un buzón existente. Crea antes el buzón o indica otra dirección.`,
         'destination_not_found',
       );
     }
@@ -445,9 +445,9 @@ const destinationsSchema = z
       .toLowerCase()
       .max(254, 'Cada destino debe ser una dirección de correo válida.')
       .email('Cada destino debe ser una dirección de correo válida.'),
-    { required_error: 'Añada al menos un destino.' },
+    { required_error: 'Añade al menos un destino.' },
   )
-  .min(1, 'Añada al menos un destino.')
+  .min(1, 'Añade al menos un destino.')
   .max(20, 'Un alias admite como máximo 20 destinos.');
 
 /* --------------------------------- Rutas ---------------------------------- */
@@ -540,14 +540,14 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
 
     if (ownershipError) throw conflict(ownershipError, 'domain_ownership_pending');
     if (valid.length === 0) {
-      throw badRequest('Ninguna dirección de la lista es válida. Revise la lista e inténtelo de nuevo.', 'bulk_empty');
+      throw badRequest('Ninguna dirección de la lista es válida. Revisa la lista e inténtalo de nuevo.', 'bulk_empty');
     }
     // Con el cerrojo del cliente, ninguna otra alta (individual o masiva) se
     // cuela entre la comprobación del plan y la última inserción del lote.
     return withLock(clientLockKey(client.id), async () => {
     assertWithinLimit(client.id, 'mailboxes', valid.length, viewerIsAdmin);
     if (bulkInProgress.has(client.id)) {
-      throw conflict('Ya hay un alta masiva en curso para este cliente. Espere a que termine.', 'bulk_in_progress');
+      throw conflict('Ya hay un alta masiva en curso para este cliente. Espera a que termine.', 'bulk_in_progress');
     }
 
     bulkInProgress.add(client.id);
@@ -686,7 +686,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     ).c;
     if (keyCount > 0) {
       throw conflict(
-        `Este buzón es el remitente de ${keyCount === 1 ? '1 clave' : `${keyCount} claves`} de API activas. Revoque esas claves antes de eliminarlo.`,
+        `Este buzón es el remitente de ${keyCount === 1 ? '1 clave' : `${keyCount} claves`} de API activas. Revoca esas claves antes de eliminarlo.`,
         'mailbox_in_use',
       );
     }
@@ -754,10 +754,10 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
   app.post('/api/aliases', async (req) => {
     const body = z
       .object({
-        domainId: z.string({ required_error: 'Seleccione un dominio.' }).min(1, 'Seleccione un dominio.'),
+        domainId: z.string({ required_error: 'Selecciona un dominio.' }).min(1, 'Selecciona un dominio.'),
         localPart: z
-          .string({ required_error: 'Indique el nombre del alias.' })
-          .min(1, 'Indique el nombre del alias.'),
+          .string({ required_error: 'Indica el nombre del alias.' })
+          .min(1, 'Indica el nombre del alias.'),
         destinations: destinationsSchema,
       })
       .parse(req.body);
@@ -770,7 +770,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const localPart = normalizeLocalPart(body.localPart);
     const email = `${localPart}@${domain.domain}`;
     if (mailboxExists(domain.id, localPart)) {
-      throw conflict(`Ya existe un buzón ${email}. Elija otro nombre para el alias.`, 'mailbox_exists');
+      throw conflict(`Ya existe un buzón ${email}. Elige otro nombre para el alias.`, 'mailbox_exists');
     }
     if (aliasExists(domain.id, localPart)) throw aliasExistsError(email);
 

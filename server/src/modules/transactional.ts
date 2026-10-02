@@ -225,7 +225,7 @@ export function checkPerMinute(keyId: string, limit: number, nowMs = Date.now())
   bucket.count += 1;
   if (bucket.count > limit) {
     throw tooMany(
-      `Se ha superado el límite de ${limit} envíos por minuto del plan. Reintente en unos segundos.`,
+      `Se ha superado el límite de ${limit} envíos por minuto del plan. Reintenta en unos segundos.`,
     );
   }
 }
@@ -399,9 +399,9 @@ const createKeySchema = z.object({
   name: z
     .string()
     .trim()
-    .min(2, 'Indique un nombre reconocible, p. ej. «OTP producción».')
+    .min(2, 'Indica un nombre reconocible, p. ej. «OTP producción».')
     .max(60, 'El nombre admite como máximo 60 caracteres.'),
-  senderMailboxId: z.string().min(1, 'Seleccione el buzón remitente.'),
+  senderMailboxId: z.string().min(1, 'Selecciona el buzón remitente.'),
   dailyLimit: z.number().int().min(1, 'El límite diario debe ser de al menos 1 envío.').optional(),
 });
 
@@ -422,7 +422,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     const user = requireAuth(req);
     const body = createKeySchema.parse(req.body);
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
-    if (!clientId) throw badRequest('Indique el cliente propietario de la clave.');
+    if (!clientId) throw badRequest('Indica el cliente propietario de la clave.');
     requireClientAccess(req, clientId);
     assertClientActive(clientId);
 
@@ -437,7 +437,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     // rechazaría en cada envío.
     if (mailbox.status === 'suspended') {
       throw badRequest(
-        `El buzón remitente ${mailbox.email} está suspendido. Reactívelo o seleccione otro buzón.`,
+        `El buzón remitente ${mailbox.email} está suspendido. Reactívalo o selecciona otro buzón.`,
         'sender_suspended',
       );
     }
@@ -609,7 +609,7 @@ function resolveApiKey(req: FastifyRequest): ApiKeyRow {
   const header = req.headers.authorization || '';
   if (!header.trim()) {
     throw unauthorized(
-      'Falta la cabecera Authorization. Use: Authorization: Bearer mw_… (su clave de API).',
+      'Falta la cabecera Authorization. Usa: Authorization: Bearer mw_… (tu clave de API).',
       'missing_api_key',
     );
   }
@@ -642,13 +642,13 @@ function resolveSender(keyRow: ApiKeyRow): Mailbox {
     mailbox = getMailbox(keyRow.sender_mailbox_id);
   } catch {
     throw forbidden(
-      'El buzón remitente de esta clave ya no existe. Cree una clave nueva con otro remitente.',
+      'El buzón remitente de esta clave ya no existe. Crea una clave nueva con otro remitente.',
       'sender_missing',
     );
   }
   if (mailbox.status === 'suspended') {
     throw forbidden(
-      `El buzón remitente ${mailbox.email} está suspendido y no puede enviar correo. Reactívelo en el panel o utilice otra clave.`,
+      `El buzón remitente ${mailbox.email} está suspendido y no puede enviar correo. Reactívalo en el panel o utiliza otra clave.`,
       'sender_suspended',
     );
   }
@@ -673,7 +673,7 @@ export function registerSendRoutes(app: FastifyInstance): void {
     // gastar ni la ventana por minuto ni el cupo diario.
     const body = sendSchema.parse(req.body);
     if (!body.html && !body.text) {
-      throw badRequest('Incluya «html», «text» o ambos con el contenido del mensaje.');
+      throw badRequest('Incluye «html», «text» o ambos con el contenido del mensaje.');
     }
 
     // Los límites del plan son del cliente (todas sus claves suman); el

@@ -58,7 +58,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
   app.get('/api/dashboard/client', async (req) => {
     const user = requireAuth(req);
     const clientId = user.role === 'client' ? user.clientId! : (req.query as { clientId?: string }).clientId;
-    if (!clientId) throw badRequest('Indique el cliente (parámetro clientId).', 'client_required');
+    if (!clientId) throw badRequest('Indica el cliente (parámetro clientId).', 'client_required');
     requireClientAccess(req, clientId);
 
     const client = getClient(clientId);

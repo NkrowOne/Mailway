@@ -90,7 +90,7 @@ export async function applyRecommendedEngineSettings(
   const host = normalizeHost(mailHostname);
   if (!host) {
     throw badRequest(
-      'Indique primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
+      'Indica primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
       'mail_hostname_missing',
     );
   }
@@ -257,9 +257,9 @@ const ALERT_WARNING = 'engine_tls_warning';
 const ALERT_CRITICAL = 'engine_tls_critical';
 
 const TLS_REMEDY =
-  'En Ajustes → Servidor de correo puede emitir un certificado de Let’s Encrypt mediante Cloudflare ' +
+  'En Ajustes → Servidor de correo puedes emitir un certificado de Let’s Encrypt mediante Cloudflare ' +
   'o recargar el certificado actual. Si el certificado lo vuelca Traefik (perfil tls del compose), ' +
-  'revise «docker logs mailway-certs-dumper».';
+  'revisa «docker logs mailway-certs-dumper».';
 
 /**
  * Traduce el estado del certificado a avisos. Separado de la comprobación
@@ -398,7 +398,7 @@ async function findCloudflareZone(token: string, hostname: string): Promise<Clou
       const detail = first ? `${first.message ?? ''} (código ${first.code ?? '?'})` : `HTTP ${res.status}`;
       if (res.status === 401 || res.status === 403 || first?.code === 1000 || first?.code === 10000) {
         throw badRequest(
-          `Cloudflare rechazó el token de esta cuenta: ${detail}. Revise la cuenta en Conexiones → Cloudflare.`,
+          `Cloudflare rechazó el token de esta cuenta: ${detail}. Revisa la cuenta en Conexiones → Cloudflare.`,
           'cloudflare_token_rejected',
         );
       }
@@ -434,8 +434,8 @@ function statusKeys(): string[] {
 /* -------------------------------- Rutas ----------------------------------- */
 
 const acmeSchema = z.object({
-  cloudflareAccountId: z.string().trim().min(1, 'Elija la cuenta de Cloudflare.'),
-  email: z.string().trim().email('Indique un correo de contacto válido para Let’s Encrypt.'),
+  cloudflareAccountId: z.string().trim().min(1, 'Elige la cuenta de Cloudflare.'),
+  email: z.string().trim().email('Indica un correo de contacto válido para Let’s Encrypt.'),
 });
 
 function errorMessage(err: unknown): string {
@@ -546,7 +546,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     const host = normalizeHost(getInstanceSettings().mailHostname);
     if (!host) {
       throw badRequest(
-        'Indique primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
+        'Indica primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
         'mail_hostname_missing',
       );
     }
@@ -558,7 +558,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       // El certificado es de la plataforma: usar el token de un cliente
       // mezclaría la infraestructura de la instancia con la de un cliente.
       throw badRequest(
-        'Esa cuenta de Cloudflare pertenece a un cliente. Use una cuenta de la instancia (Conexiones → Cloudflare).',
+        'Esa cuenta de Cloudflare pertenece a un cliente. Usa una cuenta de la instancia (Conexiones → Cloudflare).',
         'cloudflare_account_not_instance',
       );
     }
@@ -568,7 +568,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       token = decryptSecret(row.token_enc);
     } catch {
       throw badRequest(
-        'No se pudo leer el token guardado de esa cuenta. Vuelva a conectarla en Conexiones → Cloudflare.',
+        'No se pudo leer el token guardado de esa cuenta. Vuelve a conectarla en Conexiones → Cloudflare.',
         'cloudflare_token_unreadable',
       );
     }
@@ -577,7 +577,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     if (!zone) {
       throw badRequest(
         `El token de la cuenta «${row.label}» no tiene acceso a la zona DNS de ${host}. ` +
-          'Añada esa zona a los permisos del token (Zona: Lectura y DNS: Edición) o conecte otra cuenta.',
+          'Añade esa zona a los permisos del token (Zona: Lectura y DNS: Edición) o conecta otra cuenta.',
         'cloudflare_zone_not_found',
       );
     }

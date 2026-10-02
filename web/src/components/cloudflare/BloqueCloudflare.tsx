@@ -117,15 +117,15 @@ export function BloqueCloudflare({
         toast(
           'error',
           data.applied.length > 0
-            ? 'Parte de los registros no se ha podido aplicar en Cloudflare. Consulte el detalle en la ficha.'
-            : 'No se ha podido aplicar ningún registro en Cloudflare. Consulte el detalle en la ficha.',
+            ? 'Parte de los registros no se ha podido aplicar en Cloudflare. Consulta el detalle en la ficha.'
+            : 'No se ha podido aplicar ningún registro en Cloudflare. Consulta el detalle en la ficha.',
         );
       } else if (data.domain.dnsStatus.allRequiredOk) {
         toast('ok', 'DNS aplicado en Cloudflare. El dominio ya puede enviar y recibir correo.');
       } else if (data.applied.length > 0) {
         toast('ok', 'DNS aplicado en Cloudflare. Se comprobará la propagación durante 5 minutos.');
       } else if (omitidos > 0) {
-        toast('error', 'No se ha modificado nada: los registros en conflicto necesitan su confirmación.');
+        toast('error', 'No se ha modificado nada: los registros en conflicto necesitan tu confirmación.');
       } else {
         toast('ok', 'No había cambios pendientes en Cloudflare.');
       }
@@ -198,7 +198,7 @@ export function BloqueCloudflare({
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-[75ch] text-base text-tinta-2">
-            Si el DNS de este dominio está en Cloudflare, conecte la cuenta para crear todos estos
+            Si el DNS de este dominio está en Cloudflare, conecta la cuenta para crear todos estos
             registros con un clic, sin copiarlos manualmente. Mailway muestra los cambios antes de
             aplicarlos y nunca activa el proxy de Cloudflare en los registros de correo.
           </p>
@@ -252,8 +252,8 @@ export function BloqueCloudflare({
                     <span className="text-fuera">
                       {' '}
                       {resumen.conflict === 1
-                        ? 'Hay 1 registro en conflicto que requiere su decisión.'
-                        : `Hay ${resumen.conflict} registros en conflicto que requieren su decisión.`}
+                        ? 'Hay 1 registro en conflicto que requiere tu decisión.'
+                        : `Hay ${resumen.conflict} registros en conflicto que requieren tu decisión.`}
                     </span>
                   )}
                 </>

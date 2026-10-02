@@ -318,10 +318,10 @@ Mundo visual de «parte de laboratorio» (contrato completo en
 [DESIGN.md](../DESIGN.md)): mesa clara, hojas regladas, un único color de
 identidad (petróleo) como región y no como filete, y cada dato expresado como
 una medición con rango de referencia y veredicto (`Medida`). Interfaz en
-español con tratamiento de usted, operable con teclado, con estados de carga,
-vacío y error en todas las vistas y sin desplazamiento horizontal en móvil. El
-portal del titular (`/conectar/<token>`, `/mi-buzon`) usa el mismo mundo con
-controles táctiles de 44 px y un paso a la vez.
+español profesional y neutro, que trata al lector de tú, operable con teclado,
+con estados de carga, vacío y error en todas las vistas y sin desplazamiento
+horizontal en móvil. El portal del titular (`/conectar/<token>`, `/mi-buzon`)
+usa el mismo mundo con controles táctiles de 44 px y un paso a la vez.
 
 ## 6. Estado y hoja de ruta
 

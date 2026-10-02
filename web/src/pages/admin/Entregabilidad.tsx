@@ -83,7 +83,7 @@ export default function Entregabilidad() {
       <>
         {membrete}
         <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
-          No se ha podido ejecutar la comprobación de entregabilidad. Vuelva a intentarlo en unos
+          No se ha podido ejecutar la comprobación de entregabilidad. Vuelve a intentarlo en unos
           segundos.
         </AvisoError>
       </>
@@ -149,7 +149,7 @@ export default function Entregabilidad() {
                   ? TEXTO_MEDICION_INCOMPLETA
                   : data.score >= 80
                     ? 'Buena posición para entregar en Gmail y Outlook.'
-                    : 'Corrija lo que está fuera de rango antes de enviar en volumen.'}
+                    : 'Corrige lo que está fuera de rango antes de enviar en volumen.'}
               </p>
             </div>
           </div>
@@ -169,7 +169,7 @@ export default function Entregabilidad() {
               nota={
                 data.mailHostname ? undefined : (
                   <>
-                    Indique el nombre del servidor de correo en{' '}
+                    Indica el nombre del servidor de correo en{' '}
                     <Link to="/ajustes" className="text-laboratorio underline underline-offset-2">
                       Ajustes
                     </Link>
@@ -234,7 +234,7 @@ export default function Entregabilidad() {
                   </Link>
                 }
               >
-                Configure la IP pública del servidor en Ajustes para comprobar las listas negras.
+                Configura la IP pública del servidor en Ajustes para comprobar las listas negras.
               </Vacio>
             ) : (
               <ul>
@@ -278,7 +278,7 @@ export default function Entregabilidad() {
         <Hoja title="Plan de acción" meta="En orden de urgencia" flush>
           {acciones.length === 0 && !completa ? (
             <Vacio title="Comprobación incompleta">
-              No se ha podido consultar todo lo necesario para proponer un plan de acción. Vuelva a
+              No se ha podido consultar todo lo necesario para proponer un plan de acción. Vuelve a
               medir en unos minutos.
             </Vacio>
           ) : acciones.length === 0 ? (

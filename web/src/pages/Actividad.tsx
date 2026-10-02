@@ -135,7 +135,7 @@ export default function Actividad() {
                 {registro.isFetchNextPageError && (
                   <AvisoError className="w-full">
                     No se han podido leer más anotaciones.{' '}
-                    {mensajeDe(registro.error, 'Vuelva a intentarlo.')}
+                    {mensajeDe(registro.error, 'Vuelve a intentarlo.')}
                   </AvisoError>
                 )}
                 <Button

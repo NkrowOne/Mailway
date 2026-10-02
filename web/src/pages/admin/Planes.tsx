@@ -151,7 +151,7 @@ export default function Planes() {
               <BandaAviso>
                 No es posible eliminar el plan «{toDelete.name}»:{' '}
                 {toDelete.clientCount === 1 ? 'lo usa 1 cliente' : `lo usan ${toDelete.clientCount} clientes`}.
-                Asígneles otro plan desde su ficha en «Clientes» y vuelva a intentarlo.
+                Asígnales otro plan desde su ficha en «Clientes» y vuelve a intentarlo.
               </BandaAviso>
               <ul className="border border-regla">
                 {clientList
@@ -229,10 +229,10 @@ const RANGOS: Record<Exclude<keyof Campos, 'name' | 'notes'>, { min: number; max
 function errorLimite(clave: keyof typeof RANGOS, valor: string): string | undefined {
   const { min, max } = RANGOS[clave];
   const n = Number(valor);
-  if (valor.trim() === '' || !Number.isInteger(n)) return 'Indique un número entero.';
+  if (valor.trim() === '' || !Number.isInteger(n)) return 'Indica un número entero.';
   if (n < min || n > max) {
     const formato = (x: number) => x.toLocaleString('es-ES');
-    return `Indique un valor entre ${formato(min)} y ${formato(max)}.`;
+    return `Indica un valor entre ${formato(min)} y ${formato(max)}.`;
   }
   return undefined;
 }
@@ -324,8 +324,8 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
     if (conError.length > 0) {
       setError(
         conError.length === 1
-          ? 'Revise el límite marcado.'
-          : `Revise los ${conError.length} límites marcados.`,
+          ? 'Revisa el límite marcado.'
+          : `Revisa los ${conError.length} límites marcados.`,
       );
       return;
     }
@@ -344,7 +344,7 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
           value={campos.name}
           onChange={set('name')}
           placeholder="Profesional"
-          error={intentado && campos.name.trim().length < 2 ? 'Indique un nombre de al menos 2 caracteres.' : undefined}
+          error={intentado && campos.name.trim().length < 2 ? 'Indica un nombre de al menos 2 caracteres.' : undefined}
         />
         <div className="grid gap-4 sm:grid-cols-2">
           <Input

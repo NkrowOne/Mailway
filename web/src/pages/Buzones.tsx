@@ -175,7 +175,7 @@ export default function Buzones() {
         <div className="mb-4">
           <BandaAviso>
             Se ha alcanzado el máximo de buzones del plan ({clientePropio!.plan.maxMailboxes}). Para crear más,
-            elimine alguno o solicite una ampliación del plan.
+            elimina alguno o solicita una ampliación del plan.
           </BandaAviso>
         </div>
       )}
@@ -183,7 +183,7 @@ export default function Buzones() {
         <div className="mb-4">
           <BandaError>
             La cuenta está suspendida: sus buzones no pueden iniciar sesión y no es posible crear buzones
-            nuevos. Póngase en contacto con su proveedor.
+            nuevos. Ponte en contacto con tu proveedor.
           </BandaError>
         </div>
       )}
@@ -199,8 +199,8 @@ export default function Buzones() {
             void domains.refetch();
           }}
         >
-          {mensajeDe(mailboxes.error ?? domains.error, 'No se han podido cargar los buzones.')} Compruebe la
-          conexión y vuelva a intentarlo.
+          {mensajeDe(mailboxes.error ?? domains.error, 'No se han podido cargar los buzones.')} Comprueba la
+          conexión y vuelve a intentarlo.
         </BandaError>
       ) : domainList.length === 0 ? (
         <Hoja flush>
@@ -212,7 +212,7 @@ export default function Buzones() {
               </Link>
             }
           >
-            Dé de alta un dominio en «Dominios»; después podrá crear buzones como nombre@sudominio.com.
+            Da de alta un dominio en «Dominios»; después podrás crear buzones como nombre@tudominio.com.
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
@@ -230,7 +230,7 @@ export default function Buzones() {
               </div>
             }
           >
-            Cree cuentas como hola@{domainList[0]?.domain}. La contraseña se genera automáticamente y se muestra
+            Crea cuentas como hola@{domainList[0]?.domain}. La contraseña se genera automáticamente y se muestra
             una sola vez.
           </Vacio>
         </Hoja>
@@ -524,7 +524,7 @@ function CrearBuzon({
     e.preventDefault();
     const errorNombre = errorNombreBuzon(localPart.trim().toLowerCase());
     if (!domainId) {
-      setError('Seleccione un dominio que admita buzones.');
+      setError('Selecciona un dominio que admita buzones.');
       return;
     }
     if (errorNombre) {

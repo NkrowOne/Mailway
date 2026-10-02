@@ -92,7 +92,7 @@ export function getClientWebmailUrl(clientId: string): string {
 export function setPrimaryWebmail(id: string): ClientDomain {
   const domain = getClientDomain(id);
   if (domain.kind !== 'webmail' || domain.status !== 'active') {
-    throw badRequest('Compruebe primero que este dominio de webmail funciona con HTTPS.', 'webmail_not_active');
+    throw badRequest('Comprueba primero que este dominio de webmail funciona con HTTPS.', 'webmail_not_active');
   }
   db.transaction(() => {
     db.prepare("UPDATE client_domains SET is_primary = 0 WHERE client_id = ? AND kind = 'webmail'")
@@ -113,7 +113,7 @@ function normalizeHostname(input: string): string {
     .replace(/\.$/, '');
   if (!HOSTNAME_RE.test(host)) {
     throw badRequest(
-      'El dominio no es válido. Escriba solo el nombre, por ejemplo: webmail.suempresa.com',
+      'El dominio no es válido. Escribe solo el nombre, por ejemplo: webmail.tuempresa.com',
     );
   }
   return host;
@@ -154,7 +154,7 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   const firstLabel = hostname.split('.')[0]!;
   if (RESERVED_LABELS.has(firstLabel)) {
     throw badRequest(
-      `Los nombres que empiezan por «${firstLabel}.» están reservados para la configuración automática de los programas de correo. Elija otro, por ejemplo webmail.`,
+      `Los nombres que empiezan por «${firstLabel}.» están reservados para la configuración automática de los programas de correo. Elige otro, por ejemplo webmail.`,
       'reserved_hostname',
     );
   }
@@ -171,7 +171,7 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   );
   if (propios.has(hostname)) {
     throw badRequest(
-      'Ese nombre lo utiliza el propio servidor de correo. Elija un subdominio distinto, por ejemplo webmail.suempresa.com',
+      'Ese nombre lo utiliza el propio servidor de correo. Elige un subdominio distinto, por ejemplo webmail.tuempresa.com',
       'reserved_hostname',
     );
   }
@@ -186,7 +186,7 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   if (!parent) {
     throw badRequest(
       domains.length === 0
-        ? 'Este cliente todavía no tiene dominios de correo. Añada y verifique primero su dominio en «Dominios».'
+        ? 'Este cliente todavía no tiene dominios de correo. Añade y verifica primero su dominio en «Dominios».'
         : `El nombre debe ser un subdominio de uno de los dominios de correo del cliente (${domains
             .map((d) => d.domain)
             .slice(0, 5)
@@ -199,7 +199,7 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
   // cliente controla el DNS del que cuelga el nombre.
   if (parent.owner_verified_at === null) {
     throw badRequest(
-      `Todavía no se ha comprobado la propiedad del dominio de correo ${domainToUnicode(parent.domain) || parent.domain}. Compruébela primero en su ficha, en «Dominios».`,
+      `Todavía no se ha comprobado la propiedad del dominio de correo ${domainToUnicode(parent.domain) || parent.domain}. Compruébala primero en su ficha, en «Dominios».`,
       'domain_not_verified',
     );
   }
@@ -214,7 +214,7 @@ export function traefikOverrideSnippet(endpoint: string, token: string, certReso
   const r = certResolver || 'le';
   return `# docker-compose.override.yml (en la carpeta de Skyway).
 # Solo para Skyway anterior a 0.34 o un Traefik propio: con Skyway 0.34 o
-# posterior NO lo instale, porque sustituiría el puente que ya incluye.
+# posterior NO lo instales, porque sustituiría el puente que ya incluye.
 services:
   traefik:
     command:
@@ -312,7 +312,7 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
   if (ips === null) {
     return {
       status: 'unknown',
-      detail: 'No se ha podido consultar el DNS en este momento. Vuelva a intentarlo en un minuto.',
+      detail: 'No se ha podido consultar el DNS en este momento. Vuelve a intentarlo en un minuto.',
     };
   }
   if (ips.length === 0) {
@@ -325,13 +325,13 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
     }
     return {
       status: 'failed',
-      detail: 'El dominio todavía no existe en el DNS. Cree el registro y espere unos minutos.',
+      detail: 'El dominio todavía no existe en el DNS. Crea el registro y espera unos minutos.',
     };
   }
   if (!ips.includes(instance.publicIp)) {
     return {
       status: 'failed',
-      detail: `El dominio apunta a ${ips.join(', ')} en lugar de a ${instance.publicIp}. Corrija el registro.`,
+      detail: `El dominio apunta a ${ips.join(', ')} en lugar de a ${instance.publicIp}. Corrige el registro.`,
     };
   }
   return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
@@ -356,8 +356,8 @@ export async function checkHttps(hostname: string): Promise<{ ok: boolean; detai
     return {
       ok: false,
       detail: res.status === 404
-        ? 'HTTPS responde con 404. Revise la ruta de este dominio en Skyway y la conexión de Traefik con Mailway en Ajustes.'
-        : `HTTPS responde con HTTP ${res.status}. Revise el servicio y su destino en Skyway.`,
+        ? 'HTTPS responde con 404. Revisa la ruta de este dominio en Skyway y la conexión de Traefik con Mailway en Ajustes.'
+        : `HTTPS responde con HTTP ${res.status}. Revisa el servicio y su destino en Skyway.`,
     };
   } catch (err) {
     const message = (err as Error).message || '';
@@ -367,19 +367,19 @@ export async function checkHttps(hostname: string): Promise<{ ok: boolean; detai
       return {
         ok: false,
         detail:
-          'El certificado todavía no está emitido. Let\'s Encrypt suele tardar menos de un minuto; vuelva a comprobarlo.',
+          'El certificado todavía no está emitido. Let\'s Encrypt suele tardar menos de un minuto; vuelve a comprobarlo.',
       };
     }
     if (text.includes('timeout') || text.includes('aborted')) {
       return {
         ok: false,
         detail:
-          'No se ha recibido respuesta a tiempo. Si el DNS acaba de cambiar, espere a que se propague y vuelva a intentarlo.',
+          'No se ha recibido respuesta a tiempo. Si el DNS acaba de cambiar, espera a que se propague y vuelve a intentarlo.',
       };
     }
     return {
       ok: false,
-      detail: `Todavía no responde por HTTPS (${message.slice(0, 120)}). Vuelva a intentarlo en un minuto.`,
+      detail: `Todavía no responde por HTTPS (${message.slice(0, 120)}). Vuelve a intentarlo en un minuto.`,
     };
   }
 }
@@ -652,7 +652,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const user = requireAuth(req);
     const body = createSchema.parse(req.body);
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
-    if (!clientId) throw badRequest('Indique a qué cliente pertenece el dominio.', 'client_required');
+    if (!clientId) throw badRequest('Indica a qué cliente pertenece el dominio.', 'client_required');
     requireClientAccess(req, clientId);
     const clientExists = db.prepare('SELECT 1 FROM clients WHERE id = ?').get(clientId);
     if (!clientExists) throw notFound('Cliente no encontrado.');
@@ -677,7 +677,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     ).c;
     if (count >= MAX_WHITELABEL_PER_CLIENT) {
       throw badRequest(
-        `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimine uno que no se utilice para añadir otro.`,
+        `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimina uno que no se utilice para añadir otro.`,
         'whitelabel_limit',
       );
     }

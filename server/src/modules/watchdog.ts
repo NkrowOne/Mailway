@@ -63,7 +63,7 @@ async function checkEngine(): Promise<void> {
     title: 'El servidor de correo no responde',
     message: `Mailway no consigue comunicarse con el motor de correo. ${detail}`.trim(),
     remedy:
-      'Acceda al servidor por SSH y ejecute: docker ps (compruebe que «mailway-mail» está en marcha) y docker logs mailway-mail. Mientras esté detenido no se entrega ni se envía correo.',
+      'Accede al servidor por SSH y ejecuta: docker ps (comprueba que «mailway-mail» está en marcha) y docker logs mailway-mail. Mientras esté detenido no se entrega ni se envía correo.',
   });
 }
 
@@ -84,7 +84,7 @@ async function checkQueue(): Promise<void> {
         message:
           'Los mensajes se están acumulando sin poder entregarse. Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.',
         remedy:
-          'Revise la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
+          'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
       });
     } else {
       resolveAlert('queue_backed_up', { notify: true, what: 'cola de salida retenida' });
@@ -121,7 +121,7 @@ async function checkWebmail(): Promise<void> {
       title: 'El webmail no responde',
       message: `No hay respuesta desde ${webmailUrl}. Los clientes no pueden leer su correo desde el navegador (los programas de correo y el móvil siguen funcionando).`,
       remedy:
-        'Ejecute en el servidor: docker logs mailway-webmail y docker compose -f deploy/docker-compose.mail.yml up -d',
+        'Ejecuta en el servidor: docker logs mailway-webmail y docker compose -f deploy/docker-compose.mail.yml up -d',
     });
   }
 }
@@ -147,7 +147,7 @@ async function checkBlacklists(): Promise<void> {
     title: `La IP del servidor está en ${listed.length} lista(s) negra(s)`,
     message: `Listas afectadas: ${listed.map((l) => l.label).join(', ')}. Mientras siga en ellas, gran parte del correo enviado se clasificará como spam o se rechazará.`,
     remedy:
-      'Solicite la baja en la web de cada lista. Antes, compruebe que ningún buzón comprometido esté enviando spam (consulte el historial de envíos).',
+      'Solicita la baja en la web de cada lista. Antes, comprueba que ningún buzón comprometido esté enviando spam (consulta el historial de envíos).',
   });
 }
 
@@ -193,8 +193,8 @@ async function reviewDomainDns(domain: DomainRecord): Promise<void> {
         message:
           'Este dominio estaba verificado y ahora le falta algún registro obligatorio. Es probable que se haya modificado su DNS.',
         remedy: domain.cloudflare
-          ? 'Abra el dominio en el panel y aplique de nuevo el DNS en Cloudflare, o revise qué registro aparece fuera de rango: la tabla indica el valor exacto que debe tener.'
-          : 'Abra el dominio en el panel y revise qué registro aparece fuera de rango: la tabla indica el valor exacto que debe tener.',
+          ? 'Abre el dominio en el panel y aplica de nuevo el DNS en Cloudflare, o revisa qué registro aparece fuera de rango: la tabla indica el valor exacto que debe tener.'
+          : 'Abre el dominio en el panel y revisa qué registro aparece fuera de rango: la tabla indica el valor exacto que debe tener.',
       });
     }
   } catch {
@@ -270,7 +270,7 @@ async function reviewWhitelabelDomain(domain: ClientDomain): Promise<void> {
         title: `${domain.hostname} ha dejado de funcionar`,
         message: `Este dominio funcionaba y ahora no responde. ${updated.detail}`,
         remedy:
-          'Lo más habitual es que se haya modificado el DNS del dominio. Compruebe en el panel qué registro requiere y que siga apuntando al servidor.',
+          'Lo más habitual es que se haya modificado el DNS del dominio. Comprueba en el panel qué registro requiere y que siga apuntando al servidor.',
       });
       return;
     }
@@ -285,7 +285,7 @@ async function reviewWhitelabelDomain(domain: ClientDomain): Promise<void> {
         title: `${domain.hostname} lleva más de 30 minutos sin certificado`,
         message: `El DNS apunta correctamente, pero Traefik no consigue emitir el certificado. Último detalle: ${updated.detail}`,
         remedy:
-          'Compruebe que Traefik tiene configurado el sondeo a Mailway (Ajustes → Marca blanca muestra la línea exacta) y que el puerto 80 está abierto: Let\'s Encrypt lo necesita para validar el dominio.',
+          'Comprueba que Traefik tiene configurado el sondeo a Mailway (Ajustes → Marca blanca muestra la línea exacta) y que el puerto 80 está abierto: Let\'s Encrypt lo necesita para validar el dominio.',
       });
     }
   } catch {

@@ -104,7 +104,7 @@ export default function Avisos() {
           ) : !alerts.data ? (
             <div className="p-4">
               <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
-                No se han podido leer los avisos. Compruebe que el servidor de Mailway sigue en
+                No se han podido leer los avisos. Comprueba que el servidor de Mailway sigue en
                 marcha.
               </AvisoError>
             </div>
@@ -255,7 +255,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       } else {
         onToast(
           'error',
-          `No se ha podido entregar por: ${(res.failures || []).join(', ')}. Revise la URL o el token.`,
+          `No se ha podido entregar por: ${(res.failures || []).join(', ')}. Revisa la URL o el token.`,
         );
       }
     },
@@ -289,8 +289,8 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       ) : (
         <>
           <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
-            Complete los canales que utilice. Si no configura ninguno, los avisos solo aparecerán
-            en esta página y no recibirá ninguna notificación hasta que acceda al panel. El aviso
+            Completa los canales que utilices. Si no configuras ninguno, los avisos solo aparecerán
+            en esta página y no recibirás ninguna notificación hasta que accedas al panel. El aviso
             de prueba se envía por los canales ya guardados.
           </p>
           <form
@@ -316,7 +316,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
                   label="Token del bot de Telegram"
                   help={
                     hayToken
-                      ? 'Hay un token guardado. Déjelo vacío para conservarlo.'
+                      ? 'Hay un token guardado. Déjalo vacío para conservarlo.'
                       : 'Se obtiene al crear el bot con @BotFather en Telegram.'
                   }
                   mono
@@ -340,7 +340,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
               </div>
               <Input
                 label="ID del chat de Telegram"
-                help="Escriba al bot y consulte getUpdates, o utilice @userinfobot."
+                help="Escribe al bot y consulta getUpdates, o utiliza @userinfobot."
                 mono
                 value={form.telegramChat}
                 onChange={(e) => setForm({ ...form, telegramChat: e.target.value })}

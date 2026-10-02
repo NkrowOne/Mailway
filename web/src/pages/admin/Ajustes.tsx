@@ -59,7 +59,7 @@ export default function Ajustes() {
       <>
         <Membrete title="Ajustes" meta={META} />
         <AvisoError onRetry={() => void settings.refetch()} retrying={settings.isFetching}>
-          No se han podido cargar los ajustes. Compruebe que el servidor de Mailway sigue en marcha y vuelva a
+          No se han podido cargar los ajustes. Comprueba que el servidor de Mailway sigue en marcha y vuelve a
           intentarlo.
         </AvisoError>
       </>
@@ -152,18 +152,18 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
       if (data.ip) {
         setModificado(true);
         setForm((f) => ({ ...f, publicIp: data.ip }));
-        toast('ok', `IP pública detectada: ${data.ip}. Guarde los cambios para aplicarla.`);
+        toast('ok', `IP pública detectada: ${data.ip}. Guarda los cambios para aplicarla.`);
       } else {
-        toast('error', 'No se ha podido detectar la IP pública. Introdúzcala manualmente.');
+        toast('error', 'No se ha podido detectar la IP pública. Introdúcela manualmente.');
       }
     },
-    onError: () => toast('error', 'No se ha podido detectar la IP pública. Introdúzcala manualmente.'),
+    onError: () => toast('error', 'No se ha podido detectar la IP pública. Introdúcela manualmente.'),
   });
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.brandName.trim()) {
-      setError('Indique el nombre del servicio.');
+      setError('Indica el nombre del servicio.');
       return;
     }
     save.mutate();
@@ -189,10 +189,10 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           mono
           value={form.panelUrl}
           onChange={set('panelUrl')}
-          placeholder="https://panel.suempresa.com"
+          placeholder="https://panel.tuempresa.com"
           help={
             propuesta && form.panelUrl === propuesta
-              ? 'Propuesta a partir de la dirección actual del navegador. Guarde los cambios para confirmarla.'
+              ? 'Propuesta a partir de la dirección actual del navegador. Guarda los cambios para confirmarla.'
               : 'Se usa en los enlaces que reciben los titulares de los buzones (perfil de Apple, «Mi buzón», enlaces de configuración).'
           }
         />
@@ -201,7 +201,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           mono
           value={form.mailHostname}
           onChange={set('mailHostname')}
-          placeholder="mail.suempresa.com"
+          placeholder="mail.tuempresa.com"
           help="Figura en los datos de conexión de los buzones y en los registros DNS de los dominios."
         />
         <div className="flex items-end gap-2">
@@ -277,8 +277,8 @@ function HojaMotor({
   const errorContrasena =
     intentado && faltaContrasena
       ? destinoCambia
-        ? 'Para cambiar la URL, el usuario o el servidor SMTP del motor, indique también la contraseña.'
-        : 'Indique la contraseña del administrador del motor.'
+        ? 'Para cambiar la URL, el usuario o el servidor SMTP del motor, indica también la contraseña.'
+        : 'Indica la contraseña del administrador del motor.'
       : undefined;
 
   const payload = () => ({
@@ -334,7 +334,7 @@ function HojaMotor({
           e.preventDefault();
           setIntentado(true);
           if (kind === 'stalwart' && (!url.trim() || !adminUser.trim() || !smtpHost.trim())) {
-            toast('error', 'Indique la URL de la API de gestión, el usuario administrador y el host SMTP.');
+            toast('error', 'Indica la URL de la API de gestión, el usuario administrador y el host SMTP.');
             return;
           }
           if (faltaContrasena) return;
@@ -376,8 +376,8 @@ function HojaMotor({
                 help={
                   engine?.hasPassword
                     ? destinoCambia
-                      ? 'Obligatoria: ha cambiado la URL, el usuario o el servidor SMTP.'
-                      : 'Déjela vacía para conservar la actual. Es obligatoria si cambia la URL, el usuario o el servidor SMTP.'
+                      ? 'Obligatoria: has cambiado la URL, el usuario o el servidor SMTP.'
+                      : 'Déjala vacía para conservar la actual. Es obligatoria si cambias la URL, el usuario o el servidor SMTP.'
                     : undefined
                 }
               />
@@ -494,7 +494,7 @@ function HojaAutoconfiguracion() {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
         <AvisoError onRetry={() => void status.refetch()} retrying={status.isFetching}>
-          No se ha podido leer el estado de la autoconfiguración. Si el problema continúa, revise el registro
+          No se ha podido leer el estado de la autoconfiguración. Si el problema continúa, revisa el registro
           del servidor.
         </AvisoError>
       </Hoja>
@@ -535,7 +535,7 @@ function HojaAutoconfiguracion() {
         {!data.routingAvailable && (
           <Aviso>
             No se ha detectado el contenedor del panel, por lo que Traefik no puede enrutar estos
-            nombres. Despliegue el panel con Skyway (lo detecta automáticamente) o defina{' '}
+            nombres. Despliega el panel con Skyway (lo detecta automáticamente) o define{' '}
             <span className="valor">MAILWAY_PANEL_BACKEND_URL</span>, por ejemplo{' '}
             <span className="valor">http://mailway-panel:4100</span>.
           </Aviso>
@@ -559,7 +559,7 @@ function HojaAutoconfiguracion() {
           </div>
         ) : (
           <Aviso>
-            Indique el servidor de correo en «Identidad del servidor» para calcular los registros
+            Indica el servidor de correo en «Identidad del servidor» para calcular los registros
             DNS de la instancia.
           </Aviso>
         )}
@@ -596,7 +596,7 @@ function HojaAutoconfiguracion() {
                     .filter((h) => h.state !== 'ok')
                     .map((h) => `${h.host}: ${h.detail}`)
                     .join(' ')}{' '}
-                  Cree los registros de arriba y pulse «Comprobar ahora».
+                  Crea los registros de arriba y pulsa «Comprobar ahora».
                 </p>
               </div>
             )}
@@ -660,7 +660,7 @@ function HojaTraefik() {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
         <AvisoError onRetry={() => void setup.refetch()} retrying={setup.isFetching}>
-          No se ha podido cargar la configuración de Traefik. Si el problema continúa, revise el registro del
+          No se ha podido cargar la configuración de Traefik. Si el problema continúa, revisa el registro del
           servidor.
         </AvisoError>
       </Hoja>
@@ -684,7 +684,7 @@ function HojaTraefik() {
       vigilar: !s.panelBackend,
       aviso: s.panelBackend
         ? undefined
-        : 'Sin el contenedor del panel no se publican los dominios de tipo panel ni los nombres de autoconfiguración. Defina MAILWAY_PANEL_BACKEND_URL o despliegue el panel con Skyway.',
+        : 'Sin el contenedor del panel no se publican los dominios de tipo panel ni los nombres de autoconfiguración. Define MAILWAY_PANEL_BACKEND_URL o despliega el panel con Skyway.',
     },
     { rotulo: 'URL pública del panel', valor: s.panelUrl || 'Sin configurar' },
   ];
@@ -747,8 +747,8 @@ function HojaTraefik() {
           {mostrarManual && (
             <>
               <p className="max-w-[75ch] text-sm text-tinta-2">
-                Cree este fichero junto al <span className="valor">docker-compose.yml</span> de Skyway
-                y ejecute <span className="valor">docker compose up -d</span>. No lo instale si Skyway ya
+                Crea este fichero junto al <span className="valor">docker-compose.yml</span> de Skyway
+                y ejecuta <span className="valor">docker compose up -d</span>. No lo instales si Skyway ya
                 incluye el puente: Traefik solo admite un proveedor HTTP y el fichero lo sustituiría.
               </p>
               <Muestra rotulo="docker-compose.override.yml" copiar={s.overrideSnippet}>
@@ -787,7 +787,7 @@ function HojaTraefik() {
 
         <p className="max-w-[75ch] text-sm text-tinta-3">
           El token autentica a Traefik ante Mailway: sin él, cualquiera podría leer la lista de
-          nombres publicados. Si cambia el contenedor del panel, actualice también la URL del sondeo.
+          nombres publicados. Si cambia el contenedor del panel, actualiza también la URL del sondeo.
         </p>
       </div>
     </Hoja>

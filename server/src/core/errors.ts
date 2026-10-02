@@ -18,7 +18,7 @@ export function unauthorized(message = 'Es necesario iniciar sesión.', code = '
   return new HttpError(401, message, code);
 }
 
-export function forbidden(message = 'No tiene permiso para realizar esta acción.', code = 'forbidden'): HttpError {
+export function forbidden(message = 'No tienes permiso para realizar esta acción.', code = 'forbidden'): HttpError {
   return new HttpError(403, message, code);
 }
 

@@ -8,7 +8,7 @@
 #   sudo bash deploy/instalar.sh
 #
 # A mano:
-#   cp deploy/.env.example deploy/.env      # y rellene las variables
+#   cp deploy/.env.example deploy/.env      # y rellena las variables
 #   docker compose -f deploy/docker-compose.mail.yml up -d
 #
 # Redes:
@@ -26,7 +26,7 @@
 # Los puertos de correo (25, 465, 587, 993, 4190) se publican directamente en
 # el host: no pasan por Traefik y no chocan con Skyway (80/443/4000).
 #
-# Certificado de IMAP/SMTP (elija UNA vía):
+# Certificado de IMAP/SMTP (elige UNA vía):
 #   1. Preferida: ACME del propio motor con reto DNS-01 en Cloudflare. La
 #      configura el instalador (con un token de Cloudflare) o el panel en
 #      Ajustes → Servidor de correo. Renueva sola y no depende de Traefik.
@@ -34,7 +34,7 @@
 #      MAIL_HOSTNAME (servicio `certs-dumper`, perfil `tls`).
 #
 # IMPORTANTE: la imagen de Stalwart va FIJADA a v0.15.5. La v0.16 eliminó la
-# API REST de gestión que usa Mailway. No la suba sin migrar el driver.
+# API REST de gestión que usa Mailway. No la subas sin migrar el driver.
 # ============================================================================
 
 # Nombre de proyecto fijo: los contenedores, redes y volúmenes no dependen del
@@ -47,7 +47,7 @@ services:
     container_name: mailway-mail
     # Sin esto Stalwart se identifica con el ID del contenedor: sus registros
     # DNS propuestos (MX, SRV, autoconfig) apuntarían a un nombre inexistente.
-    hostname: ${MAIL_HOSTNAME:?Defina MAIL_HOSTNAME en deploy/.env}
+    hostname: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en deploy/.env}
     restart: unless-stopped
     ports:
       - '25:25'       # SMTP entre servidores (recepción y entrega)
@@ -58,7 +58,7 @@ services:
     environment:
       # Solo se aplica en el PRIMER arranque (crea el administrador de
       # respaldo con esta contraseña). Cambiarla después aquí no tiene efecto.
-      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Defina STALWART_ADMIN_PASSWORD en deploy/.env}
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
     volumes:
       - mailway-mail-data:/opt/stalwart
       # Certificados volcados de Traefik (solo con el perfil `tls`).
@@ -120,7 +120,7 @@ services:
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       # Clave fija: con la que genera la imagen en cada recreación, las
       # sesiones abiertas y las contraseñas guardadas dejarían de valer.
-      ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Defina ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
+      ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Define ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
       # Leídas por roundcube/mailway.php:
       MAILWAY_BRAND: ${MAILWAY_BRAND:-Webmail}
       MAILWAY_PANEL_URL: ${MAILWAY_PANEL_URL:-}
@@ -143,7 +143,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=skyway-edge
-      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Defina WEBMAIL_HOSTNAME en deploy/.env}`)
+      - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Define WEBMAIL_HOSTNAME en deploy/.env}`)
       - traefik.http.routers.mailway-webmail.entrypoints=web
       - traefik.http.middlewares.mailway-webmail-https.redirectscheme.scheme=https
       - traefik.http.middlewares.mailway-webmail-https.redirectscheme.permanent=true
@@ -193,7 +193,7 @@ networks:
   #   2. Un rango poco habitual no choca con las redes de Docker por defecto
   #      (172.17–31.x, 192.168.x) ni con las VPN y redes privadas típicas
   #      (10.0.x, 10.8.x).
-  # Si la cambia, cambie también MAILWAY_MAIL_INTERNAL_IP y la variable
+  # Si la cambias, cambia también MAILWAY_MAIL_INTERNAL_IP y la variable
   # MAILWAY_ENGINE_TRUSTED_NETWORK del panel.
   mailway-internal:
     name: mailway-internal

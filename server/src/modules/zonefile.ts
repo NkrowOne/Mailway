@@ -261,23 +261,23 @@ export function generarZona(opts: OpcionesZona): string {
     ';',
     ';  IMPORTACIÓN EN CLOUDFLARE',
     ';    DNS  →  Records  →  Import and Export  →  Import DNS records',
-    ';    y seleccione este fichero.',
+    ';    y selecciona este fichero.',
     ';',
     ';  ANTES DE IMPORTAR',
-    ';    Al terminar, compruebe que los registros quedan en GRIS (DNS only).',
+    ';    Al terminar, comprueba que los registros quedan en GRIS (DNS only).',
     ';    Con la nube naranja el correo NO funciona: Cloudflare no actúa como',
     ';    intermediario de SMTP ni de IMAP, de modo que los programas de correo',
     ';    y los demás servidores no podrían conectar con este servidor.',
     ';',
     ';    Importar NO borra los registros existentes. Si el dominio ya tiene',
-    ';    un SPF, quedarán dos y ninguno será válido: conserve solo uno y',
-    ';    combine en una única línea v=spf1 los mecanismos necesarios.',
+    ';    un SPF, quedarán dos y ninguno será válido: conserva solo uno y',
+    ';    combina en una única línea v=spf1 los mecanismos necesarios.',
   ];
 
   if (seleccion.some(esRegistroPropiedad)) {
     cabecera.push(
       ';',
-      ';  El TXT ' + PREFIJO_PROPIEDAD + opts.domain + ' demuestra que el dominio es suyo.',
+      ';  El TXT ' + PREFIJO_PROPIEDAD + opts.domain + ' demuestra que el dominio es tuyo.',
       ';    Permite crear buzones y alias antes de apuntar el MX a este servidor.',
     );
   }

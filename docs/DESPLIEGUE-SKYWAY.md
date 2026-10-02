@@ -1,9 +1,9 @@
 # Desplegar Mailway en producción
 
 Guía para dejar Mailway funcionando en un servidor propio, junto a Skyway
-(recomendado) o de forma autónoma. Al terminar dispondrá de:
+(recomendado) o de forma autónoma. Al terminar dispondrás de:
 
-- el **panel de Mailway** en `https://panel.<su dominio>`, desplegado desde
+- el **panel de Mailway** en `https://panel.<tu dominio>`, desplegado desde
   GitHub por Skyway y con actualización automática;
 - el **motor de correo** (Stalwart) y el **webmail** (Roundcube) en un
   docker-compose junto a Skyway, con certificado válido para IMAP y SMTP;
@@ -43,23 +43,23 @@ sección 6 describe el mismo proceso a mano.
    `skyway-traefik`, red `skyway-edge`) y con correo de Let's Encrypt
    configurado en **Skyway → Ajustes → Dominios**; sin él, Traefik no emite
    certificados.
-2. **Un dominio para la plataforma** (p. ej. `miempresa.com`) cuyo DNS pueda
+2. **Un dominio para la plataforma** (p. ej. `miempresa.com`) cuyo DNS puedas
    editar. Se usan tres nombres:
    - `mail.miempresa.com`: nombre del servidor de correo;
    - `panel.miempresa.com`: panel de Mailway;
    - `webmail.miempresa.com`: webmail.
 3. **Puerto 25 de salida abierto.** Muchos proveedores (Hetzner, OVH, AWS,
-   DigitalOcean…) lo bloquean por defecto: solicite el desbloqueo indicando que
-   va a operar un servidor de correo. Sin él no se entrega correo a otros
-   servidores. Compruébelo desde el servidor:
+   DigitalOcean…) lo bloquean por defecto: solicita el desbloqueo indicando que
+   vas a operar un servidor de correo. Sin él no se entrega correo a otros
+   servidores. Compruébalo desde el servidor:
    ```bash
    timeout 5 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25' && echo ABIERTO || echo BLOQUEADO
    ```
-4. **DNS inverso (PTR).** En el panel del proveedor del servidor (no en su
-   DNS), configure el registro inverso de la IP para que devuelva
+4. **DNS inverso (PTR).** En el panel del proveedor del servidor (no en tu
+   DNS), configura el registro inverso de la IP para que devuelva
    `mail.miempresa.com`. Gmail y Outlook rechazan servidores sin PTR coherente.
 5. **Puertos de correo libres**: 25, 465, 587, 993 y 4190. Si el sistema trae
-   Postfix o Exim, desactívelos.
+   Postfix o Exim, desactívalos.
 6. **Opcional, pero recomendado:**
    - un **token de API de Cloudflare** si el DNS del dominio está en
      Cloudflare, con los permisos *Zona → Zona → Leer* y *Zona → DNS →
@@ -170,7 +170,7 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 |---|---|
 | `--sin-skyway` | Instalación autónoma con `docker-compose.standalone.yml`: panel, motor y webmail, y un Traefik propio en 80/443 si esos puertos están libres (sección 7). |
 | `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean a mano. |
-| `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecute antes `git pull`. |
+| `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecuta antes `git pull`. |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
 ### 2.5 Ejecución desatendida
@@ -206,13 +206,13 @@ sudo MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
 ```
 
 > Los tokens pasados como variables quedan en el historial de la terminal.
-> Bórrelo después (`history -c`) o expórtelos desde un fichero protegido.
+> Bórralo después (`history -c`) o expórtalos desde un fichero protegido.
 
 ---
 
 ## 3. Puesta en marcha del panel
 
-Abra la dirección que muestra el instalador:
+Abre la dirección que muestra el instalador:
 `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>`. El token de
 puesta en marcha evita que el primer visitante de un panel recién publicado
 se quede con la instancia; también está en `deploy/.env`. Sin él, el paso 1
@@ -220,7 +220,7 @@ responde `403 setup_token_invalid`.
 
 El asistente tiene cuatro pasos:
 
-1. **Administrador**: su cuenta del panel (no es la del motor).
+1. **Administrador**: tu cuenta del panel (no es la del motor).
 2. **Motor de correo**: con las variables del instalador, «Usar el motor
    configurado en el servidor» lo conecta sin que su contraseña pase por el
    navegador. Al conectar, el panel aplica en el motor los ajustes
@@ -232,13 +232,13 @@ El asistente tiene cuatro pasos:
 
 Después, en el panel:
 
-- **Conexiones → Cloudflare**: conecte una cuenta con el ámbito «Toda la
-  instancia» si va a usar Cloudflare para el certificado o para los dominios
-  de sus clientes. **DNS de la plataforma** crea los registros del propio
+- **Conexiones → Cloudflare**: conecta una cuenta con el ámbito «Toda la
+  instancia» si vas a usar Cloudflare para el certificado o para los dominios
+  de tus clientes. **DNS de la plataforma** crea los registros del propio
   servidor si aún faltan.
-- **Ajustes → Servidor de correo**: compruebe el nombre del servidor, los
+- **Ajustes → Servidor de correo**: comprueba el nombre del servidor, los
   ajustes recomendados y el certificado (sección 5).
-- **Avisos → Canales de aviso**: configure al menos un canal (sección 10).
+- **Avisos → Canales de aviso**: configura al menos un canal (sección 10).
 
 ---
 
@@ -249,12 +249,12 @@ Después, en el panel:
 Skyway gestiona el correo de cada proyecto a través de la API de Mailway.
 
 1. En Mailway, con la cuenta de administración: **Conexiones → Tokens de
-   gestión → Crear token** (p. ej. «Skyway», sin caducidad). Copie el token
+   gestión → Crear token** (p. ej. «Skyway», sin caducidad). Copia el token
    `mwt_…`: solo se muestra una vez.
-2. En Skyway: **Ajustes → Correo (Mailway)**. Seleccione el servicio de Skyway
+2. En Skyway: **Ajustes → Correo (Mailway)**. Selecciona el servicio de Skyway
    que ejecuta el panel de Mailway (Skyway le hablará por la red interna) o
-   escriba su URL pública, pegue el token y pulse **Probar conexión**. Skyway
-   avisa si el token no es de administrador. Guarde.
+   escribe su URL pública, pega el token y pulsa **Probar conexión**. Skyway
+   avisa si el token no es de administrador. Guarda.
 3. El botón **Correo** aparece en la cabecera de cada proyecto. Para los
    usuarios de Skyway que no son administradores, el plan de su cuenta debe
    incluir el módulo **Correo** (`mail`): los planes creados antes de la 0.34
@@ -288,12 +288,12 @@ El estado de la sincronización (rutas publicadas y descartadas) aparece en
 Skyway → Ajustes → Correo (Mailway); en Mailway, en **Ajustes → Rutas de
 Traefik** y **Ajustes → Autoconfiguración de dispositivos**.
 
-> Si actualiza Skyway desde una versión anterior y tenía un
+> Si actualizas Skyway desde una versión anterior y tenías un
 > `docker-compose.override.yml` para Mailway en la carpeta de Skyway,
-> **elimínelo** y ejecute `docker compose up -d traefik` en esa carpeta: el
+> **elimínalo** y ejecuta `docker compose up -d traefik` en esa carpeta: el
 > fichero sustituye los parámetros de Traefik de la 0.34 (Traefik solo admite
 > un proveedor HTTP) y dejaría sin efecto el puente. Si lo generó el
-> instalador, `deploy/instalar.sh --actualizar` lo retira por usted.
+> instalador, `deploy/instalar.sh --actualizar` lo retira por ti.
 
 ### 4.3 Skyway anterior a 0.34 o Traefik propio
 
@@ -303,11 +303,11 @@ Traefik debe consultar el panel directamente. El instalador lo configura solo
 1. En Mailway, **Ajustes → Rutas de Traefik** muestra el bloque exacto
    (`docker-compose.override.yml`) con su token y el destino del panel. Hay
    una plantilla comentada en `deploy/skyway-traefik-override.yml`.
-2. Cópielo a la carpeta de Skyway como `docker-compose.override.yml` y
-   aplíquelo: `cd /ruta/a/Skyway && docker compose up -d traefik`.
+2. Cópialo a la carpeta de Skyway como `docker-compose.override.yml` y
+   aplícalo: `cd /ruta/a/Skyway && docker compose up -d traefik`.
 
 Compose **reemplaza** `command` entero, no lo fusiona: el bloque repite los
-parámetros que ya traía Traefik. Si actualiza Skyway y cambian, compárelos
+parámetros que ya traía Traefik. Si actualizas Skyway y cambian, compáralos
 con `docker inspect -f '{{json .Config.Cmd}}' skyway-traefik`.
 
 ---
@@ -315,7 +315,7 @@ con `docker inspect -f '{{json .Config.Cmd}}' skyway-traefik`.
 ## 5. Certificado TLS de IMAP y SMTP
 
 Los programas de correo exigen un certificado válido en los puertos 993, 465 y
-587. Hay dos vías; elija una.
+587. Hay dos vías; elige una.
 
 ### 5.1 ACME del propio motor con Cloudflare (preferida)
 
@@ -323,11 +323,11 @@ El motor pide y renueva su certificado a Let's Encrypt con el reto DNS-01 en
 Cloudflare. No depende de Traefik ni del puerto 80, renueva 30 días antes de
 caducar y sirve para IMAP y SMTP.
 
-- **Con el instalador**: si indicó un token de Cloudflare, ya está hecho.
-- **Desde el panel**: conecte en **Conexiones → Cloudflare** una cuenta con el
+- **Con el instalador**: si indicaste un token de Cloudflare, ya está hecho.
+- **Desde el panel**: conecta en **Conexiones → Cloudflare** una cuenta con el
   ámbito «Toda la instancia» cuyo token vea la zona de `mail.<dominio>`. En
-  **Ajustes → Servidor de correo**, elija esa cuenta, indique el correo de
-  contacto y emita el certificado. Solo se admiten cuentas de la instancia
+  **Ajustes → Servidor de correo**, elige esa cuenta, indica el correo de
+  contacto y emite el certificado. Solo se admiten cuentas de la instancia
   (`400 cloudflare_account_not_instance` con la de un cliente).
 - **Por API**: `POST /api/engine/acme` con
   `{"cloudflareAccountId":"cf_…","email":"sistemas@miempresa.com"}` y un token
@@ -348,7 +348,7 @@ A mano:
 cd /ruta/a/Mailway
 # 1) Nombre real del volumen de certificados de Skyway (<carpeta>_traefik-letsencrypt):
 docker volume ls | grep letsencrypt
-#    Si no es skyway_traefik-letsencrypt, ajuste TRAEFIK_ACME_VOLUME en deploy/.env.
+#    Si no es skyway_traefik-letsencrypt, ajusta TRAEFIK_ACME_VOLUME en deploy/.env.
 
 # 2) Arrancar el volcado:
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d certs-dumper
@@ -356,7 +356,8 @@ docker exec mailway-mail ls /opt/stalwart/certs/     # debe listar mail.miempres
 
 # 3) Indicar al motor que use esos ficheros y recargar los certificados.
 #    El puerto 8080 del motor no está publicado: se usa un contenedor efímero
-#    en la red interna. Sustituya mail.miempresa.com por su nombre.
+#    en la red interna. Sustituye mail.miempresa.com por el nombre de tu
+#    servidor.
 read -rsp 'Contraseña del motor (STALWART_ADMIN_PASSWORD): ' PASS; echo
 docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
   -X POST http://mailway-mail:8080/api/settings -H 'Content-Type: application/json' \
@@ -395,7 +396,7 @@ certificado válido (por ejemplo, sin Cloudflare y con el certificado de
 Traefik aún pendiente), `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` acepta el
 autofirmado: en las variables del panel (en Skyway, pestaña Variables) o, en
 la instalación autónoma, en `deploy/.env`. Una vez emitido el certificado,
-**elimínela** y vuelva a desplegar; `deploy/instalar.sh --actualizar` la
+**elimínala** y vuelve a desplegar; `deploy/instalar.sh --actualizar` la
 retira de las variables del panel en Skyway si el certificado ya está
 configurado.
 
@@ -415,7 +416,7 @@ Mismo resultado que la sección 2, paso a paso.
 | CNAME | `autoconfig.miempresa.com` | `mail.miempresa.com` |
 | CNAME | `autodiscover.miempresa.com` | `mail.miempresa.com` |
 
-Sin proxy de Cloudflare (nube gris). Espere a que propaguen:
+Sin proxy de Cloudflare (nube gris). Espera a que propaguen:
 `dig +short mail.miempresa.com` debe devolver la IP.
 
 ### 6.2 Configuración (`deploy/.env`)
@@ -427,7 +428,7 @@ cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
 nano deploy/.env
 ```
 
-Rellene al menos: `MAIL_HOSTNAME`, `WEBMAIL_HOSTNAME`, `PANEL_HOSTNAME`,
+Rellena al menos: `MAIL_HOSTNAME`, `WEBMAIL_HOSTNAME`, `PANEL_HOSTNAME`,
 `MAILWAY_PUBLIC_IP`, `LETSENCRYPT_EMAIL`, `STALWART_ADMIN_PASSWORD`
 (`openssl rand -hex 24`), `ROUNDCUBE_DES_KEY` (`openssl rand -hex 12`: 24
 caracteres), `MAILWAY_PANEL_URL`, `MAILWAY_WEBMAIL_URL` y los secretos
@@ -447,7 +448,7 @@ carpeta: contenedores `mailway-mail` y `mailway-webmail`, volúmenes
 `mailway-mail-data` y `mailway-webmail-db`, red `mailway-internal`.
 
 > La imagen de Stalwart está **fijada a v0.15.5**: la v0.16 eliminó la API
-> REST que usa Mailway. No la actualice sin leer [PLAN.md](PLAN.md).
+> REST que usa Mailway. No la actualices sin leer [PLAN.md](PLAN.md).
 
 ### 6.4 Panel en Skyway
 
@@ -488,8 +489,8 @@ En Skyway:
 ### 6.5 Enlazar el webmail con el panel
 
 La pestaña **Ajustes → Contraseña** del webmail cambia la contraseña a través
-del panel, por la red interna. Indique el contenedor real del panel en
-`deploy/.env` y recree el webmail:
+del panel, por la red interna. Indica el contenedor real del panel en
+`deploy/.env` y recrea el webmail:
 
 ```bash
 docker ps --format '{{.Names}}' | grep '^skyway-.*panel'      # p. ej. skyway-mailway-panel
@@ -499,12 +500,12 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d ma
 
 ### 6.6 Puesta en marcha, rutas y certificado
 
-1. Abra `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>` y
-   complete el asistente (sección 3). Al conectar el motor se aplican los
-   ajustes recomendados; si fallan, repítalos en **Ajustes → Servidor de
+1. Abre `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>` y
+   completa el asistente (sección 3). Al conectar el motor se aplican los
+   ajustes recomendados; si fallan, repítelos en **Ajustes → Servidor de
    correo**.
-2. Conecte Skyway (sección 4).
-3. Configure el certificado (sección 5).
+2. Conecta Skyway (sección 4).
+3. Configura el certificado (sección 5).
 
 ---
 
@@ -523,8 +524,8 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.standalone.yml --
 
 Sin el perfil `proxy` (por ejemplo, si 80/443 ya los usa otro servidor web),
 el panel (`127.0.0.1:4100`), el webmail (`127.0.0.1:8000`) y la web del motor
-(`127.0.0.1:8080`) escuchan **solo en local**: póngales delante un proxy con
-TLS (Caddy, Nginx…). Nunca los publique en HTTP hacia Internet: por ellos
+(`127.0.0.1:8080`) escuchan **solo en local**: ponles delante un proxy con
+TLS (Caddy, Nginx…). Nunca los publiques en HTTP hacia Internet: por ellos
 viajan contraseñas.
 
 El certificado de IMAP/SMTP se obtiene igual que en la sección 5: ACME del
@@ -569,21 +570,21 @@ datos: el correo sigue en el mismo volumen.
 **A mano:**
 
 ```bash
-docker volume ls | grep mailway                         # localice los volúmenes deploy_*
+docker volume ls | grep mailway                         # localiza los volúmenes deploy_*
 # En deploy/.env:
 #   MAILWAY_MAIL_VOLUME=deploy_mailway-mail-data
 #   MAILWAY_WEBMAIL_DB_VOLUME=deploy_mailway-webmail-db
 #   MAILWAY_PANEL_VOLUME=deploy_mailway-panel-data      # solo en la instalación autónoma
 #   ROUNDCUBE_DES_KEY, MAILWAY_WEBMAIL_TOKEN, MAILWAY_PANEL_INTERNAL_URL… (ver .env.example)
 docker rm -f mailway-webmail mailway-certs-dumper mailway-mail   # los volúmenes se conservan
-#   (en la instalación autónoma, retire también mailway-panel y use docker-compose.standalone.yml)
+#   (en la instalación autónoma, retira también mailway-panel y usa docker-compose.standalone.yml)
 docker network rm mailway-internal                               # se recrea con la subred fija
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d
 ```
 
 Después, en el panel, **Ajustes → Servidor de correo → Aplicar ajustes
 recomendados** (nombre del servidor, proxy y exención de la red interna), y
-añada al servicio del panel en Skyway las variables nuevas de la sección 6.4
+añade al servicio del panel en Skyway las variables nuevas de la sección 6.4
 (`MAILWAY_WEBMAIL_TOKEN`, `MAILWAY_ENGINE_TRUSTED_NETWORK`,
 `MAILWAY_SETUP_TOKEN`…).
 
@@ -596,7 +597,7 @@ En el panel (`https://panel.miempresa.com`):
 1. **Clientes → Alta de cliente**: nombre y plan, y opcionalmente el usuario con
    el que el cliente entrará en su panel (la contraseña generada se muestra
    una sola vez). Los planes se editan en **Planes**.
-2. El cliente (o usted) sigue la lista de puesta en marcha:
+2. El cliente (o tú en su nombre) sigue la lista de puesta en marcha:
    - **Dominios → Añadir dominio**. Si una cuenta de Cloudflare conectada
      contiene la zona, la casilla «Configurar el DNS automáticamente en
      Cloudflare» lo deja listo en un paso. Si no, el asistente muestra los
@@ -610,7 +611,7 @@ En el panel (`https://panel.miempresa.com`):
      contraseña se muestra una vez; **Conectar dispositivos** genera el enlace
      de configuración para el titular.
    - **API de envío**: claves para envíos automatizados ([API.md](API.md)).
-3. Envíe a los titulares la [guía para titulares](GUIA-TITULARES.md) junto con
+3. Envía a los titulares la [guía para titulares](GUIA-TITULARES.md) junto con
    su enlace de configuración.
 
 ---
@@ -625,14 +626,14 @@ negras y el certificado del motor una vez al día. Cuando algo falla abre una
 incidencia en **Avisos** y la envía por los canales configurados, sin repetir
 el mismo aviso y con mensaje de recuperación.
 
-En **Avisos → Canales de aviso** configure al menos uno:
+En **Avisos → Canales de aviso** configura al menos uno:
 
 - **Discord**: Ajustes del canal → Integraciones → Webhooks → Copiar URL.
-- **Telegram**: cree un bot con [@BotFather](https://t.me/BotFather) e indique
+- **Telegram**: crea un bot con [@BotFather](https://t.me/BotFather) e indica
   su token y el ID del chat.
 - **Webhook genérico**: recibe un JSON (útil para n8n o un sistema propio).
 
-Pulse **Enviar aviso de prueba**. Skyway no vigila estos contenedores: el
+Pulsa **Enviar aviso de prueba**. Skyway no vigila estos contenedores: el
 vigilante de Mailway es lo que cubre el correo.
 
 ---
@@ -663,7 +664,7 @@ vigilante de Mailway es lo que cubre el correo.
   indican que la ruta o su destino aún no están bien). **Ajustes → Rutas de
   Traefik** muestra cuándo consultó Traefik las rutas por última vez
   (directamente o a través de Skyway): si nunca lo ha hecho o lleva más de 90
-  segundos sin hacerlo, revise la conexión (sección 4).
+  segundos sin hacerlo, revisa la conexión (sección 4).
 
 Detalle y reglas en [INTEGRACIONES.md](INTEGRACIONES.md).
 
@@ -675,21 +676,21 @@ En **Entregabilidad** el panel comprueba PTR, registro A y listas negras
 (Spamhaus, SpamCop, Barracuda) y ordena las tareas pendientes. Antes de enviar
 en volumen:
 
-- **Caliente la IP**: si es nueva, empiece con decenas de envíos al día y
-  aumente de forma gradual durante 2–4 semanas.
+- **Calienta la IP**: si es nueva, empieza con decenas de envíos al día y
+  aumenta de forma gradual durante 2–4 semanas.
 - **DMARC en `p=quarantine` o `p=reject`** cuando SPF y DKIM lleven unos días
   correctos.
-- Pruebe con [mail-tester.com](https://www.mail-tester.com) desde un buzón y
+- Prueba con [mail-tester.com](https://www.mail-tester.com) desde un buzón y
   desde la API; el objetivo es 10/10.
-- Si Spamhaus aparece como «no concluyente», consulte manualmente en
+- Si Spamhaus aparece como «no concluyente», consulta manualmente en
   [check.spamhaus.org](https://check.spamhaus.org): rechaza las consultas
   hechas a través de resolutores públicos.
 
 ### 12.1 Lista de salida a producción
 
 Que los contenedores respondan no significa que el servicio de correo esté
-listo. Antes de aceptar clientes reales, deje comprobados **todos** estos
-puntos y anote la fecha de la prueba:
+listo. Antes de aceptar clientes reales, deja comprobados **todos** estos
+puntos y anota la fecha de la prueba:
 
 - [ ] El panel solo se publica por HTTPS y `/api/health` devuelve `ok: true`.
 - [ ] El volumen `/data` del panel es persistente y una copia de prueba se ha
@@ -716,7 +717,7 @@ puntos y anote la fecha de la prueba:
 compilación, las pruebas y esta lista. La disponibilidad, la reputación, el
 PTR, el cortafuegos, el TLS y la restauración dependen del servidor final y no
 se pueden validar desde el repositorio. Mientras quede una casilla sin
-comprobar, trate la instalación como preproducción.
+comprobar, trata la instalación como preproducción.
 
 ---
 
@@ -727,7 +728,7 @@ comprobar, trate la instalación como preproducción.
     del servicio, que se puede programar desde Skyway);
   - volumen `mailway-mail-data` (todo el correo y la configuración del motor);
   - volumen `mailway-webmail-db` (ajustes de los usuarios del webmail);
-  - `deploy/.env` (secretos; guárdelo cifrado).
+  - `deploy/.env` (secretos; guárdalo cifrado).
   ```bash
   # Se detiene el motor unos segundos: copiar su base de datos en marcha
   # puede dejarla incoherente.
@@ -736,7 +737,7 @@ comprobar, trate la instalación como preproducción.
     tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
   docker start mailway-mail
   ```
-  Con una instalación migrada desde 0.x, sustituya `mailway-mail-data` por el
+  Con una instalación migrada desde 0.x, sustituye `mailway-mail-data` por el
   valor de `MAILWAY_MAIL_VOLUME`.
 - **Registros del motor**: `docker logs -f mailway-mail` y
   `docker exec mailway-mail ls /opt/stalwart/logs`.
@@ -762,7 +763,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 |---|---|---|
 | `PORT`, `HOST` | `4100`, `0.0.0.0` | Dirección de escucha. |
 | `MAILWAY_DATA_DIR` | `/data` en la imagen | Base de datos y clave maestra. |
-| `MAILWAY_SECRET` | se genera en `/data/.secret` | Clave maestra: firma sesiones, cifra secretos y deriva los TXT de verificación de propiedad. Mínimo 16 caracteres. **No la cambie** en una instalación en uso ([SEGURIDAD.md](SEGURIDAD.md#6-secretos)). |
+| `MAILWAY_SECRET` | se genera en `/data/.secret` | Clave maestra: firma sesiones, cifra secretos y deriva los TXT de verificación de propiedad. Mínimo 16 caracteres. **No la cambies** en una instalación en uso ([SEGURIDAD.md](SEGURIDAD.md#6-secretos)). |
 | `MAILWAY_SETUP_TOKEN` | — | Exige este token para crear el primer administrador. |
 | `STALWART_URL`, `STALWART_ADMIN_USER`, `STALWART_ADMIN_PASSWORD` | —, `admin`, — | Motor que el asistente conecta con «Usar el motor configurado en el servidor», sin que la contraseña pase por el navegador. |
 | `STALWART_SMTP_HOST`, `STALWART_SMTP_PORT` | host de `STALWART_URL`, `587` | SMTP interno de la API de envío. |
@@ -790,20 +791,20 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Síntoma | Causa probable | Solución |
 |---|---|---|
 | `engine_unreachable` al conectar el motor | El compose del correo no está en marcha, o el panel no está en la red `skyway-edge` | `docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d`. En Skyway, el servicio del panel necesita un dominio para quedar conectado a `skyway-edge`. |
-| El paso 1 del asistente responde «El token de puesta en marcha no es correcto» | Falta `?token=` o no coincide con `MAILWAY_SETUP_TOKEN` | Use la dirección que imprime el instalador o copie el valor de `deploy/.env`. |
-| `mailway-mail` nunca llega a *healthy* | Núcleo sin IPv6, o puertos ocupados | Vuelva a ejecutar el instalador (cambia el motor a IPv4) y revise `docker exec mailway-mail ls /opt/stalwart/logs`. |
+| El paso 1 del asistente responde «El token de puesta en marcha no es correcto» | Falta `?token=` o no coincide con `MAILWAY_SETUP_TOKEN` | Usa la dirección que imprime el instalador o copia el valor de `deploy/.env`. |
+| `mailway-mail` nunca llega a *healthy* | Núcleo sin IPv6, o puertos ocupados | Vuelve a ejecutar el instalador (cambia el motor a IPv4) y revisa `docker exec mailway-mail ls /opt/stalwart/logs`. |
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
-| No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX su-dominio.com`; abra el 25 de entrada en el cortafuegos del proveedor. |
-| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítelo al proveedor (sección 1). |
+| No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
+| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
 | Thunderbird o el iPhone avisan del certificado | Certificado de IMAP/SMTP sin configurar o autofirmado | Sección 5; estado en Ajustes → Servidor de correo. |
-| Un envío por API devuelve `status: "failed"` con un error de certificado | El SMTP interno no puede verificar el certificado | Emita el certificado (sección 5) o, solo mientras tanto, `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en las variables del panel. |
-| El webmail no inicia sesión | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; compruebe en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
-| El webmail no muestra «Contraseña» o no la cambia | Falta `MAILWAY_WEBMAIL_TOKEN` (en `deploy/.env` y en el panel, con el mismo valor) o `MAILWAY_PANEL_INTERNAL_URL` no apunta al contenedor real del panel | Sección 6.5; recree `mailway-webmail`. |
-| Una IP legítima no puede conectar al motor (bloqueo automático) | Stalwart bloquea de forma permanente una IP tras demasiados fallos de autenticación | Desbloquéela: `docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" -X DELETE http://mailway-mail:8080/api/settings/server.blocked-ip.<IP>` y después `…/api/reload/server.blocked-ip`. |
-| No se pueden crear buzones: `domain_ownership_pending` | La propiedad del dominio no está comprobada | Apunte el MX a este servidor o cree el TXT `_mailway.<dominio>` de la ficha del dominio y pulse «Medir el DNS ahora». |
-| Los nombres `autoconfig.` o la marca blanca dan 404 de Traefik | El DNS aún no apunta aquí (Mailway no los publica), o Traefik no consulta las rutas de Mailway | Pulse «Comprobar» cuando el DNS esté listo. Con Skyway 0.34, compruebe que Mailway está conectado en Skyway (sección 4.2); en versiones anteriores, el override (sección 4.3). |
-| Ajustes → Rutas de Traefik indica «Destino del panel: Sin detectar» | El panel no se desplegó con Skyway y no define `MAILWAY_PANEL_BACKEND_URL` | Defina `MAILWAY_PANEL_BACKEND_URL=http://<contenedor del panel>:4100`. Sin él no se publican los nombres de autoconfiguración ni los dominios de tipo panel. |
-| Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no consulta el panel, o el puerto 80 está cerrado | Revise la sección 4. Let's Encrypt valida por el puerto 80: debe estar abierto. |
-| Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínelo y ejecute `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
+| Un envío por API devuelve `status: "failed"` con un error de certificado | El SMTP interno no puede verificar el certificado | Emite el certificado (sección 5) o, solo mientras tanto, `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en las variables del panel. |
+| El webmail no inicia sesión | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; comprueba en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
+| El webmail no muestra «Contraseña» o no la cambia | Falta `MAILWAY_WEBMAIL_TOKEN` (en `deploy/.env` y en el panel, con el mismo valor) o `MAILWAY_PANEL_INTERNAL_URL` no apunta al contenedor real del panel | Sección 6.5; recrea `mailway-webmail`. |
+| Una IP legítima no puede conectar al motor (bloqueo automático) | Stalwart bloquea de forma permanente una IP tras demasiados fallos de autenticación | Desbloquéala: `docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" -X DELETE http://mailway-mail:8080/api/settings/server.blocked-ip.<IP>` y después `…/api/reload/server.blocked-ip`. |
+| No se pueden crear buzones: `domain_ownership_pending` | La propiedad del dominio no está comprobada | Apunta el MX a este servidor o crea el TXT `_mailway.<dominio>` de la ficha del dominio y pulsa «Medir el DNS ahora». |
+| Los nombres `autoconfig.` o la marca blanca dan 404 de Traefik | El DNS aún no apunta aquí (Mailway no los publica), o Traefik no consulta las rutas de Mailway | Pulsa «Comprobar» cuando el DNS esté listo. Con Skyway 0.34, comprueba que Mailway está conectado en Skyway (sección 4.2); en versiones anteriores, el override (sección 4.3). |
+| Ajustes → Rutas de Traefik indica «Destino del panel: Sin detectar» | El panel no se desplegó con Skyway y no define `MAILWAY_PANEL_BACKEND_URL` | Define `MAILWAY_PANEL_BACKEND_URL=http://<contenedor del panel>:4100`. Sin él no se publican los nombres de autoconfiguración ni los dominios de tipo panel. |
+| Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no consulta el panel, o el puerto 80 está cerrado | Revisa la sección 4. Let's Encrypt valida por el puerto 80: debe estar abierto. |
+| Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
 | El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | Sección 4.1. |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |

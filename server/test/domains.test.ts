@@ -69,7 +69,7 @@ test('un dominio no válido se rechaza con un mensaje claro', async () => {
     payload: { domain: 'no valido', clientId },
   });
   assert.equal(res.statusCode, 400);
-  assert.match((res.json() as { error: string }).error, /Introdúzcalo/);
+  assert.match((res.json() as { error: string }).error, /Introdúcelo/);
 });
 
 /* ---------------------------------- Borrado -------------------------------- */

@@ -16,7 +16,7 @@ export default function Conexiones({ isAdmin }: { isAdmin: boolean }) {
         meta={
           isAdmin
             ? 'Cloudflare para configurar el DNS sin copiar registros, y tokens para gestionar Mailway desde Skyway u otras herramientas.'
-            : 'Cloudflare para configurar el DNS de sus dominios sin copiar registros, y tokens para automatizar la gestión.'
+            : 'Cloudflare para configurar el DNS de tus dominios sin copiar registros, y tokens para automatizar la gestión.'
         }
       />
       <div className="flex flex-col gap-4">

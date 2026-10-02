@@ -322,7 +322,7 @@ function entero(nombre: string, min: number, max: number) {
   const Nombre = nombre.charAt(0).toUpperCase() + nombre.slice(1);
   return z
     .number({
-      required_error: `Indique ${nombre}.`,
+      required_error: `Indica ${nombre}.`,
       invalid_type_error: `${Nombre} debe ser un número.`,
     })
     .int(`${Nombre} debe ser un número entero.`)
@@ -332,7 +332,7 @@ function entero(nombre: string, min: number, max: number) {
 
 const planFields = {
   name: z
-    .string({ required_error: 'Indique el nombre del plan.' })
+    .string({ required_error: 'Indica el nombre del plan.' })
     .trim()
     .min(2, 'El nombre del plan debe tener al menos 2 caracteres.')
     .max(60, 'El nombre del plan no puede superar los 60 caracteres.'),
@@ -360,12 +360,12 @@ const contactEmailSchema = z
 
 const clientFields = {
   name: z
-    .string({ required_error: 'Indique el nombre del cliente.' })
+    .string({ required_error: 'Indica el nombre del cliente.' })
     .trim()
     .min(2, 'El nombre del cliente debe tener al menos 2 caracteres.')
     .max(80, 'El nombre del cliente no puede superar los 80 caracteres.'),
   contactEmail: contactEmailSchema,
-  planId: z.string({ required_error: 'Seleccione un plan.' }).min(1, 'Seleccione un plan.'),
+  planId: z.string({ required_error: 'Selecciona un plan.' }).min(1, 'Selecciona un plan.'),
   notes: z.string().max(1000, 'Las notas no pueden superar los 1000 caracteres.'),
 };
 
@@ -377,7 +377,7 @@ const passwordSchema = z
 const userFields = {
   email: emailSchema('El correo del usuario no es válido.'),
   name: z
-    .string({ required_error: 'Indique el nombre del usuario.' })
+    .string({ required_error: 'Indica el nombre del usuario.' })
     .trim()
     .min(2, 'El nombre del usuario debe tener al menos 2 caracteres.')
     .max(80, 'El nombre del usuario no puede superar los 80 caracteres.'),
@@ -504,7 +504,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
     const inUse = clientCountOfPlan(id);
     if (inUse > 0) {
       throw conflict(
-        `No es posible eliminar el plan «${plan.name}»: lo ${inUse === 1 ? 'usa 1 cliente' : `usan ${inUse} clientes`}. Asígneles otro plan antes de eliminarlo.`,
+        `No es posible eliminar el plan «${plan.name}»: lo ${inUse === 1 ? 'usa 1 cliente' : `usan ${inUse} clientes`}. Asígnales otro plan antes de eliminarlo.`,
         'plan_in_use',
       );
     }
@@ -594,7 +594,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
       const excess = planExcess(id, nextPlan);
       if (excess.length > 0) {
         throw conflict(
-          `No es posible asignar el plan «${nextPlan.name}»: ${excess.join('; ')}. Reduzca el uso o elija un plan con más capacidad.`,
+          `No es posible asignar el plan «${nextPlan.name}»: ${excess.join('; ')}. Reduce el uso o elige un plan con más capacidad.`,
           'plan_below_usage',
         );
       }
@@ -653,7 +653,7 @@ export function registerClientRoutes(app: FastifyInstance): void {
     const usage = getClientUsage(id);
     if (usage.domains > 0) {
       throw conflict(
-        'No es posible eliminar un cliente con dominios. Elimine antes sus dominios (y con ellos sus buzones) para no dejar cuentas huérfanas en el motor.',
+        'No es posible eliminar un cliente con dominios. Elimina antes sus dominios (y con ellos sus buzones) para no dejar cuentas huérfanas en el motor.',
         'client_has_domains',
       );
     }
@@ -751,7 +751,7 @@ export function assertWithinLimit(
       adding === 1
         ? // El administrador no tiene a quién pedir la ampliación: la hace él.
           `Se ha alcanzado el máximo de ${limit.label} del plan «${plan.name}» (${limit.max}). ${
-            viewerIsAdmin ? 'Amplíe el plan del cliente en su ficha.' : 'Solicite una ampliación del plan.'
+            viewerIsAdmin ? 'Amplía el plan del cliente en su ficha.' : 'Solicita una ampliación del plan.'
           }`
         : `El plan «${plan.name}» permite ${limit.max} ${limit.label} y ya hay ${limit.used}: no es posible crear ${adding} más (quedan ${remaining}). No se ha creado ninguno.`,
       'plan_limit_reached',

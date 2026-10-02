@@ -145,7 +145,7 @@ export function RevisionCambios({
           <p className="mt-1.5 max-w-[75ch] text-sm text-tinta">
             Los registros en conflicto se eliminarán o sustituirán en Cloudflare. Si el dominio
             recibe hoy correo en otro proveedor, dejará de recibirlo allí en cuanto se apliquen los
-            cambios: active esta opción solo si está trasladando el correo a este servidor. Los SPF
+            cambios: activa esta opción solo si estás trasladando el correo a este servidor. Los SPF
             duplicados y los registros bloqueados por Email Routing nunca se modifican
             automáticamente.
           </p>

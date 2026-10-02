@@ -169,7 +169,7 @@ export function AltaMasiva({
           {revision.exceedsPlan && !revision.ownershipPending && (
             <BandaError>
               El plan permite crear {revision.capacity.remaining} buzones más y la lista contiene{' '}
-              {revision.valid} válidos. Reduzca la lista o amplíe el plan del cliente; no se creará ninguno
+              {revision.valid} válidos. Reduce la lista o amplía el plan del cliente; no se creará ninguno
               mientras no quepan todos.
             </BandaError>
           )}
@@ -210,15 +210,15 @@ export function AltaMasiva({
           onSubmit={(e) => {
             e.preventDefault();
             if (!domainId) {
-              setError('Seleccione un dominio que admita buzones.');
+              setError('Selecciona un dominio que admita buzones.');
               return;
             }
             if (lineas.length === 0) {
-              setError('Escriba al menos una dirección.');
+              setError('Escribe al menos una dirección.');
               return;
             }
             if (enviadas.length === 0) {
-              setError('Ninguna línea es válida. Corrija los errores indicados.');
+              setError('Ninguna línea es válida. Corrige los errores indicados.');
               return;
             }
             if (lineas.length > MAX_LOTE) {
@@ -249,7 +249,7 @@ export function AltaMasiva({
               setTexto(e.target.value);
             }}
             placeholder={'ana\nluis, Luis Martín\nsoporte, Atención al cliente'}
-            help={`Escriba el nombre del buzón o «nombre, Nombre visible». También se admite la dirección completa y lo pegado desde una hoja de cálculo. Máximo ${MAX_LOTE} por lote.`}
+            help={`Escribe el nombre del buzón o «nombre, Nombre visible». También se admite la dirección completa y lo pegado desde una hoja de cálculo. Máximo ${MAX_LOTE} por lote.`}
           />
           {lineas.length > 0 && (
             <p className="text-sm text-tinta-2">
@@ -312,8 +312,8 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
       {creados.length > 0 && (
         <>
           <BandaAviso>
-            Las contraseñas <strong className="font-semibold">solo se muestran ahora</strong>. Descárguelas o
-            cópielas antes de cerrar y entréguelas a cada titular por un canal seguro.
+            Las contraseñas <strong className="font-semibold">solo se muestran ahora</strong>. Descárgalas o
+            cópialas antes de cerrar y entrégalas a cada titular por un canal seguro.
           </BandaAviso>
           <div className="flex flex-wrap gap-2">
             <Button

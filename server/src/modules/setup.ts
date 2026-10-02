@@ -22,8 +22,8 @@ import {
 } from './settings';
 
 const adminSchema = z.object({
-  email: z.string().trim().toLowerCase().max(254).email('Introduzca un correo válido.'),
-  name: z.string().trim().min(2, 'Escriba su nombre.').max(80, 'El nombre no puede superar los 80 caracteres.'),
+  email: z.string().trim().toLowerCase().max(254).email('Introduce un correo válido.'),
+  name: z.string().trim().min(2, 'Escribe tu nombre.').max(80, 'El nombre no puede superar los 80 caracteres.'),
   password: z
     .string()
     .min(10, 'La contraseña debe tener al menos 10 caracteres.')
@@ -144,7 +144,7 @@ function withStoredPassword(body: EngineSettings): EngineSettings {
     current.smtpHost.trim().toLowerCase() === body.smtpHost.trim().toLowerCase();
   if (!sameTarget) {
     throw badRequest(
-      'Para cambiar la URL, el usuario o el servidor SMTP del motor, indique también la contraseña del administrador del motor.',
+      'Para cambiar la URL, el usuario o el servidor SMTP del motor, indica también la contraseña del administrador del motor.',
       'engine_password_required',
     );
   }
@@ -277,13 +277,13 @@ export function registerSetupRoutes(app: FastifyInstance): void {
   /** Paso 1: crear la cuenta de administrador (solo si no existe ninguna). */
   app.post('/api/setup/admin', async (req, reply) => {
     if (countUsers() > 0) {
-      throw forbidden('Ya existe un administrador. Inicie sesión con esa cuenta.', 'admin_exists');
+      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.', 'admin_exists');
     }
     const body = adminSchema.parse(req.body);
     if (config.setupToken) {
       const ip = req.ip || '';
       if (setupFailures(ip) >= SETUP_MAX_FAILURES) {
-        throw tooMany('Se han producido demasiados intentos con un token incorrecto. Espere 15 minutos antes de volver a intentarlo.');
+        throw tooMany('Se han producido demasiados intentos con un token incorrecto. Espera 15 minutos antes de volver a intentarlo.');
       }
       if (!sameSecret(body.setupToken ?? '', config.setupToken)) {
         db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)').run(`setup:${ip}`, now());
@@ -317,7 +317,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       const env = engineFromEnv();
       if (!env) {
         throw badRequest(
-          'El servidor no tiene un motor definido en su entorno (STALWART_URL y STALWART_ADMIN_PASSWORD). Indique los datos a mano.',
+          'El servidor no tiene un motor definido en su entorno (STALWART_URL y STALWART_ADMIN_PASSWORD). Indica los datos a mano.',
           'engine_env_missing',
         );
       }
@@ -328,12 +328,12 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     }
 
     if (settings.kind === 'stalwart') {
-      if (!settings.url) throw badRequest('Indique la URL de la API de gestión de Stalwart.');
-      if (!settings.adminPassword) throw badRequest('Indique la contraseña del administrador del motor.');
+      if (!settings.url) throw badRequest('Indica la URL de la API de gestión de Stalwart.');
+      if (!settings.adminPassword) throw badRequest('Indica la contraseña del administrador del motor.');
       const result = await testEngine(settings);
       if (!result.ok) {
         throw badRequest(
-          `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}. Revise la URL y las credenciales.`,
+          `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}. Revisa la URL y las credenciales.`,
           'engine_test_failed',
         );
       }
@@ -482,7 +482,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     requireAdminSession(req);
     const body = withStoredPassword(engineSchema.parse(req.body));
     if (body.kind === 'stalwart') {
-      if (!body.url) throw badRequest('Indique la URL de la API de gestión de Stalwart.', 'engine_url_required');
+      if (!body.url) throw badRequest('Indica la URL de la API de gestión de Stalwart.', 'engine_url_required');
       const result = await testEngine(body);
       if (!result.ok) {
         throw badRequest(
@@ -500,7 +500,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     requireAdminSession(req);
     const body = withStoredPassword(engineSchema.parse(req.body));
     if (body.kind === 'stalwart' && !body.url) {
-      throw badRequest('Indique la URL de la API de gestión de Stalwart.', 'engine_url_required');
+      throw badRequest('Indica la URL de la API de gestión de Stalwart.', 'engine_url_required');
     }
     return await testEngine(body);
   });

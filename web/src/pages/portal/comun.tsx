@@ -158,7 +158,7 @@ export function BotonCopiarTactil({ texto, rotulo = 'Copiar' }: { texto: string;
         )}
       </svg>
       <span aria-live="polite">
-        {estado === 'ok' ? 'Copiado' : estado === 'fallo' ? 'Cópielo manualmente' : rotulo}
+        {estado === 'ok' ? 'Copiado' : estado === 'fallo' ? 'Cópialo manualmente' : rotulo}
       </span>
     </button>
   );

@@ -16,7 +16,7 @@ de gestión está en [INTEGRACIONES.md](INTEGRACIONES.md).
 ## 1. Envío transaccional
 
 Cada clave de API pertenece a un cliente y envía siempre en nombre de **un
-buzón remitente** fijo (recomendado: `noreply@su-dominio.com`). Así ningún
+buzón remitente** fijo (recomendado: `noreply@tu-dominio.com`). Así ningún
 cliente puede enviar como otro.
 
 ### 1.1 Autenticación
@@ -59,9 +59,9 @@ curl -sS -X POST https://panel.miempresa.com/v1/send \
   -H "Content-Type: application/json" \
   -d '{
     "to": "cliente@ejemplo.com",
-    "subject": "Su código de acceso",
-    "html": "<p>Su código es <strong>482913</strong>. Caduca en 10 minutos.</p>",
-    "text": "Su código es 482913. Caduca en 10 minutos."
+    "subject": "Tu código de acceso",
+    "html": "<p>Tu código es <strong>482913</strong>. Caduca en 10 minutos.</p>",
+    "text": "Tu código es 482913. Caduca en 10 minutos."
   }'
 ```
 
@@ -92,9 +92,9 @@ async function enviarCorreo(mensaje, intentos = 4) {
 
 await enviarCorreo({
   to: usuario.email,
-  subject: 'Su código de acceso',
-  html: `<p>Su código es <strong>${otp}</strong>.</p>`,
-  text: `Su código es ${otp}.`,
+  subject: 'Tu código de acceso',
+  html: `<p>Tu código es <strong>${otp}</strong>.</p>`,
+  text: `Tu código es ${otp}.`,
 });
 ```
 
@@ -107,7 +107,7 @@ r = requests.post(
     f"{os.environ['MAILWAY_API_URL']}/v1/send",
     headers={"Authorization": f"Bearer {os.environ['MAILWAY_API_KEY']}"},
     json={"to": ["ana@ejemplo.com"], "subject": "Factura 2026-031",
-          "text": "Adjuntamos el enlace a su factura.", "replyTo": "facturacion@miempresa.com"},
+          "text": "Adjuntamos el enlace a tu factura.", "replyTo": "facturacion@miempresa.com"},
     timeout=30,
 )
 data = r.json()
@@ -196,15 +196,15 @@ dailyLimit, lastUsedAt, revokedAt, createdAt, usedToday }`.
 ## 3. Buenas prácticas
 
 - Una clave por aplicación y entorno («OTP producción», «Facturas pruebas»).
-- Guarde la clave en un gestor de secretos o en una variable de entorno, nunca
+- Guarda la clave en un gestor de secretos o en una variable de entorno, nunca
   en el código.
-- Incluya siempre la versión `text` además de `html`: mejora la entrega.
-- Ante `429 rate_limited`, reintente con espera exponencial (2 s, 4 s, 8 s…).
-  Ante `429 daily_limit_reached`, no reintente hasta el día siguiente.
-- Trate `200` con `status: "failed"` como un error: el mensaje no salió.
-- Revoque de inmediato cualquier clave que se haya podido filtrar; crear una
+- Incluye siempre la versión `text` además de `html`: mejora la entrega.
+- Ante `429 rate_limited`, reintenta con espera exponencial (2 s, 4 s, 8 s…).
+  Ante `429 daily_limit_reached`, no reintentes hasta el día siguiente.
+- Trata `200` con `status: "failed"` como un error: el mensaje no salió.
+- Revoca de inmediato cualquier clave que se haya podido filtrar; crear una
   nueva lleva segundos.
-- Para enviar desde un programa que ya habla SMTP, use una contraseña de
+- Para enviar desde un programa que ya habla SMTP, usa una contraseña de
   aplicación del buzón (`mail.<dominio>`, puerto 587 con STARTTLS o 465 con
   TLS): ver [INTEGRACIONES.md](INTEGRACIONES.md#8-otras-plataformas).
 

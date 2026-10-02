@@ -75,25 +75,31 @@ Las pruebas viven en `server/test/*.test.ts` y se ejecutan con `node --test`.
 el motor de demostración, desactiva el vigilante y activa el modo sin red
 (`MAILWAY_DNS_OFFLINE=1`: el DNS devuelve «no se pudo consultar»).
 `test/helpers.ts` crea la app, el administrador, clientes, dominios y buzones
-para probar rutas reales con `app.inject()`. Si arregla un fallo, añada la
+para probar rutas reales con `app.inject()`. Si arreglas un fallo, añade la
 prueba que lo reproduce.
 
 ## Convenciones
 
 - **Idioma**: código, comentarios, mensajes de interfaz y de error en
   **español**. Los comentarios explican el *porqué*.
-- **Registro de los textos**: profesional y neutro, tratamiento de usted,
-  botones en infinitivo, sin coloquialismos (mismo criterio que
-  `docs/ESTILO-TEXTOS.md` de Skyway). Terminología fija: buzón, alias, clave
-  de API, token de gestión, contraseña de aplicación, enlace de
-  configuración, plan, entregabilidad.
+- **Registro de los textos**: profesional y neutro, tratando al usuario de
+  tú («Revisa el token», «Tu sesión ha caducado»), con construcciones
+  impersonales cuando encajen, botones en infinitivo y sin coloquialismos
+  (mismo criterio que `docs/ESTILO-TEXTOS.md` de Skyway). «Su», «le» y
+  «puede» no cambian cuando se refieren a un tercero (el cliente, el buzón,
+  el titular). Terminología fija: buzón, alias, clave de API, token de
+  gestión, contraseña de aplicación, enlace de configuración, plan,
+  entregabilidad.
 - **Rutas**: `requireAuth` / `requireAdmin` / `requireClientAccess` según el
   recurso, y `requireSession` para lo que un token no debe poder hacer (crear
-  tokens, cambiar la contraseña). Cuerpo validado con **zod**. Errores con
-  los ayudantes de `core/errors.ts` y un `code` estable: la respuesta es
-  siempre `{ error, code }`. `audit(req, 'area.accion', {...}, clientId)` en
-  las acciones sensibles, con el cliente afectado para que aparezca en su
-  Actividad, y nunca con secretos.
+  tokens, cambiar la contraseña). `requireAdminSession` (administrador con
+  sesión del panel) es el guarda para cambiar la conexión con el motor: un
+  token de gestión no puede, ni siquiera el de administración. Cuerpo
+  validado con **zod**. Errores con los ayudantes de `core/errors.ts` y un
+  `code` estable: la respuesta es siempre `{ error, code }`.
+  `audit(req, 'area.accion', {...}, clientId)` en las acciones sensibles, con
+  el cliente afectado para que aparezca en su Actividad, y nunca con
+  secretos.
 - **Altas**: dentro de `withLock(clientLockKey(clientId), …)` (dominios:
   `'altas:dominios'`) y con `assertWithinLimit` dentro del cerrojo. Buzones y
   alias exigen `assertDomainOwnership(domainId)`.
@@ -137,11 +143,11 @@ prueba que lo reproduce.
   datos de otros clientes, con límite de peticiones y sin registrar
   credenciales (Autodiscover nunca lee `Authorization`).
 - Peticiones mutantes con cookie desde otro sitio: `403 cross_site_request`.
-  La IP del cliente depende de `MAILWAY_TRUST_PROXY`: no la cambie a `true`.
+  La IP del cliente depende de `MAILWAY_TRUST_PROXY`: no la cambies a `true`.
 - Detalle en `docs/SEGURIDAD.md`.
 
 ## Git
 
-Desarrolle en la rama indicada por la tarea; no haga push a otra rama sin
-permiso explícito. No incluya identificadores internos de modelo en commits
+Desarrolla en la rama indicada por la tarea; no hagas push a otra rama sin
+permiso explícito. No incluyas identificadores internos de modelo en commits
 ni artefactos.

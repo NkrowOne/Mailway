@@ -87,7 +87,7 @@ Opciones:
                     descarga imágenes, recrea contenedores, reaplica los ajustes del
                     motor y, con Skyway, actualiza las variables y redespliega el panel.
                     Mantiene el modo de la instalación (junto a Skyway o autónoma).
-                    Ejecute antes «git pull» en la carpeta de Mailway.
+                    Ejecuta antes «git pull» en la carpeta de Mailway.
   --ayuda           Muestra esta ayuda.
 
 Variables de entorno (ejecución desatendida):
@@ -109,7 +109,7 @@ Variables de entorno (ejecución desatendida):
                             Con Skyway 0.34 o posterior no se instala ningún fichero: su Traefik ya
                             lee las rutas de Mailway a través de Skyway (Ajustes → Correo (Mailway)).
   STALWART_ADMIN_PASSWORD   Contraseña del motor existente, si deploy/.env se perdió.
-  MAILWAY_INTERNAL_SUBNET   Subred de la red interna (por defecto 10.203.53.0/24). Cámbiela si
+  MAILWAY_INTERNAL_SUBNET   Subred de la red interna (por defecto 10.203.53.0/24). Cámbiala si
                             choca con otra red del servidor.
   MAILWAY_MAIL_INTERNAL_IP  IP del motor en esa red (por defecto 10.203.53.10).
   MAILWAY_ESPERA_DNS        Segundos máximos de espera a que propague el DNS (por defecto 300).
@@ -130,7 +130,7 @@ while [ $# -gt 0 ]; do
       ayuda
       exit 0
       ;;
-    *) fallo "Opción desconocida: $1 (use --ayuda)." ;;
+    *) fallo "Opción desconocida: $1 (usa --ayuda)." ;;
   esac
   shift
 done
@@ -441,17 +441,17 @@ comprobaciones_previas() {
   for cmd in docker curl od grep sed awk timeout; do
     if ! tiene "$cmd"; then falta+=" $cmd"; fi
   done
-  if [ -n "$falta" ]; then fallo "Faltan herramientas:$falta. Instálelas y vuelva a ejecutar."; fi
-  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecute como root (sudo) o con un usuario del grupo docker."
-  docker compose version >/dev/null 2>&1 || fallo "Falta Docker Compose v2 («docker compose»). Instale el plugin docker-compose-plugin."
+  if [ -n "$falta" ]; then fallo "Faltan herramientas:$falta. Instálalas y vuelve a ejecutar."; fi
+  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  docker compose version >/dev/null 2>&1 || fallo "Falta Docker Compose v2 («docker compose»). Instala el plugin docker-compose-plugin."
   ok "Docker y Docker Compose v2 disponibles."
 
   if [ "$CON_SKYWAY" = 1 ]; then
     if [ "$(docker inspect -f '{{.State.Running}}' skyway-traefik 2>/dev/null || true)" != "true" ]; then
-      fallo "No está en marcha el Traefik de Skyway (contenedor skyway-traefik). Arranque Skyway o use --sin-skyway."
+      fallo "No está en marcha el Traefik de Skyway (contenedor skyway-traefik). Arranca Skyway o usa --sin-skyway."
     fi
     docker network inspect skyway-edge >/dev/null 2>&1 ||
-      fallo "No existe la red skyway-edge de Skyway. Arranque Skyway o use --sin-skyway."
+      fallo "No existe la red skyway-edge de Skyway. Arranca Skyway o usa --sin-skyway."
     ok "Skyway detectado (Traefik y red skyway-edge)."
     # Let's Encrypt rechaza los contactos de example.com: con el valor por
     # defecto del compose de Skyway, Traefik no obtiene ningún certificado
@@ -465,7 +465,7 @@ comprobaciones_previas() {
       case "$correo_le" in
         '' | *@example.com | *@example.org | *@example.net)
           aviso "El Traefik de Skyway no tiene un correo válido para Let's Encrypt («${correo_le:-vacío}»): no obtendrá certificados."
-          aviso "Defina LETSENCRYPT_EMAIL en el fichero .env de Skyway y ejecute «docker compose up -d traefik» en su carpeta."
+          aviso "Define LETSENCRYPT_EMAIL en el fichero .env de Skyway y ejecuta «docker compose up -d traefik» en su carpeta."
           ;;
       esac
     fi
@@ -476,7 +476,7 @@ comprobaciones_previas() {
     if puerto_ocupado_por_otro "$puerto"; then ocupados+=" $puerto"; fi
   done
   if [ -n "$ocupados" ]; then
-    fallo "Puertos de correo ocupados por otro programa:$ocupados. Libérelos (p. ej. postfix o exim del sistema) y vuelva a ejecutar."
+    fallo "Puertos de correo ocupados por otro programa:$ocupados. Libéralos (p. ej. postfix o exim del sistema) y vuelve a ejecutar."
   fi
   if tiene ss; then ok "Puertos 25, 465, 587, 993 y 4190 libres."; else aviso "Sin «ss» no se pueden comprobar los puertos."; fi
 
@@ -485,7 +485,7 @@ comprobaciones_previas() {
     ok "Puerto 25 de salida abierto."
   else
     RESUMEN_P25="BLOQUEADO"
-    aviso "El puerto 25 de salida parece bloqueado: sin él no se entrega correo a otros servidores. Solicite al proveedor que lo desbloquee."
+    aviso "El puerto 25 de salida parece bloqueado: sin él no se entrega correo a otros servidores. Solicita al proveedor que lo desbloquee."
   fi
 }
 
@@ -518,7 +518,7 @@ elegir_host() {
 recoger_datos() {
   titulo "Datos de la instalación"
   if [ "$ACTUALIZAR" = 1 ] && [ ! -f "$ENV_FILE" ]; then
-    fallo "No existe $ENV_FILE: no hay nada que actualizar. Ejecute el instalador sin --actualizar."
+    fallo "No existe $ENV_FILE: no hay nada que actualizar. Ejecuta el instalador sin --actualizar."
   fi
 
   local mail_prev dominio_def
@@ -530,7 +530,7 @@ recoger_datos() {
   preguntar DOMINIO "Dominio base de la plataforma (p. ej. miempresa.com)" "$dominio_def"
   DOMINIO=$(printf '%s' "$DOMINIO" | tr '[:upper:]' '[:lower:]' | sed 's/^[.]*//; s/[.]*$//')
   host_valido "$DOMINIO" ||
-    fallo "Dominio no válido: «$DOMINIO». Indique un dominio como miempresa.com (variable MAILWAY_DOMINIO)."
+    fallo "Dominio no válido: «$DOMINIO». Indica un dominio como miempresa.com (variable MAILWAY_DOMINIO)."
 
   elegir_host MAIL_HOSTNAME mail "${MAILWAY_MAIL_HOST:-}" MAILWAY_MAIL_HOST "$(leer_env MAIL_HOSTNAME)"
   elegir_host WEBMAIL_HOSTNAME webmail "${MAILWAY_WEBMAIL_HOST:-}" MAILWAY_WEBMAIL_HOST "$(leer_env WEBMAIL_HOSTNAME)"
@@ -558,7 +558,7 @@ recoger_datos() {
   coincide "$LE_EMAIL" '^[A-Za-z0-9._%+-]+@([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$' ||
     fallo "Correo no válido: «$LE_EMAIL» (variable LETSENCRYPT_EMAIL)."
   case "$LE_EMAIL" in
-    *@example.com | *@example.org | *@example.net) fallo "Let's Encrypt rechaza los correos de ${LE_EMAIL#*@}: indique uno real (variable LETSENCRYPT_EMAIL)." ;;
+    *@example.com | *@example.org | *@example.net) fallo "Let's Encrypt rechaza los correos de ${LE_EMAIL#*@}: indica uno real (variable LETSENCRYPT_EMAIL)." ;;
   esac
 
   local ip_def
@@ -603,7 +603,7 @@ comprobar_subred() {
     fallo "La IP interna del motor «$MAIL_INTERNAL_IP» no pertenece a $INTERNAL_SUBNET (variable MAILWAY_MAIL_INTERNAL_IP)."
   fi
   case "$MAIL_INTERNAL_IP" in *.0 | *.1 | *.255)
-    fallo "La IP interna del motor «$MAIL_INTERNAL_IP» está reservada (red, puerta de enlace o difusión). Use p. ej. la .10." ;;
+    fallo "La IP interna del motor «$MAIL_INTERNAL_IP» está reservada (red, puerta de enlace o difusión). Usa p. ej. la .10." ;;
   esac
 
   # «nombre subred» de cada red de Docker con IPv4.
@@ -630,7 +630,7 @@ comprobar_subred() {
   fi
 
   if [ -n "$conflictos" ]; then
-    fallo "La subred interna $INTERNAL_SUBNET se solapa con:${conflictos%;}. Elija otra libre con MAILWAY_INTERNAL_SUBNET y MAILWAY_MAIL_INTERNAL_IP (p. ej. 10.231.87.0/24 y 10.231.87.10)."
+    fallo "La subred interna $INTERNAL_SUBNET se solapa con:${conflictos%;}. Elige otra libre con MAILWAY_INTERNAL_SUBNET y MAILWAY_MAIL_INTERNAL_IP (p. ej. 10.231.87.0/24 y 10.231.87.10)."
   fi
   ok "Subred interna $INTERNAL_SUBNET libre (motor en $MAIL_INTERNAL_IP)."
 }
@@ -738,7 +738,7 @@ retirar_contenedores_anteriores() {
       for c in $conectados; do
         case "$c" in
           mailway-*) docker rm -f "$c" >/dev/null ;;
-          *) fallo "La red mailway-internal tiene conectado «$c», que no es de Mailway. Desconéctelo y vuelva a ejecutar." ;;
+          *) fallo "La red mailway-internal tiene conectado «$c», que no es de Mailway. Desconéctalo y vuelve a ejecutar." ;;
         esac
       done
       docker network rm mailway-internal >/dev/null
@@ -767,7 +767,7 @@ escribir_env() {
     linea_env MAILWAY_PUBLIC_IP "$IP_PUBLICA"
     linea_env MAILWAY_BRAND "$MARCA"
     linea_env LETSENCRYPT_EMAIL "$LE_EMAIL"
-    printf '\n# Motor (solo se aplica en su primer arranque; no la cambie aquí después).\n'
+    printf '\n# Motor (solo se aplica en su primer arranque; no la cambies aquí después).\n'
     linea_env STALWART_ADMIN_PASSWORD "$STALWART_ADMIN_PASSWORD"
     printf '\n# Webmail\n'
     linea_env ROUNDCUBE_DES_KEY "$ROUNDCUBE_DES_KEY"
@@ -833,7 +833,7 @@ campo_json() { printf '%s' "$RESP_BODY" | jqr -r "$@" 2>/dev/null || true; }
 # Token»): se verifican en su cuenta, que se deduce de las zonas visibles.
 cf_verificar_token() {
   case "$CF_TOKEN" in
-    cfk_*) fallo "Ha indicado la clave global de Cloudflare. Cree un token de API con los permisos Zona: Lectura y DNS: Edición." ;;
+    cfk_*) fallo "Has indicado la clave global de Cloudflare. Crea un token de API con los permisos Zona: Lectura y DNS: Edición." ;;
   esac
   coincide "$CF_TOKEN" '^[A-Za-z0-9_-]{20,200}$' ||
     fallo "El token de Cloudflare no tiene un formato válido (variable CLOUDFLARE_API_TOKEN)."
@@ -846,10 +846,10 @@ cf_verificar_token() {
   if [ -z "$estado" ]; then
     cf_api GET "/zones?per_page=50"
     [ "$RESP_CODE" = "200" ] ||
-      fallo "Cloudflare rechazó el token: $(cf_primer_error). Compruebe que está activo y tiene los permisos Zona: Lectura y DNS: Edición."
+      fallo "Cloudflare rechazó el token: $(cf_primer_error). Comprueba que está activo y tiene los permisos Zona: Lectura y DNS: Edición."
     cuenta=$(campo_json '(.result // [])[0].account.id // empty')
     coincide "$cuenta" '^[A-Za-z0-9]{1,64}$' ||
-      fallo "El token de Cloudflare no da acceso a ninguna zona. Añada la zona de $DOMINIO a sus permisos."
+      fallo "El token de Cloudflare no da acceso a ninguna zona. Añade la zona de $DOMINIO a sus permisos."
     cf_api GET "/accounts/$cuenta/tokens/verify"
     if [ "$RESP_CODE" = "200" ]; then estado=$(campo_json '.result.status // empty'); fi
   fi
@@ -874,7 +874,7 @@ configurar_cloudflare() {
   fi
   preguntar_secreto CF_TOKEN "Token de API de Cloudflare" "${CLOUDFLARE_API_TOKEN:-}"
   if [ -z "$CF_TOKEN" ]; then
-    info "Sin token: cree a mano los registros A de $MAIL_HOSTNAME, $WEBMAIL_HOSTNAME y $PANEL_HOSTNAME hacia $IP_PUBLICA."
+    info "Sin token: crea a mano los registros A de $MAIL_HOSTNAME, $WEBMAIL_HOSTNAME y $PANEL_HOSTNAME hacia $IP_PUBLICA."
     return 0
   fi
   cf_verificar_token
@@ -895,7 +895,7 @@ configurar_cloudflare() {
     case "$candidato" in *.*.*) candidato=${candidato#*.} ;; *) break ;; esac
   done
   if [ -z "$CF_ZONA_ID" ]; then
-    fallo "El token no tiene acceso a la zona de $DOMINIO en Cloudflare. Añada la zona a los permisos del token."
+    fallo "El token no tiene acceso a la zona de $DOMINIO en Cloudflare. Añade la zona a los permisos del token."
   fi
   ok "Zona de Cloudflare: $CF_ZONA_NOMBRE"
   if [ "$estado_zona" = "pending" ]; then
@@ -935,11 +935,11 @@ cf_registro() {
     "$tipo" "$(json_escape "$nombre")" "$(json_escape "$contenido")")
 
   if [ -n "$otro" ]; then
-    aviso "$nombre ya tiene un registro $otro: no se crea el $tipo. Revíselo en Cloudflare."
+    aviso "$nombre ya tiene un registro $otro: no se crea el $tipo. Revísalo en Cloudflare."
     return 0
   fi
   if [ "$tipo" = "A" ] && [ -n "$(campo_json 'first((.result // [])[] | select(.type == "AAAA")) | .content')" ]; then
-    aviso "$nombre tiene además un registro AAAA (IPv6): compruebe que apunta a este servidor o bórrelo."
+    aviso "$nombre tiene además un registro AAAA (IPv6): comprueba que apunta a este servidor o bórralo."
   fi
   if [ -z "$existente" ]; then
     cf_api POST "/zones/$CF_ZONA_ID/dns_records" "$cuerpo"
@@ -948,7 +948,7 @@ cf_registro() {
     return 0
   fi
   if [ "${total:-1}" -gt 1 ] 2>/dev/null; then
-    aviso "$nombre tiene $total registros $tipo: solo se ajusta el primero. Borre los demás en Cloudflare."
+    aviso "$nombre tiene $total registros $tipo: solo se ajusta el primero. Borra los demás en Cloudflare."
   fi
   read -r id actual proxied <<<"$existente"
   coincide "$id" '^[A-Za-z0-9]{1,64}$' || fallo "Cloudflare devolvió un identificador de registro inesperado."
@@ -984,7 +984,7 @@ esperar_dns() {
     fi
     if [ -z "$CF_TOKEN" ] && [ "$INTERACTIVO" = 1 ] && [ "$t" = 0 ]; then
       info "Pendientes:$pendientes"
-      info "Cree los registros A hacia $IP_PUBLICA en su proveedor de DNS (sin proxy)."
+      info "Crea los registros A hacia $IP_PUBLICA en tu proveedor de DNS (sin proxy)."
       if ! confirmar "¿Esperar a que propaguen?" s; then break; fi
     fi
     if [ "$t" -ge "$max" ]; then break; fi
@@ -1007,7 +1007,7 @@ comprobar_ptr() {
   elif [ -n "$ptr" ]; then
     RESUMEN_PTR="INCORRECTO: $IP_PUBLICA → $ptr (debe ser $MAIL_HOSTNAME; se cambia en el panel del proveedor del servidor)"
   else
-    RESUMEN_PTR="SIN CONFIGURAR: pida al proveedor del servidor el DNS inverso $IP_PUBLICA → $MAIL_HOSTNAME"
+    RESUMEN_PTR="SIN CONFIGURAR: pide al proveedor del servidor el DNS inverso $IP_PUBLICA → $MAIL_HOSTNAME"
   fi
 }
 
@@ -1036,9 +1036,9 @@ levantar_servicios() {
       aviso "El núcleo no admite IPv6: el motor pasa a escuchar solo en IPv4."
       docker exec mailway-mail sed -i 's/"\[::\]:/"0.0.0.0:/' /opt/stalwart/etc/config.toml
       docker restart mailway-mail >/dev/null
-      esperar_sano mailway-mail 90 || fallo "El motor no arranca. Revise: docker exec mailway-mail tail -n 50 /opt/stalwart/logs/stalwart.log.$(date -u +%F)"
+      esperar_sano mailway-mail 90 || fallo "El motor no arranca. Revisa: docker exec mailway-mail tail -n 50 /opt/stalwart/logs/stalwart.log.$(date -u +%F)"
     else
-      fallo "El motor no arranca. Revise: docker logs mailway-mail y docker exec mailway-mail ls /opt/stalwart/logs"
+      fallo "El motor no arranca. Revisa: docker logs mailway-mail y docker exec mailway-mail ls /opt/stalwart/logs"
     fi
   fi
   ok "Motor en marcha (mailway-mail)."
@@ -1046,10 +1046,10 @@ levantar_servicios() {
   if esperar_sano mailway-webmail 180; then
     ok "Webmail en marcha (mailway-webmail)."
   else
-    aviso "El webmail aún no está sano. Revise: docker logs mailway-webmail"
+    aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
   fi
   if [ "$CON_SKYWAY" = 0 ]; then
-    if esperar_sano mailway-panel 120; then ok "Panel en marcha (mailway-panel)."; else aviso "El panel aún no está sano. Revise: docker logs mailway-panel"; fi
+    if esperar_sano mailway-panel 120; then ok "Panel en marcha (mailway-panel)."; else aviso "El panel aún no está sano. Revisa: docker logs mailway-panel"; fi
   fi
 }
 
@@ -1115,7 +1115,7 @@ configurar_motor() {
   # Sin Cloudflare: se usa el certificado que Traefik obtiene para el nombre
   # del servidor de correo, volcado a ficheros.
   if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
-    aviso "No se encontró el volumen de certificados de Traefik: emita el certificado desde Ajustes → Servidor de correo."
+    aviso "No se encontró el volumen de certificados de Traefik: emite el certificado desde Ajustes → Servidor de correo."
     return 0
   fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
@@ -1131,8 +1131,8 @@ configurar_motor() {
     t=$((t + 5))
   done
   if ! docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null; then
-    RESUMEN_CERT="pendiente: Traefik aún no tiene el certificado de $MAIL_HOSTNAME (vuelva a ejecutar con --actualizar)"
-    aviso "Traefik aún no tiene el certificado de $MAIL_HOSTNAME. Cuando el DNS apunte aquí, ejecute de nuevo con --actualizar."
+    RESUMEN_CERT="pendiente: Traefik aún no tiene el certificado de $MAIL_HOSTNAME (vuelve a ejecutar con --actualizar)"
+    aviso "Traefik aún no tiene el certificado de $MAIL_HOSTNAME. Cuando el DNS apunte aquí, ejecuta de nuevo con --actualizar."
     return 0
   fi
   if motor_ajustes \
@@ -1144,7 +1144,7 @@ configurar_motor() {
     RESUMEN_CERT="certificado de Traefik volcado al motor (el panel lo recarga a diario)"
     ok "El motor usa el certificado de Traefik para IMAP y SMTP."
   else
-    aviso "No se pudo configurar el certificado volcado; revise Ajustes → Servidor de correo."
+    aviso "No se pudo configurar el certificado volcado; revisa Ajustes → Servidor de correo."
   fi
 }
 
@@ -1178,7 +1178,7 @@ desplegar_en_skyway() {
   fi
   preguntar_secreto SKYWAY_TOKEN "Token de API de Skyway" "${SKYWAY_TOKEN:-}"
   if [ -z "$SKYWAY_TOKEN" ]; then
-    info "Omitido. Variables del panel para crearlo a mano: vea el final de deploy/.env.example."
+    info "Omitido. Variables del panel para crearlo a mano: consulta el final de deploy/.env.example."
     return 0
   fi
   coincide "$SKYWAY_TOKEN" '^sky_[A-Za-z0-9_-]{8,200}$' ||
@@ -1205,7 +1205,7 @@ desplegar_en_skyway() {
   if [ -z "$proyecto" ]; then
     sky_api POST /api/projects "{\"name\":\"$(json_escape "$nombre_proyecto")\"}"
     [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
-      fallo "No se pudo crear el proyecto en Skyway: $(sky_error). Use un token de un administrador o propietario."
+      fallo "No se pudo crear el proyecto en Skyway: $(sky_error). Usa un token de un administrador o propietario."
     proyecto=$(campo_json '.project | "\(.id) \(.slug)"')
     ok "Proyecto «$nombre_proyecto» creado en Skyway."
   else
@@ -1300,7 +1300,7 @@ desplegar_en_skyway() {
 
   sky_api GET /api/domains/config
   if [ "$RESP_CODE" = "200" ] && [ "$(campo_json '.tls')" != "true" ]; then
-    aviso "Skyway no tiene correo de Let's Encrypt: el panel no tendrá HTTPS. Configúrelo en Skyway → Ajustes → Dominios."
+    aviso "Skyway no tiene correo de Let's Encrypt: el panel no tendrá HTTPS. Configúralo en Skyway → Ajustes → Dominios."
   fi
 
   sky_api POST "/api/services/$servicio_id/deploy" '{}'
@@ -1321,14 +1321,14 @@ desplegar_en_skyway() {
         return 0
         ;;
       failed | canceled)
-        RESUMEN_SKYWAY="despliegue fallido: revise el registro en Skyway"
-        aviso "El despliegue del panel terminó en «$estado». Revise el registro del despliegue en Skyway (¿acceso de Skyway al repositorio de GitHub?)."
+        RESUMEN_SKYWAY="despliegue fallido: revisa el registro en Skyway"
+        aviso "El despliegue del panel terminó en «$estado». Revisa el registro del despliegue en Skyway (¿acceso de Skyway al repositorio de GitHub?)."
         return 0
         ;;
     esac
   done
-  RESUMEN_SKYWAY="desplegando (consulte Skyway)"
-  aviso "El despliegue sigue en curso; consulte su estado en Skyway."
+  RESUMEN_SKYWAY="desplegando (consulta Skyway)"
+  aviso "El despliegue sigue en curso; consulta su estado en Skyway."
 }
 
 env_json() {
@@ -1362,7 +1362,7 @@ recrear_traefik() {
   # de Skyway.
   if ! salida=$(cd "$SKYWAY_DIR" && env -u LETSENCRYPT_EMAIL docker compose up -d traefik 2>&1); then
     printf '%s\n' "$salida" >&2
-    aviso "Traefik no se pudo recrear. Ejecute «docker compose up -d traefik» en $SKYWAY_DIR."
+    aviso "Traefik no se pudo recrear. Ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
     return 1
   fi
 }
@@ -1401,11 +1401,11 @@ configurar_proveedor_traefik() {
     return 0
   fi
   if [ -z "$compose_skyway" ]; then
-    aviso "No se encontró la carpeta de Skyway: configure el proveedor con deploy/skyway-traefik-override.yml."
+    aviso "No se encontró la carpeta de Skyway: configura el proveedor con deploy/skyway-traefik-override.yml."
     return 0
   fi
   if [ -f "$override" ]; then
-    aviso "Ya existe $override y no se modifica. Añada a mano las líneas de deploy/skyway-traefik-override.yml."
+    aviso "Ya existe $override y no se modifica. Añade a mano las líneas de deploy/skyway-traefik-override.yml."
     return 0
   fi
   confirmar_traefik "¿Configurar el Traefik de Skyway para los dominios de los clientes? Traefik se reinicia unos segundos." ||
@@ -1422,7 +1422,7 @@ configurar_proveedor_traefik() {
     printf '%s el %s.\n' "$MARCA_OVERRIDE" "$(date -u '+%Y-%m-%d')"
     printf '# Compose REEMPLAZA «command»: se repiten los flags actuales de Traefik y se\n'
     printf '# añade el proveedor HTTP de Mailway. Solo para Skyway anterior a la 0.34: al\n'
-    printf '# actualizar Skyway, ejecute deploy/instalar.sh --actualizar y este fichero se\n'
+    printf '# actualizar Skyway, ejecuta deploy/instalar.sh --actualizar y este fichero se\n'
     printf '# retirará (Skyway 0.34 ya lee por sí mismo las rutas de Mailway).\n'
     printf 'services:\n  traefik:\n    command:\n'
     printf '%s' "$argumentos" | jqr -r '.[]' | while IFS= read -r arg; do
@@ -1436,7 +1436,7 @@ configurar_proveedor_traefik() {
   chmod 600 "$override"
   umask "$umask_previa"
   if ! recrear_traefik; then
-    fallo "Traefik no arrancó con $override. Bórrelo y ejecute «docker compose up -d traefik» en $SKYWAY_DIR."
+    fallo "Traefik no arrancó con $override. Bórralo y ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
   fi
   ok "Traefik consulta $endpoint."
 }
@@ -1454,10 +1454,10 @@ traefik_con_puente() {
         recrear_traefik || return 0
         argumentos=$(docker inspect -f '{{json .Config.Cmd}}' skyway-traefik 2>/dev/null || printf '[]')
       else
-        aviso "Se mantiene $override: fija los flags antiguos de Traefik. Bórrelo cuando pueda."
+        aviso "Se mantiene $override: fija los flags antiguos de Traefik. Bórralo cuando puedas."
       fi
     elif grep -q 'command' "$override"; then
-      aviso "$override redefine opciones de Traefik: compruebe que no sustituye el «command» de Skyway ni añade otro proveedor HTTP."
+      aviso "$override redefine opciones de Traefik: comprueba que no sustituye el «command» de Skyway ni añade otro proveedor HTTP."
     fi
   fi
   if ! printf '%s' "$argumentos" | grep -q 'api/traefik/mailway'; then
@@ -1465,12 +1465,12 @@ traefik_con_puente() {
       confirmar_traefik "El Traefik de Skyway aún no usa la configuración actual de Skyway. ¿Recrearlo ahora?"; then
       recrear_traefik || return 0
     else
-      aviso "El Traefik de Skyway aún no lee las rutas de Mailway: ejecute «docker compose up -d traefik» en la carpeta de Skyway."
+      aviso "El Traefik de Skyway aún no lee las rutas de Mailway: ejecuta «docker compose up -d traefik» en la carpeta de Skyway."
       return 0
     fi
   fi
   ok "Skyway sirve a Traefik las rutas de Mailway: no hace falta ningún fichero adicional."
-  info "Tras la puesta en marcha, conecte Mailway en Skyway → Ajustes → Correo (Mailway) (URL del panel y un token de gestión)."
+  info "Tras la puesta en marcha, conecta Mailway en Skyway → Ajustes → Correo (Mailway) (URL del panel y un token de gestión)."
 }
 
 # ---------------------------------------------------------------- resumen --
@@ -1487,7 +1487,7 @@ resumen() {
   info "Token de puesta en marcha: $MAILWAY_SETUP_TOKEN"
   if [ "$CON_SKYWAY" = 1 ]; then info "Panel en Skyway:     $RESUMEN_SKYWAY"; fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
-    info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; póngales delante un proxy con TLS."
+    info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; ponles delante un proxy con TLS."
   fi
   info "DNS de la plataforma: $RESUMEN_DNS"
   info "DNS inverso (PTR):   $RESUMEN_PTR"
@@ -1504,11 +1504,11 @@ resumen() {
   info "  $copia"
   printf '\n'
   info "Siguientes pasos:"
-  info "  1. Abra el panel con el enlace de arriba y complete la puesta en marcha."
-  info "  2. En Conexiones → Cloudflare, conecte una cuenta para publicar el DNS de los dominios de los clientes."
-  info "  3. En Ajustes → Servidor de correo, compruebe el certificado y el nombre del servidor."
+  info "  1. Abre el panel con el enlace de arriba y completa la puesta en marcha."
+  info "  2. En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
+  info "  3. En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
   if [ "$CON_SKYWAY" = 1 ] && version_ge "$SKYWAY_VERSION" 0.34.0; then
-    info "  4. En Skyway → Ajustes → Correo (Mailway), pegue la URL del panel y un token de gestión (Mailway → Conexiones)."
+    info "  4. En Skyway → Ajustes → Correo (Mailway), pega la URL del panel y un token de gestión (Mailway → Conexiones)."
   fi
 }
 

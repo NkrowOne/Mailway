@@ -55,7 +55,7 @@ export default function ConectarPagina() {
   });
 
   useEffect(() => {
-    document.title = 'Configurar su correo';
+    document.title = 'Configurar tu correo';
   }, []);
 
   if (consulta.isPending) {
@@ -81,7 +81,7 @@ export default function ConectarPagina() {
           <p className="text-base text-tinta-2">
             {caducado
               ? mensajeError(err, 'Este enlace de configuración no es válido o ha caducado.')
-              : mensajeError(err, 'Compruebe la conexión a Internet y vuelva a intentarlo.')}
+              : mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}
           </p>
           {!definitivo && (
             <Button variant="tinta" className={TACTIL} onClick={() => void consulta.refetch()}>
@@ -89,11 +89,11 @@ export default function ConectarPagina() {
             </Button>
           )}
           <Nota>
-            Si ya tiene la contraseña de su buzón, también puede acceder a{' '}
+            Si ya tienes la contraseña de tu buzón, también puedes acceder a{' '}
             <a href="/mi-buzon" className="text-laboratorio underline hover:text-tinta">
               «Mi buzón»
             </a>{' '}
-            para configurar sus dispositivos.
+            para configurar tus dispositivos.
           </Nota>
         </div>
       </PaginaEstado>
@@ -104,17 +104,17 @@ export default function ConectarPagina() {
   const movil = esDispositivoMovil();
   const notaContrasena = datos.password
     ? 'La indicada en el apartado «Contraseña del buzón».'
-    : 'La contraseña del buzón que le ha facilitado la persona que administra su correo.';
+    : 'La contraseña del buzón que te ha facilitado la persona que administra tu correo.';
 
   return (
     <MarcoPortal
       marca={datos.brandName}
-      titulo="Configurar su correo"
+      titulo="Configurar tu correo"
       meta={
         <>
           <p className="valor break-all text-white/90">{datos.email}</p>
           <p className="mt-1">
-            Siga los pasos para su dispositivo. Este enlace es válido hasta el {fechaLarga(datos.expiresAt)}.
+            Sigue los pasos para tu dispositivo. Este enlace es válido hasta el {fechaLarga(datos.expiresAt)}.
           </p>
         </>
       }
@@ -124,15 +124,15 @@ export default function ConectarPagina() {
           <div className="flex flex-col gap-3">
             <ContrasenaRevelable password={datos.password} />
             <Nota>
-              Necesitará esta contraseña si configura el correo manualmente. Por seguridad, se eliminará de este
-              enlace cuando indique que ha terminado (al final de esta página) o cuando el enlace caduque; si desea
-              conservarla, guárdela en un lugar seguro.
+              Necesitarás esta contraseña si configuras el correo manualmente. Por seguridad, se eliminará de este
+              enlace cuando indiques que has terminado (al final de esta página) o cuando el enlace caduque; si quieres
+              conservarla, guárdala en un lugar seguro.
             </Nota>
           </div>
         </Hoja>
       ) : confirmado ? (
         <AvisoHecho>
-          Se ha eliminado la contraseña de este enlace. Puede seguir consultando las instrucciones para otros
+          Se ha eliminado la contraseña de este enlace. Puedes seguir consultando las instrucciones para otros
           dispositivos.
         </AvisoHecho>
       ) : (
@@ -140,13 +140,13 @@ export default function ConectarPagina() {
         // se dice cuál usar en lugar de dejar el campo en blanco sin explicación.
         <Hoja title="Contraseña del buzón">
           <Nota>
-            Este enlace no incluye la contraseña del buzón. Utilice la contraseña actual de su buzón; si no la
-            conoce, solicítela a la persona que administra su correo.
+            Este enlace no incluye la contraseña del buzón. Utiliza la contraseña actual de tu buzón; si no la
+            conoces, solicítala a la persona que administra tu correo.
           </Nota>
         </Hoja>
       )}
 
-      <Hoja title="Elija su dispositivo">
+      <Hoja title="Elige tu dispositivo">
         <GuiasDispositivo
           email={datos.email}
           conexion={datos.connection}
@@ -164,9 +164,9 @@ export default function ConectarPagina() {
             <QR texto={window.location.href} etiqueta="Código QR para abrir esta página en el móvil" />
             <div className="flex flex-col gap-2">
               <p className="max-w-[60ch] text-base text-tinta">
-                Para configurar el móvil, escanee este código con su cámara: se abrirá esta misma página.
+                Para configurar el móvil, escanea este código con tu cámara: se abrirá esta misma página.
               </p>
-              <Nota>En el iPhone, ábrala en Safari para poder instalar el perfil.</Nota>
+              <Nota>En el iPhone, ábrela en Safari para poder instalar el perfil.</Nota>
             </div>
           </div>
         </Hoja>
@@ -175,7 +175,7 @@ export default function ConectarPagina() {
       <Hoja title="Correo web">
         <div className="flex flex-col gap-3">
           <p className="max-w-[70ch] text-base text-tinta-2">
-            También puede leer y enviar correo desde el navegador, sin configurar nada, con su dirección y su
+            También puedes leer y enviar correo desde el navegador, sin configurar nada, con tu dirección y tu
             contraseña.
           </p>
           <BotonWebmail url={datos.connection.webmailUrl} />
@@ -185,7 +185,7 @@ export default function ConectarPagina() {
       <Hoja title="Mi buzón">
         <div className="flex flex-col gap-3">
           <p className="max-w-[70ch] text-base text-tinta-2">
-            En «Mi buzón» puede cambiar la contraseña y crear una contraseña distinta para cada dispositivo, de modo que
+            En «Mi buzón» puedes cambiar la contraseña y crear una contraseña distinta para cada dispositivo, de modo que
             perder el móvil no obligue a cambiar la de todos los demás.
           </p>
           <a href={datos.portalUrl || '/mi-buzon'} className={`${claseEnlaceBoton('perfil')} self-stretch sm:self-start`}>
@@ -197,10 +197,10 @@ export default function ConectarPagina() {
       {/* Al final, cuando ya se han seguido las instrucciones: pulsarlo antes
           de configurar dejaba al titular sin la contraseña a mitad de camino. */}
       {datos.password && (
-        <Hoja title="¿Ha terminado?">
+        <Hoja title="¿Has terminado?">
           <div className="flex flex-col gap-3">
             <p className="max-w-[70ch] text-base text-tinta-2">
-              Cuando el correo funcione en sus dispositivos, indíquelo para eliminar la contraseña de este enlace.
+              Cuando el correo funcione en tus dispositivos, indícalo para eliminar la contraseña de este enlace.
               Las instrucciones seguirán disponibles.
             </p>
             <Button
@@ -220,8 +220,8 @@ export default function ConectarPagina() {
       <Dialogo open={preguntando} onClose={() => setPreguntando(false)} title="Eliminar la contraseña del enlace">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            Se eliminará la contraseña de este enlace. Asegúrese de que el correo funciona en su dispositivo o de
-            haberla guardado. ¿Desea continuar?
+            Se eliminará la contraseña de este enlace. Asegúrate de que el correo funciona en tu dispositivo o de
+            haberla guardado. ¿Quieres continuar?
           </p>
           {hecho.isError && (
             <AvisoError>{mensajeError(hecho.error, 'No se ha podido registrar la configuración.')}</AvisoError>

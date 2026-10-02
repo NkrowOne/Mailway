@@ -91,7 +91,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se ha podido completar la operación. Vuelva a intentarlo.');
+      setError(err instanceof ApiError ? err.message : 'No se ha podido completar la operación. Vuelve a intentarlo.');
     } finally {
       setBusy(false);
     }
@@ -104,7 +104,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     } else {
       toast(
         'error',
-        `El motor no aceptó los ajustes recomendados: ${resultado.error || resultado.errors[0] || 'sin detalle'}. Puede repetirlo en Ajustes → Servidor de correo.`,
+        `El motor no aceptó los ajustes recomendados: ${resultado.error || resultado.errors[0] || 'sin detalle'}. Puedes repetirlo en Ajustes → Servidor de correo.`,
       );
     }
   }
@@ -114,7 +114,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     // Validación propia (el formulario es noValidate): el globo del navegador
     // sale en su idioma y tapa los mensajes del asistente.
     if (estado.requiresSetupToken && !setupToken.trim()) {
-      setError('Indique el token de puesta en marcha que mostró el instalador.');
+      setError('Indica el token de puesta en marcha que mostró el instalador.');
       return;
     }
     if (adminName.trim().length < 2) {
@@ -122,7 +122,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail.trim())) {
-      setError('Indique un correo electrónico válido.');
+      setError('Indica un correo electrónico válido.');
       return;
     }
     if (adminPassword.length < 10) {
@@ -189,10 +189,10 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
       if (ip) {
         setPublicIp(ip);
       } else {
-        toast('error', 'No se ha podido detectar la IP automáticamente. Escríbala manualmente.');
+        toast('error', 'No se ha podido detectar la IP automáticamente. Escríbela manualmente.');
       }
     } catch {
-      toast('error', 'No se ha podido detectar la IP automáticamente. Escríbala manualmente.');
+      toast('error', 'No se ha podido detectar la IP automáticamente. Escríbela manualmente.');
     } finally {
       setDetectando(false);
     }
@@ -343,7 +343,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   autoComplete="new-password"
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
-                  help="Mínimo 10 caracteres. Guárdela en un gestor de contraseñas."
+                  help="Mínimo 10 caracteres. Guárdala en un gestor de contraseñas."
                 />
                 {error && <BandaError texto={error} />}
                 <Button type="submit" variant="tinta" busy={busy} className="self-start">
@@ -576,10 +576,10 @@ function sugerir(status: SetupStatus): { mailHostname: string; panelUrl: string;
 /* --------------------------- Comprobación final --------------------------- */
 
 const PASOS_SIGUIENTES = [
-  'Conexiones → Cloudflare: conecte una cuenta para publicar el DNS de los dominios con un clic.',
-  'Ajustes → Servidor de correo: emita el certificado de Let’s Encrypt si aún es autofirmado.',
-  'Clientes → Nuevo cliente: cree el primer cliente, su dominio y sus buzones.',
-  'Entregabilidad: revise el PTR y las listas negras antes de enviar en volumen.',
+  'Conexiones → Cloudflare: conecta una cuenta para publicar el DNS de los dominios con un clic.',
+  'Ajustes → Servidor de correo: emite el certificado de Let’s Encrypt si aún es autofirmado.',
+  'Clientes → Nuevo cliente: crea el primer cliente, su dominio y sus buzones.',
+  'Entregabilidad: revisa el PTR y las listas negras antes de enviar en volumen.',
 ];
 
 const ROLES: Record<string, string> = {
@@ -635,7 +635,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
           ? m.tls.error
           : m.tls.ok
             ? undefined
-            : 'Emítalo desde Ajustes → Servidor de correo; hasta entonces los programas de correo muestran un aviso de seguridad.',
+            : 'Emítelo desde Ajustes → Servidor de correo; hasta entonces los programas de correo muestran un aviso de seguridad.',
       });
     }
   }
@@ -651,7 +651,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
             : r.status === 'unknown'
               ? 'No se ha podido consultar el DNS desde el servidor.'
               : r.status === 'missing'
-                ? `${textoDns[r.status]}: cree un registro A hacia ${r.expected ?? 'la IP del servidor'}.`
+                ? `${textoDns[r.status]}: crea un registro A hacia ${r.expected ?? 'la IP del servidor'}.`
                 : `${textoDns[r.status]}: apunta a ${(r.found ?? []).join(', ')} en lugar de ${r.expected}.`,
       });
     }
@@ -695,7 +695,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       )}
 
       {fallo && (
-        <BandaError texto="Parte de la comprobación no se ha podido completar. Puede repetirla o continuar y revisarla en Ajustes." />
+        <BandaError texto="Parte de la comprobación no se ha podido completar. Puedes repetirla o continuar y revisarla en Ajustes." />
       )}
 
       {!cargando && (

@@ -388,7 +388,7 @@ test('sin propiedad comprobada del dominio no se crean buzones (uno o en lote) n
     results: { ok: boolean; error?: string }[];
   };
   assert.equal(cuerpo.ownershipPending, true);
-  assert.match(cuerpo.ownershipError ?? '', /comprobar que el dominio es suyo/);
+  assert.match(cuerpo.ownershipError ?? '', /comprobar que el dominio es tuyo/);
   assert.equal(cuerpo.valid, 0);
   assert.ok(cuerpo.results.every((r) => !r.ok && r.error));
 
@@ -498,10 +498,10 @@ test('al llegar al máximo del plan, el administrador lo amplía y el cliente lo
   const admin = await asAdmin('POST', '/api/mailboxes', { domainId, localPart: 'segundo' });
   assert.equal(admin.statusCode, 400);
   assert.equal(admin.json().code, 'plan_limit_reached');
-  assert.match(admin.json().error, /Amplíe el plan del cliente en su ficha\./);
-  assert.doesNotMatch(admin.json().error, /Solicite/);
+  assert.match(admin.json().error, /Amplía el plan del cliente en su ficha\./);
+  assert.doesNotMatch(admin.json().error, /Solicita/);
 
   const propio = await asCookie(cliente.userCookie!, 'POST', '/api/mailboxes', { domainId, localPart: 'segundo' });
   assert.equal(propio.statusCode, 400);
-  assert.match(propio.json().error, /Solicite una ampliación del plan\./);
+  assert.match(propio.json().error, /Solicita una ampliación del plan\./);
 });

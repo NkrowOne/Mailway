@@ -70,9 +70,9 @@ export function FichaBuzon({
   // ficha no se cierra sin preguntar y «Volver» regresa a las credenciales.
   const contrasenaPendiente = password !== undefined;
   const confirmarCierre: ConfirmarCierre | null = contrasenaPendiente
-    ? { pregunta: '¿Ha guardado la contraseña?', detalle: 'No se podrá volver a ver.' }
+    ? { pregunta: '¿Has guardado la contraseña?', detalle: 'No se podrá volver a ver.' }
     : appPendiente && vista === 'aplicaciones'
-      ? { pregunta: '¿Ha introducido la contraseña de aplicación?', detalle: 'No se podrá volver a ver.' }
+      ? { pregunta: '¿Has introducido la contraseña de aplicación?', detalle: 'No se podrá volver a ver.' }
       : null;
   const titulo = vista === 'resumen' && mailbox ? mailbox.email : titulos[vista];
 
@@ -185,7 +185,7 @@ function Resumen({
       </div>
       {veredicto === 'fuera' && (
         <BandaError>
-          El buzón ha alcanzado su cuota y deja de recibir correo. Amplíe la cuota o solicite al titular que
+          El buzón ha alcanzado su cuota y deja de recibir correo. Amplía la cuota o solicita al titular que
           libere espacio.
         </BandaError>
       )}
@@ -280,8 +280,8 @@ function Credenciales({
       {password ? (
         <>
           <BandaAviso>
-            Esta contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entréguela al
-            titular del buzón por un canal seguro o utilice el enlace de configuración.
+            Esta contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entrégala al
+            titular del buzón por un canal seguro o utiliza el enlace de configuración.
           </BandaAviso>
           <Muestra rotulo="Usuario" copiar={mailbox.email}>
             <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
@@ -298,7 +298,7 @@ function Credenciales({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla pt-4">
         <p className="min-w-0 flex-1 basis-56 text-sm text-tinta-2">
           {password
-            ? 'Para que el titular configure el móvil o el ordenador sin escribir la contraseña, cree un enlace de configuración que la incluya.'
+            ? 'Para que el titular configure el móvil o el ordenador sin escribir la contraseña, crea un enlace de configuración que la incluya.'
             : 'Datos de conexión, perfiles de configuración y enlace para el titular.'}
         </p>
         <Button variant="perfil" onClick={onConectar}>
@@ -350,7 +350,7 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
       return;
     }
     if (excedePlan) {
-      setError(`La cuota supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indique un valor igual o inferior.`);
+      setError(`La cuota supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indica un valor igual o inferior.`);
       return;
     }
     setError('');
@@ -390,7 +390,7 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
         }
         error={
           excedePlan
-            ? `Supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indique un valor igual o inferior.`
+            ? `Supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indica un valor igual o inferior.`
             : undefined
         }
       />
@@ -659,7 +659,7 @@ function Eliminar({
         </BandaAviso>
       )}
       <Input
-        label="Escriba la dirección para confirmar"
+        label="Escribe la dirección para confirmar"
         mono
         autoComplete="off"
         value={confirmacion}

@@ -138,13 +138,13 @@ async function createAppPasswordNow(
   assertClientActive(mailbox.clientId);
   if (mailbox.status === 'suspended') {
     throw badRequest(
-      `El buzón ${mailbox.email} está suspendido. Reactívelo antes de crear contraseñas de aplicación.`,
+      `El buzón ${mailbox.email} está suspendido. Reactívalo antes de crear contraseñas de aplicación.`,
       'mailbox_suspended',
     );
   }
   if (activeAppPasswords(mailboxId) >= MAX_ACTIVE_APP_PASSWORDS) {
     throw conflict(
-      `Este buzón ya tiene ${MAX_ACTIVE_APP_PASSWORDS} contraseñas de aplicación activas. Revoque las que ya no se utilicen antes de crear otra.`,
+      `Este buzón ya tiene ${MAX_ACTIVE_APP_PASSWORDS} contraseñas de aplicación activas. Revoca las que ya no se utilicen antes de crear otra.`,
       'app_password_limit',
     );
   }
@@ -179,9 +179,9 @@ export async function revokeAppPassword(mailboxId: string, appId: string): Promi
 
 const createSchema = z.object({
   name: z
-    .string({ required_error: 'Indique un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).' })
+    .string({ required_error: 'Indica un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).' })
     .trim()
-    .min(1, 'Indique un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).')
+    .min(1, 'Indica un nombre para identificar la contraseña (p. ej. «Móvil de Ana»).')
     .max(60, 'El nombre no puede superar los 60 caracteres.'),
 });
 

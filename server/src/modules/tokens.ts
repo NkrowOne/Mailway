@@ -128,9 +128,9 @@ const DAY_MS = 24 * 3600_000;
 
 const createSchema = z.object({
   name: z
-    .string({ required_error: 'Indique un nombre para el token.' })
+    .string({ required_error: 'Indica un nombre para el token.' })
     .trim()
-    .min(1, 'Indique un nombre para el token.')
+    .min(1, 'Indica un nombre para el token.')
     .max(60, 'El nombre no puede superar los 60 caracteres.'),
   /** Días de validez; null u omitido = sin caducidad. */
   expiresInDays: z
@@ -174,7 +174,7 @@ export function registerTokenRoutes(app: FastifyInstance): void {
     ).c;
     if (active >= MAX_ACTIVE_TOKENS_PER_USER) {
       throw conflict(
-        `Ha alcanzado el máximo de ${MAX_ACTIVE_TOKENS_PER_USER} tokens activos. Revoque los que ya no utilice antes de crear otro.`,
+        `Has alcanzado el máximo de ${MAX_ACTIVE_TOKENS_PER_USER} tokens activos. Revoca los que ya no utilices antes de crear otro.`,
         'token_limit',
       );
     }

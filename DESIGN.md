@@ -672,10 +672,10 @@ escala en petróleo vivo y el nombre de la instancia invertido en versalitas de 
 bajo un título, sino la misma región oscura que el membrete de página—. Debajo, sobre hoja, los enlaces se
 agrupan bajo secciones rotuladas con el rótulo en `.rotulo`:
 
-- **administrador**: «Parte diario» (Constantes, Avisos, Entregabilidad), «Registro» (Clientes, Dominios,
-  Buzones, Alias, Marca blanca), «Instrumentos» (API de envío, Conexiones, Planes, Actividad, Ajustes) y
+- **administrador**: «Vista general» (Resumen, Avisos, Entregabilidad), «Gestión» (Clientes, Dominios,
+  Buzones, Alias, Marca blanca), «Configuración» (API de envío, Conexiones, Planes, Actividad, Ajustes) y
   «Cuenta» (Mi cuenta);
-- **cliente**: «Su correo» (Resumen, Dominios, Buzones, Alias, Marca blanca), «Automatización» (API de
+- **cliente**: «Tu correo» (Resumen, Dominios, Buzones, Alias, Marca blanca), «Automatización» (API de
   envío, Conexiones) y «Cuenta» (Actividad, Mi cuenta).
 
 Cada enlace: icono de 16px + etiqueta de 14px, 8px de aire lateral y 6px vertical. Inactivo en `tinta-2` con
@@ -765,7 +765,7 @@ desplaza (`useBloqueoDesplazamiento`, un contador compartido con el cajón móvi
 superficie donde conviven una acción principal y una secundaria.
 
 Dos props para los secretos que se muestran una sola vez (contraseñas, claves, tokens):
-`confirmarCierre` hace que Escape y el aspa pregunten «¿Ha guardado la contraseña? No se podrá volver a ver.»
+`confirmarCierre` hace que Escape y el aspa pregunten «¿Has guardado la contraseña? No se podrá volver a ver.»
 («Volver» / «Cerrar sin guardar») y que el clic en el velo no cierre; `pie` fija una botonera al pie del
 diálogo para que la acción «Ya la he guardado» se vea en móvil sin desplazar. Si el título cambia (el
 diálogo pasa a otra vista), el foco vuelve al contenido.
@@ -837,7 +837,7 @@ controles grandes, frases cortas y un paso a la vez (`web/src/pages/portal/comun
 - **Altura táctil (`TACTIL`):** 44px mínimos en móvil (`min-h-11`), la altura normal del kit desde `sm`. Se
   aplica como `min-height` porque siempre se impone a la altura del control.
 - **`BotonCopiarTactil`:** la versión táctil de `BotonCopiar`. Solo dice «Copiado» si la copia ha funcionado;
-  si no, «Cópielo a mano», en carmín.
+  si no, «Cópialo manualmente», en carmín.
 - **`Pasos` / `Paso`:** lista numerada con la cifra en `.valor` dentro de un cuadrado de 24px con filete; el
   texto a 14px y máximo 70ch. `Nota` para el contexto que no es un paso y `Ui` para citar un elemento de otra
   aplicación entre comillas angulares y en negrita («Permitir», «Ajustes»).
@@ -897,8 +897,8 @@ controles grandes, frases cortas y un paso a la vez (`web/src/pages/portal/comun
   error.
 - **Do** usar `sin-dato` —guion y `tinta-3`— cuando algo no se ha podido medir; no fingir un veredicto.
 - **Do** mantener el foco visible de 2px en petróleo y el contraste AA; el texto más tenue admitido es `tinta-3`.
-- **Do** escribir toda la interfaz en español, con la terminología fijada: buzón, alias, clave de API, plan,
-  entregabilidad.
+- **Do** escribir toda la interfaz en español profesional y neutro, tratando al lector de tú, con la
+  terminología fijada: buzón, alias, clave de API, plan, entregabilidad.
 
 ### Don't:
 

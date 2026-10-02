@@ -201,13 +201,13 @@ export function fechaLarga(ts: number): string {
  * aún no tiene el buzón configurado, así que suele enviarse a otra dirección.
  */
 export function mailtoEnlace(opts: { email: string; url: string; expiresAt: number; hasPassword: boolean }): string {
-  const asunto = `Configuración de su correo ${opts.email}`;
+  const asunto = `Configuración de tu correo ${opts.email}`;
   const lineas = [
     'Buenos días:',
     '',
-    `Ya tiene disponible su buzón de correo ${opts.email}.`,
+    `Ya tienes disponible tu buzón de correo ${opts.email}.`,
     '',
-    'Para configurarlo en el móvil o en el ordenador, abra el siguiente enlace y siga las instrucciones para su dispositivo:',
+    'Para configurarlo en el móvil o en el ordenador, abre el siguiente enlace y sigue las instrucciones para tu dispositivo:',
     '',
     opts.url,
     '',
@@ -215,7 +215,7 @@ export function mailtoEnlace(opts: { email: string; url: string; expiresAt: numb
   ];
   if (opts.hasPassword) {
     lineas.push(
-      'El enlace incluye la contraseña del buzón: no lo reenvíe a otras personas.',
+      'El enlace incluye la contraseña del buzón: no lo reenvíes a otras personas.',
     );
   }
   lineas.push('', 'Un saludo.');

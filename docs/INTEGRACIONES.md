@@ -114,7 +114,7 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
-| `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (véase debajo); sin el parámetro, siempre. |
+| `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (ver debajo); sin el parámetro, siempre. |
 | `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
@@ -166,7 +166,7 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? (MX, SPF, DMARC actuales). |
 | `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain }`; mientras la propiedad esté pendiente, la comprueba también. Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
 | `POST /api/domains/:id/dkim` | Regenera las claves DKIM en el motor. |
-| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted }` (véase «Baja de un dominio»). Con buzones exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
+| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted }` (ver «Baja de un dominio»). Con buzones exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
 
 `DomainRecord`: `{ id, clientId, domain, domainUnicode, status:
 pending_dns|active|error, dkimSelector, dnsStatus: { checks, requiredTotal,
@@ -288,10 +288,10 @@ encuentre un móvil perdido no puede adueñarse del buzón.
   - `400 app_password_not_allowed`: es una contraseña de aplicación.
   - `429 rate_limited`: ya se han indicado 5 contraseñas incorrectas para ese
     buzón en los últimos 15 minutos. El bloqueo alcanza también a la contraseña
-    correcta, para que la ruta no sirva para probar contraseñas: espere 15
-    minutos o cree el enlace sin contraseña.
+    correcta, para que la ruta no sirva para probar contraseñas: espera 15
+    minutos o crea el enlace sin contraseña.
   - `503 engine_unreachable`: el motor no ha respondido, así que no se puede
-    comprobar. No se crea ningún enlace; reintente o cree uno sin contraseña.
+    comprobar. No se crea ningún enlace; reintenta o crea uno sin contraseña.
 - El token del enlace tiene 256 bits y solo se guarda su hash. La contraseña
   se guarda cifrada y se borra al caducar o revocar el enlace, cuando el
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
@@ -301,7 +301,7 @@ encuentre un móvil perdido no puede adueñarse del buzón.
 ### 2.8 Actividad
 
 `GET /api/audit?clientId=&limit=&before=` → `{ entries, nextBefore }`.
-`limit` de 1 a 500 (100 por defecto); para la página siguiente, pase
+`limit` de 1 a 500 (100 por defecto); para la página siguiente, pasa
 `before=<nextBefore>`. Cada anotación es `{ id, userId, clientId, clientName,
 action, detail, ip, createdAt, actor: { name, email, role } | null }`.
 
@@ -357,12 +357,12 @@ de ese proyecto (si no, responde 404 sin llegar a Mailway).
 
 1. En Mailway: **Conexiones → Tokens de gestión → Crear token** con la cuenta
    de administración (p. ej. «Skyway», sin caducidad).
-2. En Skyway: **Ajustes → Correo (Mailway)**. Seleccione el servicio de Skyway
+2. En Skyway: **Ajustes → Correo (Mailway)**. Selecciona el servicio de Skyway
    que ejecuta el panel de Mailway (Skyway le habla por la red interna,
-   `http://skyway-<proyecto>-<servicio>:4100`) o escriba su URL pública;
-   pegue el token (debe empezar por `mwt_`) y pulse **Probar conexión**. Skyway
+   `http://skyway-<proyecto>-<servicio>:4100`) o escribe su URL pública;
+   pega el token (debe empezar por `mwt_`) y pulsa **Probar conexión**. Skyway
    muestra la versión, la marca y el servidor de correo, y avisa si el token no
-   es de administración. Guarde.
+   es de administración. Guarda.
 3. Para los usuarios de Skyway que no son administradores, el plan de su
    cuenta debe incluir el módulo **Correo** (`mail`). Los planes anteriores a
    la 0.34 no lo incluyen.
@@ -385,7 +385,7 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
   `409 domain_ownership_pending` y Skyway muestra el TXT que falta.
 - **Buzones**: crear (la contraseña se muestra una vez), generar el enlace de
   configuración para el titular, restablecer la contraseña y eliminar.
-- **Conectar a un servicio**: elija un servicio del proyecto (no de base de
+- **Conectar a un servicio**: elige un servicio del proyecto (no de base de
   datos) y un buzón.
   - *SMTP*: crea una contraseña de aplicación `skyway:<servicio>` y añade
     `SMTP_HOST` (`mail.<dominio>`), `SMTP_PORT=587`, `SMTP_SECURE=false`
@@ -396,7 +396,7 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
   - Las variables se fusionan con las existentes y sus valores nunca se
     muestran ni se anotan. Opcionalmente vuelve a desplegar el servicio.
   - Conectar de nuevo crea una credencial nueva, pero **no revoca la
-    anterior**: retírela en Mailway (contraseñas de aplicación del buzón o
+    anterior**: retírala en Mailway (contraseñas de aplicación del buzón o
     **API de envío**) si ya no se usa.
 - **Desactivar el correo**: quita la referencia en Mailway (los datos se
   conservan). Skyway lo hace de forma condicional
@@ -432,14 +432,13 @@ Traefik) y su URL pública (`PUBLIC_URL`, si no se define `MAILWAY_PANEL_URL`).
 
 ## 4. Cloudflare
 
-Si el DNS de un dominio está en Cloudflare, Mailway crea los registros por
-usted.
+Si el DNS de un dominio está en Cloudflare, Mailway crea los registros por ti.
 
 ### 4.1 Conectar una cuenta
 
 **Conexiones → Cloudflare → Conectar cuenta.** El botón abre Cloudflare con un
 token ya preparado con los permisos mínimos: *Zona → Zona → Leer* y *Zona →
-DNS → Editar*. Limítelo a las zonas que quiera, créelo y péguelo.
+DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
 
 - La administración puede conectar una cuenta para **toda la instancia** o
   para un cliente. Cada cliente puede conectar la suya.
@@ -474,7 +473,7 @@ DNS → Editar*. Limítelo a las zonas que quiera, créelo y péguelo.
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
 Si la zona está pendiente de activación en Cloudflare, `zone.nameServers`
-indica los servidores de nombres que debe poner en su registrador.
+indica los servidores de nombres que debes poner en tu registrador.
 
 ### 4.3 Qué cuentas se usan
 
@@ -522,7 +521,7 @@ indica los servidores de nombres que debe poner en su registrador.
 |---|---|
 | `400 cloudflare_token_invalid` · `cloudflare_token_malformed` · `cloudflare_token_inactive` | Token no válido, incompleto, desactivado o caducado |
 | `400 cloudflare_forbidden` | El token no tiene permiso sobre la zona o está limitado por IP |
-| `409 cloudflare_email_routing` | La zona tiene *Email Routing* activado, que bloquea MX y SPF: desactívelo en Cloudflare (Email → Email Routing) |
+| `409 cloudflare_email_routing` | La zona tiene *Email Routing* activado, que bloquea MX y SPF: desactívalo en Cloudflare (Email → Email Routing) |
 | `409 cloudflare_exists` | Otro registro con ese nombre impide crear el nuevo |
 | `429 cloudflare_rate_limited` | Límite de Cloudflare (1200 peticiones cada 5 minutos por token) |
 | `502 cloudflare_unreachable` · `504 cloudflare_timeout` | Cloudflare no responde o tarda más de 15 segundos |
@@ -734,7 +733,7 @@ está leyendo las rutas.
 - Con **Skyway 0.34 o posterior** no hay que instalar nada (sección 3.3).
 - Con Skyway anterior o un Traefik propio, `overrideSnippet` es el
   `docker-compose.override.yml` exacto que hace que Traefik consulte el panel
-  directamente. **No lo instale con Skyway 0.34**: Traefik solo admite un
+  directamente. **No lo instales con Skyway 0.34**: Traefik solo admite un
   proveedor HTTP y el fichero sustituiría al puente.
 
 ---

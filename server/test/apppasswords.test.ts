@@ -83,7 +83,7 @@ test('validación del nombre y 404 al revocar una que no existe', async () => {
 
   const empty = await call(ctx.adminCookie, 'POST', base, { name: '   ' });
   assert.equal(empty.statusCode, 400);
-  assert.match(empty.json().error, /Indique un nombre/);
+  assert.match(empty.json().error, /Indica un nombre/);
 
   const missing = await call(ctx.adminCookie, 'DELETE', `${base}/app_no_existe`);
   assert.equal(missing.statusCode, 404);

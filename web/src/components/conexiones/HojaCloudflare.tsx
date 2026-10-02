@@ -51,7 +51,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
       queryClient.setQueryData(['cloudflare-accounts'], data);
       const conError = data.accounts.filter((a) => a.lastError).length;
       if (conError > 0) {
-        toast('error', `${plural(conError, 'cuenta con error', 'cuentas con error')}. Revise el detalle en la lista.`);
+        toast('error', `${plural(conError, 'cuenta con error', 'cuentas con error')}. Revisa el detalle en la lista.`);
       } else {
         toast('ok', 'Cuentas comprobadas.');
       }
@@ -98,11 +98,11 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
             mismo elemento, la regla se cortaba a 80 caracteres. */}
         <div className="regla-fila px-4 py-3">
           <p className="max-w-[80ch] text-base text-tinta-2">
-            Conecte una cuenta de Cloudflare para que Mailway cree y corrija los registros DNS de
-            correo de {isAdmin ? 'los dominios' : 'sus dominios'} con un clic. Antes de aplicar se
+            Conecta una cuenta de Cloudflare para que Mailway cree y corrija los registros DNS de
+            correo de {isAdmin ? 'los dominios' : 'tus dominios'} con un clic. Antes de aplicar se
             muestran todos los cambios, los registros de correo nunca se activan con el proxy de
             Cloudflare y lo que ya existe (otros proveedores, un SPF propio, un DMARC) no se modifica
-            sin su confirmación.
+            sin tu confirmación.
           </p>
         </div>
 
@@ -116,7 +116,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
           </div>
         ) : lista.length === 0 ? (
           <Vacio title="Todavía no hay ninguna cuenta conectada">
-            Siga los tres pasos siguientes: crear el token en Cloudflare, pegarlo aquí y conectar.
+            Sigue los tres pasos siguientes: crear el token en Cloudflare, pegarlo aquí y conectar.
           </Vacio>
         ) : (
           <>
@@ -217,7 +217,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
           <p className="text-base text-tinta-2">
             Mailway dejará de usar la cuenta <strong className="text-tinta">{aBorrar?.label}</strong>.
             Los registros DNS ya creados en Cloudflare no se modifican. El token sigue existiendo en
-            Cloudflare: si ya no lo necesita, revóquelo en Cloudflare (My Profile → API Tokens).
+            Cloudflare: si ya no lo necesitas, revócalo en Cloudflare (My Profile → API Tokens).
           </p>
           {borrar.isError && <BandaError>{mensaje(borrar.error, 'No se ha podido eliminar la cuenta.')}</BandaError>}
           <div className="flex flex-wrap justify-end gap-2">
@@ -288,8 +288,8 @@ function FormularioConexion({
           <p className="rotulo">Paso 1 · Crear el token en Cloudflare</p>
           <p className="max-w-[75ch] text-base text-tinta-2">
             El enlace abre Cloudflare con los dos permisos necesarios ya seleccionados: «Zone · Zone ·
-            Read» y «Zone · DNS · Edit». En «Zone Resources», elija las zonas de{' '}
-            {isAdmin ? 'los dominios' : 'sus dominios'} (o «All zones»), pulse «Continue to summary»
+            Read» y «Zone · DNS · Edit». En «Zone Resources», elige las zonas de{' '}
+            {isAdmin ? 'los dominios' : 'tus dominios'} (o «All zones»), pulsa «Continue to summary»
             y, después, «Create Token».
           </p>
           <div>
@@ -396,7 +396,7 @@ function HojaDnsPlataforma({ hayInstancia }: { hayInstancia: boolean }) {
       toast(
         data.errors.length > 0 ? 'error' : 'ok',
         data.errors.length > 0
-          ? 'Parte de los registros no se ha podido aplicar. Revise el detalle.'
+          ? 'Parte de los registros no se ha podido aplicar. Revisa el detalle.'
           : 'DNS de la plataforma aplicado en Cloudflare.',
       );
     },

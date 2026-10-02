@@ -299,7 +299,7 @@ export function AppShell({
         'error',
         err instanceof ApiError
           ? err.message
-          : 'No se ha podido cerrar la sesión. Compruebe la conexión e inténtelo de nuevo.',
+          : 'No se ha podido cerrar la sesión. Comprueba la conexión e inténtalo de nuevo.',
       );
       return;
     }

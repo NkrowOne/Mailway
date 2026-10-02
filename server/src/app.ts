@@ -102,7 +102,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       // traducido: es un conflicto del cliente (lo mismo creado dos veces),
       // no un fallo interno.
       reply.status(409).send({
-        error: 'Ese elemento ya existe o se está creando en otra petición simultánea. Actualice la página y compruebe el resultado.',
+        error: 'Ese elemento ya existe o se está creando en otra petición simultánea. Actualiza la página y comprueba el resultado.',
         code: 'conflict',
       });
       return;
@@ -120,7 +120,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     req.log.error({ err }, 'Error no controlado');
     reply.status(500).send({
-      error: 'Error interno del servidor. Revise los registros de Mailway.',
+      error: 'Error interno del servidor. Revisa los registros de Mailway.',
       code: 'internal',
     });
   });

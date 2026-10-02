@@ -32,7 +32,7 @@ import { getTraefikToken } from './whitelabel';
 const EXTERNAL_REF_RE = /^[a-z0-9][a-z0-9:._-]{2,199}$/i;
 
 const externalRefSchema = z
-  .string({ required_error: 'Indique la referencia externa (externalRef).' })
+  .string({ required_error: 'Indica la referencia externa (externalRef).' })
   .trim()
   .regex(
     EXTERNAL_REF_RE,
@@ -109,7 +109,7 @@ function defaultPlanId(): string {
     | undefined;
   if (!row) {
     throw conflict(
-      'No hay ningún plan definido. Cree un plan en Mailway antes de dar de alta clientes.',
+      'No hay ningún plan definido. Crea un plan en Mailway antes de dar de alta clientes.',
       'no_plans',
     );
   }
@@ -119,7 +119,7 @@ function defaultPlanId(): string {
 const ensureSchema = z.object({
   externalRef: externalRefSchema,
   name: z
-    .string({ required_error: 'Indique el nombre del cliente.' })
+    .string({ required_error: 'Indica el nombre del cliente.' })
     .trim()
     .min(2, 'El nombre del cliente es demasiado corto.')
     .max(80, 'El nombre del cliente no puede superar los 80 caracteres.'),
@@ -398,7 +398,7 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
     if (owner && owner !== id) {
       const other = getClient(owner);
       throw conflict(
-        `La referencia externa ya está vinculada a otro cliente («${other.name}»). Desvincúlela antes de asignarla a este.`,
+        `La referencia externa ya está vinculada a otro cliente («${other.name}»). Desvincúlala antes de asignarla a este.`,
         'external_ref_in_use',
       );
     }

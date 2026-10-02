@@ -137,7 +137,7 @@ function clienteDe(row: CuentaRow): CloudflareClient {
   } catch {
     throw new CloudflareError(
       400,
-      'No se ha podido descifrar el token de esta cuenta (la clave de Mailway ha cambiado). Elimine la cuenta y vuelva a conectarla.',
+      'No se ha podido descifrar el token de esta cuenta (la clave de Mailway ha cambiado). Elimina la cuenta y vuelve a conectarla.',
       'cloudflare_token_unreadable',
     );
   }
@@ -158,7 +158,7 @@ export function tokenDeCuenta(id: string): { token: string; clientId: string | n
     token = decryptSecret(fila.token_enc);
   } catch {
     throw badRequest(
-      'No se ha podido descifrar el token de esta cuenta (la clave de Mailway ha cambiado). Elimine la cuenta y vuelva a conectarla.',
+      'No se ha podido descifrar el token de esta cuenta (la clave de Mailway ha cambiado). Elimina la cuenta y vuelve a conectarla.',
       'cloudflare_token_unreadable',
     );
   }
@@ -257,14 +257,14 @@ export async function resolverZona(
     return {
       resolucion: null,
       motivo: hayInstancia
-        ? 'No hay ninguna cuenta de Cloudflare propia conectada. Las cuentas de la instancia solo las utiliza el administrador: conecte una cuenta en Conexiones o solicite al administrador que aplique el DNS.'
-        : 'No hay ninguna cuenta de Cloudflare conectada. Conecte una en Conexiones para configurar el DNS automáticamente.',
+        ? 'No hay ninguna cuenta de Cloudflare propia conectada. Las cuentas de la instancia solo las utiliza el administrador: conecta una cuenta en Conexiones o solicita al administrador que aplique el DNS.'
+        : 'No hay ninguna cuenta de Cloudflare conectada. Conecta una en Conexiones para configurar el DNS automáticamente.',
     };
   }
   const detalle = errores.length > 0 ? ` Último error: ${errores[errores.length - 1]}` : '';
   return {
     resolucion: null,
-    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${domainToUnicode(hostname) || hostname}. Compruebe que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}`,
+    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${domainToUnicode(hostname) || hostname}. Comprueba que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}`,
   };
 }
 
@@ -433,7 +433,7 @@ const MOTIVO_PROXY =
   'Está en modo proxy (nube naranja): se cambiará a «Solo DNS», ya que el proxy de Cloudflare impide la conexión de los programas de correo.';
 
 const MOTIVO_EMAIL_ROUTING =
-  'Cloudflare Email Routing tiene bloqueado este registro. Desactive Email Routing en el panel de Cloudflare (Email → Email Routing → Settings) y vuelva a revisar los cambios.';
+  'Cloudflare Email Routing tiene bloqueado este registro. Desactiva Email Routing en el panel de Cloudflare (Email → Email Routing → Settings) y vuelve a revisar los cambios.';
 
 function esHostEmailRouting(host: string): boolean {
   return /(^|\.)mx\.cloudflare\.net$/.test(sinPunto(host));
@@ -581,7 +581,7 @@ function planificarUno(
       let reason = `El dominio recibe hoy el correo en ${hosts}. Si se reemplazan estos MX, el correo dejará de llegar a ese proveedor.`;
       if (routing) {
         reason +=
-          ' Pertenecen a Cloudflare Email Routing: desactívelo en el panel de Cloudflare (Email → Email Routing → Settings) antes de aplicar.';
+          ' Pertenecen a Cloudflare Email Routing: desactívalo en el panel de Cloudflare (Email → Email Routing → Settings) antes de aplicar.';
       }
       return enConflicto(reason, ajenos, {
         ...vacias(),
@@ -605,7 +605,7 @@ function planificarUno(
         if (spfs.length > 1) {
           // Nunca se corrige solo: decidir qué mecanismos sobran es del titular.
           return enConflicto(
-            `Hay ${spfs.length} registros SPF con este nombre y solo puede existir uno: los servidores receptores los invalidan todos. Combínelos manualmente en un único registro v=spf1 que incluya «mx».`,
+            `Hay ${spfs.length} registros SPF con este nombre y solo puede existir uno: los servidores receptores los invalidan todos. Combínalos manualmente en un único registro v=spf1 que incluya «mx».`,
             spfs,
             null,
           );
@@ -1112,7 +1112,7 @@ export function deseadosDeInstancia(): { deseados: Deseado[]; motivo: string } {
   if (!mail || !ip) {
     return {
       deseados: [],
-      motivo: 'Configure en Ajustes el nombre del servidor de correo y la IP pública antes de aplicar el DNS de la plataforma.',
+      motivo: 'Configura en Ajustes el nombre del servidor de correo y la IP pública antes de aplicar el DNS de la plataforma.',
     };
   }
   const deseados: Deseado[] = [{ type: 'A', name: mail, content: ip, required: true }];
@@ -1153,7 +1153,7 @@ async function planDeInstancia(): Promise<{
   if (cuentasDeInstancia().length === 0) {
     return {
       available: false,
-      reason: 'No hay ninguna cuenta de Cloudflare de la instancia conectada. Conecte una con el ámbito «Toda la instancia».',
+      reason: 'No hay ninguna cuenta de Cloudflare de la instancia conectada. Conecta una con el ámbito «Toda la instancia».',
       grupos: [],
       sinZona: [],
     };
@@ -1204,7 +1204,7 @@ async function planDeInstancia(): Promise<{
 /* ---------------------------------- Rutas --------------------------------- */
 
 const tokenSchema = z
-  .string({ required_error: 'Introduzca el token de Cloudflare.' })
+  .string({ required_error: 'Introduce el token de Cloudflare.' })
   .trim()
   .min(20, 'El token de Cloudflare no parece completo.')
   .max(400, 'El token de Cloudflare es demasiado largo.')
@@ -1243,7 +1243,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       .object({
         token: tokenSchema,
         label: z.string().trim().max(80, 'El nombre no puede superar 80 caracteres.').optional(),
-        clientId: z.string().trim().min(1, 'Seleccione un cliente.').nullable().optional(),
+        clientId: z.string().trim().min(1, 'Selecciona un cliente.').nullable().optional(),
       })
       .parse(req.body);
 
@@ -1254,7 +1254,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     } else {
       if (!user.clientId) throw forbidden();
       if (body.clientId && body.clientId !== user.clientId) {
-        throw forbidden('Solo puede conectar cuentas de Cloudflare para su propia organización.');
+        throw forbidden('Solo puedes conectar cuentas de Cloudflare para tu propia organización.');
       }
       clientId = user.clientId;
     }
@@ -1275,7 +1275,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const zonas = await cliente.listZones();
     if (zonas.length === 0) {
       throw badRequest(
-        'El token es válido, pero no da acceso a ninguna zona. Asigne el permiso «Zone · Zone · Read» e incluya las zonas de sus dominios.',
+        'El token es válido, pero no da acceso a ninguna zona. Asigna el permiso «Zone · Zone · Read» e incluye las zonas de tus dominios.',
         'cloudflare_no_zones',
       );
     }
@@ -1379,7 +1379,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       deseado = { type: 'A', name: host, content: inst.publicIp.trim(), required: true, proxyTolerado: false };
     } else {
       throw badRequest(
-        'Configure en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
+        'Configura en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
         'instance_incomplete',
       );
     }

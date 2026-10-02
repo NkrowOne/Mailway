@@ -83,7 +83,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
   function enviarAlta(e: FormEvent) {
     e.preventDefault();
     if (!nombre.trim()) {
-      setErrorAlta('Indique un nombre para el token.');
+      setErrorAlta('Indica un nombre para el token.');
       return;
     }
     crear.mutate();
@@ -125,8 +125,8 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
           </p>
           <p className="max-w-[75ch] text-sm text-tinta-3">
             {isAdmin
-              ? 'Para conectar Skyway se necesita un token creado por un administrador. Cambiar la contraseña no revoca los tokens: revóquelos aquí si sospecha de un uso indebido.'
-              : 'Su token solo da acceso a los datos de su cuenta. Para conectar Skyway se necesita un token de un administrador de la instancia.'}
+              ? 'Para conectar Skyway se necesita un token creado por un administrador. Cambiar la contraseña no revoca los tokens: revócalos aquí si sospechas de un uso indebido.'
+              : 'Tu token solo da acceso a los datos de tu cuenta. Para conectar Skyway se necesita un token de un administrador de la instancia.'}
           </p>
           {isAdmin && (
             <label className="mt-1 flex w-fit cursor-pointer items-center gap-2 text-sm text-tinta-2">
@@ -147,12 +147,12 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void tokens.refetch()} retrying={tokens.isFetching}>
               No se han podido leer los tokens de gestión.{' '}
-              {tokens.error instanceof ApiError ? tokens.error.message : 'Compruebe la conexión con el servidor.'}
+              {tokens.error instanceof ApiError ? tokens.error.message : 'Comprueba la conexión con el servidor.'}
             </AvisoError>
           </div>
         ) : vigentes.length === 0 && revocados.length === 0 ? (
           <Vacio title="No hay tokens de gestión">
-            Cree un token con «Crear token» para conectar Skyway o automatizar tareas por API. El
+            Crea un token con «Crear token» para conectar Skyway o automatizar tareas por API. El
             token completo se muestra una sola vez.
           </Vacio>
         ) : (
@@ -240,8 +240,8 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
           </Select>
           <p className="text-sm text-tinta-3">
             {isAdmin
-              ? 'El token tendrá permisos de administrador sobre toda la instancia. Guárdelo como cualquier otra contraseña.'
-              : 'El token tendrá los mismos permisos que su usuario, limitados a su cuenta.'}
+              ? 'El token tendrá permisos de administrador sobre toda la instancia. Guárdalo como cualquier otra contraseña.'
+              : 'El token tendrá los mismos permisos que tu usuario, limitados a tu cuenta.'}
           </p>
           {errorAlta && <AvisoError>{errorAlta}</AvisoError>}
           <div className="flex flex-wrap justify-end gap-2">
@@ -260,7 +260,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         open={creado !== null}
         onClose={() => setCreado(null)}
         title="Token de gestión creado"
-        confirmarCierre={{ pregunta: '¿Ha guardado el token?', detalle: 'No se podrá volver a ver.' }}
+        confirmarCierre={{ pregunta: '¿Has guardado el token?', detalle: 'No se podrá volver a ver.' }}
         pie={
           <Button variant="tinta" onClick={() => setCreado(null)}>
             Ya lo he guardado
@@ -389,7 +389,7 @@ function TokenRecienCreado({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-base text-tinta-2">
-        Copie el token ahora y guárdelo en un gestor de secretos:{' '}
+        Copia el token ahora y guárdalo en un gestor de secretos:{' '}
         <strong className="text-tinta">no se volverá a mostrar</strong>.
       </p>
       <Muestra rotulo={`Token «${creado.info.name}»`} copiar={creado.token}>
@@ -401,7 +401,7 @@ function TokenRecienCreado({
         {isAdmin ? (
           <>
             <p className="text-sm text-tinta-2">
-              En Skyway, abra «Ajustes» → «Correo (Mailway)» e introduzca la URL del panel y este
+              En Skyway, abre «Ajustes» → «Correo (Mailway)» e introduce la URL del panel y este
               token.
             </p>
             <Muestra rotulo="URL del panel" copiar={origen}>
@@ -411,7 +411,7 @@ function TokenRecienCreado({
         ) : (
           <p className="text-sm text-tinta-2">
             Skyway necesita un token de un administrador de la instancia. Este token sirve para
-            automatizar la gestión de su cuenta desde scripts o procesos propios.
+            automatizar la gestión de tu cuenta desde scripts o procesos propios.
           </p>
         )}
       </div>

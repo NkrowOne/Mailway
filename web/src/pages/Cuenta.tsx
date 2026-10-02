@@ -48,7 +48,7 @@ export default function Cuenta() {
       setError(
         err instanceof ApiError
           ? err.message
-          : 'No se ha podido cambiar la contraseña. Compruebe la conexión e inténtelo de nuevo.',
+          : 'No se ha podido cambiar la contraseña. Comprueba la conexión e inténtalo de nuevo.',
       );
     } finally {
       setBusy(false);
@@ -82,7 +82,7 @@ export default function Cuenta() {
               autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              error={intentado && !currentPassword ? 'Indique la contraseña actual.' : undefined}
+              error={intentado && !currentPassword ? 'Indica la contraseña actual.' : undefined}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
@@ -101,7 +101,7 @@ export default function Cuenta() {
                 }
               />
               <Input
-                label="Repita la nueva contraseña"
+                label="Repite la nueva contraseña"
                 type="password"
                 required
                 autoComplete="new-password"

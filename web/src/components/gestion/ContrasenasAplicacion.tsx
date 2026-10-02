@@ -71,7 +71,7 @@ export function ContrasenasAplicacion({
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Indique el nombre del dispositivo o la aplicación.');
+      setError('Indica el nombre del dispositivo o la aplicación.');
       return;
     }
     create.mutate();
@@ -87,7 +87,7 @@ export function ContrasenasAplicacion({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-base text-tinta-2">
-        Cree una contraseña para cada dispositivo o aplicación (móvil, portátil, una aplicación que envía
+        Crea una contraseña para cada dispositivo o aplicación (móvil, portátil, una aplicación que envía
         correo). Se introduce en lugar de la contraseña del buzón y se puede revocar por separado; la
         contraseña principal no cambia.
       </p>
@@ -96,7 +96,7 @@ export function ContrasenasAplicacion({
         <div className="revelar flex flex-col gap-3">
           <p className="text-base text-tinta-2">
             Contraseña para «{nueva.name}».{' '}
-            <strong className="font-semibold text-tinta">Solo se muestra ahora</strong>: introdúzcala en el
+            <strong className="font-semibold text-tinta">Solo se muestra ahora</strong>: introdúcela en el
             dispositivo como contraseña de la cuenta.
           </p>
           <Muestra rotulo="Usuario" copiar={email}>

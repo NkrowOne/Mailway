@@ -32,7 +32,7 @@ import { useDireccionPanel } from '../../components/gestion/consultas';
 
 /** Pregunta antes de cerrar un diálogo con una contraseña recién generada. */
 const CONFIRMAR_CONTRASENA: ConfirmarCierre = {
-  pregunta: '¿Ha guardado la contraseña?',
+  pregunta: '¿Has guardado la contraseña?',
   detalle: 'No se podrá volver a ver.',
 };
 
@@ -152,7 +152,7 @@ export default function ClienteDetalle() {
         <div className="mb-4">
           <BandaAviso>
             No se ha podido aplicar el cambio en {plural(fallosSuspension.length, 'buzón', 'buzones')} del servidor
-            de correo ({fallosSuspension.map((f) => f.email).join(', ')}). Compruebe el estado del motor y vuelva a
+            de correo ({fallosSuspension.map((f) => f.email).join(', ')}). Comprueba el estado del motor y vuelve a
             aplicar el cambio desde «Estado del servicio».
           </BandaAviso>
         </div>
@@ -312,7 +312,7 @@ export default function ClienteDetalle() {
           ) : mailboxList.length === 0 ? (
             <Vacio title="Sin buzones">
               {domainList.length > 0
-                ? 'Todavía no hay buzones. Créelos desde «Buzones».'
+                ? 'Todavía no hay buzones. Créalos desde «Buzones».'
                 : 'Los buzones se crean en «Buzones», una vez añadido un dominio.'}
             </Vacio>
           ) : (
@@ -591,8 +591,8 @@ function CambiarPlan({
         </div>
         {excede ? (
           <BandaError>
-            El uso actual del cliente no cabe en el plan «{nuevo.name}». Reduzca antes el uso (dominios, buzones,
-            alias u ocupación de los buzones) o elija un plan con más capacidad.
+            El uso actual del cliente no cabe en el plan «{nuevo.name}». Reduce antes el uso (dominios, buzones,
+            alias u ocupación de los buzones) o elige un plan con más capacidad.
           </BandaError>
         ) : (
           conCuotaMayor > 0 && (
@@ -623,7 +623,7 @@ function CredencialUsuario({ clientId, email, password }: { clientId: string; em
   return (
     <>
       <BandaAviso>
-        La contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entréguela por un canal
+        La contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entrégala por un canal
         seguro; el usuario podrá cambiarla desde «Mi cuenta».
       </BandaAviso>
       <Muestra rotulo="Dirección del panel" copiar={panel}>
@@ -675,7 +675,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
       return;
     }
     if (!esCorreoValido(email)) {
-      setError('Indique un correo válido: será el usuario con el que entrará en el panel.');
+      setError('Indica un correo válido: será el usuario con el que entrará en el panel.');
       return;
     }
     if (modo === 'propia' && password.length < 10) {
@@ -1002,7 +1002,7 @@ function EliminarCliente({ client, onClose }: { client: Client; onClose: () => v
           Se eliminarán {client.name} y sus usuarios del panel. Esta acción no se puede deshacer.
         </p>
         <Input
-          label="Escriba el nombre del cliente para confirmar"
+          label="Escribe el nombre del cliente para confirmar"
           autoComplete="off"
           value={confirmacion}
           onChange={(e) => {

@@ -74,7 +74,7 @@ export class StalwartEngine implements MailEngine {
         // principales seguirían recibiendo correo y aceptando contraseñas.
         throw new HttpError(
           502,
-          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revise la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart 0.15.`,
+          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revisa la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart 0.15.`,
           'engine_error',
         );
       }

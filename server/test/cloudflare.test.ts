@@ -399,7 +399,7 @@ test('los códigos de Cloudflare se traducen a mensajes en español', () => {
     assert.ok(err.message.length > 10);
   }
   assert.equal(errorDeCloudflare(400, [{ code: 81058, message: 'x' }]).idempotente, true);
-  assert.match(errorDeCloudflare(400, [{ code: 890190, message: 'x' }]).message, /Desactive Email Routing/);
+  assert.match(errorDeCloudflare(400, [{ code: 890190, message: 'x' }]).message, /Desactiva Email Routing/);
   assert.match(errorDeCloudflare(400, [{ code: 1004, message: 'DNS Validation Error', error_chain: [{ code: 9005, message: 'Bad IP' }] }]).message, /Bad IP/);
 });
 

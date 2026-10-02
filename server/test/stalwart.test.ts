@@ -184,7 +184,7 @@ test('un HTTP 404 (ruta desconocida) es un error del motor, nunca «no existe»'
   assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), null);
   const salud = await motor.ping();
   assert.equal(salud.ok, false);
-  assert.match(salud.detail ?? '', /Revise la URL del motor/);
+  assert.match(salud.detail ?? '', /Revisa la URL del motor/);
 });
 
 test('un borrado de algo que ya no existe ({ error: "notFound" }) sigue siendo idempotente', async () => {

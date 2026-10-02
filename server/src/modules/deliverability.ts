@@ -230,7 +230,7 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
         ...base,
         found: foundText,
         status: 'mismatch',
-        help: `Además de este servidor, el dominio tiene MX de otro proveedor con la misma o mayor preferencia (${veredicto.ajenosPorDelante.join(', ')}): buena parte del correo entrante llegará allí. Elimine esos registros MX para que todo el correo llegue a este servidor.`,
+        help: `Además de este servidor, el dominio tiene MX de otro proveedor con la misma o mayor preferencia (${veredicto.ajenosPorDelante.join(', ')}): buena parte del correo entrante llegará allí. Elimina esos registros MX para que todo el correo llegue a este servidor.`,
       };
     }
     return { ...base, found: foundText, status: veredicto.propio ? 'ok' : 'mismatch' };
@@ -401,14 +401,14 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   if (!mailHostname) {
     recommendations.push({
       severity: 'critical',
-      title: 'Configure el nombre del servidor de correo',
-      detail: 'En Ajustes, defina el FQDN del servidor (p. ej. mail.suempresa.com). Es la identidad con la que el servidor se presenta al resto de Internet.',
+      title: 'Configura el nombre del servidor de correo',
+      detail: 'En Ajustes, define el FQDN del servidor (p. ej. mail.tuempresa.com). Es la identidad con la que el servidor se presenta al resto de Internet.',
     });
   }
   if (!publicIp) {
     recommendations.push({
       severity: 'critical',
-      title: 'Configure la IP pública del servidor',
+      title: 'Configura la IP pública del servidor',
       detail: 'Sin la IP no se puede comprobar el registro inverso (PTR) ni las listas negras.',
     });
   }
@@ -416,7 +416,7 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
     recommendations.push({
       severity: 'critical',
       title: `El registro A de ${mailHostname} no apunta a ${publicIp}`,
-      detail: `Cree un registro A: ${mailHostname} → ${publicIp}. Los servidores receptores comprueban que el nombre y la IP coincidan. Si el DNS está en Cloudflare, puede crearlo desde Conexiones → Cloudflare → DNS de la plataforma.`,
+      detail: `Crea un registro A: ${mailHostname} → ${publicIp}. Los servidores receptores comprueban que el nombre y la IP coincidan. Si el DNS está en Cloudflare, puedes crearlo desde Conexiones → Cloudflare → DNS de la plataforma.`,
     });
   }
   if (ptrOk === false) {
@@ -429,7 +429,7 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
     recommendations.push({
       severity: 'warning',
       title: 'No se ha podido verificar el registro inverso (PTR)',
-      detail: 'Compruebe manualmente que la IP resuelve al nombre del servidor (comando: dig -x IP).',
+      detail: 'Comprueba manualmente que la IP resuelve al nombre del servidor (comando: dig -x IP).',
     });
   }
   for (const list of dnsbl) {
@@ -449,13 +449,13 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   }
   recommendations.push({
     severity: 'info',
-    title: 'Compruebe que el proveedor permite el puerto 25 de salida',
+    title: 'Comprueba que el proveedor permite el puerto 25 de salida',
     detail: 'Muchos proveedores (OVH, Hetzner, AWS…) bloquean el puerto 25 por defecto y es necesario solicitar su apertura. Sin él no es posible entregar correo a otros servidores.',
   });
   recommendations.push({
     severity: 'info',
-    title: 'Aumente el volumen de envío de forma progresiva',
-    detail: 'Si la IP es nueva en el envío de correo, comience con pocos envíos diarios y auméntelos gradualmente durante 2 a 4 semanas. Un aumento repentino del volumen desde una IP sin historial activa los filtros de spam.',
+    title: 'Aumenta el volumen de envío de forma progresiva',
+    detail: 'Si la IP es nueva en el envío de correo, comienza con pocos envíos diarios y auméntalos gradualmente durante 2 a 4 semanas. Un aumento repentino del volumen desde una IP sin historial activa los filtros de spam.',
   });
 
   let score = 100;

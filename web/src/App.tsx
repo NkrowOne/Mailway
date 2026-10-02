@@ -102,7 +102,7 @@ function PanelApp() {
         <div>
           <p className="text-lg font-semibold">No se ha podido contactar con el servidor de Mailway.</p>
           <p className="mt-1 text-sm text-tinta-2">
-            Compruebe que el servicio está en marcha y vuelva a cargar la página.
+            Comprueba que el servicio está en marcha y vuelve a cargar la página.
           </p>
         </div>
       </div>

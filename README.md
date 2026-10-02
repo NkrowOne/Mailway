@@ -64,7 +64,7 @@ de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
 
 Requisitos: un servidor con Docker y Docker Compose v2, el **puerto 25 de
 salida desbloqueado** por el proveedor y el **DNS inverso (PTR)** de la IP
-apuntando al futuro `mail.<su dominio>`. Con Skyway, Skyway debe estar en
+apuntando al futuro `mail.<tu dominio>`. Con Skyway, Skyway debe estar en
 marcha.
 
 ```bash
@@ -76,8 +76,8 @@ sudo bash deploy/instalar.sh --sin-skyway # sin Skyway: todo en un compose propi
 
 El instalador pregunta el dominio base, la IP y, de forma opcional, un token
 de Cloudflare y un token de API de Skyway. Al terminar muestra la dirección
-de la puesta en marcha (`https://panel.<dominio>/setup?token=…`): ábrala y
-complete el asistente. Guía completa, variables de ejecución desatendida y
+de la puesta en marcha (`https://panel.<dominio>/setup?token=…`): ábrela y
+completa el asistente. Guía completa, variables de ejecución desatendida y
 camino manual en **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**.
 
 ## Desarrollo

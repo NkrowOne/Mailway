@@ -53,9 +53,9 @@ function ejemplo(lenguaje: Lenguaje, base: string): string {
         '  -H "Content-Type: application/json" \\',
         "  -d '{",
         '    "to": "cliente@ejemplo.com",',
-        '    "subject": "Su código de acceso",',
-        '    "text": "Su código es 482913. Caduca en 10 minutos.",',
-        '    "html": "<p>Su código es <strong>482913</strong>. Caduca en 10 minutos.</p>"',
+        '    "subject": "Tu código de acceso",',
+        '    "text": "Tu código es 482913. Caduca en 10 minutos.",',
+        '    "html": "<p>Tu código es <strong>482913</strong>. Caduca en 10 minutos.</p>"',
         "  }'",
       ].join('\n');
     case 'node':
@@ -69,8 +69,8 @@ function ejemplo(lenguaje: Lenguaje, base: string): string {
         '  },',
         '  body: JSON.stringify({',
         "    to: 'cliente@ejemplo.com',",
-        "    subject: 'Su código de acceso',",
-        "    text: 'Su código es 482913. Caduca en 10 minutos.',",
+        "    subject: 'Tu código de acceso',",
+        "    text: 'Tu código es 482913. Caduca en 10 minutos.',",
         '  }),',
         '});',
         'const data = await res.json();',
@@ -90,8 +90,8 @@ function ejemplo(lenguaje: Lenguaje, base: string): string {
         '    ],',
         '    CURLOPT_POSTFIELDS => json_encode([',
         "        'to' => 'cliente@ejemplo.com',",
-        "        'subject' => 'Su código de acceso',",
-        "        'text' => 'Su código es 482913. Caduca en 10 minutos.',",
+        "        'subject' => 'Tu código de acceso',",
+        "        'text' => 'Tu código es 482913. Caduca en 10 minutos.',",
         '    ]),',
         ']);',
         '$respuesta = json_decode(curl_exec($ch), true);',
@@ -108,8 +108,8 @@ function ejemplo(lenguaje: Lenguaje, base: string): string {
         `    headers={"Authorization": f"Bearer {os.environ['${VARIABLE}']}"},`,
         '    json={',
         '        "to": "cliente@ejemplo.com",',
-        '        "subject": "Su código de acceso",',
-        '        "text": "Su código es 482913. Caduca en 10 minutos.",',
+        '        "subject": "Tu código de acceso",',
+        '        "text": "Tu código es 482913. Caduca en 10 minutos.",',
         '    },',
         '    timeout=15,',
         ')',
@@ -122,7 +122,7 @@ function ejemplo(lenguaje: Lenguaje, base: string): string {
 const CAMPOS: { campo: string; tipo: string; nota: string }[] = [
   { campo: 'to', tipo: 'texto o lista', nota: 'Obligatorio. Hasta 50 destinatarios.' },
   { campo: 'subject', tipo: 'texto', nota: 'Obligatorio. Máximo 300 caracteres.' },
-  { campo: 'html · text', tipo: 'texto', nota: 'Al menos uno. Máximo 2 MB cada uno; incluya los dos para una mejor entrega.' },
+  { campo: 'html · text', tipo: 'texto', nota: 'Al menos uno. Máximo 2 MB cada uno; incluye los dos para una mejor entrega.' },
   { campo: 'fromName', tipo: 'texto', nota: 'Nombre visible del remitente. La dirección es siempre la del buzón de la clave.' },
   { campo: 'replyTo', tipo: 'dirección', nota: 'Dirección de respuesta.' },
   { campo: 'cc · bcc', tipo: 'lista', nota: 'Hasta 20 direcciones cada uno.' },
@@ -136,7 +136,7 @@ const RESPUESTAS: { codigo: string; nota: string }[] = [
   { codigo: '403', nota: 'Cuenta del cliente o buzón remitente suspendidos.' },
   {
     codigo: '429',
-    nota: 'Límite alcanzado: el del plan (por minuto o diario, compartido por todas las claves del cliente) o el diario propio de la clave. El campo error indica cuál. Reintente con espera exponencial.',
+    nota: 'Límite alcanzado: el del plan (por minuto o diario, compartido por todas las claves del cliente) o el diario propio de la clave. El campo error indica cuál. Reintenta con espera exponencial.',
   },
 ];
 
@@ -272,7 +272,7 @@ export default function ApiKeys({ user }: { user: User }) {
       setRevealedKey(data.key);
     },
     onError: (err) =>
-      setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Inténtelo de nuevo.'),
+      setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Inténtalo de nuevo.'),
   });
 
   const revoke = useMutation({
@@ -323,11 +323,11 @@ export default function ApiKeys({ user }: { user: User }) {
   function submit(e: FormEvent) {
     e.preventDefault();
     if (isAdmin && !clientId) {
-      setError('Seleccione el cliente propietario de la clave.');
+      setError('Selecciona el cliente propietario de la clave.');
       return;
     }
     if (!name.trim()) {
-      setError('Indique un nombre para reconocer la clave.');
+      setError('Indica un nombre para reconocer la clave.');
       return;
     }
     if (limiteInvalido || !remitente) return;
@@ -339,7 +339,7 @@ export default function ApiKeys({ user }: { user: User }) {
     <>
       <Membrete
         title="API de envío"
-        meta="Envíos automatizados desde sus aplicaciones: códigos de acceso, avisos, facturas."
+        meta="Envíos automatizados desde tus aplicaciones: códigos de acceso, avisos, facturas."
         actions={
           <Button variant="campo" disabled={activos.length === 0} onClick={abrir}>
             Nueva clave
@@ -379,8 +379,8 @@ export default function ApiKeys({ user }: { user: User }) {
               }
             >
               {activos.length === 0
-                ? 'Cree antes un buzón activo: cada clave envía en nombre de un buzón remitente (por ejemplo, noreply@su-dominio.com).'
-                : 'Cree una clave para que su aplicación envíe correo con una sola petición HTTP.'}
+                ? 'Crea antes un buzón activo: cada clave envía en nombre de un buzón remitente (por ejemplo, noreply@tu-dominio.com).'
+                : 'Crea una clave para que tu aplicación envíe correo con una sola petición HTTP.'}
             </Vacio>
           </Hoja>
         ) : (
@@ -467,7 +467,7 @@ export default function ApiKeys({ user }: { user: User }) {
               <code className="valor text-sm text-tinta [overflow-wrap:anywhere]">{base}/v1/send</code>.
               La clave viaja en la cabecera{' '}
               <code className="valor text-sm text-tinta">Authorization</code> y el remitente es
-              siempre el buzón asociado a la clave. Guarde la clave en una variable de entorno (
+              siempre el buzón asociado a la clave. Guarda la clave en una variable de entorno (
               <code className="valor text-sm text-tinta">{VARIABLE}</code> en los ejemplos), nunca
               en el código.
             </p>
@@ -541,7 +541,7 @@ export default function ApiKeys({ user }: { user: User }) {
             </div>
           ) : messageList.length === 0 ? (
             <Vacio title="Todavía no hay envíos">
-              Cuando su aplicación llame a la API, cada mensaje aparecerá aquí con su estado.
+              Cuando tu aplicación llame a la API, cada mensaje aparecerá aquí con su estado.
             </Vacio>
           ) : (
             <>
@@ -606,7 +606,7 @@ export default function ApiKeys({ user }: { user: User }) {
                 setSenderMailboxId('');
               }}
             >
-              <option value="">Seleccione un cliente…</option>
+              <option value="">Selecciona un cliente…</option>
               {clientList.map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
@@ -635,12 +635,12 @@ export default function ApiKeys({ user }: { user: User }) {
             }}
             help={
               isAdmin && !clientId
-                ? 'Seleccione primero el cliente: solo se ofrecen sus buzones.'
+                ? 'Selecciona primero el cliente: solo se ofrecen sus buzones.'
                 : isAdmin && buzonesCliente.isPending
                   ? 'Leyendo los buzones del cliente…'
                   : senderOptions.length === 0
-                    ? 'Este cliente no tiene buzones activos. Cree uno en «Buzones».'
-                    : 'Los mensajes saldrán con esta dirección. Recomendado: noreply@su-dominio.com.'
+                    ? 'Este cliente no tiene buzones activos. Crea uno en «Buzones».'
+                    : 'Los mensajes saldrán con esta dirección. Recomendado: noreply@tu-dominio.com.'
             }
           >
             {senderOptions.length === 0 && <option value="">Sin buzones disponibles</option>}
@@ -661,7 +661,7 @@ export default function ApiKeys({ user }: { user: User }) {
               setLimite(e.target.value);
             }}
             placeholder="Límite del plan"
-            error={limiteInvalido ? 'Indique un número entero mayor que cero.' : undefined}
+            error={limiteInvalido ? 'Indica un número entero mayor que cero.' : undefined}
             help="Los límites del plan (diario y por minuto) se aplican al total del cliente, sumando todas sus claves. Este límite, opcional, restringe además solo esta clave y no puede superar el del plan."
           />
           {isAdmin && buzonesCliente.isError && (
@@ -694,7 +694,7 @@ export default function ApiKeys({ user }: { user: User }) {
         open={revealedKey !== null}
         onClose={() => setRevealedKey(null)}
         title="Clave de API creada"
-        confirmarCierre={{ pregunta: '¿Ha guardado la clave?', detalle: 'No se podrá volver a ver.' }}
+        confirmarCierre={{ pregunta: '¿Has guardado la clave?', detalle: 'No se podrá volver a ver.' }}
         pie={
           <Button variant="tinta" onClick={() => setRevealedKey(null)}>
             Ya la he guardado
@@ -704,7 +704,7 @@ export default function ApiKeys({ user }: { user: User }) {
         {revealedKey && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              Guárdela ahora en su gestor de secretos o como variable de entorno:{' '}
+              Guárdala ahora en tu gestor de secretos o como variable de entorno:{' '}
               <strong className="text-tinta">no se volverá a mostrar</strong>.
             </p>
             <Muestra rotulo="Clave de API" copiar={revealedKey}>
