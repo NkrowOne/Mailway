@@ -12,10 +12,11 @@
 # Las variables que fija la prueba las leen las funciones del instalador, que
 # el análisis estático no ve (se cargan de una copia): de ahí SC2034. Por lo
 # mismo, los dobles de docker, sky_api y otras funciones (que cada sección
-# vuelve a definir) solo los invocan esas funciones: SC2329. Y algunos
-# escenarios cambian variables dentro de un subshell precisamente para que el
-# cambio no llegue a los siguientes: SC2030 y SC2031.
-# shellcheck disable=SC2034,SC2329,SC2030,SC2031
+# vuelve a definir) solo los invocan esas funciones: SC2329 (SC2317 en las
+# versiones de shellcheck anteriores a la 0.11). Y algunos escenarios cambian
+# variables dentro de un subshell precisamente para que el cambio no llegue a
+# los siguientes: SC2030 y SC2031.
+# shellcheck disable=SC2034,SC2329,SC2317,SC2030,SC2031
 
 set -uo pipefail
 
