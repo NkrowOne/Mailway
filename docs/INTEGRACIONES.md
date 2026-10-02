@@ -582,9 +582,9 @@ printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
   `CLOUDFLARE_API_TOKEN`, y los dominios asociados a la cuenta lo siguen estando.
   Las cuentas de la instancia conectadas desde el panel no se tocan.
 - Queda en la Actividad como «Sistema» (`cloudflare.account_connected`, sin el
-  token). El token no se escribe en `deploy/.env`: `--actualizar` y
-  `--emparejar` sin `CLOUDFLARE_API_TOKEN` no lo tienen y no tocan la cuenta
-  que hubiera conectada.
+  token). El token no se escribe en `deploy/.env`: `--actualizar` sin
+  `CLOUDFLARE_API_TOKEN` y `--emparejar` (que nunca lo usa, aunque exista esa
+  variable) no lo tienen y no tocan la cuenta que hubiera conectada.
 
 ### 4.2 Aplicar el DNS de un dominio
 

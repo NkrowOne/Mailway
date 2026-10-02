@@ -186,9 +186,9 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     hubiera quedado pendiente (por ejemplo, el motor si no respondía); solo
     se salta si Skyway está conectado con **otro** panel de Mailway. Si algo
     falla, avisa y la instalación sigue: se repite con `--emparejar`. Con un
-    token de Cloudflare (paso 6), tras crear la cuenta de administración se
-    lo pasa al panel como cuenta de la instancia y, al terminar, a Skyway
-    (sección 2.7).
+    token de Cloudflare (paso 6), después del emparejado, y aunque este no se
+    haga o falle, se lo pasa al panel sano como cuenta de la instancia y, a
+    continuación, a Skyway (sección 2.7).
 14. **Resumen**: dirección del panel, estado del DNS, del PTR, del puerto 25,
     del certificado, del emparejado y de las cuentas de Cloudflare que han
     quedado conectadas en el panel y en Skyway, el comando de copia de seguridad del
@@ -383,10 +383,12 @@ Reglas:
   dominios asociados a ella lo siguen estando); Skyway también sustituye el
   suyo. Si conectas el nuevo a mano en Conexiones → Cloudflare, se añade como
   otra cuenta: elimina después la antigua.
-- `--actualizar` y `--emparejar` sin `CLOUDFLARE_API_TOKEN` **no tienen el
+- `--actualizar` sin `CLOUDFLARE_API_TOKEN` y `--emparejar` (que nunca lo
+  usa, aunque exista esa variable: no pasa por el paso 6) **no tienen el
   token** (no se guarda en `deploy/.env`) y no lo piden: no tocan la cuenta
   que hubiera conectada, y como no saben si la hay, el resumen pide
-  comprobarlo en Conexiones → Cloudflare.
+  comprobarlo en Conexiones → Cloudflare. Para conectarlo o cambiarlo sin
+  reinstalar, usa `--actualizar` con `CLOUDFLARE_API_TOKEN`.
 
 ---
 

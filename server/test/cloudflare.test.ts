@@ -242,7 +242,9 @@ class CloudflareFalso {
       }
       return this.ok({ id: 'tok', status: token.status });
     }
-    if (!token) return this.error(401, 1000, 'Invalid API Token');
+    // Fuera de las rutas de verificación, Cloudflare responde a un token
+    // inexistente o revocado con 403 y el código 9109 (no con 401/1000).
+    if (!token) return this.error(403, 9109, 'Invalid access token');
 
     if (path === '/zones' && method === 'GET') {
       const name = url.searchParams.get('name');
@@ -395,6 +397,10 @@ test('los códigos de Cloudflare se traducen a mensajes en español', () => {
     [401, [{ code: 1000, message: 'Invalid API Token' }], 'cloudflare_token_invalid'],
     [400, [{ code: 6003, message: 'Invalid request headers', error_chain: [{ code: 6111, message: 'Invalid format for Authorization header' }] }], 'cloudflare_token_malformed'],
     [403, [{ code: 9109, message: 'Unauthorized to access requested resource' }], 'cloudflare_forbidden'],
+    // El 9109 también es un token revocado o inexistente (así responde /zones)
+    // y uno con restricción por IP: no son un problema de permisos.
+    [403, [{ code: 9109, message: 'Invalid access token' }], 'cloudflare_token_invalid'],
+    [403, [{ code: 9109, message: 'Cannot use the access token from location: 198.51.100.7' }], 'cloudflare_token_ip_restricted'],
     [403, [{ code: 10000, message: 'Authentication error' }], 'cloudflare_forbidden'],
     [400, [{ code: 1004, message: 'DNS Validation Error', error_chain: [{ code: 9005, message: 'Content for A record must be a valid IPv4 address.' }] }], 'cloudflare_invalid_record'],
     [400, [{ code: 81057, message: 'Record already exists.' }], 'cloudflare_identical'],
@@ -1962,4 +1968,91 @@ test('herramienta: con otro token sustituye el de la cuenta del instalador, no a
   for (const cuentaId of [id, (panel.json() as { account: { id: string } }).account.id]) {
     await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${cuentaId}`, headers: { cookie: ctx.adminCookie } });
   }
+});
+
+/* ------ Dominio que la administración configuró con la cuenta de la instancia ------ */
+
+test('tras el DNS del administrador, la cuenta propia del cliente con la zona sí le sirve y el dominio pasa a ella', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('reasociar.es');
+  const TOKEN_INSTANCIA = 'cfut_reasociar0123456789abcdefghijklmnopq';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  const instancia = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(instancia.statusCode, 200, instancia.body);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'reasociar.es');
+  const asociada = () =>
+    (db.prepare('SELECT cloudflare_account_id AS id FROM domains WHERE id = ?').get(domainId) as { id: string | null }).id;
+
+  // El administrador aplica el DNS con la cuenta de la instancia: queda asociada.
+  const aplicado = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply`,
+    headers: { cookie: ctx.adminCookie },
+    payload: {},
+  });
+  assert.equal(aplicado.statusCode, 200, aplicado.body);
+  const instanciaId = (instancia.json() as { account: { id: string } }).account.id;
+  assert.equal(asociada(), instanciaId);
+
+  // El cliente conecta su propia cuenta, que también ve la zona: desde
+  // entonces planifica con ella (no queda bloqueado por la asociación) y el
+  // dominio pasa a estar asociado a su cuenta, sin usar el token del operador.
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  const propia = await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  assert.equal(propia.statusCode, 200, propia.body);
+  const propiaId = (propia.json() as { account: { id: string } }).account.id;
+  for (const [cookie, consulta] of [
+    [cliente.userCookie!, ''],
+    [ctx.adminCookie, '?soloCliente=1'],
+  ] as const) {
+    cf.llamadas = [];
+    const plan = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare${consulta}`, headers: { cookie } });
+    assert.equal(plan.statusCode, 200, plan.body);
+    const cuerpo = plan.json() as { available: boolean; account?: { id: string } };
+    assert.equal(cuerpo.available, true, consulta || 'usuario del cliente');
+    assert.equal(cuerpo.account?.id, propiaId);
+    assert.ok(cf.llamadas.length > 0);
+    assert.ok(cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`), 'nunca con el token del operador');
+    assert.equal(asociada(), propiaId);
+  }
+
+  for (const id of [instanciaId, propiaId]) {
+    await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
+  }
+});
+
+/* ------------------- Token del operador revocado en Cloudflare ------------------- */
+
+test('un token revocado en Cloudflare se anota como no válido, no como falta de permisos', async () => {
+  const cliente = await createClient(ctx);
+  const z = cf.zona('revocado.es');
+  const TOKEN_INSTANCIA = 'cfut_revocado0123456789abcdefghijklmnopqrs';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  const cuentaId = (cuenta.json() as { account: { id: string } }).account.id;
+
+  // El operador revoca el token en Cloudflare: /zones responde 403 con el 9109.
+  cf.tokens.delete(TOKEN_INSTANCIA);
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'revocado.es', clientId: cliente.clientId, autoDns: true },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const motivo = (res.json() as { cloudflareReason?: string }).cloudflareReason || '';
+  assert.match(motivo, /no es válido/);
+  assert.doesNotMatch(motivo, /permiso/);
+  assert.ok(!motivo.includes(TOKEN_INSTANCIA));
+
+  const cuentas = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/cloudflare/accounts?clientId=instancia',
+    headers: { cookie: ctx.adminCookie },
+  });
+  const anotada = (cuentas.json() as { accounts: { id: string; lastError: string | null }[] }).accounts.find((a) => a.id === cuentaId)!;
+  assert.match(anotada.lastError || '', /no es válido/);
+
+  await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${cuentaId}`, headers: { cookie: ctx.adminCookie } });
 });

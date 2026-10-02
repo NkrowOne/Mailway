@@ -160,9 +160,10 @@ Si el emparejado falla, la instalación no se interrumpe: repítelo con --empare
 Con un token de Cloudflare, el instalador lo pasa también al panel (como cuenta de la
 instancia) y a Skyway por la entrada estándar de sus herramientas: los dominios que da de
 alta el administrador configuran su DNS solos, sin modificar los registros existentes. Las
-acciones de los clientes nunca usan esa cuenta. --actualizar y --emparejar sin
-CLOUDFLARE_API_TOKEN no tienen el token (no se guarda en deploy/.env) y no tocan la cuenta
-que hubiera conectada; con un token nuevo, --actualizar lo sustituye en esa cuenta.
+acciones de los clientes nunca usan esa cuenta. El token no se guarda en deploy/.env:
+--actualizar sin CLOUDFLARE_API_TOKEN y --emparejar (que nunca lo usa, ni con esa variable)
+no lo tienen y no tocan la cuenta que hubiera conectada; con un token nuevo en
+CLOUDFLARE_API_TOKEN, --actualizar lo sustituye en esa cuenta.
 
 Variables de entorno (ejecución desatendida):
   MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
@@ -1254,11 +1255,15 @@ cf_registro() {
     ok "$tipo $nombre → $contenido (ya correcto)"
     return 0
   fi
-  local que="apunta a $actual" pregunta="¿Cambiarlo a $contenido (sin proxy)?"
+  # Sin terminal decide la respuesta por defecto que pasó quien llama:
+  # MAILWAY_DNS_REEMPLAZAR solo abre los A de la plataforma («s»), nunca los
+  # CNAME de autoconfiguración, tampoco cuando solo cambiaría su proxy.
+  local que="apunta a $actual" pregunta="¿Cambiarlo a $contenido (sin proxy)?" def_desatendida=$cambiar_def
   if [ "$actual" = "$contenido" ]; then
     que="tiene el proxy de Cloudflare activado, que impide el correo y la validación del certificado"
     pregunta="¿Desactivar el proxy («Solo DNS»)?"
-    # Con el mismo destino, quitar el proxy es lo único que se haría.
+    # Con el mismo destino, quitar el proxy es lo único que se haría: con
+    # terminal se propone por defecto.
     cambiar_def=s
   fi
   if [ "$INTERACTIVO" = 1 ]; then
@@ -1266,7 +1271,7 @@ cf_registro() {
       aviso "$nombre se deja como está ($que)."
       return 0
     fi
-  elif [ "${MAILWAY_DNS_REEMPLAZAR:-0}" != 1 ] || [ "$cambiar_def" != s ]; then
+  elif [ "${MAILWAY_DNS_REEMPLAZAR:-0}" != 1 ] || [ "$def_desatendida" != s ]; then
     # Sin nadie a quien preguntar, un registro existente es un conflicto: se
     # informa y no se toca.
     aviso "$nombre $que: no se modifica sin confirmación. Cámbialo en Cloudflare o repite la instalación con terminal (o con MAILWAY_DNS_REEMPLAZAR=1)."
@@ -2341,6 +2346,11 @@ cloudflare_sin_token() {
   if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then
     RESUMEN_CF_PANEL="sin cambios: esta ejecución no tiene el token (no se guarda en deploy/.env); si el panel ya tenía una cuenta conectada, la conserva"
     info "Cloudflare: esta ejecución no tiene el token; si el panel ya tenía una cuenta conectada, la conserva."
+    # --emparejar no pasa por el paso de Cloudflare (no verifica el token ni
+    # toca el DNS): quien lo exporta espera que se use, y se le dice dónde.
+    if [ "$EMPAREJAR" = 1 ] && [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+      info "--emparejar no usa CLOUDFLARE_API_TOKEN: para conectar o cambiar el token de Cloudflare, repite con --actualizar."
+    fi
   fi
   return 0
 }

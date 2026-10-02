@@ -353,6 +353,15 @@ for modo in ACTUALIZAR EMPAREJAR; do
     comprobar "$modo: y para Skyway, también en condicional" contiene <(printf '%s' "$RESUMEN_CF_SKYWAY") "si Skyway ya tenía uno guardado"
   fi
 done
+# --emparejar no pasa por el paso de Cloudflare: aunque se exporte el token, no
+# lo usa (ni lo verifica ni lo pasa) y dice cómo conectarlo.
+reiniciar
+EMPAREJAR=1
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+(CLOUDFLARE_API_TOKEN=$TOKEN_CF && final_skyway) >"$SALIDA" 2>&1 </dev/null
+comprobar "--emparejar con CLOUDFLARE_API_TOKEN: no llama a ninguna herramienta de Cloudflare" no_contiene "$REGISTRO" "cloudflare.js"
+comprobar "--emparejar con CLOUDFLARE_API_TOKEN: indica que se use --actualizar" contiene "$SALIDA" "--emparejar no usa CLOUDFLARE_API_TOKEN"
+comprobar "--emparejar con CLOUDFLARE_API_TOKEN: sin mostrar el token" no_contiene "$SALIDA" "$TOKEN_CF"
 reiniciar
 
 echo "# Instalación autónoma: el token llega al panel mailway-panel por la entrada estándar"
@@ -883,6 +892,7 @@ CF_ZONA_ID=zona1
 A_OTRA_IP='[{"id":"rec1","type":"A","name":"mail.ejemplo.test","content":"198.51.100.9","proxied":false}]'
 A_CON_PROXY='[{"id":"rec1","type":"A","name":"mail.ejemplo.test","content":"203.0.113.7","proxied":true}]'
 CNAME_AJENO='[{"id":"rec2","type":"CNAME","name":"autodiscover.ejemplo.test","content":"autodiscover.outlook.com","proxied":false}]'
+CNAME_PROPIO_CON_PROXY='[{"id":"rec3","type":"CNAME","name":"autoconfig.ejemplo.test","content":"mail.ejemplo.test","proxied":true}]'
 
 echo "# Sin terminal, un registro de la plataforma que ya existe no se modifica"
 for caso in "$A_OTRA_IP" "$A_CON_PROXY"; do
@@ -903,6 +913,13 @@ comprobar "cambia el A" contiene <(escrituras_cf) "cf_api PUT /zones/zona1/dns_r
 FAKE_CF_EXISTENTES=$CNAME_AJENO
 (INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro CNAME autodiscover.ejemplo.test mail.ejemplo.test n) >"$SALIDA" 2>&1
 comprobar "no toca el autodiscover de otro proveedor" igual "$(escrituras_cf)" ""
+# Mismo destino y solo el proxy distinto: con terminal se propone quitarlo,
+# pero sin ella un CNAME de autoconfiguración tampoco se modifica.
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES=$CNAME_PROPIO_CON_PROXY
+(INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro CNAME autoconfig.ejemplo.test mail.ejemplo.test n) >"$SALIDA" 2>&1
+comprobar "ni le quita el proxy a un CNAME de autoconfiguración" igual "$(escrituras_cf)" ""
+comprobar "lo informa como conflicto" contiene "$SALIDA" "no se modifica sin confirmación"
 
 echo "# Con terminal se pregunta, también para quitar el proxy"
 : >"$REGISTRO"
