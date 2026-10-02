@@ -110,6 +110,9 @@ La contraseña de aplicación se muestra una sola vez: cópiela en el dispositiv
 en ese momento. No sirve para entrar en «Mi buzón» ni para cambiar la
 contraseña principal.
 
+Cada buzón admite hasta **25 contraseñas de aplicación activas**. Si llega al
+máximo, revoque las de los dispositivos que ya no utiliza antes de crear otra.
+
 ## 6. Preguntas frecuentes
 
 **He cambiado la contraseña y el móvil ha dejado de recibir correo.** Los
@@ -120,6 +123,11 @@ aplicación.
 **He perdido el móvil.** Entre en «Mi buzón» y revoque la contraseña de
 aplicación de ese móvil. Si lo había configurado con la contraseña principal,
 cámbiela.
+
+**«Mi buzón» dice que el correo electrónico o la contraseña no son
+correctos.** Escriba la dirección completa y la contraseña principal del
+buzón, no una contraseña de aplicación. Por seguridad, el aviso es el mismo
+cuando la dirección no existe que cuando la contraseña es incorrecta.
 
 **«Mi buzón» dice que hay demasiados intentos.** Tras varios intentos fallidos
 el acceso se bloquea 15 minutos para proteger su buzón. Espere y vuelva a

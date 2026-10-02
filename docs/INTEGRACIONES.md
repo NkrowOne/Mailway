@@ -75,10 +75,12 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 | `401` | `token_expired` | Token caducado |
 | `401` | `token_user_disabled` | El usuario dueño del token está deshabilitado |
 | `401` | `api_key_not_allowed` | Se ha usado una clave de envío `mw_…` en `/api` (solo vale en `/v1/send`) |
-| `403` | `session_required` | Operación reservada a la sesión del panel: crear tokens, cambiar la contraseña del panel |
+| `401` | `bad_credentials` | Inicio de sesión del panel (`POST /api/auth/login`) con un correo o una contraseña incorrectos, o con un usuario deshabilitado. Mismo mensaje en todos los casos: «El correo electrónico o la contraseña no son correctos.» |
+| `403` | `session_required` | Operación reservada a la sesión del panel: crear tokens, cambiar la contraseña del panel y conectar, cambiar o probar el motor de correo (sección 2.9) |
 | `403` | `forbidden` | El usuario no tiene acceso a ese cliente o la operación es de administración |
 | `403` | `cross_site_request` | Petición con cookie enviada desde otro sitio web (CSRF) |
 | `409` | `token_limit` | Ya hay 25 tokens activos |
+| `429` | `rate_limited` | Inicio de sesión del panel bloqueado de forma temporal: 8 fallos desde la misma IP, o 10 con el mismo correo, en los últimos 10 minutos |
 
 > Las claves `mw_…` solo sirven para **enviar** correo por `POST /v1/send`
 > ([API.md](API.md)). No dan acceso a la gestión.
@@ -94,6 +96,11 @@ ownerRole, ownerClientId, ownerClientName, current }`.
   los de validación (`400 validation`) añaden `issues: [{ path, message }]`.
 - Los errores del motor de correo se devuelven como `502` con
   `engine_unreachable`, `engine_error`, `engine_not_found` o `engine_exists`.
+  `engine_not_found` significa que el motor no encuentra un elemento concreto
+  (Stalwart 0.15 lo comunica con HTTP 200 y `{ error }`). Un HTTP 404 del
+  motor es otra cosa, una ruta de gestión desconocida por una URL del motor
+  mal configurada, y se devuelve como `engine_error`: tomarlo por «no existe»
+  daría por hechos borrados que no se han realizado.
 - Contraseñas, tokens y claves se devuelven **una sola vez**, en la respuesta
   que los crea.
 - Un usuario de cliente solo ve lo suyo: los filtros `clientId` de las rutas
@@ -103,11 +110,11 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
-| `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. |
+| `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (véase debajo); sin el parámetro, siempre. |
 | `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
@@ -115,11 +122,21 @@ Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 única entre clientes. El nombre (`name`) tiene de 2 a 80 caracteres; si el
 *slug* ya existe se añade un sufijo (`acme-2`, `acme-3`…).
 
+**Desvinculación condicional.** Con el parámetro `externalRef`
+(`DELETE /api/integrations/clients/:id/link?externalRef=<referencia>`), la
+referencia se quita solo si el cliente sigue vinculado a esa. Así una
+integración que se desactiva (Skyway, al desactivar el correo de un proyecto o
+al borrarlo) no puede quitarle el cliente a otra que lo reclamó entre su
+comprobación y la llamada: si el cliente lleva otra referencia, responde
+`409 external_ref_mismatch` y no cambia nada. Si no lleva ninguna, responde
+`200` sin cambios. Sin el parámetro, desvincula siempre.
+
 | Código | Cuándo |
 |---|---|
 | `400 plan_not_found` | `planId` no existe |
 | `409 no_plans` | No hay ningún plan definido |
 | `409 external_ref_in_use` | La referencia ya está vinculada a otro cliente |
+| `409 external_ref_mismatch` | Desvinculación condicional: el cliente está vinculado a otra referencia |
 | `404 client_not_found` | No hay cliente con esa referencia o ese id |
 
 ### 2.3 Clientes, planes y usuarios (administración)
@@ -127,10 +144,10 @@ Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/plans` | `{ plans }`, cada uno con `clientCount`. |
-| `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit`, `notes`. Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
+| `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit` (≥ 1), `notes`. Los dos límites de envío se aplican al cliente en conjunto, sumando todas sus claves ([API.md](API.md#15-límites)). Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
 | `GET /api/clients` | Clientes con `plan` y `usage` (`{ domains, mailboxes, aliases, apiKeys, messagesLast30d }`). |
 | `POST /api/clients` | `{ name, planId, contactEmail?, notes?, user?: { email, name, password? } }` → `{ client, user?, password? }` (`password` solo si se generó). |
-| `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente). |
+| `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente, que no recibe `notes`: son notas internas de la administración). |
 | `PATCH /api/clients/:id` | `{ name?, contactEmail?, planId?, notes?, suspended? }` → `{ client, suspension? }`. Un plan por debajo del uso actual: `409 plan_below_usage`. Suspender o reactivar se aplica a todos los buzones en el motor: `suspension = { updated, skipped, failed: [{ email, error }] }`; repetir la petición reintenta los fallidos. |
 | `DELETE /api/clients/:id` | `409 client_has_domains` si aún tiene dominios. |
 | `POST /api/clients/:id/users` | `{ email, name, password? }`. Correo repetido: `409 user_exists`. |
@@ -142,14 +159,14 @@ Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/domains?clientId=` | `{ domains: DomainRecord[] }`. |
-| `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4). Duplicado: `409`. |
+| `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. |
 | `GET /api/domains/:id` | `{ domain }`. |
-| `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }] }`, sin punto final y sin SRV de puertos que no se publican. |
-| `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar. |
+| `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }] }`, sin punto final y sin SRV de puertos que no se publican. `category` es `obligatorio`, `autoconfiguracion`, `verificacion` (el TXT de propiedad, con `required: false`) o `endurecimiento` (MTA-STS y TLS-RPT). |
+| `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar (`recomendados` por defecto). Incluye el TXT de verificación salvo en `obligatorios`. |
 | `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? (MX, SPF, DMARC actuales). |
-| `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain }`. Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
+| `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain }`; mientras la propiedad esté pendiente, la comprueba también. Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
 | `POST /api/domains/:id/dkim` | Regenera las claves DKIM en el motor. |
-| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio. Con buzones exige `confirm` (`409 needs_confirmation`). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
+| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted }` (véase «Baja de un dominio»). Con buzones exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
 
 `DomainRecord`: `{ id, clientId, domain, domainUnicode, status:
 pending_dns|active|error, dkimSelector, dnsStatus: { checks, requiredTotal,
@@ -157,19 +174,42 @@ requiredOk, allRequiredOk, checkedAt }, lastCheckedAt, verifiedAt, createdAt,
 cloudflare: { accountId, zoneId } | null, dnsAppliedAt, ownershipVerifiedAt,
 ownershipRecord: { type: "TXT", name, content } }`.
 
-**Propiedad del dominio.** Nadie (ni la administración ni un token) puede
-crear buzones ni alias en un dominio cuya propiedad no se ha comprobado:
+**Propiedad del dominio.** Cada dominio expone `ownershipVerifiedAt` (fecha en
+que quedó comprobada; `null` si está pendiente) y `ownershipRecord` (el TXT que
+la prueba). Nadie (ni la administración ni un token) puede crear buzones ni
+alias en un dominio cuya propiedad no se ha comprobado:
 `409 domain_ownership_pending`. La propiedad queda comprobada, y no se vuelve a
-perder, cuando al medir el DNS:
+perder, cuando al medir el DNS (con `POST /api/domains/:id/verify` o por el
+vigilante):
 
-- algún MX del dominio apunta al servidor de correo de la instancia, o
+- algún MX del dominio, de cualquier prioridad, apunta al servidor de correo de
+  la instancia, o
 - existe el TXT `_mailway.<dominio>` con el valor
   `mailway-verificacion=<token>` (`ownershipRecord`; el token es estable y
   propio de cada dominio y de cada instancia).
 
-El TXT permite preparar los buzones antes de mover el MX desde otro proveedor.
-Aplicar el DNS en Cloudflare lo crea. Los dominios de versiones anteriores que
-ya estaban verificados o tenían buzones quedaron comprobados al actualizar.
+Una consulta DNS que falla no cuenta como «no»: la propiedad sigue pendiente
+hasta la siguiente medición. El TXT permite preparar los buzones antes de mover
+el MX desde otro proveedor. Figura en la tabla de registros con la categoría
+`verificacion` y en el fichero de zona de los niveles `recomendados` y
+`completo`; el nivel `obligatorios` no lo incluye, porque un MX hacia el
+servidor ya prueba la propiedad. **Aplicar en Cloudflare** lo crea cuando se
+aplica lo recomendado (el valor por defecto). Si la zona está activa en
+Cloudflare, escribirlo prueba la propiedad al instante; si está pendiente de
+activación, no prueba nada. Los dominios de versiones anteriores que ya estaban
+verificados o tenían buzones o alias quedaron comprobados al actualizar.
+
+**Baja de un dominio.** La respuesta es
+`{ ok: true, apiKeysRevoked, aliasesUpdated, aliasesDeleted }`:
+
+- `apiKeysRevoked`: número de claves de API activas cuyo remitente era un
+  buzón del dominio; dejan de funcionar y se eliminan con él.
+- `aliasesUpdated`: direcciones de alias de **otros** dominios que reenviaban a
+  buzones del dominio borrado y a los que se les ha quitado ese destino.
+- `aliasesDeleted`: direcciones de alias de otros dominios que se han eliminado
+  por quedarse sin destinos.
+
+Los alias del propio dominio se borran con él y no figuran en la respuesta.
 
 ### 2.5 Buzones y alias
 
@@ -177,7 +217,7 @@ ya estaban verificados o tenían buzones quedaron comprobados al actualizar.
 |---|---|
 | `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato). |
 | `POST /api/mailboxes` | `{ domainId, localPart, displayName?, password? (10–200), quotaMb? }` → `{ mailbox, password? }` (`password` solo si se generó). La cuota se acota a la del plan. |
-| `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ capacity, valid, exceedsPlan, results }`. Si no, comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. |
+| `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ dryRun, capacity, valid, exceedsPlan, ownershipPending, ownershipError, results }`; con la propiedad del dominio pendiente, cada línea sale con su error y no se responde `409`. Si no, exige la propiedad (`409 domain_ownership_pending`), comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. |
 | `PATCH /api/mailboxes/:id` | `{ displayName?, quotaMb?, status?: active\|suspended }`. Reactivar con el cliente suspendido: `409 client_suspended`. |
 | `POST /api/mailboxes/:id/password` | `{ password? }` → `{ ok, password? }`. Sin cuerpo genera una. **Desconecta los dispositivos** que usan la contraseña principal; las contraseñas de aplicación siguen valiendo. Cierra las sesiones de «Mi buzón» y borra la contraseña guardada en los enlaces de configuración. |
 | `DELETE /api/mailboxes/:id` | → `{ ok, aliasesUpdated, aliasesDeleted }`: antes de borrar, quita el buzón de los alias que reenvían a él (y borra los que se quedan sin destinos). Remitente de una clave activa: `409 mailbox_in_use`. |
@@ -198,7 +238,7 @@ Errores frecuentes de altas:
 |---|---|
 | `400 plan_limit_reached` | Se superaría el máximo de dominios, buzones o alias del plan |
 | `400 client_suspended` | El cliente está suspendido: no se crean recursos |
-| `409 domain_ownership_pending` | La propiedad del dominio no está comprobada |
+| `409 domain_ownership_pending` | La propiedad del dominio no está comprobada (buzones, altas masivas y alias; sección 2.4) |
 | `400 invalid_local_part` | Nombre no válido (solo `a-z`, `0-9`, `.`, `-`, `_`; sin símbolo al principio o al final ni `..`) |
 | `409 mailbox_exists` · `409 alias_exists` | Ya existe un buzón o un alias con esa dirección |
 | `400 alias_loop` | El alias se reenvía a sí mismo |
@@ -220,6 +260,15 @@ dirección completa del buzón.
 | `POST /api/mailboxes/:id/app-passwords` | `{ name (1–60) }` → `{ appPassword, password }`; **`password` solo aparece aquí**. Máximo 25 activas por buzón: `409 app_password_limit`. |
 | `DELETE /api/mailboxes/:id/app-passwords/:appId` | Revoca al instante → `{ ok }`. |
 
+El máximo de 25 contraseñas activas por buzón se comprueba al crearlas, sea cual
+sea la vía: este panel y las integraciones con token (también la conexión de un
+servicio desde Skyway) y «Mi buzón» (`POST /api/portal/app-passwords`). Todas
+responden `409 app_password_limit`; hay que revocar alguna antes de crear otra.
+Con el cliente o el buzón suspendido no se crean (`400 client_suspended`,
+`400 mailbox_suspended`). Las altas de un mismo buzón se ejecutan en fila, así
+que varias peticiones simultáneas no superan el máximo. No cuentan las
+credenciales SMTP que crea cada clave de API ([API.md](API.md)).
+
 Una contraseña de aplicación **no sirve** para entrar en «Mi buzón» ni para
 cambiar la contraseña principal (`400 app_password_not_allowed`): quien
 encuentre un móvil perdido no puede adueñarse del buzón.
@@ -233,8 +282,16 @@ encuentre un móvil perdido no puede adueñarse del buzón.
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
 
 - Con `includePassword: true` hay que indicar en `password` la contraseña
-  recién generada (`400 password_required`). Se comprueba antes de guardarla
-  (`400 password_mismatch`), con límite de intentos fallidos (`429`).
+  recién generada (`400 password_required`). Se comprueba con el motor antes de
+  guardarla, y debe ser la principal del buzón:
+  - `400 password_mismatch`: no es la del buzón.
+  - `400 app_password_not_allowed`: es una contraseña de aplicación.
+  - `429 rate_limited`: ya se han indicado 5 contraseñas incorrectas para ese
+    buzón en los últimos 15 minutos. El bloqueo alcanza también a la contraseña
+    correcta, para que la ruta no sirva para probar contraseñas: espere 15
+    minutos o cree el enlace sin contraseña.
+  - `503 engine_unreachable`: el motor no ha respondido, así que no se puede
+    comprobar. No se crea ningún enlace; reintente o cree uno sin contraseña.
 - El token del enlace tiene 256 bits y solo se guarda su hash. La contraseña
   se guarda cifrada y se borra al caducar o revocar el enlace, cuando el
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
@@ -245,8 +302,15 @@ encuentre un móvil perdido no puede adueñarse del buzón.
 
 `GET /api/audit?clientId=&limit=&before=` → `{ entries, nextBefore }`.
 `limit` de 1 a 500 (100 por defecto); para la página siguiente, pase
-`before=<nextBefore>`. Un usuario de cliente solo ve su cliente, y de las
-acciones de la administración no ve el correo de quien administra.
+`before=<nextBefore>`. Cada anotación es `{ id, userId, clientId, clientName,
+action, detail, ip, createdAt, actor: { name, email, role } | null }`.
+
+Un usuario de cliente solo ve su cliente. De las acciones de la administración
+(también las hechas con un token) no ve el correo ni la **IP** de quien
+administra: `actor.email` llega `null` e `ip` llega vacía. Tampoco ve la IP de
+una acción de un usuario que ya no existe, porque podía ser de la
+administración. Sí ve la de las acciones de sus propios usuarios y de los
+titulares de sus buzones. La administración lo ve todo.
 
 ### 2.9 Otras rutas
 
@@ -256,6 +320,28 @@ canales de aviso (`GET|PUT /api/notify/channels`, `POST /api/notify/test`),
 entregabilidad (`GET /api/deliverability/server`), resúmenes
 (`GET /api/dashboard/admin`, `GET /api/dashboard/client`) y ajustes y motor
 (`/api/settings`, `/api/engine/*`, solo administración).
+
+**Motor de correo.** Conectarlo, cambiarlo o probarlo (`POST /api/setup/engine`,
+`PUT /api/settings/engine`, `POST /api/settings/engine/test`) exige la **sesión
+del panel** de un administrador: con un token, aunque sea de administración,
+responde `403 session_required`. Si no, un token filtrado podría hacer que el
+panel enviase la contraseña guardada del motor, o las credenciales SMTP de las
+claves de API, a otro servidor. Por la misma razón, si cambian la URL, el
+usuario o el servidor SMTP hay que escribir de nuevo la contraseña del
+administrador del motor (`400 engine_password_required`); si el destino no
+cambia, se reutiliza la guardada. La URL debe empezar por `http://` o
+`https://` y no puede incluir usuario ni contraseña. Un motor que no responde
+da `400 engine_test_failed`.
+
+**Estado de la puesta en marcha.** `GET /api/setup/status` no exige
+autenticación (lo usan la pantalla de inicio de sesión y el asistente). Con la
+puesta en marcha terminada, quien no es administrador recibe solo
+`{ setupComplete, hasAdmin, requiresSetupToken, instance: { brandName } }`. La
+administración, y cualquiera mientras la puesta en marcha no ha terminado,
+recibe además `engineConfigured`, `demoMode`, `engineFromEnv`, `engineDefaults`
+(URL, usuario y servidor SMTP del motor del entorno, y `hasPassword`; nunca la
+contraseña) e `instance` completa (nombre y IP pública del servidor, URL del
+panel y del webmail).
 
 ---
 
@@ -292,8 +378,11 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
     duplica clientes;
   - *vincular uno existente* (solo la administración de Skyway):
     `PUT /api/integrations/clients/:id/link`.
-- **Dominios**: añadir, ver los registros, **Configurar en Cloudflare** (vista
-  previa de cambios y conflictos antes de aplicar) y verificar.
+- **Dominios**: añadir, ver los registros (incluido el TXT de verificación de
+  la propiedad), **Configurar en Cloudflare** (vista previa de cambios y
+  conflictos antes de aplicar) y verificar. Hasta que la propiedad esté
+  comprobada (sección 2.4), crear buzones o alias responde
+  `409 domain_ownership_pending` y Skyway muestra el TXT que falta.
 - **Buzones**: crear (la contraseña se muestra una vez), generar el enlace de
   configuración para el titular, restablecer la contraseña y eliminar.
 - **Conectar a un servicio**: elija un servicio del proyecto (no de base de
@@ -310,7 +399,11 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
     anterior**: retírela en Mailway (contraseñas de aplicación del buzón o
     **API de envío**) si ya no se usa.
 - **Desactivar el correo**: quita la referencia en Mailway (los datos se
-  conservan). Borrar el proyecto en Skyway también la quita.
+  conservan). Skyway lo hace de forma condicional
+  (`DELETE …/link?externalRef=skyway:project:<id>`, sección 2.2): si el cliente
+  ya está vinculado a otra referencia, Mailway responde
+  `409 external_ref_mismatch` y no lo toca. Borrar el proyecto en Skyway
+  también la quita.
 
 Con un usuario de Skyway que no es administrador, Skyway solo usa las cuentas
 de Cloudflare **del propio cliente** (parámetro `soloCliente=1`, sección 4.3).
@@ -386,17 +479,27 @@ indica los servidores de nombres que debe poner en su registrador.
 ### 4.3 Qué cuentas se usan
 
 - Primero, la cuenta ya asociada al dominio; después, las del **cliente**
-  dueño del dominio; y, solo si actúa la **administración**, las de la
-  instancia.
+  dueño del dominio; y, solo si actúa la **administración** (y no pide
+  `soloCliente=1`), las de la instancia.
 - Un cliente **no** puede usar las cuentas de la instancia: si pudiera, le
   bastaría con dar de alta un dominio que vive en la cuenta del administrador
   para escribir en esa zona. Excepción: una cuenta de la instancia que quedó
   asociada al dominio porque la administración ya aplicó su DNS con ella.
-- **`?soloCliente=1`** en `GET /api/domains/:id/cloudflare` y en
-  `POST /api/domains/:id/cloudflare/apply` limita la búsqueda a las cuentas del
-  cliente aunque la petición llegue con un token de administración. Skyway lo
-  envía cuando quien actúa en Skyway no es administrador, para que su token de
-  administración no abra a los proyectos las cuentas de la instancia.
+- **`?soloCliente=1`** (o `true`) limita la búsqueda a las cuentas del cliente
+  aunque la petición llegue con un token de administración. Se aplica en las
+  cuatro rutas que planifican o escriben DNS con una cuenta de Cloudflare:
+  - `GET /api/domains/:id/cloudflare` (plan);
+  - `POST /api/domains/:id/cloudflare/apply`;
+  - `POST /api/domains` con `autoDns: true`: el alta se completa igualmente y,
+    si el cliente no tiene una cuenta que contenga la zona, `cloudflare` es
+    `null` y `cloudflareReason` explica el motivo;
+  - `POST /api/whitelabel/domains/:id/cloudflare`.
+
+  Sin una cuenta propia que contenga la zona, el plan responde
+  `available: false` y la aplicación `400 cloudflare_unavailable`: nunca se
+  escribe en una zona de la instancia. Skyway lo envía cuando quien actúa en
+  Skyway no es administrador, para que su token de administración no abra a los
+  proyectos las cuentas de la instancia.
 
 ### 4.4 Reglas que protegen el correo existente
 
@@ -529,15 +632,21 @@ aplicación.
 | `POST /api/portal/logout` | Cierra la sesión. |
 | `POST /api/portal/password` | `{ current, next (≥ 10) }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. |
 | `GET /api/portal/mobileconfig` | Perfil de Apple sin contraseña. |
-| `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }`). |
+| `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }`). Máximo 25 activas por buzón: `409 app_password_limit`, igual que en el panel (sección 2.6). |
 
 - La contraseña se comprueba **en local** contra el hash del motor, nunca
   pidiéndole al motor que autentique (sus fallos bloquearían la IP del proxy
   para todos).
-- Límite: 5 fallos por buzón y 20 por IP cada 15 minutos (`429`).
-- Mismo `401 bad_credentials` para una dirección inexistente que para una
+- Límite: 5 fallos por buzón y 20 por IP cada 15 minutos (`429 rate_limited`).
+- Mismo `401 bad_credentials` y mismo mensaje («La dirección de correo o la
+  contraseña no son correctas.») para una dirección inexistente que para una
   contraseña incorrecta. Buzón suspendido: `403 mailbox_suspended`. Motor sin
   respuesta: `503 engine_unreachable`. Sin sesión: `401 portal_unauthorized`.
+- El inicio de sesión del panel (`POST /api/auth/login`) usa el mismo código con
+  el mensaje «El correo electrónico o la contraseña no son correctos.». Las dos
+  pantallas de la web muestran este último texto cuando reciben
+  `bad_credentials`; una integración debe guiarse por el `code`, no por el
+  texto.
 - Contraseña nueva igual a la actual: `400 same_password`; actual incorrecta:
   `400 bad_current_password`; contraseña de aplicación en lugar de la
   principal: `400 app_password_not_allowed`.
@@ -567,9 +676,11 @@ En **Marca blanca**, un cliente sirve el webmail en su propio dominio
 
 Reglas:
 
-- Debe ser un **subdominio de un dominio de correo del mismo cliente ya
-  verificado** (`400 hostname_not_owned`, `400 domain_not_verified`). Así nadie
-  puede reclamar el nombre de otra aplicación del servidor.
+- Debe ser un **subdominio de un dominio de correo del mismo cliente cuya
+  propiedad esté comprobada** (sección 2.4; `400 hostname_not_owned`,
+  `400 domain_not_verified`). Cuenta la propiedad, no que el DNS del dominio
+  esté completo. Así nadie puede reclamar el nombre de otra aplicación del
+  servidor.
 - No puede empezar por `autoconfig.`, `autodiscover.` ni `mta-sts.`, ni ser
   uno de los nombres de la instancia (`400 reserved_hostname`).
 - Máximo **5 por cliente** (`400 whitelabel_limit`). La administración debe

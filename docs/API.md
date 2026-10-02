@@ -137,23 +137,27 @@ añaden `issues: [{ path, message }]`.
 | `403` | `sender_suspended` | El buzón remitente de la clave está suspendido | Reactivarlo en el panel o usar otra clave |
 | `403` | `sender_missing` | El buzón remitente ya no existe | Crear una clave con otro remitente |
 | `413` | `bad_request` | La petición supera 5 MB | Reducir el contenido |
-| `429` | `rate_limited` | Límite de envíos por minuto del plan | Reintentar con espera exponencial |
-| `429` | `daily_limit_reached` | Límite diario (del plan o de la clave) | Esperar al reinicio: medianoche UTC |
+| `429` | `rate_limited` | Límite de envíos por minuto del plan, contado por cliente (todas sus claves) | Reintentar con espera exponencial |
+| `429` | `daily_limit_reached` | Límite diario del plan (por cliente, todas sus claves) o de la clave | Esperar al reinicio: medianoche UTC |
 
-Los rechazos por `401`, `403` y los datos no válidos **no gastan** cupo
-diario.
+Los rechazos por `401`, `403` y los datos no válidos **no gastan** cupo diario
+ni la ventana por minuto.
 
 ### 1.5 Límites
 
 - Los límites **por minuto** y **por día** los define el plan del cliente y se
   aplican **al cliente en conjunto**: todas sus claves comparten el mismo
-  cupo, de modo que crear más claves no amplía el plan.
+  cupo, de modo que crear más claves no amplía el plan. El límite por minuto es
+  una ventana fija de 60 segundos que se abre con el primer envío; superado, se
+  rechazan los envíos hasta que termina.
 - Cada clave puede tener además su propio **límite diario**, que solo puede
   ser igual o menor que el del plan (sirve para acotar una aplicación
   concreta). Si el plan cambia después, se aplica el menor de los dos.
 - Un límite diario 0 en el plan significa «sin límite diario».
-- El contador diario se reinicia a medianoche UTC. El uso del día aparece en
-  la pestaña **API de envío** del panel (`usedToday` en la API).
+- El contador diario se reinicia a medianoche UTC. El uso del día de cada clave
+  aparece en la pestaña **API de envío** del panel (`usedToday` en la API); el
+  cupo del plan suma, en cambio, los envíos admitidos de todas las claves del
+  cliente, por lo que puede agotarse aunque `usedToday` de una clave sea bajo.
 
 ### 1.6 Historial
 
@@ -180,7 +184,9 @@ Reglas:
   (`400 sender_suspended`).
 - `dailyLimit` (entero ≥ 1) se acota al límite diario del plan.
 - Cada clave crea en el buzón remitente una contraseña de aplicación propia:
-  la API envía sin conocer ni tocar la contraseña del buzón.
+  la API envía sin conocer ni tocar la contraseña del buzón. No cuenta para el
+  máximo de 25 contraseñas de aplicación activas que admite el titular
+  ([INTEGRACIONES.md](INTEGRACIONES.md#26-contraseñas-de-aplicación)).
 
 `ApiKeyInfo`: `{ id, clientId, name, prefix, senderMailboxId, senderEmail,
 dailyLimit, lastUsedAt, revokedAt, createdAt, usedToday }`.
