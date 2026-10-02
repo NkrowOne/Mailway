@@ -22,6 +22,7 @@ cliente puede usar la API directamente, no solo la interfaz.
 | Superficie | Quién accede | Protección |
 |---|---|---|
 | Panel (`/api/*`) | Usuarios del panel (sesión) e integraciones (token `mwt_`) | Guardas por ruta, CSRF, límites de intentos |
+| Estado de la puesta en marcha (`GET /api/setup/status`) | Cualquiera, sin sesión | Terminada la puesta en marcha, solo la marca y tres indicadores; el detalle, solo para la administración |
 | API de envío (`/v1/send`) | Aplicaciones con clave `mw_` | Clave hasheada, límites del plan por cliente |
 | «Mi buzón» (`/api/portal/*`) | Titulares con la contraseña del buzón | Cookie propia limitada a `/api/portal`, verificación local, límites de fallos |
 | Enlaces de configuración (`/api/public/setup/*`) | Quien tenga el enlace | Token de 256 bits, caducidad, 60 peticiones por minuto e IP |
@@ -41,11 +42,15 @@ cliente puede usar la API directamente, no solo la interfaz.
   token. Duración: `MAILWAY_SESSION_TTL_HOURS` (7 días por defecto).
 - Cambiar la contraseña cierra las demás sesiones del usuario.
 - Límite de intentos: 8 fallos por IP y 10 por dirección de correo cada 10
-  minutos. El contador por dirección es el que protege de verdad: la IP puede
-  rotarse.
+  minutos (`429 rate_limited`). El contador por dirección es el que protege de
+  verdad: la IP puede rotarse.
+- Un correo inexistente, una contraseña incorrecta y un usuario deshabilitado
+  reciben la misma respuesta: `401 bad_credentials`, «El correo electrónico o
+  la contraseña no son correctos.».
 - **Puesta en marcha**: con `MAILWAY_SETUP_TOKEN` (el instalador lo genera),
   crear el primer administrador exige ese token; así el primer visitante de un
-  panel recién publicado no se queda con la instancia.
+  panel recién publicado no se queda con la instancia. Los intentos con un
+  token incorrecto se limitan a 10 por IP cada 15 minutos (`429`).
 
 ### 3.2 Tokens de gestión
 
@@ -53,9 +58,10 @@ cliente puede usar la API directamente, no solo la interfaz.
 - Heredan los permisos de su usuario y se comprueban en **cada** petición:
   revocar el token, deshabilitar al usuario o cambiarle el rol surte efecto
   de inmediato.
-- Un token **no puede** crear otros tokens ni cambiar la contraseña del
-  panel (`403 session_required`): un token filtrado no puede perpetuarse ni
-  dejar fuera al titular.
+- Un token **no puede** crear otros tokens, cambiar la contraseña del panel ni
+  conectar, cambiar o probar el motor de correo (`403 session_required`): un
+  token filtrado no puede perpetuarse, dejar fuera al titular ni desviar los
+  secretos del motor (sección 7).
 - Con `Authorization: Bearer` no se lee la cookie: una integración nunca
   actúa con la sesión de un navegador que comparta la petición.
 - Caducidad opcional; máximo 25 activos por usuario; último uso (fecha e IP)
@@ -73,11 +79,18 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   el motor, nunca pidiéndole al motor que autentique (sección 7).
 - 5 fallos por buzón y 20 por IP cada 15 minutos; los contadores sobreviven a
   un reinicio.
-- La misma respuesta (`401 bad_credentials`) para una dirección inexistente y
-  para una contraseña incorrecta: no se revela qué direcciones existen.
+- La misma respuesta (`401 bad_credentials`, «La dirección de correo o la
+  contraseña no son correctas.») para una dirección inexistente y para una
+  contraseña incorrecta: no se revela qué direcciones existen. La web muestra
+  en ambas pantallas de acceso (panel y «Mi buzón») el mismo texto, «El correo
+  electrónico o la contraseña no son correctos.».
 - Una **contraseña de aplicación** no sirve para entrar en «Mi buzón» ni para
   cambiar la contraseña principal: quien encuentre un móvil perdido no puede
   adueñarse del buzón.
+- Máximo de **25 contraseñas de aplicación activas** por buzón, con la misma
+  respuesta (`409 app_password_limit`) en el panel, en «Mi buzón» y en las
+  integraciones: cada una es una puerta más al buzón, y decenas suelen indicar
+  que no se revocan las antiguas.
 - Cambiar la contraseña cierra las demás sesiones de «Mi buzón» y borra la
   contraseña guardada en los enlaces de configuración.
 - Suspender el buzón o su cliente corta las sesiones abiertas del portal.
@@ -89,21 +102,32 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   recibe `403` al pedir un recurso de otro cliente, exista o no, sin poder
   enumerar identificadores.
 - **Propiedad de los dominios**: nadie crea buzones ni alias en un dominio sin
-  probar que es suyo (MX hacia el servidor o TXT `_mailway.<dominio>`). Sin
+  probar que es suyo (MX hacia el servidor o TXT `_mailway.<dominio>` =
+  `mailway-verificacion=<token>`; si no, `409 domain_ownership_pending`). Sin
   esta regla, un cliente podría dar de alta un dominio ajeno y el motor le
   entregaría en local el correo que otros clientes envían a ese dominio. Se
-  aplica también a la administración y a los tokens.
+  aplica también a la administración y a los tokens. Una zona de Cloudflare solo
+  prueba la propiedad si está activa: cualquiera puede añadir un dominio ajeno
+  a su cuenta de Cloudflare, pero no activarlo.
 - **Destinos de alias**: solo buzones del mismo cliente o direcciones
   externas; una dirección de un dominio de la instancia que no existe se
   rechaza en lugar de salir a Internet.
 - **Remitente de las claves**: siempre un buzón del mismo cliente; el `From`
   no se puede cambiar.
-- **Marca blanca**: solo subdominios de un dominio verificado del mismo
-  cliente, sin prefijos reservados ni nombres de la instancia.
+- **Marca blanca**: solo subdominios de un dominio de correo del mismo cliente
+  con la propiedad comprobada (no basta con que esté activo), sin prefijos
+  reservados ni nombres de la instancia.
 - **Cloudflare**: un cliente solo usa sus cuentas; las de la instancia, solo
   la administración (o una ya asociada por la administración a ese dominio).
-  `soloCliente=1` fuerza esta regla aunque llegue un token de
-  administración.
+  `soloCliente=1` fuerza esta regla aunque llegue un token de administración,
+  en el plan y la aplicación del DNS de un dominio, en el alta con
+  `autoDns: true` y en el DNS de un dominio de marca blanca.
+- **Lo que el cliente no ve de la administración**: las notas internas del
+  cliente (`notes`: acuerdos, incidencias, precios) solo las recibe la
+  administración, y en **Actividad** no ve el correo ni la IP de quien
+  administra (el campo `ip` llega vacío), ni tampoco la IP de un usuario que
+  ya no existe, que podía serlo. Sí ve las IP de sus propios usuarios y de los
+  titulares de sus buzones.
 - **Límites del plan** en el servidor, con las altas de cada cliente en fila
   (`core/locks.ts`): ni las peticiones simultáneas superan el plan. Los envíos
   por API se cuentan por cliente, sumando todas sus claves.
@@ -140,7 +164,8 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   Cloudflare nunca se vuelven a mostrar (solo sus últimos caracteres). La
   contraseña del motor no sale del servidor: el asistente conecta el motor del
   entorno sin enviarla al navegador, y los mensajes de error se depuran de
-  ella.
+  ella. Para cambiar la URL, el usuario o el servidor SMTP del motor hay que
+  escribirla de nuevo (sección 7).
 - La actividad nunca guarda secretos; las acciones hechas con un token llevan
   su nombre (`via: token:<nombre>`).
 - `deploy/.env` contiene todos los secretos del despliegue: permisos 600 y
@@ -153,6 +178,19 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   la web del motor en `https://mail.<dominio>`, protegida por la contraseña de
   administración del motor: use una larga y aleatoria (el instalador la
   genera).
+- **Conexión del panel con el motor**: conectarlo, cambiarlo o probarlo
+  (`POST /api/setup/engine`, `PUT /api/settings/engine`,
+  `POST /api/settings/engine/test`) exige la sesión de un administrador, no
+  vale un token de gestión (`403 session_required`), y, si cambian la URL, el
+  usuario o el servidor SMTP, escribir de nuevo la contraseña del motor
+  (`400 engine_password_required`). Si bastara un token, uno filtrado podría
+  hacer que el panel enviase la contraseña guardada, o las credenciales SMTP de
+  las claves de API, a un servidor ajeno. La URL solo admite `http(s)` y sin
+  usuario ni contraseña incrustados.
+- **Rutas desconocidas**: un HTTP 404 del motor se trata como un error
+  (`engine_error`), nunca como «el elemento no existe»; si no, los borrados
+  darían por buena una eliminación que el motor no ha hecho y los buzones
+  seguirían recibiendo correo.
 - **Bloqueo automático**: Stalwart bloquea para siempre una IP tras 100 fallos
   de autenticación al día y al instante ante rutas típicas de escáneres
   (`*.php`, `/wp-*`…). Por eso:
@@ -184,15 +222,25 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 - **Enlaces de configuración**: token de 256 bits (solo el hash en la base de
   datos), caducidad de 1 a 720 horas, revocables, respuestas sin caché. La
   contraseña inicial, si se incluye, va cifrada y se borra en cuanto deja de
-  hacer falta.
+  hacer falta. Al crear un enlace con contraseña, esta se comprueba antes de
+  guardarla y debe ser la principal; como esa comprobación podría servir para
+  probar contraseñas, cada fallo cuenta por buzón: con 5 en 15 minutos la ruta
+  responde `429 rate_limited` (también con la contraseña correcta) y, si el
+  motor no responde, `503 engine_unreachable` sin crear el enlace.
 - **Autoconfiguración y MTA-STS**: solo responden para dominios dados de alta
   y no incluyen datos de las cuentas.
+- **Estado de la puesta en marcha** (`GET /api/setup/status`): sin sesión y con
+  la puesta en marcha terminada, solo devuelve `setupComplete`, `hasAdmin`,
+  `requiresSetupToken` e `instance.brandName`; ni la IP pública, ni los nombres
+  internos, ni la URL del motor. El detalle completo es para la administración
+  (y para el asistente mientras no ha terminado); la contraseña del motor y el
+  token de puesta en marcha no se devuelven nunca.
 
 ## 9. Traefik y otras aplicaciones del servidor
 
 - Mailway solo publica en Traefik nombres cuyo DNS ya apunta al servidor
   (evita bloqueos de Let's Encrypt) y, en la marca blanca, solo subdominios de
-  dominios verificados del mismo cliente.
+  dominios de correo del mismo cliente con la propiedad comprobada.
 - Con Skyway 0.34 o posterior, Traefik no consulta a Mailway sino al puente de
   Skyway, que solo deja pasar reglas `Host()` hacia contenedores de Mailway y
   nunca un dominio que ya sirve Skyway. Un Mailway comprometido no puede

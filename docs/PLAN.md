@@ -75,9 +75,14 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
    (`{"error":"notFound"|"fieldAlreadyExists"|"other"|…}`). El driver los
    traduce a `HttpError` 502 con código `engine_not_found`, `engine_exists` o
    `engine_error`; sin esa traducción, un alta duplicada o un borrado de algo
-   inexistente pasarían por éxitos. Los fallos de red son
-   `engine_unreachable`. Las altas **adoptan** lo que ya existe en el motor
-   (un huérfano de un borrado interrumpido): el panel es la fuente de verdad.
+   inexistente pasarían por éxitos. Un **HTTP 404 real** no significa «no
+   existe», sino una ruta de gestión desconocida (URL del motor mal puesta, un
+   proxy con otro prefijo o un motor sin esta API): se traduce a `engine_error`,
+   porque tomarlo por `engine_not_found` haría que los borrados «tuvieran
+   éxito» sin hacer nada y los buzones siguieran recibiendo correo. Los fallos
+   de red son `engine_unreachable`. Las altas **adoptan** lo que ya existe en
+   el motor (un huérfano de un borrado interrumpido): el panel es la fuente de
+   verdad.
 4. **Contraseñas hasheadas en el panel.** La API de Stalwart no hashea lo que
    recibe: Mailway genera `$6$` (sha512-crypt, probado contra los vectores
    oficiales en `server/src/core/sha512crypt.ts`) y nunca envía ni guarda
@@ -107,7 +112,11 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
    las altas de buzones y alias de cada cliente, y `altas:dominios` las de
    dominios (dos clientes no pueden dar de alta el mismo dominio a la vez).
    Mailway es un único proceso, así que basta con una cadena de promesas por
-   clave.
+   clave. Si pese a ello una alta choca con otra en la base (índice único),
+   responde `409` (`domain_exists`, `mailbox_exists`, `alias_exists`) y no
+   deshace en el motor lo que creó la otra: ese principal es el suyo. Las
+   contraseñas de aplicación de un mismo buzón van en fila por la misma razón
+   (`contrasenas-app:<buzón>`).
 10. **Límites de la API por cliente.** Los envíos por minuto (memoria) y por
     día (SQLite) del plan se cuentan por cliente, sumando todas sus claves:
     crear más claves no amplía el plan. El límite diario de una clave solo
@@ -121,11 +130,20 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     al servidor de la instancia, o el TXT `_mailway.<dominio>` =
     `mailway-verificacion=<token>`, con `token` = primeros 32 hexadecimales de
     HMAC-SHA256(clave maestra, `propiedad:<dominio>`). Es estable, no se
-    guarda y no se puede adivinar. Se comprueba al medir el DNS; una vez
-    probada no se pierde. Cloudflare crea el TXT al aplicar el DNS.
-12. **Marca blanca solo sobre dominios verificados del mismo cliente.** Traefik
-    enruta cualquier nombre que se le publique: sin esta regla un cliente
-    podría reclamar el nombre de otra aplicación del servidor.
+    guarda y no se puede adivinar. Se comprueba al medir el DNS (también lo
+    hace el vigilante mientras está pendiente); una vez probada no se pierde, y
+    una consulta que falla no cuenta como «no». Cloudflare crea el TXT al
+    aplicar el DNS y, si la zona está activa, la propiedad queda probada al
+    instante; una zona pendiente de activación no prueba nada, porque cualquiera
+    puede añadir un dominio ajeno a su cuenta. La API lo expone en cada dominio
+    (`ownershipVerifiedAt`, `ownershipRecord`) y en la tabla de registros con
+    la categoría `verificacion`; sin propiedad, crear buzones o alias responde
+    `409 domain_ownership_pending`.
+12. **Marca blanca solo sobre dominios de correo del mismo cliente con la
+    propiedad comprobada.** Traefik enruta cualquier nombre que se le
+    publique: sin esta regla un cliente podría reclamar el nombre de otra
+    aplicación del servidor. Cuenta la propiedad, no que el dominio esté
+    activo.
 
 ### 3.3 DNS y Cloudflare
 
@@ -145,7 +163,9 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     cliente usa sus propias cuentas; una de la instancia solo si la
     administración ya aplicó con ella el DNS de ese dominio. `soloCliente=1`
     fuerza esta regla aunque la petición llegue con un token de
-    administración (Skyway actuando por un usuario que no lo es).
+    administración (Skyway actuando por un usuario que no lo es), en el plan y
+    la aplicación del DNS de un dominio, en el alta con `autoDns` y en el DNS
+    de un dominio de marca blanca.
 
 ### 3.4 Autoconfiguración y Traefik
 
@@ -187,7 +207,10 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     del webmail todas las peticiones comparten IP. Los fallos se cuentan en el
     panel (5 por buzón y 20 por IP cada 15 minutos).
 21. **Una contraseña de aplicación no gestiona el buzón.** Sirve para IMAP y
-    SMTP, pero no para entrar en «Mi buzón» ni cambiar la principal.
+    SMTP, pero no para entrar en «Mi buzón» ni cambiar la principal. Cada
+    buzón admite hasta 25 activas (`409 app_password_limit`): lo comprueba
+    `createAppPassword`, junto con el cliente y el buzón suspendidos, para que
+    el panel, «Mi buzón» y las integraciones no puedan saltárselo.
 22. **Cambio de contraseña desde el webmail por el panel.** El complemento
     `password` de Roundcube (driver `httpapi`) llama a `/api/webmail/password`
     por la red interna con un secreto compartido. No se usa
@@ -196,7 +219,10 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
 23. **Enlaces de configuración con contraseña de corta vida.** El token (256
     bits) solo existe como hash; la contraseña va cifrada y se borra al
     caducar, al revocar, al marcar «Ya lo he configurado» o al cambiar la
-    contraseña del buzón.
+    contraseña del buzón. Al crear el enlace, la contraseña se comprueba antes
+    de guardarla; para que esa comprobación no sirva de oráculo, cada fallo
+    cuenta por buzón (5 en 15 minutos → `429 rate_limited`) y, si el motor no
+    responde, no se guarda nada (`503 engine_unreachable`).
 
 ### 3.6 Motor detrás del proxy
 
@@ -225,8 +251,11 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     `MAILWAY_TRUST_PROXY` (1 salto por defecto) evita que el cliente falsee su
     IP con `X-Forwarded-For` y esquive los límites de intentos.
 28. **Tokens de gestión con los permisos de su usuario**, verificados en cada
-    petición (sin caché); crearlos exige sesión de navegador. Con `Bearer` no
-    se lee la cookie.
+    petición (sin caché); crearlos exige sesión de navegador, igual que cambiar
+    la contraseña del panel y conectar, cambiar o probar el motor
+    (`requireSession` y `requireAdminSession`): de otro modo, un token
+    filtrado podría desviar la contraseña del motor a otro servidor. Con
+    `Bearer` no se lee la cookie.
 
 Detalle en [SEGURIDAD.md](SEGURIDAD.md).
 
@@ -245,7 +274,8 @@ edita una ya publicada.
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
-clients            cliente → plan, suspensión, notas, external_ref (p. ej. skyway:project:<id>)
+clients            cliente → plan, suspensión, notas internas (solo la administración),
+                   external_ref (p. ej. skyway:project:<id>)
 users              usuarios del panel: admin (todo) | client (su cliente); deshabilitables
 sessions           sesiones del panel (hash del token, caducidad, IP, agente)
 management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, revocación
@@ -263,8 +293,10 @@ api_usage          contador diario de envíos
 cloudflare_accounts  cuentas de Cloudflare (token cifrado; client_id NULL = instancia)
 client_domains     dominios de marca blanca (webmail | panel) y su estado
 alerts             incidencias del vigilante (una abierta por dedupe_key, índice parcial)
-audit_log          quién hizo qué, cuándo, desde qué IP y con qué token
-login_attempts     intentos fallidos (panel por IP y correo; portal por buzón e IP)
+audit_log          quién hizo qué, cuándo, desde qué IP y con qué token (el cliente no ve
+                   la IP ni el correo de la administración)
+login_attempts     intentos fallidos (panel por IP y correo; portal por buzón e IP;
+                   enlaces con contraseña por buzón; token de puesta en marcha por IP)
 settings           ajustes de instancia y motor, estado de autoconfiguración, cachés
 ```
 
@@ -274,7 +306,9 @@ Reglas de integridad que protegen al usuario:
   buzón remitente de una clave activa.
 - Borrar un dominio con buzones exige escribir su nombre; se limpia primero el
   motor y después el panel, buzón a buzón, de modo que un fallo a mitad deja
-  el panel coherente y repetir completa el borrado.
+  el panel coherente y repetir completa el borrado. La respuesta cuenta las
+  claves de API que dejan de funcionar con sus buzones y las direcciones de
+  los alias de otros dominios que se actualizan o se eliminan.
 - Borrar un buzón lo retira antes de los alias que reenvían a él.
 - Contraseñas, tokens y claves se muestran **una sola vez**.
 
