@@ -646,11 +646,24 @@ vigilante de Mailway es lo que cubre el correo.
   apunta aquí. Estado en **Ajustes → Autoconfiguración de dispositivos**.
 - **Marca blanca**: en **Marca blanca**, el cliente añade
   `webmail.sucliente.com` (debe ser un subdominio de uno de sus dominios de
-  correo ya verificados), crea el CNAME que se le indica (o pulsa «Configurar
+  correo con la propiedad comprobada), crea el CNAME que se le indica (o pulsa «Configurar
   en Cloudflare») y pulsa **Comprobar**. El dominio pasa por *Esperando DNS →
   Emitiendo certificado → En servicio*. Mailway solo publica los dominios cuyo
   DNS ya apunta aquí: publicar uno que no resuelve haría fallar la validación
   de Let's Encrypt y acabaría en un bloqueo temporal por reintentos.
+- **Webmail principal**: si un cliente tiene varios dominios de webmail en
+  servicio, **Usar como principal** elige el que verán sus usuarios. Sin una
+  elección expresa se usa el primero que entró en servicio y, si ninguno lo
+  está, la URL general del webmail (**Ajustes**). El inicio del cliente, los
+  datos de conexión de los buzones, los enlaces de configuración y la
+  autoconfiguración usan siempre ese mismo webmail; los servidores IMAP y SMTP
+  conservan el nombre del servidor de correo.
+- **Comprobación**: un dominio solo cuenta como en servicio cuando responde
+  por HTTPS con un certificado válido y un código 2xx o 3xx (un 404 o un 5xx
+  indican que la ruta o su destino aún no están bien). **Ajustes → Rutas de
+  Traefik** muestra cuándo consultó Traefik las rutas por última vez
+  (directamente o a través de Skyway): si nunca lo ha hecho o lleva más de 90
+  segundos sin hacerlo, revise la conexión (sección 4).
 
 Detalle y reglas en [INTEGRACIONES.md](INTEGRACIONES.md).
 
@@ -671,6 +684,39 @@ en volumen:
 - Si Spamhaus aparece como «no concluyente», consulte manualmente en
   [check.spamhaus.org](https://check.spamhaus.org): rechaza las consultas
   hechas a través de resolutores públicos.
+
+### 12.1 Lista de salida a producción
+
+Que los contenedores respondan no significa que el servicio de correo esté
+listo. Antes de aceptar clientes reales, deje comprobados **todos** estos
+puntos y anote la fecha de la prueba:
+
+- [ ] El panel solo se publica por HTTPS y `/api/health` devuelve `ok: true`.
+- [ ] El volumen `/data` del panel es persistente y una copia de prueba se ha
+  restaurado en otro directorio. Se copian juntos `mailway.db`, sus ficheros
+  WAL/SHM si existen, y `.secret`.
+- [ ] Los puertos 25 (de entrada **y de salida**), 465, 587 y 993 son
+  accesibles desde fuera; el 8080 del motor no se publica en el host.
+- [ ] El PTR devuelve `MAIL_HOSTNAME` y el registro A de ese nombre vuelve a
+  la misma IP (FCrDNS).
+- [ ] `openssl s_client` confirma un certificado público vigente en 465 y 993
+  (sección 5.3); el autofirmado no se usa fuera de la red interna.
+- [ ] Un dominio piloto muestra MX, SPF, DKIM y DMARC verificados en Mailway.
+- [ ] Se han probado la recepción, el envío SMTP autenticado y `POST /v1/send`
+  en ambos sentidos con Gmail u Outlook; no basta con probar dentro del
+  dominio.
+- [ ] Hay al menos un canal de avisos configurado y el aviso de prueba llega
+  (sección 10).
+- [ ] Se ha ensayado la restauración de los volúmenes del motor y del panel:
+  una copia que nunca se ha restaurado no se considera verificada.
+- [ ] Se han acordado el calentamiento de la IP y límites bajos para el primer
+  cliente; no se inicia un envío masivo desde una IP nueva.
+
+**Criterio de decisión:** el software puede desplegarse cuando pasan la
+compilación, las pruebas y esta lista. La disponibilidad, la reputación, el
+PTR, el cortafuegos, el TLS y la restauración dependen del servidor final y no
+se pueden validar desde el repositorio. Mientras quede una casilla sin
+comprobar, trate la instalación como preproducción.
 
 ---
 
@@ -694,7 +740,7 @@ en volumen:
   valor de `MAILWAY_MAIL_VOLUME`.
 - **Registros del motor**: `docker logs -f mailway-mail` y
   `docker exec mailway-mail ls /opt/stalwart/logs`.
-- **Cola de salida**: visible en **Constantes** (panel de administración).
+- **Cola de salida**: visible en **Resumen → Tu servicio** (panel de administración).
 - **Contraseña de administración del panel olvidada**: en el contenedor del
   panel (con Skyway, `skyway-<proyecto>-<servicio>`; en la instalación
   autónoma, `mailway-panel`):

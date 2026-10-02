@@ -11,18 +11,21 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   busy?: boolean;
 }
 
+// Altura fija (h-9) y no mínima: las alturas táctiles del portal (TACTIL,
+// `min-h-11 sm:min-h-0`) y los botones compactos (`!h-7`) la sustituyen; con
+// un min-height de base, `sm:min-h-0` dejaría el botón a la altura del texto.
 const base =
-  'inline-flex h-8 items-center justify-center gap-2 px-3 text-base ' +
-  'transition-colors duration-100 select-none';
+  'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3.5 text-base ' +
+  'transition duration-150 select-none';
 
 const styles: Record<VarianteBoton, string> = {
   // Acción principal: sólida en tinta, como un sello de conformidad.
   tinta:
-    'bg-tinta text-hoja font-semibold hover:bg-[rgb(var(--laboratorio))] active:translate-y-px ' +
+    'bg-tinta text-hoja font-semibold shadow-sm hover:bg-[rgb(var(--laboratorio))] active:translate-y-px ' +
     'disabled:opacity-35 disabled:hover:bg-tinta',
   // Acción principal SOBRE el campo de laboratorio (membrete): invertida.
   campo:
-    'bg-white text-laboratorio font-semibold hover:bg-laboratorio-claro active:translate-y-px ' +
+    'bg-white text-laboratorio font-semibold shadow-sm hover:bg-laboratorio-claro active:translate-y-px ' +
     'disabled:opacity-40 disabled:hover:bg-white',
   // Secundaria SOBRE el campo: filete blanco. `plano` o `perfil` ahí serían
   // tinta sobre petróleo, es decir, un botón que no se ve.

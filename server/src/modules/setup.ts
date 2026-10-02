@@ -8,7 +8,7 @@ import { badRequest, forbidden, tooMany } from '../core/errors';
 import { buildEngine, engineConfigured } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
-import { countUsers, createUser, createSession, requireAdmin, requireAdminSession } from './auth';
+import { countUsers, createInitialAdmin, createSession, requireAdmin, requireAdminSession } from './auth';
 import { ensureDefaultPlans } from './clients';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
@@ -293,7 +293,9 @@ export function registerSetupRoutes(app: FastifyInstance): void {
         );
       }
     }
-    const user = createUser({ email: body.email, name: body.name, password: body.password, role: 'admin' });
+    // Comprobación y alta en una sola transacción: dos peticiones simultáneas
+    // no pueden crear dos administradores (la de arriba solo ahorra trabajo).
+    const user = createInitialAdmin({ email: body.email, name: body.name, password: body.password });
     ensureDefaultPlans();
     createSession(req, reply, user.id);
     req.user = user;

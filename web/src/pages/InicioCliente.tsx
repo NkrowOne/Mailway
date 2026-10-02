@@ -47,14 +47,14 @@ export default function InicioCliente() {
   // marca blanca del cliente), no la que muestre ahora el navegador.
   const panel = useDireccionPanel({ user });
 
-  if (isPending) return <Midiendo label="Leyendo el estado de su correo…" />;
+  if (isPending) return <Midiendo label="Cargando tu resumen…" />;
   // Si una relectura falla pero ya hubo datos, se siguen mostrando.
   if (!data) {
     return (
       <>
         <Membrete title="Resumen" />
         <AvisoError onRetry={() => void refetch()} retrying={isFetching}>
-          No se ha podido cargar el resumen de su correo. Compruebe la conexión y vuelva a intentarlo.
+          No se ha podido cargar el resumen de tu correo. Comprueba la conexión y vuelve a intentarlo.
         </AvisoError>
       </>
     );
@@ -137,6 +137,7 @@ export default function InicioCliente() {
     <>
       <Membrete
         title={data.client.name}
+        illustration="/mail-server.png"
         meta={
           data.client.suspended ? (
             <MarcaFondo veredicto="fuera">
@@ -152,26 +153,33 @@ export default function InicioCliente() {
           )
         }
         actions={
-          siguiente ? (
-            <Link to={siguiente.to} className={estiloBoton('campo')}>
-              {siguiente.label}
-            </Link>
-          ) : data.webmailUrl ? (
-            <a
-              href={data.webmailUrl}
-              target="_blank"
-              rel="noreferrer"
-              className={estiloBoton('campo')}
-            >
-              Abrir webmail
-            </a>
+          siguiente || data.webmailUrl ? (
+            <>
+              {/* El webmail siempre a mano; mientras quede un paso pendiente,
+                  la acción principal es ese paso y el webmail pasa a secundaria. */}
+              {data.webmailUrl && (
+                <a
+                  href={data.webmailUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={estiloBoton(siguiente ? 'contorno' : 'campo')}
+                >
+                  Abrir webmail <span aria-hidden>↗</span>
+                </a>
+              )}
+              {siguiente && (
+                <Link to={siguiente.to} className={estiloBoton('campo')}>
+                  {siguiente.label}
+                </Link>
+              )}
+            </>
           ) : undefined
         }
       />
 
       <div className="grid items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Hoja
-          title="Puesta en marcha"
+          title="Primeros pasos"
           meta={
             <span className="valor">
               {hechos}/{obligatorios.length}
@@ -228,7 +236,7 @@ export default function InicioCliente() {
           </ol>
         </Hoja>
 
-        <Hoja title="Carga del plan" meta="Uso frente al límite">
+        <Hoja title="Uso de tu plan" meta="Recursos disponibles">
           <div className="flex flex-col gap-4">
             <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
             <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />

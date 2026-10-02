@@ -23,7 +23,7 @@ import {
 } from '../../lib/gestion';
 import { lecturaDominio } from '../../lib/cloudflare';
 import { pesoVeredicto } from '../../lib/dominios';
-import { Button } from '../../ui/Button';
+import { Button, estiloBoton } from '../../ui/Button';
 import { Input, Select, Textarea } from '../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio, type ConfirmarCierre } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
@@ -79,7 +79,7 @@ export default function ClienteDetalle() {
   if (client.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Leyendo la ficha del cliente…" />
+        <Midiendo label="Cargando el cliente…" />
       </Hoja>
     );
   }
@@ -128,9 +128,15 @@ export default function ClienteDetalle() {
           </div>
         }
         actions={
-          <Button variant="campo" onClick={() => setDialogo('editar')}>
-            Editar datos
-          </Button>
+          <>
+            {/* Su webmail principal se elige en Marca blanca, con el cliente ya filtrado. */}
+            <Link to={`/marca-blanca?cliente=${encodeURIComponent(id)}`} className={estiloBoton('contorno')}>
+              Configurar webmail
+            </Link>
+            <Button variant="campo" onClick={() => setDialogo('editar')}>
+              Editar datos
+            </Button>
+          </>
         }
       />
 
@@ -233,7 +239,7 @@ export default function ClienteDetalle() {
       >
         {users.length === 0 ? (
           <Vacio title="Sin usuarios de acceso">
-            Este cliente aún no puede entrar en su panel. Añada su primer usuario con «Añadir usuario».
+            Este cliente aún no puede entrar en su panel. Añade su primer usuario con «Añadir usuario».
           </Vacio>
         ) : (
           <ul>
@@ -247,7 +253,7 @@ export default function ClienteDetalle() {
       <div className="mt-4 grid items-start gap-4 lg:grid-cols-2">
         <Hoja
           title="Dominios"
-          meta={domains.isPending ? 'midiendo…' : plural(domainList.length, 'dominio', 'dominios')}
+          meta={domains.isPending ? 'cargando…' : plural(domainList.length, 'dominio', 'dominios')}
           actions={
             <Link to="/dominios" className="text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta">
               Ir a Dominios
@@ -256,13 +262,13 @@ export default function ClienteDetalle() {
           flush
         >
           {domains.isPending ? (
-            <Midiendo label="Leyendo los dominios del cliente…" />
+            <Midiendo label="Cargando los dominios del cliente…" />
           ) : domains.isError ? (
             <div className="p-4">
               <BandaError onRetry={() => void domains.refetch()}>No se han podido cargar los dominios.</BandaError>
             </div>
           ) : domainList.length === 0 ? (
-            <Vacio title="Sin dominios">El cliente puede añadirlos desde su panel, o usted desde «Dominios».</Vacio>
+            <Vacio title="Sin dominios">El cliente puede añadirlos desde su panel, o tú desde «Dominios».</Vacio>
           ) : (
             <ul>
               {domainList.map((domain) => (
@@ -286,7 +292,7 @@ export default function ClienteDetalle() {
 
         <Hoja
           title="Buzones"
-          meta={mailboxes.isPending ? 'midiendo…' : plural(mailboxList.length, 'buzón', 'buzones')}
+          meta={mailboxes.isPending ? 'cargando…' : plural(mailboxList.length, 'buzón', 'buzones')}
           actions={
             <Link
               to={`/buzones?cliente=${encodeURIComponent(id)}`}
@@ -298,7 +304,7 @@ export default function ClienteDetalle() {
           flush
         >
           {mailboxes.isPending ? (
-            <Midiendo label="Leyendo los buzones del cliente…" />
+            <Midiendo label="Cargando los buzones del cliente…" />
           ) : mailboxes.isError ? (
             <div className="p-4">
               <BandaError onRetry={() => void mailboxes.refetch()}>No se han podido cargar los buzones.</BandaError>
@@ -555,7 +561,7 @@ function CambiarPlan({
         <p className="text-base text-tinta-2">
           De «{actual.name}» a «{nuevo.name}». Límites del nuevo plan frente al uso actual:
         </p>
-        <div className="border border-regla">
+        <div className="overflow-hidden rounded-lg border border-regla">
           <div className="regla-cabecera hidden items-baseline gap-x-3 px-3 py-1.5 sm:flex">
             <span className="rotulo min-w-0 grow basis-0">Concepto</span>
             <span className="rotulo w-20 shrink-0 text-right">Uso</span>

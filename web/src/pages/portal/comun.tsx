@@ -21,9 +21,9 @@ export const TACTIL = 'min-h-11 sm:min-h-0';
  * no válido (y dos paradas de tabulación), así que se replica el estilo.
  */
 export function claseEnlaceBoton(variante: 'tinta' | 'perfil', tamano: 'tactil' | 'panel' = 'tactil'): string {
-  const alto = tamano === 'tactil' ? `h-9 px-4 ${TACTIL}` : 'h-8 px-3';
+  const alto = tamano === 'tactil' ? `h-9 px-4 ${TACTIL}` : 'h-9 px-3.5';
   const base =
-    `inline-flex ${alto} items-center justify-center gap-2 text-base no-underline ` +
+    `inline-flex ${alto} items-center justify-center gap-2 rounded-lg text-base no-underline ` +
     'transition-colors duration-100 select-none active:translate-y-px';
   return variante === 'tinta'
     ? `${base} bg-tinta font-semibold text-hoja hover:bg-[rgb(var(--laboratorio))]`
@@ -86,7 +86,7 @@ export function MarcoPortal({
 export function PaginaEstado({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-mesa px-4 py-10">
-      <section className="w-full max-w-[28rem] animate-aparecer border border-regla bg-hoja">
+      <section className="hoja-panel w-full max-w-[28rem] animate-aparecer overflow-hidden rounded-xl border border-regla bg-hoja">
         {children}
       </section>
     </div>
@@ -106,7 +106,7 @@ export function AvisoHecho({ children }: { children: ReactNode }) {
   return (
     <div
       role="status"
-      className="revelar border border-[rgb(var(--normal)/0.35)] bg-normal-fondo px-3 py-2 text-sm text-normal"
+      className="revelar rounded-lg border border-[rgb(var(--normal)/0.35)] bg-normal-fondo px-3 py-2 text-sm text-normal"
     >
       {children}
     </div>
@@ -132,7 +132,7 @@ export function BotonCopiarTactil({ texto, rotulo = 'Copiar' }: { texto: string;
         window.clearTimeout(temporizador.current);
         temporizador.current = window.setTimeout(() => setEstado('reposo'), 2000);
       }}
-      className={`inline-flex h-7 ${TACTIL} shrink-0 items-center gap-1.5 border px-3 font-estrecha text-micro
+      className={`inline-flex h-7 ${TACTIL} shrink-0 items-center gap-1.5 rounded-md border px-3 font-estrecha text-micro
         font-semibold uppercase tracking-[0.08em] transition-colors duration-100 active:translate-y-px sm:px-2
         ${
           estado === 'ok'

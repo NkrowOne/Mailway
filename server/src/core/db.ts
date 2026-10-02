@@ -199,6 +199,16 @@ const migrations: { id: string; sql: string }[] = [
     `,
   },
   {
+    // Publicada en main antes de la 1.0: va antes que las de esta versión.
+    // Los identificadores se comparan completos, así que dos «003-» conviven.
+    id: '003-webmail-principal',
+    sql: `
+      ALTER TABLE client_domains ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
+      CREATE UNIQUE INDEX idx_client_webmail_primary
+        ON client_domains(client_id) WHERE is_primary = 1 AND kind = 'webmail';
+    `,
+  },
+  {
     id: '003-integraciones-y-portal',
     sql: `
       -- Tokens de gestión: acceso por API (Skyway, scripts, agentes) con los

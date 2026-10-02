@@ -49,7 +49,7 @@ export default function Ajustes() {
       <>
         <Membrete title="Ajustes" meta={META} />
         <Hoja>
-          <Midiendo label="Leyendo los ajustes…" />
+          <Midiendo label="Cargando los ajustes…" />
         </Hoja>
       </>
     );
@@ -112,7 +112,7 @@ export default function Ajustes() {
 /** Aviso sobre papel (vigilar): algo que conviene resolver, sin ser un error. */
 function Aviso({ children }: { children: ReactNode }) {
   return (
-    <div className="border border-[rgb(var(--vigilar)/0.35)] bg-vigilar-fondo px-3 py-2 text-sm text-tinta">
+    <div className="rounded-lg border border-[rgb(var(--vigilar)/0.35)] bg-vigilar-fondo px-3 py-2 text-sm text-tinta">
       {children}
     </div>
   );
@@ -218,7 +218,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           <Button
             type="button"
             variant="perfil"
-            className="h-9"
+            className="h-10"
             busy={detectar.isPending}
             onClick={() => detectar.mutate()}
           >
@@ -226,12 +226,12 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           </Button>
         </div>
         <Input
-          label="URL del webmail"
+          label="URL general del webmail"
           mono
           value={form.webmailUrl}
           onChange={set('webmailUrl')}
-          placeholder="https://webmail.suempresa.com"
-          help="Si se deja vacía, el panel no muestra enlaces al webmail. Los clientes con dominio propio de webmail ven el suyo."
+          placeholder="https://webmail.tuempresa.com"
+          help="Se usa para los clientes sin dominio propio de webmail en servicio (se configura en Marca blanca). Si se deja vacía, a esos clientes no se les muestran enlaces al webmail."
         />
         {error && <AvisoError>{error}</AvisoError>}
         {/* Única acción principal de la vista: el resto de hojas usan filete. */}
@@ -643,6 +643,8 @@ function HojaTraefik() {
   const setup = useQuery({
     queryKey: ['whitelabel-setup'],
     queryFn: () => api.get<ConfiguracionTraefik>('/api/whitelabel/setup'),
+    // Traefik consulta cada 15 s: así «Última consulta» se mantiene al día.
+    refetchInterval: 15_000,
   });
   const [manual, setManual] = useState<boolean | null>(null);
 
@@ -650,7 +652,7 @@ function HojaTraefik() {
   if (setup.isPending) {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
-        <Midiendo label="Leyendo la configuración de Traefik…" />
+        <Midiendo label="Cargando la configuración de Traefik…" />
       </Hoja>
     );
   }
@@ -666,6 +668,9 @@ function HojaTraefik() {
   }
 
   const s = setup.data;
+  // Más de 90 s sin consultas (seis sondeos perdidos) indica que el proxy ya no
+  // llega a Mailway, directamente o a través de Skyway.
+  const consultaReciente = s.lastPollAt !== null && Date.now() - s.lastPollAt < 90_000;
   // Bajo Skyway el puente es lo normal: el bloque manual queda plegado.
   const mostrarManual = manual ?? !s.underSkyway;
   // El token es un secreto: va aparte, enmascarado, con «Mostrar» y «Copiar».
@@ -700,7 +705,25 @@ function HojaTraefik() {
           blanca de los clientes y los nombres de autoconfiguración cuyo DNS ya apunta aquí.
         </p>
 
-        <div className="border border-regla bg-hoja-2 px-3 py-2.5">
+        <div role="status" className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <Marca veredicto={consultaReciente ? 'normal' : s.lastPollAt ? 'vigilar' : 'sin-dato'}>
+            {consultaReciente
+              ? 'Traefik consulta las rutas'
+              : s.lastPollAt
+                ? 'Sin consultas recientes'
+                : 'Sin consultas de Traefik'}
+          </Marca>
+          <span className="max-w-[75ch] text-sm text-tinta-2">
+            {s.lastPollAt
+              ? `Última consulta: ${formatDate(s.lastPollAt)}.${
+                  consultaReciente ? '' : ' Revisa la conexión antes de añadir dominios.'
+                }`
+              : 'Conecta Mailway con Skyway o configura tu Traefik para que publique los dominios propios de los clientes.'}{' '}
+            La consulta confirma la conexión, no que cada dominio esté operativo.
+          </span>
+        </div>
+
+        <div className="rounded-lg border border-regla bg-hoja-2 px-3 py-2.5">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-base font-semibold text-tinta">
               Skyway {s.skywayBridge.minVersion.replace(/\.0$/, '')} o posterior
@@ -733,6 +756,10 @@ function HojaTraefik() {
                   {s.overrideSnippet}
                 </pre>
               </Muestra>
+              <p className="max-w-[75ch] text-sm text-tinta-3">
+                Compose sustituye la lista completa de comandos: conserva todos los parámetros de tu versión
+                de Skyway y añade los de providers.http. Si ya tienes un override, incorpora los cambios en él.
+              </p>
             </>
           )}
         </div>

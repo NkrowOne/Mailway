@@ -39,9 +39,10 @@ export function FieldWrap({ label, help, error, children }: FieldWrapProps) {
 
 // Casilla de formulario impreso: filete perimetral fino, fondo de hoja.
 const controlBase =
-  'h-9 w-full min-w-0 border border-regla bg-hoja px-2.5 text-base text-tinta ' +
-  'placeholder:text-tinta-3 transition-colors duration-100 ' +
-  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] disabled:opacity-35 ' +
+  'h-10 w-full min-w-0 rounded-lg border border-regla bg-hoja px-3 text-base text-tinta shadow-sm ' +
+  'placeholder:text-tinta-3 transition duration-150 ' +
+  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] focus:ring-2 focus:ring-laboratorio/10 ' +
+  'disabled:opacity-35 ' +
   // Un campo con error lleva el filete del veredicto, no solo el texto de debajo.
   'aria-[invalid=true]:border-[rgb(var(--fuera)/0.6)]';
 

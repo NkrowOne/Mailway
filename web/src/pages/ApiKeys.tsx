@@ -190,7 +190,7 @@ function PestanasLenguaje({
             onClick={() => onCambio(l.id)}
             // Como la navegación activa: fondo petróleo tenue, sin filete de
             // acento (DESIGN.md solo admite dos bordes de petróleo).
-            className={`border px-3 py-1.5 text-base transition-colors duration-100 ${
+            className={`rounded-lg border px-3 py-1.5 text-base transition-colors duration-100 ${
               seleccionado
                 ? 'border-[rgb(var(--laboratorio)/0.35)] bg-laboratorio-claro font-semibold text-laboratorio'
                 : 'border-regla text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
@@ -356,7 +356,7 @@ export default function ApiKeys({ user }: { user: User }) {
 
         {keys.isPending ? (
           <Hoja>
-            <Midiendo label="Leyendo las claves de API…" />
+            <Midiendo label="Cargando las claves de API…" />
           </Hoja>
         ) : keys.isError ? (
           <AvisoError onRetry={() => void keys.refetch()} retrying={keys.isFetching}>
@@ -532,7 +532,7 @@ export default function ApiKeys({ user }: { user: User }) {
           flush
         >
           {messages.isPending ? (
-            <Midiendo label="Leyendo los últimos envíos…" />
+            <Midiendo label="Cargando los últimos envíos…" />
           ) : messages.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void messages.refetch()} retrying={messages.isFetching}>

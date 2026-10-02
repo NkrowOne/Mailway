@@ -37,7 +37,7 @@ export function BandaAviso({ children }: { children: ReactNode }) {
   return (
     <div
       role="status"
-      className="border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2 text-sm text-tinta"
+      className="rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2 text-sm text-tinta"
     >
       <div className="max-w-[75ch]">{children}</div>
     </div>

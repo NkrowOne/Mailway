@@ -229,7 +229,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
             <span className="rotulo min-w-0 flex-1">Dominio</span>
             {isAdmin && <span className="rotulo shrink-0 basis-40">Cliente</span>}
             <span className="rotulo shrink-0 basis-24">Obligatorios</span>
-            <span className="rotulo shrink-0 basis-32">Última medición</span>
+            <span className="rotulo shrink-0 basis-32">Comprobado</span>
             <span className="rotulo shrink-0 basis-28 text-right">Veredicto</span>
           </div>
 
@@ -282,7 +282,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                   </span>
 
                   <span className="shrink-0 sm:basis-32">
-                    <span className="rotulo mr-1.5 sm:hidden">Medido</span>
+                    <span className="rotulo mr-1.5 sm:hidden">Comprobado</span>
                     <span className="text-sm text-tinta-3">{formatDate(domain.lastCheckedAt)}</span>
                   </span>
 
@@ -339,7 +339,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
           />
 
           {hayCloudflare && (
-            <div className="border border-regla bg-hoja-2 px-3 py-2.5">
+            <div className="rounded-lg border border-regla bg-hoja-2 px-3 py-2.5">
               <label htmlFor={idCasilla} className="flex cursor-pointer items-baseline gap-2.5">
                 <input
                   id={idCasilla}

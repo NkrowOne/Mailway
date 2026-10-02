@@ -100,12 +100,12 @@ export default function Actividad() {
         flush
       >
         {registro.isPending ? (
-          <Midiendo label="Leyendo el registro de actividad…" />
+          <Midiendo label="Cargando el registro de actividad…" />
         ) : errorInicial ? (
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void registro.refetch()} retrying={registro.isFetching}>
               No se ha podido leer el registro de actividad.{' '}
-              {mensajeDe(registro.error, 'Compruebe la conexión con el servidor.')}
+              {mensajeDe(registro.error, 'Comprueba la conexión con el servidor.')}
             </AvisoError>
           </div>
         ) : anotaciones.length === 0 ? (

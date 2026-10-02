@@ -77,7 +77,7 @@ export default function Avisos() {
         title="Avisos"
         meta={
           alerts.isPending
-            ? 'Leyendo los avisos…'
+            ? 'Cargando los avisos…'
             : abiertas.length === 0
               ? 'Sin incidencias abiertas.'
               : `${plural(abiertas.length, 'incidencia abierta', 'incidencias abiertas')}.`
@@ -100,7 +100,7 @@ export default function Avisos() {
           flush
         >
           {alerts.isPending ? (
-            <Midiendo label="Leyendo los avisos…" />
+            <Midiendo label="Cargando los avisos…" />
           ) : !alerts.data ? (
             <div className="p-4">
               <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
@@ -281,7 +281,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       }
     >
       {channels.isPending ? (
-        <Midiendo label="Leyendo los canales de aviso…" />
+        <Midiendo label="Cargando los canales de aviso…" />
       ) : !channels.data ? (
         <AvisoError onRetry={() => void channels.refetch()} retrying={channels.isFetching}>
           No se han podido leer los canales de aviso.

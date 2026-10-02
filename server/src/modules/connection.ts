@@ -35,14 +35,14 @@ export interface ConnectionSettings {
 /** Puertos que publica el compose del motor; son fijos por diseño. */
 export const PUERTOS = { imaps: 993, smtps: 465, submission: 587 } as const;
 
-/** Webmail con la marca del cliente, si tiene uno activo. */
+/** Webmail con la marca del cliente, si tiene uno activo: el principal que haya elegido o, si no, el primero que se activó. */
 export function webmailPropio(clientId: string | null): string | null {
   if (!clientId) return null;
   const row = db
     .prepare(
       `SELECT hostname FROM client_domains
        WHERE client_id = ? AND kind = 'webmail' AND status = 'active'
-       ORDER BY activated_at ASC LIMIT 1`,
+       ORDER BY is_primary DESC, activated_at ASC, created_at ASC, id ASC LIMIT 1`,
     )
     .get(clientId) as { hostname: string } | undefined;
   return row ? `https://${row.hostname}` : null;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   api,
   ApiError,
@@ -37,12 +37,13 @@ const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: str
   pending_dns: {
     veredicto: 'vigilar',
     etiqueta: 'Esperando DNS',
-    pista: 'Cree en su proveedor de DNS el registro que se indica a continuación.',
+    pista: 'Crea en tu proveedor de DNS el registro que se indica a continuación.',
   },
   issuing: {
     veredicto: 'vigilar',
     etiqueta: 'Emitiendo certificado',
-    pista: 'El DNS ya apunta a este servidor. El certificado suele tardar menos de un minuto.',
+    pista:
+      'El DNS ya apunta a este servidor. Falta confirmar que el webmail responde por HTTPS con un certificado válido; el certificado suele tardar menos de un minuto.',
   },
   active: { veredicto: 'normal', etiqueta: 'En servicio', pista: 'El dominio funciona con HTTPS.' },
   error: { veredicto: 'fuera', etiqueta: 'Con error', pista: '' },
@@ -68,17 +69,43 @@ function verificado(d: DominioCorreo): boolean {
 }
 
 /**
+ * Webmail que usa cada cliente, con el mismo criterio que el servidor
+ * (connection.ts): el principal elegido o, si no hay ninguno, el primero que
+ * entró en servicio. Así la ficha dice cuál se usa aunque nadie lo haya
+ * elegido, y «Usar como principal» solo aparece en los demás.
+ */
+function webmailsPrincipales(lista: ClientDomain[]): Set<string> {
+  const porCliente = new Map<string, ClientDomain>();
+  const clave = (d: ClientDomain) =>
+    [d.isPrimary ? 0 : 1, d.activatedAt ?? 0, d.createdAt, d.id] as const;
+  for (const d of lista) {
+    if (d.kind !== 'webmail' || d.status !== 'active') continue;
+    const actual = porCliente.get(d.clientId);
+    if (!actual) {
+      porCliente.set(d.clientId, d);
+      continue;
+    }
+    const [a, b] = [clave(d), clave(actual)];
+    const antes = a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || (a[3] < b[3] ? -1 : a[3] > b[3] ? 1 : 0);
+    if (antes < 0) porCliente.set(d.clientId, d);
+  }
+  return new Set([...porCliente.values()].map((d) => d.id));
+}
+
+/**
  * Dominios propios del cliente: su webmail en su dominio, con certificado
  * automático. El registro que hay que crear se entrega como una muestra
  * exacta para copiar; el estado es el veredicto de la última medición.
  */
-export default function MarcaBlanca() {
+export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
   });
-  const isAdmin = me.data?.user?.role === 'admin';
-  const [filtro, setFiltro] = useState('');
+  // El filtro del administrador vive en la dirección (?cliente=, como en
+  // Buzones y Alias): la ficha del cliente enlaza aquí con él ya elegido.
+  const [params, setParams] = useSearchParams();
+  const filtro = isAdmin ? (params.get('cliente') ?? '') : '';
   const [abierto, setAbierto] = useState(false);
   const [nuevo, setNuevo] = useState<{ domain: ClientDomain; instructions: DnsInstruction[] } | null>(null);
 
@@ -96,6 +123,9 @@ export default function MarcaBlanca() {
           : '/api/whitelabel/domains',
       ),
     enabled: me.isSuccess,
+    // El vigilante del servidor activa los dominios cuando su DNS y su HTTPS
+    // responden: la lista se refresca sola mientras la página está abierta.
+    refetchInterval: 15_000,
   });
   // Cloudflare es opcional: si el área no existe o falla, simplemente no se ofrece.
   const cuentas = useQuery({
@@ -112,6 +142,7 @@ export default function MarcaBlanca() {
   const lista = [...(domains.data?.domains ?? [])].sort(
     (a, b) => ORDEN[a.status] - ORDEN[b.status] || a.hostname.localeCompare(b.hostname),
   );
+  const principales = webmailsPrincipales(lista);
 
   return (
     <>
@@ -120,7 +151,7 @@ export default function MarcaBlanca() {
         meta={
           isAdmin || !me.isSuccess
             ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo del cliente con la propiedad comprobada.'
-            : 'Su webmail en su propio dominio, con certificado. El nombre debe ser un subdominio de uno de sus dominios de correo con la propiedad comprobada.'
+            : 'Tu webmail en tu propio dominio, con certificado. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
         }
         actions={
           <Button variant="campo" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
@@ -132,7 +163,14 @@ export default function MarcaBlanca() {
       {isAdmin && (
         <Hoja className="mb-4">
           <div className="max-w-sm">
-            <Select label="Cliente" value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+            <Select
+              label="Cliente"
+              value={filtro}
+              onChange={(e) =>
+                setParams(e.target.value ? { cliente: e.target.value } : {}, { replace: true })
+              }
+              help="Selecciona un cliente para configurar su dirección de webmail."
+            >
               <option value="">Todos los clientes</option>
               {(clients.data?.clients ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
@@ -141,6 +179,11 @@ export default function MarcaBlanca() {
               ))}
             </Select>
           </div>
+          {clients.isError && (
+            <AvisoError className="mt-3" onRetry={() => void clients.refetch()} retrying={clients.isFetching}>
+              No se han podido cargar los clientes.
+            </AvisoError>
+          )}
         </Hoja>
       )}
 
@@ -152,11 +195,11 @@ export default function MarcaBlanca() {
             void domains.refetch();
           }}
         >
-          No se han podido cargar los dominios propios. Compruebe la conexión y vuelva a intentarlo.
+          No se han podido cargar los dominios propios. Comprueba la conexión y vuelve a intentarlo.
         </AvisoError>
       ) : me.isPending || domains.isPending ? (
         <Hoja>
-          <Midiendo label="Leyendo los dominios propios…" />
+          <Midiendo label="Cargando los dominios propios…" />
         </Hoja>
       ) : lista.length === 0 ? (
         <Hoja>
@@ -173,20 +216,28 @@ export default function MarcaBlanca() {
             <span className="valor">suempresa.com</span> es un dominio de correo con la propiedad comprobada— se abre
             {isAdmin
               ? ` con la marca del cliente. Máximo ${MAX_DOMINIOS_PROPIOS} por cliente.`
-              : ` con su marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}
+              : ` con tu marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}
           </Vacio>
         </Hoja>
       ) : (
-        <div className="flex flex-col gap-4">
-          {lista.map((domain) => (
-            <FichaDominio
-              key={domain.id}
-              domain={domain}
-              cliente={isAdmin ? nombres.get(domain.clientId) ?? '' : ''}
-              cuentas={cuentas.data?.accounts ?? []}
-            />
-          ))}
-        </div>
+        <>
+          <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
+            El webmail principal es el que se abre desde el resumen, los datos de conexión de los buzones y
+            los enlaces de configuración. Si no se elige ninguno, se usa el primer dominio que entró en
+            servicio y, si no hay ninguno en servicio, la dirección general del webmail.
+          </p>
+          <div className="flex flex-col gap-4">
+            {lista.map((domain) => (
+              <FichaDominio
+                key={domain.id}
+                domain={domain}
+                cliente={isAdmin ? nombres.get(domain.clientId) ?? '' : ''}
+                cuentas={cuentas.data?.accounts ?? []}
+                principal={principales.has(domain.id)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       <DialogoAlta
@@ -206,8 +257,8 @@ export default function MarcaBlanca() {
         {nuevo && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              Cree este registro en el proveedor de DNS de{' '}
-              <span className="valor">{nuevo.domain.hostname}</span>. Cuando esté publicado, pulse
+              Crea este registro en el proveedor de DNS de{' '}
+              <span className="valor">{nuevo.domain.hostname}</span>. Cuando esté publicado, pulsa
               «Comprobar» en la ficha del dominio.
             </p>
             {nuevo.instructions
@@ -309,7 +360,7 @@ function DialogoAlta({
               setPadre('');
             }}
           >
-            <option value="">Seleccione un cliente…</option>
+            <option value="">Selecciona un cliente…</option>
             {clientes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -319,7 +370,7 @@ function DialogoAlta({
         )}
 
         {sinCliente ? null : dominiosCorreo.isPending ? (
-          <Midiendo label="Leyendo los dominios de correo…" />
+          <Midiendo label="Cargando los dominios de correo…" />
         ) : dominiosCorreo.isError ? (
           <AvisoError onRetry={() => void dominiosCorreo.refetch()} retrying={dominiosCorreo.isFetching}>
             No se han podido leer los dominios de correo del cliente.
@@ -328,14 +379,14 @@ function DialogoAlta({
           <div className="flex flex-col gap-2 text-base text-tinta-2">
             <p>
               {pendientes.length > 0
-                ? `${isAdmin ? 'El cliente todavía no tiene' : 'Todavía no tiene'} ningún dominio de correo con la propiedad comprobada (${listaNatural(
+                ? `${isAdmin ? 'El cliente todavía no tiene' : 'Todavía no tienes'} ningún dominio de correo con la propiedad comprobada (${listaNatural(
                     pendientes.map(nombreVisible),
                   )} ${pendientes.length === 1 ? 'está pendiente' : 'están pendientes'}).`
                 : isAdmin
                   ? 'El cliente todavía no tiene dominios de correo.'
-                  : 'Todavía no tiene dominios de correo.'}{' '}
+                  : 'Todavía no tienes dominios de correo.'}{' '}
               El dominio propio debe ser un subdominio de un dominio de correo con la propiedad comprobada: así se
-              garantiza que {isAdmin ? 'el cliente controla' : 'usted controla'} su DNS.
+              garantiza que {isAdmin ? 'el cliente controla su' : 'controlas tu'} DNS.
             </p>
             <Link to="/dominios" className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta">
               Ir a Dominios
@@ -411,16 +462,29 @@ function FichaDominio({
   domain,
   cliente,
   cuentas,
+  principal,
 }: {
   domain: ClientDomain;
   cliente: string;
   cuentas: CuentaCloudflare[];
+  /** Es el webmail que usa el cliente (elegido o, sin elección, el primero en servicio). */
+  principal: boolean;
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [confirmar, setConfirmar] = useState(false);
   const meta = estadoMeta[domain.status];
   const cuenta = domain.status === 'pending_dns' ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname) : undefined;
+
+  // Activar, elegir o quitar un dominio cambia el webmail que ven el resumen
+  // del cliente y los datos de conexión de sus buzones.
+  const invalidar = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] }),
+      queryClient.invalidateQueries({ queryKey: ['whitelabel-domain', domain.id] }),
+      queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
+      queryClient.invalidateQueries({ queryKey: ['conexion'] }),
+    ]);
 
   const detalle = useQuery({
     queryKey: ['whitelabel-domain', domain.id],
@@ -435,7 +499,7 @@ function FichaDominio({
   const comprobar = useMutation({
     mutationFn: () => api.post<{ domain: ClientDomain }>(`/api/whitelabel/domains/${domain.id}/verify`),
     onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
+      await invalidar();
       if (data.domain.status === 'active') {
         toast('ok', `${data.domain.hostname} ya funciona con HTTPS.`);
       } else {
@@ -448,6 +512,16 @@ function FichaDominio({
     },
     onError: (err) =>
       toast('error', err instanceof ApiError ? err.message : 'No se ha podido completar la comprobación.'),
+  });
+
+  const usarComoPrincipal = useMutation({
+    mutationFn: () => api.post<{ domain: ClientDomain }>(`/api/whitelabel/domains/${domain.id}/primary`),
+    onSuccess: async () => {
+      await invalidar();
+      toast('ok', `${domain.hostname} es ahora el webmail principal${cliente ? ` de ${cliente}` : ''}.`);
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido cambiar el webmail principal.'),
   });
 
   const cloudflare = useMutation({
@@ -474,7 +548,7 @@ function FichaDominio({
     mutationFn: () => api.delete(`/api/whitelabel/domains/${domain.id}`),
     onSuccess: async () => {
       setConfirmar(false);
-      await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
+      await invalidar();
       toast('ok', `Se ha eliminado ${domain.hostname}.`);
     },
     onError: (err) =>
@@ -490,7 +564,12 @@ function FichaDominio({
       <div className="regla-cabecera mb-3 flex flex-col gap-3 pb-3 sm:flex-row sm:items-baseline sm:justify-between">
         <div className="min-w-0">
           <span className="valor block break-all text-md text-tinta">{domain.hostname}</span>
-          {cliente && <span className="text-sm text-tinta-3">{cliente}</span>}
+          {cliente && <span className="block text-sm text-tinta-3">{cliente}</span>}
+          {principal && (
+            <span className="mt-1 block text-sm text-tinta-2">
+              {domain.isPrimary ? 'Webmail principal' : 'Webmail principal: el primero que entró en servicio'}
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <MarcaFondo veredicto={meta.veredicto}>{meta.etiqueta}</MarcaFondo>
@@ -499,11 +578,20 @@ function FichaDominio({
               Configurar en Cloudflare
             </Button>
           )}
-          {domain.status !== 'active' && (
-            <Button variant="perfil" busy={comprobar.isPending} onClick={() => comprobar.mutate()}>
-              Comprobar
+          {domain.kind === 'webmail' && domain.status === 'active' && !principal && (
+            <Button
+              variant="perfil"
+              busy={usarComoPrincipal.isPending}
+              onClick={() => usarComoPrincipal.mutate()}
+            >
+              Usar como principal
             </Button>
           )}
+          {/* También en servicio: la comprobación confirma que el webmail sigue
+              respondiendo por HTTPS (un 404 o un 5xx indican que la ruta falla). */}
+          <Button variant="perfil" busy={comprobar.isPending} onClick={() => comprobar.mutate()}>
+            Comprobar
+          </Button>
           <Button variant="plano" onClick={() => setConfirmar(true)}>
             Eliminar
           </Button>
@@ -552,6 +640,8 @@ function FichaDominio({
           <p className="text-base text-tinta-2">
             Se eliminará <span className="valor break-all">{domain.hostname}</span>. El webmail dejará de
             responder en esa dirección en unos segundos; los buzones y el correo no se ven afectados.
+            {principal &&
+              ' Es el webmail principal: los accesos pasarán al siguiente dominio en servicio o, si no hay ninguno, a la dirección general del webmail.'}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="plano" onClick={() => setConfirmar(false)}>

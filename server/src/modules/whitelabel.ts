@@ -15,7 +15,7 @@ import {
   routedAutoconfigHosts,
   runningUnderSkyway,
 } from './autoconfig';
-import { instanceAutoconfigBase, publicBaseUrl } from './connection';
+import { instanceAutoconfigBase, publicBaseUrl, webmailUrlForClient } from './connection';
 import { getInstanceSettings, getSetting, setSetting } from './settings';
 
 export type DomainKind = 'webmail' | 'panel';
@@ -31,6 +31,7 @@ export interface ClientDomain {
   lastCheckedAt: number | null;
   activatedAt: number | null;
   createdAt: number;
+  isPrimary: boolean;
 }
 
 interface DomainRow {
@@ -43,6 +44,7 @@ interface DomainRow {
   last_checked_at: number | null;
   activated_at: number | null;
   created_at: number;
+  is_primary: number;
 }
 
 function toDomain(row: DomainRow): ClientDomain {
@@ -56,6 +58,7 @@ function toDomain(row: DomainRow): ClientDomain {
     lastCheckedAt: row.last_checked_at,
     activatedAt: row.activated_at,
     createdAt: row.created_at,
+    isPrimary: row.is_primary === 1,
   };
 }
 
@@ -74,6 +77,29 @@ export function listClientDomains(clientId?: string): ClientDomain[] {
         .all(clientId) as DomainRow[])
     : (db.prepare('SELECT * FROM client_domains ORDER BY created_at DESC').all() as DomainRow[]);
   return rows.map(toDomain);
+}
+
+/**
+ * Un único destino para todos los accesos del cliente, nunca el de otro
+ * cliente. La consulta vive en connection.ts (webmailPropio) para que el
+ * inicio, los datos de conexión, la autoconfiguración y el portal digan lo
+ * mismo.
+ */
+export function getClientWebmailUrl(clientId: string): string {
+  return webmailUrlForClient(clientId);
+}
+
+export function setPrimaryWebmail(id: string): ClientDomain {
+  const domain = getClientDomain(id);
+  if (domain.kind !== 'webmail' || domain.status !== 'active') {
+    throw badRequest('Compruebe primero que este dominio de webmail funciona con HTTPS.', 'webmail_not_active');
+  }
+  db.transaction(() => {
+    db.prepare("UPDATE client_domains SET is_primary = 0 WHERE client_id = ? AND kind = 'webmail'")
+      .run(domain.clientId);
+    db.prepare('UPDATE client_domains SET is_primary = 1 WHERE id = ?').run(id);
+  })();
+  return getClientDomain(id);
 }
 
 const HOSTNAME_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
@@ -316,7 +342,7 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
  * una petición HTTPS real: si el certificado aún no está emitido, falla el
  * handshake y sabemos que sigue en proceso.
  */
-async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: string }> {
+export async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: string }> {
   if (dnsOffline()) return { ok: false, detail: 'Comprobación HTTPS desactivada (modo sin red).' };
   try {
     const res = await fetch(`https://${hostname}/`, {
@@ -324,9 +350,14 @@ async function checkHttps(hostname: string): Promise<{ ok: boolean; detail: stri
       redirect: 'manual',
       signal: AbortSignal.timeout(8000),
     });
+    if (res.status >= 200 && res.status < 400) {
+      return { ok: true, detail: `HTTPS responde correctamente (HTTP ${res.status}).` };
+    }
     return {
-      ok: true,
-      detail: `Certificado válido y sirviendo (HTTP ${res.status}).`,
+      ok: false,
+      detail: res.status === 404
+        ? 'HTTPS responde con 404. Revise la ruta de este dominio en Skyway y la conexión de Traefik con Mailway en Ajustes.'
+        : `HTTPS responde con HTTP ${res.status}. Revise el servicio y su destino en Skyway.`,
     };
   } catch (err) {
     const message = (err as Error).message || '';
@@ -564,7 +595,9 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
       reply.status(401);
       return { error: 'Token no válido.' };
     }
-    return buildTraefikConfig();
+    const dynamicConfig = buildTraefikConfig();
+    setSetting('traefik_last_poll', String(now()));
+    return dynamicConfig;
   });
 
   /** Datos que necesita el administrador para conectar Traefik con Mailway. */
@@ -597,6 +630,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
           'configuración válida. Basta con conectar Mailway en Skyway, en Ajustes → Correo (Mailway), con un ' +
           'token de gestión; Skyway obtiene el token de Traefik por sí mismo.',
       },
+      lastPollAt: Number(getSetting('traefik_last_poll')) || null,
       publishedDomains: (
         db
           .prepare(`SELECT COUNT(*) AS c FROM client_domains WHERE status IN ('issuing','active')`)
@@ -673,6 +707,14 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const domain = await refreshClientDomain(id);
     audit(req, 'whitelabel.domain_verified', { id, status: domain.status }, domain.clientId);
     return { domain, instructions: dnsInstructions(domain.hostname) };
+  });
+
+  app.post('/api/whitelabel/domains/:id/primary', async (req) => {
+    const { id } = req.params as { id: string };
+    requireDomainAccess(req, id);
+    const domain = setPrimaryWebmail(id);
+    audit(req, 'whitelabel.primary_changed', { id, hostname: domain.hostname }, domain.clientId);
+    return { domain };
   });
 
   app.delete('/api/whitelabel/domains/:id', async (req) => {

@@ -282,14 +282,14 @@ export default function DominioDetalle() {
 
       <div className="flex flex-col gap-4">
         {checks.length === 0 ? (
-          <Hoja title="Sin lectura del DNS">
+          <Hoja title="DNS sin comprobar">
             <p className="max-w-[75ch] text-base text-tinta-2">
-              Todavía no hay lectura del DNS. Pulse «Medir el DNS ahora» para obtener los registros
-              que es necesario crear.
+              Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
+              que debes crear.
             </p>
           </Hoja>
         ) : (
-          <Hoja title="Resumen de la medición" meta={formatDate(record.lastCheckedAt)}>
+          <Hoja title="Resumen de la comprobación" meta={formatDate(record.lastCheckedAt)}>
             <CabeceraMedidas />
             <Medida
               concepto="Registros obligatorios en rango"

@@ -43,8 +43,9 @@ function destinoTrasEntrar(search: string, state: unknown, enlaceDeArranque: str
 }
 
 /**
- * Portada del parte: la mesa clara y, encima, la hoja con su membrete.
- * Sin fondos decorativos: aquí solo se identifica el laboratorio y se entra.
+ * Portada de acceso. En escritorio, el campo de identidad con la ilustración
+ * del servidor de correo a la izquierda; la hoja de acceso, a la derecha. En
+ * el móvil solo queda la hoja, con la marca en su cabecera.
  */
 export default function Login({
   brand,
@@ -70,7 +71,7 @@ export default function Login({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
-      setError('Indique el correo electrónico y la contraseña.');
+      setError('Indica el correo electrónico y la contraseña.');
       return;
     }
     setBusy(true);
@@ -102,85 +103,122 @@ export default function Login({
           ? TEXTO_CREDENCIALES_INCORRECTAS
           : err instanceof ApiError
             ? err.message
-            : 'No se ha podido iniciar sesión. Compruebe la conexión e inténtelo de nuevo.',
+            : 'No se ha podido iniciar sesión. Comprueba la conexión y vuelve a intentarlo.',
       );
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-mesa px-4 py-10">
-      <main className="w-full max-w-[25rem] animate-aparecer">
-        <section className="border border-regla bg-hoja">
-          {/* Membrete de la hoja: quién firma el parte. */}
-          <header className="border-b-2 border-b-[rgb(var(--laboratorio))] px-5 py-4">
-            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-              <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio" aria-hidden>
-                <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-              <span className="min-w-0 break-words font-estrecha text-lg font-semibold uppercase tracking-[0.14em] text-tinta">
-                {brand}
-              </span>
-            </div>
-          </header>
-
-          <form onSubmit={submit} noValidate className="flex flex-col gap-4 px-5 py-5">
-            <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">
-              Acceso al panel
-            </h1>
-            {trasSalir && (
-              <p role="status" className="text-sm text-tinta-2">
-                Ha cerrado la sesión.
-              </p>
-            )}
-            <Input
-              label="Correo electrónico"
-              type="email"
-              autoComplete="username"
-              autoFocus
-              value={email}
-              onChange={(e) => {
-                setError('');
-                setEmail(e.target.value);
-              }}
-              placeholder="nombre@empresa.com"
-            />
-            <Input
-              label="Contraseña"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => {
-                setError('');
-                setPassword(e.target.value);
-              }}
-              placeholder="••••••••••"
-            />
-            {error && <AvisoError>{error}</AvisoError>}
-            <Button type="submit" variant="tinta" busy={busy} className="w-full">
-              Iniciar sesión
-            </Button>
-          </form>
-        </section>
-
-        <div className="mt-3 flex flex-col gap-1.5 text-center text-sm text-tinta-3">
-          <p>
-            ¿Es titular de un buzón?{' '}
-            <Link
-              to="/mi-buzon"
-              className="text-laboratorio underline underline-offset-2 hover:text-tinta"
-            >
-              Acceda a «Mi buzón»
-            </Link>{' '}
-            para configurar sus dispositivos o cambiar la contraseña.
-          </p>
-          <p>
-            ¿No tiene acceso o ha olvidado la contraseña? Solicítelo al administrador de su
-            proveedor de correo.
-          </p>
+    <div className="grid min-h-screen bg-mesa lg:grid-cols-[1.05fr_0.95fr]">
+      <aside className="sidebar-lab relative hidden overflow-hidden p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
+        <div className="membrete-panel absolute inset-0 opacity-70" aria-hidden />
+        <div className="relative flex items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-laboratorio">
+            <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden>
+              <path
+                d="M4 7.5 12 13l8-5.5M5 6h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="min-w-0 break-words text-xl font-semibold">{brand}</span>
         </div>
-      </main>
+        <div className="relative max-w-xl">
+          <p className="text-sm font-medium text-laboratorio-vivo">Todo tu correo, en un solo lugar</p>
+          {/* Lema, no encabezado: el título de la página es el <h1> del formulario. */}
+          <p className="mt-4 text-4xl font-semibold leading-[1.08] tracking-[-0.035em] xl:text-5xl">
+            Gestiona dominios, buzones y entregas sin complicaciones.
+          </p>
+          <p className="mt-5 max-w-lg text-lg leading-relaxed text-white/65">
+            Una vista clara del estado de tu servicio y los siguientes pasos para mantenerlo funcionando bien.
+          </p>
+          <img
+            src="/mail-server.png"
+            alt=""
+            aria-hidden
+            className="mt-4 h-56 w-full object-contain object-left-bottom xl:h-72"
+          />
+        </div>
+        <p className="relative text-sm text-white/60">Correo profesional, bajo tu control.</p>
+      </aside>
+      <div className="flex items-center justify-center px-4 py-10 sm:px-8">
+        <main className="w-full max-w-[27rem] animate-aparecer">
+          <section className="hoja-panel overflow-hidden rounded-2xl border border-regla bg-hoja">
+            {/* Membrete de la hoja: quién firma el parte. */}
+            <header className="border-b border-regla px-6 py-5 lg:hidden">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio" aria-hidden>
+                  <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
+                </svg>
+                <span className="min-w-0 break-words text-lg font-semibold tracking-[-0.02em] text-tinta">
+                  {brand}
+                </span>
+              </div>
+            </header>
+
+            <form onSubmit={submit} noValidate className="flex flex-col gap-5 px-6 py-7 sm:px-8 sm:py-8">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-[-0.025em] text-tinta">Te damos la bienvenida</h1>
+                <p className="mt-1 text-base text-tinta-2">Accede para gestionar tu servicio de correo.</p>
+              </div>
+              {trasSalir && (
+                <p role="status" className="text-sm text-tinta-2">
+                  Has cerrado la sesión.
+                </p>
+              )}
+              <Input
+                label="Correo electrónico"
+                type="email"
+                autoComplete="username"
+                autoFocus
+                value={email}
+                onChange={(e) => {
+                  setError('');
+                  setEmail(e.target.value);
+                }}
+                placeholder="nombre@empresa.com"
+              />
+              <Input
+                label="Contraseña"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => {
+                  setError('');
+                  setPassword(e.target.value);
+                }}
+                placeholder="••••••••••"
+              />
+              {error && <AvisoError>{error}</AvisoError>}
+              <Button type="submit" variant="tinta" busy={busy} className="w-full">
+                Iniciar sesión
+              </Button>
+            </form>
+          </section>
+
+          <div className="mt-4 flex flex-col gap-1.5 text-center text-sm text-tinta-3">
+            <p>
+              ¿Eres titular de un buzón?{' '}
+              <Link
+                to="/mi-buzon"
+                className="text-laboratorio underline underline-offset-2 hover:text-tinta"
+              >
+                Accede a «Mi buzón»
+              </Link>{' '}
+              para configurar tus dispositivos o cambiar la contraseña.
+            </p>
+            <p>
+              ¿No tienes acceso o has olvidado la contraseña? Ponte en contacto con el administrador de tu
+              proveedor de correo.
+            </p>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

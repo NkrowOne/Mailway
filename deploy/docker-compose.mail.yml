@@ -116,7 +116,7 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       # Clave fija: con la que genera la imagen en cada recreación, las
       # sesiones abiertas y las contraseñas guardadas dejarían de valer.
@@ -135,6 +135,8 @@ services:
       - mailway-webmail-db:/var/roundcube/db
       # El entrypoint de la imagen incluye todo /var/roundcube/config/*.php.
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
+      # Capa visual de Mailway sobre Elastic (solo CSS; ver roundcube/README.md).
+      - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
     networks:
       - mailway-internal
       - skyway-edge

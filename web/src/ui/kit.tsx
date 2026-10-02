@@ -33,12 +33,14 @@ export function Hoja({
   flush?: boolean;
 }) {
   return (
-    <section className={`min-w-0 border border-regla bg-hoja ${className}`}>
+    <section
+      className={`hoja-panel min-w-0 overflow-hidden rounded-xl border border-regla bg-hoja ${className}`}
+    >
       {(title || actions) && (
-        <header className="regla-cabecera flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 px-4 py-3">
+        <header className="regla-cabecera flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 bg-hoja-2/70 px-4 py-3.5">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
             {typeof title === 'string' ? (
-              <h2 className="font-estrecha text-md font-semibold uppercase tracking-[0.06em] text-tinta">
+              <h2 className="text-md font-semibold tracking-[-0.01em] text-tinta">
                 {title}
               </h2>
             ) : (
@@ -59,10 +61,10 @@ export function Hoja({
 export type Veredicto = 'normal' | 'vigilar' | 'fuera' | 'sin-dato';
 
 const veredictoTexto: Record<Veredicto, string> = {
-  normal: 'En rango',
-  vigilar: 'Vigilar',
-  fuera: 'Fuera de rango',
-  'sin-dato': 'Sin dato',
+  normal: 'Correcto',
+  vigilar: 'Revisar',
+  fuera: 'Necesita atención',
+  'sin-dato': 'Sin datos',
 };
 
 const veredictoColor: Record<Veredicto, string> = {
@@ -86,8 +88,8 @@ const veredictoFondo: Record<Veredicto, string> = {
 export function Marca({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap font-estrecha text-micro
-        font-semibold uppercase tracking-[0.08em] ${veredictoColor[veredicto]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium
+        ${veredictoColor[veredicto]}`}
     >
       <GlifoVeredicto veredicto={veredicto} />
       {children ?? veredictoTexto[veredicto]}
@@ -99,8 +101,8 @@ export function Marca({ veredicto, children }: { veredicto: Veredicto; children?
 export function MarcaFondo({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5
-        font-estrecha text-micro font-semibold uppercase tracking-[0.08em]
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1
+        text-sm font-semibold
         ${veredictoFondo[veredicto]}`}
     >
       <GlifoVeredicto veredicto={veredicto} />
@@ -181,7 +183,7 @@ export function Medida({
         {referencia && (
           <span className="valor shrink-0 text-sm text-tinta-3 [@container(min-width:36rem)]:basis-28">
             {/* Plegada, la cabecera de columnas se oculta: la celda lleva su rótulo. */}
-            <span className="rotulo mr-1.5 [@container(min-width:36rem)]:hidden">Referencia</span>
+            <span className="rotulo mr-1.5 [@container(min-width:36rem)]:hidden">Objetivo</span>
             {referencia}
           </span>
         )}
@@ -210,10 +212,10 @@ export function CabeceraMedidas({
   return (
     <div className="[container-type:inline-size]">
       <div className="regla-cabecera hidden flex-wrap items-baseline gap-x-4 gap-y-1 px-3 pb-1.5 [@container(min-width:36rem)]:flex">
-        <span className="rotulo min-w-0 flex-1 basis-40">Concepto</span>
-        <span className="rotulo shrink-0">Valor</span>
-        {referencia && <span className="rotulo shrink-0 basis-28">Referencia</span>}
-        <span className="rotulo shrink-0 basis-32 text-right">Veredicto</span>
+        <span className="rotulo min-w-0 flex-1 basis-40">Indicador</span>
+        <span className="rotulo shrink-0">Estado</span>
+        {referencia && <span className="rotulo shrink-0 basis-28">Objetivo</span>}
+        <span className="rotulo shrink-0 basis-32 text-right">Resultado</span>
       </div>
     </div>
   );
@@ -307,7 +309,7 @@ export function Muestra({
   const valorRef = useRef<HTMLDivElement>(null);
   return (
     <div
-      className={`min-w-0 border border-regla border-t-2 border-t-[rgb(var(--laboratorio))] bg-hoja-2 ${className}`}
+      className={`min-w-0 overflow-hidden rounded-lg border border-regla border-t-2 border-t-[rgb(var(--laboratorio))] bg-hoja-2 ${className}`}
     >
       <div className="flex items-center justify-between gap-3 px-3 pt-2">
         <span className="rotulo">{rotulo}</span>
@@ -431,7 +433,7 @@ export function BotonCopiar({
         ref={botonRef}
         type="button"
         onClick={() => void copiar()}
-        className={`inline-flex h-6 shrink-0 items-center gap-1 border px-1.5 font-estrecha text-micro
+        className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 font-estrecha text-micro
           font-semibold uppercase tracking-[0.08em] transition-colors duration-100 active:translate-y-px
           ${tono}`}
       >
@@ -647,14 +649,18 @@ export function Dialogo({
         }
         pulsadoEnVelo.current = false;
       }}
+      // Esquinas redondeadas sin overflow-hidden: el <dialog> modal desplaza su
+      // propio contenido (overflow: auto del navegador) y el pie fijo depende de
+      // ello; con overflow-hidden un diálogo largo quedaría cortado en el móvil.
       className={`${ancho === 'amplio' ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(520px,calc(100vw-32px))]'}
-        border border-regla-fuerte bg-hoja p-0 text-tinta shadow-flotante
+        rounded-xl border border-regla-fuerte bg-hoja p-0 text-tinta shadow-flotante
         backdrop:bg-[rgb(var(--tinta)/0.45)] open:animate-aparecer`}
     >
       <div className="regla-cabecera flex items-center justify-between gap-3 px-5 py-3">
         <h2
           id={tituloId}
-          className="min-w-0 font-estrecha text-md font-semibold uppercase tracking-[0.06em] [overflow-wrap:anywhere]"
+          // Mismo título que la cabecera de una Hoja.
+          className="min-w-0 text-md font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]"
         >
           {title}
         </h2>
@@ -676,7 +682,7 @@ export function Dialogo({
           aria-describedby={`${tituloId}-detalle`}
           className="flex flex-col gap-4 p-5"
         >
-          <div className="border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
+          <div className="rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
             <p id={`${tituloId}-pregunta`} className="text-base font-semibold text-tinta">
               {confirmarCierre.pregunta}
             </p>
@@ -749,7 +755,7 @@ export function AvisoError({
   return (
     <div
       role="alert"
-      className={`revelar flex flex-wrap items-center gap-x-4 gap-y-2 border border-[rgb(var(--fuera)/0.4)]
+      className={`revelar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-[rgb(var(--fuera)/0.4)]
         bg-fuera-fondo px-3 py-2 text-base text-fuera ${className}`}
     >
       <div className="min-w-0 flex-1 basis-56 [overflow-wrap:anywhere]">{children}</div>
@@ -801,7 +807,7 @@ export function Vacio({
  * con un breve retraso (`.entrada-diferida` en styles.css): una lectura que
  * tarda 80 ms no debe hacer parpadear el instrumento.
  */
-export function Midiendo({ label = 'Midiendo…' }: { label?: string }) {
+export function Midiendo({ label = 'Cargando…' }: { label?: string }) {
   return (
     <div
       className="entrada-diferida flex flex-col items-center gap-3 px-6 py-12"
@@ -826,15 +832,18 @@ export function Membrete({
   title,
   meta,
   actions,
+  illustration,
 }: {
   title: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
+  illustration?: string;
 }) {
   return (
-    <div className="campo-lab mb-5 px-5 py-5 sm:px-6 sm:py-6">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+    <div className="campo-lab membrete-panel mb-5 rounded-xl px-5 py-6 sm:px-7 sm:py-7">
+      <div className={`relative z-10 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 ${illustration ? 'pb-24 sm:pb-0 sm:pr-[32%]' : ''}`}>
         <div className="min-w-0">
+          <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Gestión de correo</p>
           {/* Un dominio largo en el título parte en lugar de desbordar en móvil. */}
           <h1 className="titular text-3xl text-white [overflow-wrap:anywhere] sm:text-4xl">{title}</h1>
           {meta && (
@@ -845,6 +854,7 @@ export function Membrete({
           <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
         )}
       </div>
+      {illustration && <img src={illustration} alt="" aria-hidden className="pointer-events-none absolute -bottom-8 right-0 h-40 w-52 object-contain sm:h-56 sm:w-[30%]" />}
     </div>
   );
 }

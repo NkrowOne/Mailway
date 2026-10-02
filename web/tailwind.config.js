@@ -50,7 +50,8 @@ export default {
         '5xl': ['68px', { lineHeight: '62px' }],
       },
       boxShadow: {
-        // Elevación declarada UNA vez: los diálogos flotan; nada más.
+        suave: 'var(--sombra-suave)',
+        panel: 'var(--sombra-panel)',
         flotante: '0 18px 48px -20px rgb(var(--tinta) / 0.38)',
       },
       keyframes: {

@@ -24,26 +24,38 @@ import { api, ApiError, type Alert, type User } from '../lib/api';
 import { plural } from '../lib/format';
 import { useBloqueoDesplazamiento } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { PanelTools } from './PanelTools';
 
 /** Color del campo de laboratorio (--laboratorio) para la barra del navegador. */
 const COLOR_CAMPO = '#0a3e45';
 
 /**
- * El membrete del índice. El logotipo es la marca de una escala medida:
- * geometría, no una ilustración. Va sobre el mismo campo que la cabecera de página,
- * de modo que la banda oscura recorre todo el borde superior de la aplicación
- * en lugar de aparecer y desaparecer.
+ * El membrete del índice: logotipo y nombre de la instancia sobre el campo
+ * oscuro que ocupa todo el índice. En el cajón móvil lleva además el botón
+ * de cerrar (`accion`).
  */
 function Marca({ brand, accion }: { brand: string; accion?: ReactNode }) {
   return (
-    <div className="campo-lab flex items-center gap-2.5 px-4 py-4">
-      <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio-vivo" aria-hidden>
-        <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-      <span className="min-w-0 flex-1 break-words font-estrecha text-lg font-semibold uppercase tracking-[0.14em] text-white">
-        {brand}
+    <div className="flex items-center gap-3 px-4 py-5">
+      <span
+        aria-hidden
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-laboratorio shadow-sm"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+          <path
+            d="M4 7.5 12 13l8-5.5M5 6h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinejoin="round"
+          />
+        </svg>
       </span>
+      {/* El nombre parte en lugar de recortarse: es lo que identifica la instancia. */}
+      <div className="min-w-0 flex-1">
+        <span className="block break-words text-lg font-semibold tracking-[-0.02em] text-white">{brand}</span>
+        <span className="block text-sm text-white/60">Gestión de correo</span>
+      </div>
       {accion}
     </div>
   );
@@ -68,15 +80,15 @@ function buildNav(user: User): NavGroup[] {
   if (user.role === 'admin') {
     return [
       {
-        section: 'Parte diario',
+        section: 'Vista general',
         items: [
-          { to: '/', label: 'Constantes', icon: <Gauge className={iconClass} />, end: true },
+          { to: '/', label: 'Resumen', icon: <Gauge className={iconClass} />, end: true },
           { to: '/avisos', label: 'Avisos', icon: <BellRing className={iconClass} />, badge: 'alerts' },
           { to: '/entregabilidad', label: 'Entregabilidad', icon: <Radar className={iconClass} /> },
         ],
       },
       {
-        section: 'Registro',
+        section: 'Gestión',
         items: [
           { to: '/clientes', label: 'Clientes', icon: <Building2 className={iconClass} /> },
           { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
@@ -86,7 +98,7 @@ function buildNav(user: User): NavGroup[] {
         ],
       },
       {
-        section: 'Instrumentos',
+        section: 'Configuración',
         items: [
           { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
           { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
@@ -104,7 +116,7 @@ function buildNav(user: User): NavGroup[] {
   }
   return [
     {
-      section: 'Su correo',
+      section: 'Tu correo',
       items: [
         { to: '/', label: 'Resumen', icon: <Gauge className={iconClass} />, end: true },
         { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
@@ -303,7 +315,7 @@ export function AppShell({
 
   function indice(enCajon: boolean) {
     return (
-      <div className="flex h-full flex-col bg-hoja">
+      <div className="sidebar-lab flex h-full flex-col text-white">
         <Marca
           brand={brand}
           accion={
@@ -315,18 +327,20 @@ export function AppShell({
                   setOpen(false);
                 }}
                 aria-label="Cerrar menú"
-                className="flex h-8 w-8 shrink-0 items-center justify-center border border-white/30 text-white hover:bg-white/10"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 text-white hover:bg-white/10"
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>
             ) : undefined
           }
         />
-        <nav aria-label="Navegación principal" className="flex-1 overflow-y-auto px-2 py-3">
+        <nav aria-label="Navegación principal" className="flex-1 overflow-y-auto px-3 pb-5 pt-2">
           {nav.map((group) => (
             <div key={group.section} className="mt-4 first:mt-0">
-              <p className="rotulo px-2 pb-1.5">{group.section}</p>
-              <ul className="flex flex-col">
+              <p className="px-3 pb-2 font-estrecha text-micro font-semibold uppercase tracking-[0.12em] text-white/60">
+                {group.section}
+              </p>
+              <ul className="flex flex-col gap-1">
                 {group.items.map((item) => (
                   <li key={item.to}>
                     <NavLink
@@ -334,16 +348,16 @@ export function AppShell({
                       end={item.end}
                       onClick={() => setOpen(false)}
                       className={({ isActive }) =>
-                        `flex items-center gap-2.5 px-2 py-1.5 text-base transition-colors duration-100 ${
+                        `flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-base transition duration-150 ${
                           isActive
-                            ? 'bg-laboratorio-claro font-semibold text-laboratorio'
-                            : 'text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
+                            ? 'bg-white font-semibold text-laboratorio shadow-sm'
+                            : 'text-white/75 hover:bg-white/10 hover:text-white'
                         }`
                       }
                     >
                       {({ isActive }) => (
                         <>
-                          <span aria-hidden className={isActive ? 'text-laboratorio' : 'text-tinta-3'}>
+                          <span aria-hidden className={isActive ? 'text-laboratorio' : 'text-white/50'}>
                             {item.icon}
                           </span>
                           {item.label}
@@ -351,7 +365,7 @@ export function AppShell({
                             <>
                               <span
                                 aria-hidden
-                                className="valor ml-auto bg-fuera-fondo px-1.5 text-sm font-semibold text-fuera"
+                                className="valor ml-auto rounded-full bg-fuera px-2 py-0.5 text-sm font-semibold text-white"
                               >
                                 {avisosAbiertos}
                               </span>
@@ -370,19 +384,19 @@ export function AppShell({
           ))}
         </nav>
 
-        <div className="flex items-center gap-2.5 border-t border-regla px-3 py-2.5">
+        <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3.5">
           <span
             aria-hidden
-            className="flex h-7 w-7 shrink-0 items-center justify-center bg-laboratorio font-estrecha
-              text-micro font-semibold uppercase tracking-wider text-hoja"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15
+              text-sm font-semibold uppercase tracking-wider text-white"
           >
             {iniciales(user.name || user.email)}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-tinta" title={user.email}>
+            <p className="truncate text-sm font-medium text-white" title={user.email}>
               {user.name || user.email}
             </p>
-            <p className="rotulo">{esAdmin ? 'Administrador' : 'Cliente'}</p>
+            <p className="text-sm text-white/60">{esAdmin ? 'Administrador' : 'Cliente'}</p>
           </div>
           <button
             type="button"
@@ -390,7 +404,7 @@ export function AppShell({
             disabled={saliendo}
             aria-label="Cerrar sesión"
             title="Cerrar sesión"
-            className="flex h-7 w-7 shrink-0 items-center justify-center text-tinta-3 hover:bg-hoja-3 hover:text-tinta disabled:opacity-35"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35"
           >
             <LogOut className="h-4 w-4" aria-hidden />
           </button>
@@ -414,7 +428,7 @@ export function AppShell({
       </a>
 
       {/* Índice del informe: fijo en escritorio. */}
-      <aside className="hidden w-56 shrink-0 border-r border-regla lg:block">
+      <aside className="hidden w-64 shrink-0 lg:block">
         <div className="sticky top-0 h-screen">{indice(false)}</div>
       </aside>
 
@@ -434,7 +448,7 @@ export function AppShell({
             role="dialog"
             aria-modal="true"
             aria-label="Menú de navegación"
-            className="cajon-entrada absolute inset-y-0 left-0 w-64 max-w-[85vw] border-r border-regla-fuerte shadow-flotante"
+            className="cajon-entrada absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-flotante"
           >
             {indice(true)}
           </div>
@@ -442,7 +456,7 @@ export function AppShell({
       )}
 
       <div ref={contenidoRef} className="flex min-w-0 flex-1 flex-col">
-        <header className="campo-lab flex items-center gap-3 px-4 py-2.5 lg:hidden">
+        <header className="sidebar-lab flex items-center gap-3 px-4 py-3 lg:hidden">
           <button
             ref={menuRef}
             type="button"
@@ -450,37 +464,31 @@ export function AppShell({
             aria-label="Abrir menú"
             aria-expanded={open}
             aria-haspopup="dialog"
-            className="flex h-8 w-8 shrink-0 items-center justify-center border border-white/30 text-white
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 text-white
               hover:bg-white/10"
           >
             <Menu className="h-4 w-4" aria-hidden />
           </button>
-          <span className="min-w-0 truncate font-estrecha text-md font-semibold uppercase tracking-[0.12em] text-white">
+          <span className="min-w-0 truncate text-md font-semibold text-white">
             {brand}
           </span>
         </header>
 
-        <main
-          ref={mainRef}
-          id="contenido"
-          tabIndex={-1}
-          className="min-w-0 flex-1 px-4 pb-5 pt-0 focus:outline-none sm:px-6 sm:pb-7 lg:pt-7"
-        >
-          {/* La clave remonta la vista con un fundido corto: la página nueva
-              entra sin saltos en lugar de sustituir a la anterior de golpe.
-              Por debajo de lg, el membrete de la vista continúa la barra
-              móvil a sangre (Regla de la Banda Continua): sin mesa entre las
-              dos regiones de identidad. Lo que no es un membrete conserva
-              su aire superior. */}
-          <div
-            key={location.pathname}
-            className="vista-entrada mx-auto max-w-6xl
-              [&>.campo-lab:first-child]:-mx-4 sm:[&>.campo-lab:first-child]:-mx-6 lg:[&>.campo-lab:first-child]:mx-0
-              [&>:first-child:not(.campo-lab)]:mt-5 sm:[&>:first-child:not(.campo-lab)]:mt-7 lg:[&>:first-child:not(.campo-lab)]:mt-0"
-          >
-            {children}
+        <div className="min-w-0 flex-1 px-4 py-5 sm:px-7 sm:py-8 xl:px-10">
+          <div className="mx-auto max-w-7xl">
+            {/* Búsqueda y ayuda fuera de <main>: no se repiten al cambiar de
+                vista, y el foco y «Ir al contenido» van directos a la página. */}
+            <PanelTools user={user} />
+            <main ref={mainRef} id="contenido" tabIndex={-1} className="min-w-0 focus:outline-none">
+              {/* La clave remonta la vista con un fundido corto: la página
+                  nueva entra sin saltos en lugar de sustituir a la anterior
+                  de golpe. */}
+              <div key={location.pathname} className="vista-entrada">
+                {children}
+              </div>
+            </main>
           </div>
-        </main>
+        </div>
       </div>
     </div>
   );

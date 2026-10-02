@@ -91,7 +91,7 @@ function PanelApp() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Midiendo label="Cargando…" />
+        <Midiendo label="Preparando tu panel…" />
       </div>
     );
   }
@@ -175,7 +175,7 @@ function PanelApp() {
             <Route path="/dominios/:id" element={<DominioDetalle />} />
             <Route path="/buzones" element={<Buzones />} />
             <Route path="/alias" element={<Alias />} />
-            <Route path="/marca-blanca" element={<MarcaBlanca />} />
+            <Route path="/marca-blanca" element={<MarcaBlanca isAdmin={isAdmin} />} />
             <Route path="/api-envio" element={<ApiKeys user={user} />} />
             <Route path="/actividad" element={<Actividad />} />
             <Route path="/cuenta" element={<Cuenta />} />

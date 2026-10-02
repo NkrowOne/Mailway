@@ -138,7 +138,7 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Defina ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
       MAILWAY_BRAND: ${MAILWAY_BRAND:-Webmail}
@@ -151,6 +151,8 @@ services:
     volumes:
       - mailway-webmail-db:/var/roundcube/db
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
+      # Capa visual de Mailway sobre Elastic (solo CSS; ver roundcube/README.md).
+      - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
     networks:
       - mailway-internal
       - mailway-edge
