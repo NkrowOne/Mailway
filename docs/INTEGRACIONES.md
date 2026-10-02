@@ -690,7 +690,15 @@ Reglas:
 
 Estados: **Esperando DNS** (`pending_dns`) → **Emitiendo certificado**
 (`issuing`) → **En servicio** (`active`), o `error`. Solo se publican en
-Traefik los dominios cuyo DNS ya apunta aquí.
+Traefik los dominios cuyo DNS ya apunta aquí, y un dominio solo pasa a «En
+servicio» cuando responde por HTTPS con un certificado válido y un código 2xx
+o 3xx (un 404 o un 5xx indican que la ruta o su destino aún no están bien).
+
+**Webmail principal**: si un cliente tiene varios dominios de webmail en
+servicio, el marcado como principal (`isPrimary`) es el que usan su inicio,
+los datos de conexión de sus buzones, los enlaces de configuración y la
+autoconfiguración. Sin elección expresa se usa el primero que entró en
+servicio y, si no hay ninguno, la URL general del webmail de la instancia.
 
 | Método y ruta | Descripción |
 |---|---|
@@ -698,6 +706,7 @@ Traefik los dominios cuyo DNS ya apunta aquí.
 | `POST /api/whitelabel/domains` | `{ hostname, kind?, clientId? }` → `{ domain, instructions }` (CNAME recomendado hacia el servidor de correo o A hacia la IP). |
 | `GET /api/whitelabel/domains/:id` · `POST …/:id/verify` · `DELETE …/:id` | Ficha, comprobación y baja. |
 | `POST /api/whitelabel/domains/:id/cloudflare` | Crea el registro en Cloudflare (sección 4). |
+| `POST /api/whitelabel/domains/:id/primary` | Marca el dominio como webmail principal de su cliente → `{ domain }` (`400 webmail_not_active` si no es de tipo `webmail` o no está en servicio). |
 
 ### 7.2 Configuración para Traefik
 
@@ -708,7 +717,8 @@ redirige a HTTPS), los servicios `mailway-webmail` y `mailway-panel` y el
 *middleware* `mailway-https`. Los routers de autoconfiguración se llaman
 `mailway-autoconfig-<id>`, `mailway-autodiscover-<id>` y `mailway-mtasts-<id>`
 (`…-instancia` para los de la instancia). El token es `MAILWAY_TRAEFIK_TOKEN`
-o, si no se define, uno generado y guardado.
+o, si no se define, uno generado y guardado. Cada consulta autenticada queda
+anotada (`lastPollAt` en la sección 7.3).
 
 ### 7.3 Ajustes → Rutas de Traefik
 
@@ -716,7 +726,10 @@ o, si no se define, uno generado y guardado.
 certResolver, webmailBackend, panelBackend, panelDomainsAvailable, panelUrl,
 underSkyway, providerEndpoint, overrideSnippet, autoconfig: { routingAvailable,
 routedHosts }, skywayBridge: { minVersion: "0.34.0", endpoint, note },
-publishedDomains }`.
+lastPollAt, publishedDomains }`. `lastPollAt` es la hora (en milisegundos) de
+la última consulta autenticada de Traefik o del puente de Skyway, o `null` si
+aún no ha llegado ninguna: si lleva más de 90 segundos sin llegar, Traefik no
+está leyendo las rutas.
 
 - Con **Skyway 0.34 o posterior** no hay que instalar nada (sección 3.3).
 - Con Skyway anterior o un Traefik propio, `overrideSnippet` es el
