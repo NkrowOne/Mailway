@@ -3,3 +3,6 @@
 .env
 .env.*
 !.env.example
+
+# Caché de Python que dejan las pruebas del extractor (deploy/tls).
+__pycache__/

@@ -207,7 +207,9 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
   Stalwart.
 - **TLS**: IMAP y SMTP con certificado de Let's Encrypt (ACME del motor o
-  volcado de Traefik). El vigilante avisa si caduca, es autofirmado o no
+  certificado de Traefik copiado por el extractor del perfil `tls`, que solo
+  lleva al volumen del motor el par del servidor de correo, nunca las claves
+  de otros dominios). El vigilante avisa si caduca, es autofirmado o no
   corresponde al nombre. La API de envío verifica el certificado del SMTP
   interno contra el nombre público; `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` solo
   debe usarse mientras no hay certificado.

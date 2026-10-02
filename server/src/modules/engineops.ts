@@ -255,8 +255,8 @@ const ALERT_CRITICAL = 'engine_tls_critical';
 
 const TLS_REMEDY =
   'En Ajustes → Servidor de correo puedes emitir un certificado de Let’s Encrypt mediante Cloudflare ' +
-  'o recargar el certificado actual. Si el certificado lo vuelca Traefik (perfil tls del compose), ' +
-  'revisa «docker logs mailway-certs-dumper».';
+  'o recargar el certificado actual. Si el certificado lo copia el extractor desde Traefik (perfil tls ' +
+  'del compose), revisa «docker logs mailway-certs-dumper» o ejecuta «sudo bash deploy/instalar.sh --comprobar».';
 
 /**
  * Traduce el estado del certificado a avisos. Separado de la comprobación

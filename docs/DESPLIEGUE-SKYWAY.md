@@ -142,8 +142,10 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 10. **Ajustes del motor**: fija `server.hostname`, `http.use-x-forwarded` y
     la exención de la red interna (los mismos ajustes que «Aplicar ajustes
     recomendados» del panel) y configura el certificado: con Cloudflare, ACME
-    del propio motor por DNS-01 (sección 5.1); sin Cloudflare, el volcado del
-    certificado de Traefik (sección 5.2).
+    del propio motor por DNS-01 (sección 5.1); sin Cloudflare, el certificado
+    de Traefik, que lleva al motor el extractor del perfil `tls` (sección
+    5.2). Espera a que el extractor confirme el certificado servido en 993 y
+    465.
 11. **Panel en Skyway** (si hay token): crea (o reutiliza) el proyecto
     `mailway` y su servicio `panel` desde GitHub, con puerto 4100, dominio,
     volumen `/data`, comprobación `/api/health` y todas las variables, sin
@@ -162,7 +164,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     (sección 4.3).
 13. **Resumen**: dirección de la puesta en marcha con su token (el único
     secreto que se muestra en pantalla), estado del DNS, del PTR, del puerto
-    25 y del certificado, y el comando de copia de seguridad del correo.
+    25 y del certificado, el comando de copia de seguridad del correo y los
+    de diagnóstico (sección 13.1).
 
 ### 2.4 Opciones
 
@@ -171,6 +174,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | `--sin-skyway` | Instalación autónoma con `docker-compose.standalone.yml`: panel, motor y webmail, y un Traefik propio en 80/443 si esos puertos están libres (sección 7). |
 | `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean a mano. |
 | `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecuta antes `git pull`. |
+| `--comprobar` | Diagnóstico de solo lectura: contenedores, ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail y estado del extractor (sección 13.1). Termina con código 1 si algo falla. |
+| `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, e inicia sesión desde el webmail con un único intento (sección 13.1). |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
 ### 2.5 Ejecución desatendida
@@ -196,6 +201,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_INTERNAL_SUBNET`, `MAILWAY_MAIL_INTERNAL_IP` | Red interna (por defecto `10.203.53.0/24` y `10.203.53.10`). |
 | `MAILWAY_ESPERA_DNS` | Segundos máximos de espera a la propagación del DNS (por defecto 300). |
 | `MAILWAY_ENV_FILE` | Ruta alternativa del fichero de configuración (por defecto `deploy/.env`). |
+| `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
 
 Ejemplo:
 
@@ -337,11 +343,52 @@ La emisión tarda unos minutos. **Ajustes → Servidor de correo** muestra el
 emisor y los días de validez; el botón de recarga (`POST
 /api/engine/reload-certificate`) hace que el motor use el certificado nuevo.
 
-### 5.2 Alternativa: volcar el certificado de Traefik
+### 5.2 Alternativa: el certificado de Traefik, con el extractor
 
 Traefik ya obtiene un certificado para `mail.<dominio>` (la web del motor va
-por Traefik). El servicio `certs-dumper` (perfil `tls`) lo vuelca a ficheros
-PEM que lee el motor. El instalador lo usa cuando no hay token de Cloudflare.
+por Traefik). El **extractor del certificado** lo lleva al motor: es el
+servicio `certs-dumper` del perfil `tls` (contenedor `mailway-certs-dumper`,
+código en `deploy/tls/extractor.py`). El instalador lo usa cuando no hay token
+de Cloudflare. Cada 30 segundos:
+
+1. Lee el `acme.json` de Traefik **en solo lectura**.
+2. Elige para `MAIL_HOSTNAME` el certificado exacto o comodín que caduca más
+   tarde. El par que ya está en uso también compite: nunca lo cambia por otro
+   que caduca antes.
+3. Lo valida antes de escribir nada: vigente, válido para `MAIL_HOSTNAME` y
+   con la clave privada que corresponde al certificado.
+4. Escribe **solo ese par**, de forma atómica, donde lo lee
+   `certificate.mailway`: `/opt/stalwart/certs/<MAIL_HOSTNAME>/cert.pem` y
+   `key.pem`. Esa ruta es un enlace a una versión inmutable dentro de
+   `.mailway-tls/`, así que el motor nunca ve el certificado de un par y la
+   clave de otro.
+5. Si el par cambió, pide al motor `GET /api/reload/certificate` y comprueba
+   el certificado que sirve en 993 y 465 (cadena, nombre y huella). Si no es
+   el nuevo, vuelve al anterior; el renovado no se reintenta hasta pasadas 6
+   horas. Con todo en orden, repite la comprobación cada 10 minutos.
+
+Si el motor obtiene su propio certificado por ACME (sección 5.1), el extractor
+no hace nada. Si además conserva `certificate.mailway`, mantiene esos ficheros
+al día sin recargar el motor, porque el motor los vuelve a cargar en cada
+recarga de certificados.
+
+> **Seguridad.** Hasta ahora el perfil `tls` usaba `traefik-certs-dumper`,
+> que copiaba al volumen del motor las claves privadas de **todos** los
+> dominios de Traefik, también las de las demás webs de Skyway. El extractor
+> no decodifica siquiera las entradas de otros dominios y, al arrancar,
+> retira del volumen esas copias; la carpeta que dejaba el volcado para
+> `MAIL_HOSTNAME` pasa a ser una versión propia, con las mismas rutas.
+> `deploy/instalar.sh --actualizar` hace el cambio sin tocar la configuración
+> del motor.
+
+Para recargar los certificados usa la contraseña **vigente** del
+administrador del motor (`STALWART_ADMIN_PASSWORD` de `deploy/.env`). Si el
+motor la rechaza (401) o el usuario no tiene permiso (403), no reintenta hasta
+pasada una hora y lo explica en su registro: cada contraseña incorrecta
+cuenta para el bloqueo automático del motor. Corre solo en
+`mailway-internal`, la red exenta de ese bloqueo, sin capacidades del núcleo y
+con el sistema de ficheros en solo lectura. Nunca registra secretos.
+
 A mano:
 
 ```bash
@@ -350,29 +397,46 @@ cd /ruta/a/Mailway
 docker volume ls | grep letsencrypt
 #    Si no es skyway_traefik-letsencrypt, ajusta TRAEFIK_ACME_VOLUME en deploy/.env.
 
-# 2) Arrancar el volcado:
+# 2) Arrancar el extractor:
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d certs-dumper
-docker exec mailway-mail ls /opt/stalwart/certs/     # debe listar mail.miempresa.com/
+docker exec mailway-mail ls -l /opt/stalwart/certs/   # mail.miempresa.com -> .mailway-tls/…
 
-# 3) Indicar al motor que use esos ficheros y recargar los certificados.
-#    El puerto 8080 del motor no está publicado: se usa un contenedor efímero
-#    en la red interna. Sustituye mail.miempresa.com por el nombre de tu
-#    servidor.
+# 3) Indicar al motor (una sola vez) que use esos ficheros. El puerto 8080 del
+#    motor no está publicado: se usa un contenedor efímero en la red interna.
+#    Sustituye mail.miempresa.com por el nombre de tu servidor.
 read -rsp 'Contraseña del motor (STALWART_ADMIN_PASSWORD): ' PASS; echo
 docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
   -X POST http://mailway-mail:8080/api/settings -H 'Content-Type: application/json' \
   -d '[{"type":"insert","prefix":null,"assert_empty":false,"values":[
         ["certificate.mailway.cert","%{file:/opt/stalwart/certs/mail.miempresa.com/cert.pem}%"],
         ["certificate.mailway.private-key","%{file:/opt/stalwart/certs/mail.miempresa.com/key.pem}%"],
-        ["certificate.mailway.default","true"]]}]'
+        ["certificate.mailway.default","true"],
+        ["certificate.mailway.subjects.0","mail.miempresa.com"]]}]'
 docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
   http://mailway-mail:8080/api/reload/certificate
 unset PASS
+
+# 4) Estado: en el minuto siguiente debe confirmar el certificado servido.
+docker exec mailway-certs-dumper python /app/extractor.py estado
 ```
 
 El campo `assert_empty` es obligatorio en la API de ajustes de Stalwart 0.15:
-sin él, la petición falla. Stalwart no relee el fichero por sí solo tras una
-renovación; el vigilante del panel recarga los certificados a diario.
+sin él, la petición falla. `certificate.mailway.subjects.0` hace que el motor
+sustituya el certificado al recargar aunque el nuevo sea un comodín; sin él,
+conservaría en memoria el exacto anterior hasta reiniciarse. El instalador lo
+añade también a las instalaciones existentes.
+
+El registro del extractor (`docker logs mailway-certs-dumper`) explica cada
+cambio y cada problema en una línea, sin repetirla. Sus tiempos se pueden
+ajustar con variables de entorno (por ejemplo, en un fichero de
+`MAILWAY_COMPOSE_EXTRA`):
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `MAILWAY_TLS_INTERVALO` | `30` | Segundos entre lecturas de `acme.json`. |
+| `MAILWAY_TLS_COMPROBACION` | `600` | Segundos entre comprobaciones completas cuando todo está en orden. |
+| `MAILWAY_TLS_ESPERA_AUTH` | `3600` | Espera tras un 401 o 403 del motor antes de volver a intentarlo. |
+| `MAILWAY_TLS_ESPERA_RECHAZO` | `21600` | Espera antes de reintentar un certificado que el motor no llegó a servir. |
 
 ### 5.3 Comprobar
 
@@ -381,10 +445,15 @@ openssl s_client -connect mail.miempresa.com:993 -servername mail.miempresa.com 
   | openssl x509 -noout -issuer -enddate
 ```
 
-Debe indicar Let's Encrypt. El vigilante comprueba el certificado a diario y
-abre un aviso (`engine_tls`) si quedan menos de 20 días, si quedan menos de 7
-(crítico), si ha caducado, si es autofirmado, si no corresponde al nombre del
-servidor o si la cadena no es de confianza.
+Debe indicar Let's Encrypt. Desde el propio servidor, `sudo bash
+deploy/instalar.sh --comprobar` verifica el certificado de 993 y 465 desde el
+webmail, con el nombre público, sin depender de que el servidor se alcance a
+sí mismo por su IP pública (sección 13.1).
+
+El vigilante comprueba el certificado a diario y abre un aviso (`engine_tls`)
+si quedan menos de 20 días, si quedan menos de 7 (crítico), si ha caducado, si
+es autofirmado, si no corresponde al nombre del servidor o si la cadena no es
+de confianza.
 
 ### 5.4 El SMTP interno de la API de envío
 
@@ -529,8 +598,8 @@ TLS (Caddy, Nginx…). Nunca los publiques en HTTP hacia Internet: por ellos
 viajan contraseñas.
 
 El certificado de IMAP/SMTP se obtiene igual que en la sección 5: ACME del
-motor con Cloudflare desde **Ajustes → Servidor de correo**, o el volcado del
-certificado de `mailway-proxy` con `--profile tls`.
+motor con Cloudflare desde **Ajustes → Servidor de correo**, o el extractor
+del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
 
 ---
 
@@ -549,6 +618,12 @@ certificado de `mailway-proxy` con `--profile tls`.
   deploy/docker-compose.mail.yml pull && docker compose --env-file deploy/.env
   -f deploy/docker-compose.mail.yml up -d`. Los volúmenes no se tocan.
   Stalwart está fijado a `v0.15.5`, así que `pull` nunca salta a la v0.16.
+- **Extractor del certificado** (perfil `tls`): `--actualizar` lo recrea con
+  el código nuevo. A mano: `docker compose --env-file deploy/.env -f
+  deploy/docker-compose.mail.yml --profile tls up -d --force-recreate
+  certs-dumper`. Si la instalación venía de `traefik-certs-dumper`, el
+  extractor lo sustituye con las mismas rutas y retira del volumen del motor
+  las claves de los demás dominios de Traefik (sección 5.2).
 - **Liberar espacio desde Skyway es seguro**: `docker image prune -f` y
   `docker builder prune -f` solo borran imágenes huérfanas y caché de
   compilación, nunca volúmenes ni imágenes en uso.
@@ -702,6 +777,9 @@ puntos y anota la fecha de la prueba:
   la misma IP (FCrDNS).
 - [ ] `openssl s_client` confirma un certificado público vigente en 465 y 993
   (sección 5.3); el autofirmado no se usa fuera de la red interna.
+- [ ] `sudo bash deploy/instalar.sh --comprobar` termina sin incidencias y
+  `--probar-acceso` abre la bandeja de entrada de un buzón de prueba desde el
+  webmail (sección 13.1).
 - [ ] Un dominio piloto muestra MX, SPF, DKIM y DMARC verificados en Mailway.
 - [ ] Se han probado la recepción, el envío SMTP autenticado y `POST /v1/send`
   en ambos sentidos con Gmail u Outlook; no basta con probar dentro del
@@ -752,6 +830,45 @@ comprobar, trata la instalación como preproducción.
   La contraseña debe tener al menos 10 caracteres; se cierran las sesiones de
   ese usuario.
 
+### 13.1 Diagnóstico y prueba de acceso
+
+```bash
+sudo bash deploy/instalar.sh --comprobar       # no cambia nada
+sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
+```
+
+**`--comprobar`** revisa, con los datos de `deploy/.env` y sin preguntar nada:
+
+- que `mailway-mail` y `mailway-webmail` (y `mailway-panel` en la instalación
+  autónoma) están en marcha y sanos;
+- en el motor: el nombre del servidor, la exención de la red interna y qué
+  certificado usa (ACME propio, el de Traefik con el extractor o uno a mano).
+  Hace **una sola** petición autenticada a su API: si la contraseña de
+  `deploy/.env` no es la vigente, lo dice y no reintenta;
+- el certificado que sirve el motor en 993 y 465, verificado como lo haría
+  un programa de correo (cadena de confianza, nombre y vigencia). Se
+  comprueba desde el webmail, por la red interna y con el nombre público;
+- la conexión IMAP y SMTP del webmail con el motor, con la configuración
+  efectiva de Roundcube (`imap_conn_options` y `smtp_conn_options` de
+  `deploy/roundcube/mailway.php`) y sin credenciales;
+- el estado del extractor del certificado, si está en marcha.
+
+Termina con código 0 si todo es correcto y 1 si algo falla. No cubre el DNS
+público, el PTR, los puertos vistos desde Internet ni la entrega a otros
+servidores: eso sigue en la lista de la sección 12.1.
+
+**`--probar-acceso`** pide la dirección y la contraseña de un buzón (la
+contraseña no se muestra, no se guarda y no aparece en la lista de procesos)
+e inicia sesión desde el webmail con la biblioteca IMAP de Roundcube; después
+abre la bandeja de entrada. Hace **un único intento** por ejecución: cada
+contraseña incorrecta cuenta para el bloqueo automático del motor. Sin
+terminal (por ejemplo, en un script), lee la dirección y la contraseña de dos
+líneas de la entrada estándar.
+
+Las dos opciones usan `deploy/roundcube/diagnostico/comprobar.php`, que los
+compose montan en el webmail en `/opt/mailway` (fuera de la raíz web) y que
+solo funciona por línea de órdenes.
+
 ---
 
 ## 14. Variables de entorno del panel
@@ -796,7 +913,11 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
 | No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
 | No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
-| Thunderbird o el iPhone avisan del certificado | Certificado de IMAP/SMTP sin configurar o autofirmado | Sección 5; estado en Ajustes → Servidor de correo. |
+| Thunderbird o el iPhone avisan del certificado | Certificado de IMAP/SMTP sin configurar o autofirmado | Sección 5; estado en Ajustes → Servidor de correo o con `deploy/instalar.sh --comprobar`. |
+| `mailway-certs-dumper` no está sano y su registro dice «El motor rechaza la contraseña de administración (HTTP 401)» | `STALWART_ADMIN_PASSWORD` de `deploy/.env` no es la contraseña vigente del motor | Corrígela y recrea el extractor (`docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d --force-recreate certs-dumper`). No reintenta antes de una hora para no alimentar el bloqueo automático. |
+| El extractor dice «Traefik aún no tiene un certificado válido para mail.…» | El DNS de `mail.` aún no apunta aquí, los puertos 80/443 están cerrados o Traefik no tiene correo de Let's Encrypt | Sección 1; `docker logs skyway-traefik`. El motor conserva mientras tanto el certificado que tenga. |
+| El extractor dice que el motor no sirve el certificado aunque se le pidió recargarlo | El motor conserva en memoria otro certificado para ese nombre | Reinicia el motor (`docker restart mailway-mail`) y comprueba que existe `certificate.mailway.subjects.0` (sección 5.2). |
+| `--probar-acceso` dice que el motor rechazó el inicio de sesión | Contraseña incorrecta, o buzón inexistente o desactivado | Revisa el buzón en el panel antes de repetir: cada intento fallido cuenta para el bloqueo automático. |
 | Un envío por API devuelve `status: "failed"` con un error de certificado | El SMTP interno no puede verificar el certificado | Emite el certificado (sección 5) o, solo mientras tanto, `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en las variables del panel. |
 | El webmail no inicia sesión | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; comprueba en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
 | El webmail no muestra «Contraseña» o no la cambia | Falta `MAILWAY_WEBMAIL_TOKEN` (en `deploy/.env` y en el panel, con el mismo valor) o `MAILWAY_PANEL_INTERNAL_URL` no apunta al contenedor real del panel | Sección 6.5; recrea `mailway-webmail`. |
@@ -808,3 +929,32 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
 | El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | Sección 4.1. |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
+
+---
+
+## 16. Pruebas automáticas del despliegue
+
+Además de `ci.yml` (compilación y pruebas del panel), el workflow
+`.github/workflows/stack.yml` prueba el despliegue cuando cambia `deploy/`, a
+mano y cada semana (las imágenes de Roundcube y de Python siguen su versión
+menor):
+
+1. **Sin contenedores**: pruebas unitarias del extractor
+   (`python3 -m unittest discover -s deploy/tls`, con un motor de laboratorio
+   y certificados generados con openssl), sintaxis de Python, PHP y Bash,
+   `shellcheck` y `docker compose config` de los dos compose, con y sin el
+   perfil `tls`.
+2. **Con contenedores reales** (`deploy/prueba-stack.py`): monta con
+   `deploy/instalar.sh --actualizar` Stalwart v0.15.5, Roundcube y el
+   extractor con la topología de producción (subred interna fija, un Skyway
+   simulado con certificados de laboratorio y credenciales desechables) y
+   comprueba que el extractor sustituye al volcado antiguo sin dejar claves de
+   otros dominios, el TLS de 993 y 465, el inicio de sesión IMAP desde el
+   webmail y directo, la autenticación SMTP en 465 y 587 (sin enviar correo),
+   la renovación y el paso a un comodín, `--comprobar` y `--probar-acceso`.
+
+Las pruebas unitarias se ejecutan en cualquier equipo con Python 3 y openssl.
+La prueba de la pila crea y borra contenedores, redes y volúmenes con los
+nombres de Mailway: solo se ejecuta con `MAILWAY_PRUEBA_DESECHABLE=1`, se
+niega si encuentra restos de Mailway o de Skyway y nunca debe lanzarse en un
+servidor con datos.

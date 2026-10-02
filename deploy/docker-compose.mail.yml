@@ -30,8 +30,13 @@
 #   1. Preferida: ACME del propio motor con reto DNS-01 en Cloudflare. La
 #      configura el instalador (con un token de Cloudflare) o el panel en
 #      Ajustes → Servidor de correo. Renueva sola y no depende de Traefik.
-#   2. Alternativa: volcar el certificado que Traefik obtiene para
-#      MAIL_HOSTNAME (servicio `certs-dumper`, perfil `tls`).
+#   2. Alternativa: el certificado que Traefik obtiene para MAIL_HOSTNAME,
+#      que lleva al motor el extractor (servicio `certs-dumper`, perfil
+#      `tls`): solo ese par, validado, y lo renueva solo.
+#
+# Diagnóstico de la pila (no cambia nada) y prueba de acceso a un buzón:
+#   sudo bash deploy/instalar.sh --comprobar
+#   sudo bash deploy/instalar.sh --probar-acceso
 #
 # IMPORTANTE: la imagen de Stalwart va FIJADA a v0.15.5. La v0.16 eliminó la
 # API REST de gestión que usa Mailway. No la subas sin migrar el driver.
@@ -61,7 +66,8 @@ services:
       STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
     volumes:
       - mailway-mail-data:/opt/stalwart
-      # Certificados volcados de Traefik (solo con el perfil `tls`).
+      # Certificado de MAIL_HOSTNAME que escribe el extractor (perfil `tls`):
+      # <MAIL_HOSTNAME>/cert.pem y key.pem, y nada de otros dominios.
       - mailway-mail-certs:/opt/stalwart/certs:ro
     networks:
       mailway-internal:
@@ -73,7 +79,7 @@ services:
       # Web del motor (administración, autoconfiguración, MTA-STS) por HTTPS
       # en el nombre del servidor de correo, p. ej. https://mail.miempresa.com.
       # Además hace que Traefik obtenga el certificado de MAIL_HOSTNAME, que
-      # el servicio opcional `certs-dumper` puede volcar para IMAP/SMTP.
+      # el extractor opcional (`certs-dumper`) puede llevar a IMAP/SMTP.
       - traefik.enable=true
       - traefik.docker.network=skyway-edge
       - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME}`)
@@ -137,11 +143,19 @@ services:
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
       # Capa visual de Mailway sobre Elastic (solo CSS; ver roundcube/README.md).
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
+      # Diagnóstico de instalar.sh --comprobar y --probar-acceso (solo línea
+      # de órdenes). Fuera de la raíz web y de /var/roundcube/config, cuyos
+      # .php se cargarían como configuración.
+      - ./roundcube/diagnostico:/opt/mailway:ro
     networks:
       - mailway-internal
       - skyway-edge
     labels:
       - traefik.enable=true
+      # Huella de roundcube/mailway.php (la pone el instalador): se monta como
+      # fichero suelto y, tras «git pull», el contenedor seguiría leyendo la
+      # versión anterior. Si cambia, Compose recrea el webmail.
+      - mailway.roundcube-config=${MAILWAY_ROUNDCUBE_CONFIG_HASH:-}
       - traefik.docker.network=skyway-edge
       - traefik.http.routers.mailway-webmail.rule=Host(`${WEBMAIL_HOSTNAME:?Define WEBMAIL_HOSTNAME en deploy/.env}`)
       - traefik.http.routers.mailway-webmail.entrypoints=web
@@ -161,26 +175,71 @@ services:
       start_period: 90s
 
   # --------------------------------------------------------------------------
-  # OPCIONAL (perfil `tls`): vuelca los certificados que Traefik ya obtuvo
-  # (acme.json) a ficheros PEM que Stalwart usa en IMAP/SMTP. Solo si no se
-  # usa el ACME del propio motor (vía preferida).
-  #   docker compose -f deploy/docker-compose.mail.yml --profile tls up -d
-  # Resultado: /opt/stalwart/certs/<MAIL_HOSTNAME>/cert.pem y key.pem dentro
-  # del motor. El instalador configura el motor para leerlos; el panel los
-  # recarga a diario (Stalwart no relee el fichero por sí solo).
+  # OPCIONAL (perfil `tls`): extractor del certificado de MAIL_HOSTNAME para
+  # IMAP y SMTP (deploy/tls/extractor.py). Solo si no se usa el ACME del
+  # propio motor, la vía preferida; si el motor ya emite su certificado, no
+  # hace nada.
+  #   docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d certs-dumper
+  #
+  # Lee el acme.json de Traefik en solo lectura, elige el certificado exacto
+  # o comodín de MAIL_HOSTNAME que caduca más tarde, lo valida (vigencia,
+  # nombre y par clave/certificado) y escribe en el volumen del motor
+  # ÚNICAMENTE ese par: /opt/stalwart/certs/<MAIL_HOSTNAME>/cert.pem y
+  # key.pem, las rutas de certificate.mailway que configura el instalador. Si
+  # cambia, recarga los certificados del motor, comprueba el que sirve en 993
+  # y 465 y, si no es el nuevo, vuelve al anterior. Sustituye al volcado de
+  # traefik-certs-dumper, que copiaba al motor las claves privadas de TODOS
+  # los dominios de Traefik (también las de las demás webs de Skyway): al
+  # arrancar retira esas copias del volumen.
+  #
+  # Necesita la contraseña VIGENTE del administrador del motor para recargar.
+  # Si el motor la rechaza, no reintenta hasta pasada una hora: cada intento
+  # fallido cuenta para su bloqueo automático. Va solo en mailway-internal,
+  # la red exenta de ese bloqueo.
+  # Estado: docker exec mailway-certs-dumper python /app/extractor.py estado
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: ldez/traefik-certs-dumper:v2.11.4
+    image: python:3.13-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']
-    command: >-
-      file --version v3 --watch
-      --source /traefik/acme.json --dest /output
-      --domain-subdir --crt-name cert --crt-ext .pem --key-name key --key-ext .pem
+    command: ['python', '/app/extractor.py']
+    # tini como PID 1: reenvía la señal de parada al proceso.
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    tmpfs:
+      - /tmp:size=8m
+    environment:
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?Define MAIL_HOSTNAME en deploy/.env}
+      STALWART_URL: http://mailway-mail:8080
+      STALWART_ADMIN_USER: admin
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+    extra_hosts:
+      # Siempre por la subred interna, la exenta del bloqueo automático.
+      - mailway-mail:${MAILWAY_MAIL_INTERNAL_IP:-10.203.53.10}
     volumes:
+      # Traefik guarda acme.json con permisos 600: el proceso corre como root
+      # (sin ninguna capacidad) para leerlo, y siempre en solo lectura.
       - traefik-letsencrypt:/traefik:ro
       - mailway-mail-certs:/output
+      - ./tls:/app:ro
+    networks:
+      - mailway-internal
+    depends_on:
+      mailway-mail:
+        condition: service_healthy
+    healthcheck:
+      # Sano = el motor sirve en 993 y 465 el certificado vigente (o usa su
+      # propio ACME y no hay nada que hacer).
+      test: ['CMD', 'python', '/app/extractor.py', 'salud']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
 networks:
   # Subred fija y poco común (10.203.53.0/24) por dos motivos:
@@ -212,6 +271,8 @@ volumes:
     name: ${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
   mailway-webmail-db:
     name: ${MAILWAY_WEBMAIL_DB_VOLUME:-mailway-webmail-db}
+  # Certificado de MAIL_HOSTNAME para el motor (perfil `tls`). Lo escribe el
+  # extractor y lo lee el motor en solo lectura.
   mailway-mail-certs:
     name: mailway-mail-certs
   # Volumen del acme.json del Traefik de Skyway. Su nombre depende de la

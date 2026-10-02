@@ -11,6 +11,8 @@
 #   sudo bash deploy/instalar.sh                 # junto a Skyway (recomendado)
 #   sudo bash deploy/instalar.sh --sin-skyway    # todo en un compose propio
 #   sudo bash deploy/instalar.sh --actualizar    # reaplicar sin preguntas
+#   sudo bash deploy/instalar.sh --comprobar     # diagnóstico de solo lectura
+#   sudo bash deploy/instalar.sh --probar-acceso # abrir un buzón desde el webmail
 #   bash deploy/instalar.sh --ayuda
 #
 # Ejecución desatendida: todas las preguntas se pueden responder con
@@ -28,12 +30,20 @@ ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"
 COMPOSE_MAIL="$DEPLOY_DIR/docker-compose.mail.yml"
 COMPOSE_SOLO="$DEPLOY_DIR/docker-compose.standalone.yml"
 IMAGEN_CURL="curlimages/curl:8.11.1"
+# Huella de la configuración de Roundcube: la etiqueta del webmail en los
+# compose la usa para que Compose lo recree cuando cambia mailway.php.
+MAILWAY_ROUNDCUBE_CONFIG_HASH=$(sha256sum "$DEPLOY_DIR/roundcube/mailway.php" 2>/dev/null | cut -c1-16 || true)
+export MAILWAY_ROUNDCUBE_CONFIG_HASH
 IMAGEN_JQ="ghcr.io/jqlang/jq:1.7.1"
+# Diagnóstico del webmail: deploy/roundcube/diagnostico, que los compose montan en /opt/mailway.
+COMPROBAR_PHP="/opt/mailway/comprobar.php"
 LE_DIRECTORIO="https://acme-v02.api.letsencrypt.org/directory"
 
 CON_SKYWAY=1
 CON_CLOUDFLARE=1
 ACTUALIZAR=0
+COMPROBAR=0
+PROBAR_ACCESO=0
 INTERACTIVO=0
 if [ -t 0 ] && [ -t 1 ]; then INTERACTIVO=1; fi
 
@@ -88,6 +98,12 @@ Opciones:
                     motor y, con Skyway, actualiza las variables y redespliega el panel.
                     Mantiene el modo de la instalación (junto a Skyway o autónoma).
                     Ejecuta antes «git pull» en la carpeta de Mailway.
+  --comprobar       Diagnóstico de solo lectura: contenedores, ajustes y certificado del
+                    motor (993 y 465), conexión IMAP y SMTP desde el webmail y extractor
+                    del certificado. No cambia nada. Código de salida 1 si algo falla.
+  --probar-acceso   Pide la dirección y la contraseña de un buzón (sin mostrarla ni
+                    guardarla) e inicia sesión desde el webmail: un único intento, porque
+                    cada contraseña incorrecta cuenta para el bloqueo automático del motor.
   --ayuda           Muestra esta ayuda.
 
 Variables de entorno (ejecución desatendida):
@@ -114,6 +130,8 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_MAIL_INTERNAL_IP  IP del motor en esa red (por defecto 10.203.53.10).
   MAILWAY_ESPERA_DNS        Segundos máximos de espera a que propague el DNS (por defecto 300).
   MAILWAY_ENV_FILE          Fichero de configuración con los secretos (por defecto deploy/.env).
+  MAILWAY_COMPOSE_EXTRA     Fichero de Compose adicional que se aplica sobre el del instalador
+                            (ajustes locales; lo usa la prueba de la pila en la CI).
   MAILWAY_CLOUDFLARE_API    Base de la API de Cloudflare (solo para pruebas).
 
 Los nombres del servidor de correo, del webmail y del panel cuelgan directamente
@@ -126,6 +144,8 @@ while [ $# -gt 0 ]; do
     --sin-skyway) CON_SKYWAY=0 ;;
     --sin-cloudflare) CON_CLOUDFLARE=0 ;;
     --actualizar) ACTUALIZAR=1 ;;
+    --comprobar) COMPROBAR=1 ;;
+    --probar-acceso) PROBAR_ACCESO=1 ;;
     --ayuda | -h | --help)
       ayuda
       exit 0
@@ -135,7 +155,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO))" -gt 1 ]; then
+  fallo "Las opciones --actualizar, --comprobar y --probar-acceso no se combinan: usa una."
+fi
 if [ "$ACTUALIZAR" = 1 ]; then INTERACTIVO=0; fi
+if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ] && [ ! -f "$MAILWAY_COMPOSE_EXTRA" ]; then
+  fallo "No existe el fichero de MAILWAY_COMPOSE_EXTRA: $MAILWAY_COMPOSE_EXTRA."
+fi
 
 # -------------------------------------------------------------- utilidades --
 
@@ -405,13 +431,14 @@ resuelve_a() {
 
 # Compose da prioridad al entorno sobre --env-file: sin quitarla, una
 # LETSENCRYPT_EMAIL exportada para responder al instalador ganaría al valor
-# elegido y guardado en deploy/.env.
+# elegido y guardado en deploy/.env. MAILWAY_COMPOSE_EXTRA añade un fichero
+# que se aplica encima (ajustes locales; la prueba de la pila de la CI lo usa
+# para la CA de laboratorio).
 compose() {
-  if [ "$CON_SKYWAY" = 1 ]; then
-    env -u LETSENCRYPT_EMAIL docker compose --env-file "$ENV_FILE" -f "$COMPOSE_MAIL" "$@"
-  else
-    env -u LETSENCRYPT_EMAIL docker compose --env-file "$ENV_FILE" -f "$COMPOSE_SOLO" "$@"
-  fi
+  local ficheros=(-f "$COMPOSE_MAIL")
+  if [ "$CON_SKYWAY" = 0 ]; then ficheros=(-f "$COMPOSE_SOLO"); fi
+  if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ]; then ficheros+=(-f "$MAILWAY_COMPOSE_EXTRA"); fi
+  env -u LETSENCRYPT_EMAIL docker compose --env-file "$ENV_FILE" "${ficheros[@]}" "$@"
 }
 
 # Compose sin su barra de progreso; la salida completa solo si falla.
@@ -767,7 +794,8 @@ escribir_env() {
     linea_env MAILWAY_PUBLIC_IP "$IP_PUBLICA"
     linea_env MAILWAY_BRAND "$MARCA"
     linea_env LETSENCRYPT_EMAIL "$LE_EMAIL"
-    printf '\n# Motor (solo se aplica en su primer arranque; no la cambies aquí después).\n'
+    printf '\n# Motor: contraseña VIGENTE del administrador. El motor solo la toma en su primer\n'
+    printf '# arranque; si la cambias en el motor, cámbiala también aquí (la usa el extractor).\n'
     linea_env STALWART_ADMIN_PASSWORD "$STALWART_ADMIN_PASSWORD"
     printf '\n# Webmail\n'
     linea_env ROUNDCUBE_DES_KEY "$ROUNDCUBE_DES_KEY"
@@ -1068,12 +1096,14 @@ configurar_motor() {
   fi
 
   # Lo ya configurado (por el panel o por una ejecución anterior) se respeta.
-  local existentes
-  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,certificate.mailway.cert,certificate.default.cert' 2>/dev/null || true)
+  local existentes con_volcado=0
+  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,certificate.mailway.cert,certificate.mailway.subjects.0,certificate.default.cert' 2>/dev/null || true)
+  if printf '%s' "$existentes" | grep -q '"certificate.mailway.cert"'; then con_volcado=1; fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"acme.mailway.directory"'; then
     CERT_CONFIGURADO=1
     RESUMEN_CERT="Let's Encrypt emitido por el propio motor (configurado antes)"
     ok "El motor ya emite su certificado con Let's Encrypt."
+    extractor_con_acme "$con_volcado"
     return 0
   fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"certificate.default.cert"'; then
@@ -1082,12 +1112,17 @@ configurar_motor() {
     ok "El motor ya tiene un certificado configurado a mano; no se modifica."
     return 0
   fi
-  if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"certificate.mailway.cert"'; then
-    compose_q --profile tls up -d certs-dumper || true
-    motor_api GET /api/reload/certificate >/dev/null || true
+  if [ -z "$CF_TOKEN" ] && [ "$con_volcado" = 1 ]; then
+    # Instalación que ya usa el certificado de Traefik: mismas rutas, ahora
+    # con el extractor. El nombre del servidor como sujeto explícito hace que
+    # el motor lo sustituya al recargar aunque el certificado nuevo sea un
+    # comodín (sin él, conservaría en memoria el exacto anterior).
+    if ! printf '%s' "$existentes" | grep -q '"certificate.mailway.subjects.0"'; then
+      motor_ajustes certificate.mailway.subjects.0 "$MAIL_HOSTNAME" ||
+        aviso "No se pudo añadir $MAIL_HOSTNAME como sujeto del certificado; el extractor funciona igualmente."
+    fi
     CERT_CONFIGURADO=1
-    RESUMEN_CERT="certificado de Traefik volcado al motor (el panel lo recarga a diario)"
-    ok "El motor ya usa el certificado volcado de Traefik; recargado."
+    aplicar_extractor
     return 0
   fi
 
@@ -1106,14 +1141,15 @@ configurar_motor() {
       CERT_CONFIGURADO=1
       RESUMEN_CERT="Let's Encrypt emitido por el propio motor (DNS-01 en Cloudflare); tarda unos minutos"
       ok "Certificado de IMAP/SMTP solicitado a Let's Encrypt por DNS-01."
+      extractor_con_acme "$con_volcado"
     else
       aviso "No se pudo configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
     fi
     return 0
   fi
 
-  # Sin Cloudflare: se usa el certificado que Traefik obtiene para el nombre
-  # del servidor de correo, volcado a ficheros.
+  # Sin Cloudflare: el extractor lleva al motor el certificado que Traefik
+  # obtiene para el nombre del servidor de correo (y solo ese).
   if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
     aviso "No se encontró el volumen de certificados de Traefik: emite el certificado desde Ajustes → Servidor de correo."
     return 0
@@ -1122,8 +1158,11 @@ configurar_motor() {
     aviso "Sin proxy propio ni Cloudflare, el certificado de IMAP/SMTP se emite desde Ajustes → Servidor de correo."
     return 0
   fi
-  info "Volcando el certificado que obtiene Traefik para $MAIL_HOSTNAME…"
-  compose_q --profile tls up -d certs-dumper
+  info "Extrayendo el certificado que obtiene Traefik para $MAIL_HOSTNAME…"
+  if ! arrancar_extractor; then
+    aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+    return 0
+  fi
   local t=0 ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
   while [ "$t" -lt 180 ]; do
     if docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null; then break; fi
@@ -1138,13 +1177,77 @@ configurar_motor() {
   if motor_ajustes \
     certificate.mailway.cert "%{file:$ruta/cert.pem}%" \
     certificate.mailway.private-key "%{file:$ruta/key.pem}%" \
-    certificate.mailway.default true; then
+    certificate.mailway.default true \
+    certificate.mailway.subjects.0 "$MAIL_HOSTNAME"; then
     motor_api GET /api/reload/certificate >/dev/null || true
     CERT_CONFIGURADO=1
-    RESUMEN_CERT="certificado de Traefik volcado al motor (el panel lo recarga a diario)"
-    ok "El motor usa el certificado de Traefik para IMAP y SMTP."
+    comprobar_extractor
   else
-    aviso "No se pudo configurar el certificado volcado; revisa Ajustes → Servidor de correo."
+    aviso "No se pudo configurar el certificado de Traefik en el motor; revisa Ajustes → Servidor de correo."
+  fi
+}
+
+# Extractor del certificado de Traefik (servicio certs-dumper, perfil «tls»;
+# deploy/tls/extractor.py). Se recrea siempre: así arranca con el código
+# actual tras un «git pull» y, en las instalaciones anteriores, sustituye al
+# volcado de traefik-certs-dumper, que copiaba al volumen del motor las claves
+# privadas de todos los dominios de Traefik (el extractor retira esas copias).
+arrancar_extractor() {
+  compose_q --profile tls up -d --force-recreate certs-dumper
+}
+
+# Espera a que el extractor confirme que el motor sirve el certificado en 993
+# y 465. Mientras no lo logra, lo comprueba cada 30 segundos.
+esperar_extractor() {
+  local t=0 max=${1:-150}
+  while [ "$t" -lt "$max" ]; do
+    if docker exec mailway-certs-dumper python /app/extractor.py estado >/dev/null 2>&1; then return 0; fi
+    sleep 5
+    t=$((t + 5))
+  done
+  return 1
+}
+
+comprobar_extractor() {
+  info "Esperando a que el extractor compruebe el certificado que sirve el motor en 993 y 465…"
+  if esperar_extractor 150; then
+    RESUMEN_CERT="el de Traefik, aplicado por el extractor y comprobado en 993 y 465 (lo renueva solo)"
+    ok "El motor sirve en 993 y 465 el certificado de Traefik para $MAIL_HOSTNAME."
+  else
+    RESUMEN_CERT="el de Traefik, configurado; el extractor aún no lo ha comprobado (deploy/instalar.sh --comprobar)"
+    aviso "El extractor aún no ha comprobado el certificado. Estado: docker exec mailway-certs-dumper python /app/extractor.py estado"
+  fi
+}
+
+aplicar_extractor() {
+  if ! arrancar_extractor; then
+    RESUMEN_CERT="el de Traefik, pero el extractor no arranca (docker logs mailway-certs-dumper)"
+    aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+    return 0
+  fi
+  comprobar_extractor
+}
+
+# Con el ACME del motor, el extractor solo sigue si el motor conserva además
+# certificate.mailway: el motor vuelve a cargar esos ficheros en cada recarga
+# de certificados y no deben caducar. Si no, se retira y se limpian del
+# volumen las claves de otros dominios que dejó el volcado antiguo.
+extractor_con_acme() {
+  if [ "$1" = 1 ]; then
+    if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then return 0; fi
+    if arrancar_extractor; then
+      info "El motor conserva además certificate.mailway: el extractor mantiene esos ficheros al día sin recargar el motor."
+    else
+      aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+    fi
+    return 0
+  fi
+  docker inspect mailway-certs-dumper >/dev/null 2>&1 || return 0
+  docker rm -f mailway-certs-dumper >/dev/null
+  if compose_q --profile tls run --rm --no-deps -T certs-dumper python /app/extractor.py purgar; then
+    ok "Extractor del certificado retirado (el motor usa su propio ACME) y volumen de certificados limpio."
+  else
+    aviso "Extractor retirado, pero no se pudo limpiar su volumen. A mano: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
   fi
 }
 
@@ -1503,6 +1606,9 @@ resumen() {
   info "puede dejarla incoherente):"
   info "  $copia"
   printf '\n'
+  info "Diagnóstico en cualquier momento (no cambia nada): sudo bash deploy/instalar.sh --comprobar"
+  info "Prueba de acceso a un buzón desde el webmail:      sudo bash deploy/instalar.sh --probar-acceso"
+  printf '\n'
   info "Siguientes pasos:"
   info "  1. Abre el panel con el enlace de arriba y completa la puesta en marcha."
   info "  2. En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
@@ -1512,10 +1618,191 @@ resumen() {
   fi
 }
 
+# ------------------------------------------------------------ diagnóstico --
+
+# Datos que necesita el diagnóstico, leídos de deploy/.env sin preguntar nada.
+preparar_diagnostico() {
+  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
+  tiene docker || fallo "Falta Docker."
+  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  case "$(leer_env MAILWAY_INSTALACION)" in
+    autonoma) CON_SKYWAY=0 ;;
+    '') if docker inspect mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
+  esac
+  MAIL_HOSTNAME=$(leer_env MAIL_HOSTNAME)
+  host_valido "$MAIL_HOSTNAME" || fallo "MAIL_HOSTNAME no es válido en $ENV_FILE."
+  STALWART_ADMIN_PASSWORD=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
+  INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
+  INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
+}
+
+# Muestra la salida de una comprobación hecha dentro de un contenedor con el
+# formato del instalador: «OK: …» → [ok], «FALLO: …» → [aviso].
+mostrar_resultado() {
+  local linea
+  while IFS= read -r linea; do
+    case "$linea" in
+      'OK: '*) ok "${linea#OK: }" ;;
+      'FALLO: '*) aviso "${linea#FALLO: }" ;;
+      '') ;;
+      *) info "$linea" ;;
+    esac
+  done
+}
+
+# Ejecuta una comprobación, muestra su resultado y devuelve su código.
+ejecutar_comprobacion() {
+  local salida codigo=0
+  salida=$("$@" 2>&1) || codigo=$?
+  printf '%s\n' "$salida" | mostrar_resultado
+  return "$codigo"
+}
+
+# --comprobar: diagnóstico de solo lectura. Hace una sola petición
+# autenticada a la API del motor: cada contraseña incorrecta cuenta para su
+# bloqueo automático.
+comprobar_instalacion() {
+  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-webmail)
+  if [ "$CON_SKYWAY" = 0 ]; then contenedores+=(mailway-panel); fi
+
+  titulo "Contenedores"
+  for c in "${contenedores[@]}"; do
+    estado=$(estado_contenedor "$c")
+    case "$estado" in
+      healthy) ok "$c: en marcha y sano." ;;
+      ausente)
+        aviso "$c: no existe. Vuelve a ejecutar el instalador (sudo bash deploy/instalar.sh --actualizar)."
+        fallos=$((fallos + 1))
+        ;;
+      *)
+        aviso "$c: $estado. Revisa: docker logs $c"
+        fallos=$((fallos + 1))
+        ;;
+    esac
+  done
+  extractor=$(estado_contenedor mailway-certs-dumper)
+  if [ "$extractor" = ausente ]; then
+    info "Extractor del certificado (perfil tls): no está en marcha; solo hace falta si el motor usa el certificado de Traefik."
+  fi
+
+  titulo "Motor de correo"
+  if [ "$(estado_contenedor mailway-mail)" = healthy ]; then
+    respuesta=$(motor_api GET "/api/settings/keys?keys=server.hostname,server.allowed-ip.$INTERNAL_SUBNET,acme.mailway.directory,certificate.mailway.cert,certificate.default.cert" 2>/dev/null || true)
+    if ! printf '%s' "$respuesta" | grep -q '"data"'; then
+      if printf '%s' "$respuesta" | grep -Eq '"status": *40[13]'; then
+        aviso "El motor rechaza la contraseña de administración de $ENV_FILE (STALWART_ADMIN_PASSWORD). No se reintenta."
+      else
+        aviso "La API de gestión del motor no responde por la red interna. Revisa: docker logs mailway-mail"
+      fi
+      fallos=$((fallos + 1))
+    else
+      nombre=$(printf '%s' "$respuesta" | jqr -r '.data["server.hostname"] // empty' 2>/dev/null || true)
+      if [ "$nombre" = "$MAIL_HOSTNAME" ]; then
+        ok "Nombre del servidor: $MAIL_HOSTNAME."
+      else
+        aviso "El motor se identifica como «${nombre:-sin nombre}», no como $MAIL_HOSTNAME: aplica los ajustes recomendados (Ajustes → Servidor de correo)."
+        fallos=$((fallos + 1))
+      fi
+      if printf '%s' "$respuesta" | grep -Fq "\"server.allowed-ip.$INTERNAL_SUBNET\""; then
+        ok "La red interna $INTERNAL_SUBNET está exenta del bloqueo automático."
+      else
+        aviso "Falta la exención de $INTERNAL_SUBNET: los fallos de contraseña del webmail acabarían bloqueándolo. Aplica los ajustes recomendados."
+        fallos=$((fallos + 1))
+      fi
+      if printf '%s' "$respuesta" | grep -q '"acme.mailway.directory"'; then
+        info "Certificado: Let's Encrypt emitido por el propio motor (ACME)."
+      elif printf '%s' "$respuesta" | grep -q '"certificate.mailway.cert"'; then
+        info "Certificado: el de Traefik, que mantiene el extractor (perfil tls)."
+      elif printf '%s' "$respuesta" | grep -q '"certificate.default.cert"'; then
+        info "Certificado: configurado a mano en el motor."
+      else
+        aviso "El motor no tiene ningún certificado configurado y sirve uno autofirmado (sección 5 de docs/DESPLIEGUE-SKYWAY.md)."
+        fallos=$((fallos + 1))
+      fi
+    fi
+  else
+    info "El motor no está sano: no se consulta su API."
+  fi
+
+  titulo "Certificado público de IMAP y SMTP"
+  if [ "$(estado_contenedor mailway-webmail)" = healthy ]; then
+    # Se verifica desde el webmail, por la red interna y con el nombre público
+    # (SNI): es el mismo certificado que ven los programas de correo.
+    ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" certificado "$MAIL_HOSTNAME" ||
+      fallos=$((fallos + 1))
+    titulo "Webmail"
+    ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" conexion ||
+      fallos=$((fallos + 1))
+    info "Inicio de sesión real con un buzón: sudo bash deploy/instalar.sh --probar-acceso"
+  else
+    info "Se comprueba desde el webmail, que no está en marcha."
+  fi
+
+  if [ "$extractor" != ausente ]; then
+    titulo "Extractor del certificado (perfil tls)"
+    ejecutar_comprobacion docker exec mailway-certs-dumper python /app/extractor.py estado ||
+      fallos=$((fallos + 1))
+  fi
+
+  titulo "Resultado"
+  if [ "$fallos" = 0 ]; then
+    ok "Todo correcto. Quedan fuera el DNS público, el PTR, los puertos vistos desde Internet y la entrega a otros servidores (sección 12.1 de docs/DESPLIEGUE-SKYWAY.md)."
+    return 0
+  fi
+  aviso "$fallos comprobaciones con incidencias (detalle arriba)."
+  return 1
+}
+
+# --probar-acceso: un inicio de sesión real desde el webmail, con la
+# biblioteca IMAP de Roundcube, y la apertura de la bandeja de entrada.
+probar_acceso() {
+  titulo "Prueba de acceso a un buzón desde el webmail"
+  if [ "$(estado_contenedor mailway-webmail)" != healthy ]; then
+    fallo "El webmail (mailway-webmail) no está en marcha y sano. Revisa: sudo bash deploy/instalar.sh --comprobar"
+  fi
+  local correo="" clave="" salida codigo=0
+  if [ -t 0 ]; then
+    info "Se hace un único intento: cada contraseña incorrecta cuenta para el bloqueo automático del"
+    info "motor. La contraseña no se muestra, no se guarda y no queda en el historial."
+    read -r -p "   Dirección del buzón: " correo || true
+    IFS= read -r -s -p "   Contraseña: " clave || true
+    printf '\n'
+  else
+    # Sin terminal (p. ej. la CI): dirección y contraseña en dos líneas.
+    IFS= read -r correo || true
+    IFS= read -r clave || true
+  fi
+  correo=$(printf '%s' "$correo" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  coincide "$correo" '^[^@[:space:][:cntrl:]]+@[a-z0-9.-]+\.[a-z0-9-]{2,}$' ||
+    fallo "«$correo» no es una dirección de correo."
+  [ -n "$clave" ] || fallo "No se ha indicado la contraseña."
+  if tiene_control "$clave"; then
+    clave=""
+    fallo "La contraseña contiene caracteres de control."
+  fi
+  # La contraseña viaja por la entrada estándar del contenedor: printf es
+  # interno de bash, así que no aparece en la lista de procesos ni en argumentos.
+  salida=$(printf '%s\n%s\n' "$correo" "$clave" |
+    docker exec -i -u www-data mailway-webmail php "$COMPROBAR_PHP" acceso 2>&1) || codigo=$?
+  clave=""
+  printf '%s\n' "$salida" | mostrar_resultado
+  return "$codigo"
+}
+
 # ------------------------------------------------------------------ main --
 
 main() {
   printf '%sInstalador de Mailway %s%s\n' "$C_TIT" "$VERSION_INSTALADOR" "$C_0"
+  if [ "$COMPROBAR" = 1 ] || [ "$PROBAR_ACCESO" = 1 ]; then
+    preparar_diagnostico
+    if [ "$CON_SKYWAY" = 1 ]; then info "Modo: junto a Skyway."; else info "Modo: instalación autónoma (sin Skyway)."; fi
+    if [ "$COMPROBAR" = 1 ]; then
+      if comprobar_instalacion; then exit 0; fi
+    elif probar_acceso; then
+      exit 0
+    fi
+    exit 1
+  fi
   # La actualización mantiene el modo con el que se instaló. Los deploy/.env
   # anteriores a la 1.0 no lo guardan: solo la instalación autónoma tiene el
   # contenedor mailway-panel (con Skyway, el panel es skyway-<proyecto>-panel).

@@ -11,6 +11,14 @@ sustituye el logotipo de marca blanca configurado.
 complemento de contraseña, ManageSieve, marca); el compose lo monta en
 `/var/roundcube/config/`.
 
+`diagnostico/comprobar.php` es el diagnóstico de línea de órdenes que usan
+`deploy/instalar.sh --comprobar` y `--probar-acceso`: abre IMAP y SMTP con la
+configuración efectiva de Roundcube, verifica el certificado público del
+motor y, con `--probar-acceso`, inicia sesión una sola vez con la biblioteca
+IMAP de Roundcube. Los compose montan esa carpeta en `/opt/mailway`, fuera de
+la raíz web y de `/var/roundcube/config/` (cuyos `.php` se cargarían como
+configuración).
+
 Después de actualizar el repositorio, aplica los cambios con el instalador
 (`sudo bash deploy/instalar.sh --actualizar`) o recrea solo el webmail con el
 mismo Compose y el mismo fichero de entorno de siempre:

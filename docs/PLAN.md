@@ -239,9 +239,11 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     proxy.
 26. **Certificado del motor.** Preferido: ACME del propio Stalwart con DNS-01
     en Cloudflare (no depende de Traefik ni del puerto 80, renueva 30 días
-    antes). Alternativa: volcar el certificado de Traefik con
-    `ldez/traefik-certs-dumper`. Stalwart no relee el fichero tras renovar: el
-    vigilante recarga los certificados a diario y avisa si caducan.
+    antes). Alternativa (perfil `tls`): el extractor propio
+    (`deploy/tls/extractor.py`) toma de Traefik solo el certificado del
+    servidor de correo, lo valida antes de usarlo, pide la recarga al motor,
+    comprueba 993/465 y vuelve al anterior si falla. El vigilante recarga
+    además los certificados a diario y avisa si caducan.
 
 ### 3.7 Seguridad del panel
 
