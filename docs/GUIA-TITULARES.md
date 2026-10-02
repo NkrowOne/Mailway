@@ -110,6 +110,11 @@ La contraseña de aplicación se muestra una sola vez: cópiala en el dispositiv
 en ese momento. No sirve para entrar en «Mi buzón» ni para cambiar la
 contraseña principal.
 
+Si la contraseña es para una web o una aplicación que envía correo (una tienda
+online, un formulario, un programa propio), pulsa **Ver las variables para una
+web o una aplicación**: aparecen los datos listos para copiar en su
+configuración (`.env`, Node, Laravel o Django). Tampoco se vuelven a mostrar.
+
 Cada buzón admite hasta **25 contraseñas de aplicación activas**. Si llegas al
 máximo, revoca las de los dispositivos que ya no utilizas antes de crear otra.
 

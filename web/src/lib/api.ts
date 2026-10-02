@@ -196,6 +196,18 @@ export interface ApiKeyInfo {
   usedToday: number;
 }
 
+/**
+ * Bloque listo para copiar que acompaña a una credencial recién creada
+ * (POST /api/apikeys, POST …/app-passwords). Solo llega en esa respuesta.
+ */
+export interface BloqueVariables {
+  id: 'env' | 'node' | 'laravel' | 'django';
+  label: string;
+  language: 'dotenv' | 'javascript' | 'php' | 'python';
+  filename: string;
+  content: string;
+}
+
 export interface Message {
   id: string;
   clientId: string;

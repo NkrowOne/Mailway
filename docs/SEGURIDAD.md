@@ -170,7 +170,10 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   contraseña opcional de un enlace de configuración.
 - **Solo hash** (HMAC-SHA256 con la clave maestra) de lo que no hay que
   recuperar: sesiones, tokens de gestión, claves de API, tokens de enlaces.
-- Contraseñas, tokens y claves se devuelven **una sola vez**. Los tokens de
+- Contraseñas, tokens y claves se devuelven **una sola vez**. Los bloques
+  listos para copiar que acompañan a una clave de API o a una contraseña de
+  aplicación viajan solo en esa respuesta (`Cache-Control: no-store`) y no se
+  pueden regenerar; el secreto solo aparece en las líneas de `.env`. Los tokens de
   Cloudflare nunca se vuelven a mostrar (solo sus últimos caracteres). La
   contraseña del motor no sale del servidor: el asistente conecta el motor del
   entorno sin enviarla al navegador, y los mensajes de error se depuran de

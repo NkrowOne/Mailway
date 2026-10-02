@@ -251,7 +251,9 @@ if (!res.ok || data.status !== 'sent') throw new Error(`${data.code ?? data.stat
 ```
 
 Las aplicaciones conectadas desde Skyway reciben `MAILWAY_API_URL` (URL del
-panel), `MAILWAY_API_KEY` y `MAIL_FROM` como variables de entorno.
+panel), `MAILWAY_API_KEY` y `MAIL_FROM` como variables de entorno: son los
+mismos nombres que usan los bloques que el panel entrega al crear una clave
+(sección 2.1), así que el mismo código sirve con Skyway y sin él.
 
 ### 1.6 Respuestas
 
@@ -316,7 +318,7 @@ Las claves se crean en el panel o con un token de gestión.
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/apikeys?clientId=` | Claves del cliente (`{ keys }`). Un usuario de cliente solo ve las suyas. |
-| `POST /api/apikeys` | Crea una clave. Cuerpo: `{ name, senderMailboxId, dailyLimit?, clientId? }` (`clientId` solo para la administración). Respuesta: `{ key, info }`; **`key` solo aparece aquí**. |
+| `POST /api/apikeys` | Crea una clave. Cuerpo: `{ name, senderMailboxId, dailyLimit?, clientId? }` (`clientId` solo para la administración). Respuesta: `{ key, info, snippets }` con `Cache-Control: no-store`; **`key` y `snippets` solo aparecen aquí**. |
 | `DELETE /api/apikeys/:id` | Revoca la clave al instante y retira su credencial del motor. `409` si ya estaba revocada. |
 
 Reglas:
@@ -332,6 +334,27 @@ Reglas:
 
 `ApiKeyInfo`: `{ id, clientId, name, prefix, senderMailboxId, senderEmail,
 dailyLimit, lastUsedAt, revokedAt, createdAt, usedToday }`.
+
+### 2.1 Variables listas para copiar
+
+`snippets` es una lista de bloques `{ id, label, language, filename, content }`
+que el panel muestra en pestañas, con botón de copiar, en el mismo aviso donde
+aparece la clave:
+
+| `id` | `label` | Contenido |
+|---|---|---|
+| `env` | `.env` | `MAILWAY_API_URL` (URL pública del panel), `MAILWAY_API_KEY` (la clave) y `MAIL_FROM` (el buzón remitente). |
+| `node` | `Node.js` | Función `enviarCorreo()` con `fetch` a `/v1/send` e `Idempotency-Key`; lee la clave del entorno. |
+| `laravel` | `PHP · Laravel` | Líneas del `.env` con la clave, entrada de `config/services.php` y llamada con `Http::withToken()`. |
+| `django` | `Python · Django` | `settings.py` que lee el entorno y función `enviar_correo()` con `requests`. |
+
+El secreto solo va en las líneas de `.env` (las del bloque `env` y las del
+bloque de Laravel); el código lo lee del entorno. Los
+nombres son los mismos que Skyway inyecta al conectar el correo a un servicio
+en modo API. Como la clave no se guarda en claro, los bloques **no se pueden
+volver a generar**: si se pierden, crea otra clave y revoca la anterior. Las
+contraseñas de aplicación traen bloques equivalentes para SMTP
+([INTEGRACIONES.md](INTEGRACIONES.md#26-contraseñas-de-aplicación)).
 
 ---
 

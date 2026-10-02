@@ -22,6 +22,7 @@ import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
 import { assertClientActive, getClient, getPlan } from './clients';
 import { getMailbox, type Mailbox } from './mailboxes';
+import { bloquesClaveApi, publicBaseUrl } from './connection';
 
 /* ------------------------------ Claves de API ----------------------------- */
 
@@ -405,7 +406,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     return { keys: rows.map(toInfo) };
   });
 
-  app.post('/api/apikeys', async (req) => {
+  app.post('/api/apikeys', async (req, reply) => {
     const user = requireAuth(req);
     const body = createKeySchema.parse(req.body);
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
@@ -475,8 +476,14 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     // con su token) debe aparecer también en la actividad de ese cliente.
     audit(req, 'apikey.created', { id, name: body.name, sender: mailbox.email }, clientId);
 
-    // La clave completa solo se muestra una vez.
-    return { key, info: toInfo(db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as ApiKeyRow) };
+    // La clave completa solo se muestra una vez, y con ella los bloques listos
+    // para copiar: sin la clave en claro no se pueden volver a generar.
+    reply.header('Cache-Control', 'no-store');
+    return {
+      key,
+      info: toInfo(db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as ApiKeyRow),
+      snippets: bloquesClaveApi({ apiUrl: publicBaseUrl(req), key, from: mailbox.email, name: body.name }),
+    };
   });
 
   app.delete('/api/apikeys/:id', async (req) => {

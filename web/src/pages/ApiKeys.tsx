@@ -1,10 +1,11 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
   ApiError,
   type ApiKeyInfo,
+  type BloqueVariables,
   type Client,
   type Mailbox,
   type Message,
@@ -23,15 +24,21 @@ import {
   Muestra,
   Vacio,
 } from '../ui/kit';
+import { Pestanas } from '../ui/Pestanas';
 import { useToast } from '../ui/toast';
+import { VariablesIntegracion } from '../components/VariablesIntegracion';
 import { formatDate } from '../lib/format';
 import { useDireccionPanel } from '../components/gestion/consultas';
 
 /** Documentación completa de la API (solo se enlaza para el administrador). */
 const DOCS_API = 'https://github.com/NkrowOne/Mailway/blob/main/docs/API.md';
 
-/** Nombre de variable de entorno neutro: el panel puede ir con marca blanca. */
-const VARIABLE = 'MAIL_API_KEY';
+/**
+ * Mismo nombre que los bloques que acompañan a cada clave nueva y que la
+ * variable que Skyway inyecta al conectar el correo a un servicio: el ejemplo
+ * funciona sin renombrar nada.
+ */
+const VARIABLE = 'MAILWAY_API_KEY';
 
 type Lenguaje = 'curl' | 'node' | 'php' | 'python';
 
@@ -147,70 +154,6 @@ const RESPUESTAS: { codigo: string; nota: string }[] = [
   },
 ];
 
-/** Pestañas accesibles: flechas para moverse entre lenguajes, una sola parada de tabulación. */
-function PestanasLenguaje({
-  activo,
-  onCambio,
-  panelId,
-}: {
-  activo: Lenguaje;
-  onCambio: (l: Lenguaje) => void;
-  panelId: string;
-}) {
-  const refs = useRef<Partial<Record<Lenguaje, HTMLButtonElement | null>>>({});
-
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    const i = LENGUAJES.findIndex((l) => l.id === activo);
-    let siguiente = -1;
-    if (e.key === 'ArrowRight') siguiente = (i + 1) % LENGUAJES.length;
-    if (e.key === 'ArrowLeft') siguiente = (i - 1 + LENGUAJES.length) % LENGUAJES.length;
-    if (e.key === 'Home') siguiente = 0;
-    if (e.key === 'End') siguiente = LENGUAJES.length - 1;
-    if (siguiente < 0) return;
-    e.preventDefault();
-    const id = LENGUAJES[siguiente]!.id;
-    onCambio(id);
-    refs.current[id]?.focus();
-  }
-
-  return (
-    <div
-      role="tablist"
-      aria-label="Lenguaje del ejemplo"
-      onKeyDown={onKeyDown}
-      className="flex flex-wrap gap-1.5"
-    >
-      {LENGUAJES.map((l) => {
-        const seleccionado = l.id === activo;
-        return (
-          <button
-            key={l.id}
-            ref={(el) => {
-              refs.current[l.id] = el;
-            }}
-            type="button"
-            role="tab"
-            id={`${panelId}-${l.id}`}
-            aria-selected={seleccionado}
-            aria-controls={panelId}
-            tabIndex={seleccionado ? 0 : -1}
-            onClick={() => onCambio(l.id)}
-            // Como la navegación activa: fondo petróleo tenue, sin filete de
-            // acento (DESIGN.md solo admite dos bordes de petróleo).
-            className={`rounded-lg border px-3 py-1.5 text-base transition-colors duration-100 ${
-              seleccionado
-                ? 'border-[rgb(var(--laboratorio)/0.35)] bg-laboratorio-claro font-semibold text-laboratorio'
-                : 'border-regla text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
-            }`}
-          >
-            {l.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 /** Claves de API + historial de envíos + guía de integración (OTP y avisos). */
 export default function ApiKeys({ user }: { user: User }) {
   const queryClient = useQueryClient();
@@ -226,7 +169,7 @@ export default function ApiKeys({ user }: { user: User }) {
   const [clientId, setClientId] = useState('');
   const [limite, setLimite] = useState('');
   const [error, setError] = useState('');
-  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<{ key: string; snippets: BloqueVariables[] } | null>(null);
   const [toRevoke, setToRevoke] = useState<ApiKeyInfo | null>(null);
   const [lenguaje, setLenguaje] = useState<Lenguaje>('curl');
 
@@ -259,7 +202,7 @@ export default function ApiKeys({ user }: { user: User }) {
 
   const create = useMutation({
     mutationFn: (datos: { senderMailboxId: string; dailyLimit?: number }) =>
-      api.post<{ key: string; info: ApiKeyInfo }>('/api/apikeys', {
+      api.post<{ key: string; info: ApiKeyInfo; snippets?: BloqueVariables[] }>('/api/apikeys', {
         name,
         senderMailboxId: datos.senderMailboxId,
         dailyLimit: datos.dailyLimit,
@@ -276,7 +219,7 @@ export default function ApiKeys({ user }: { user: User }) {
       setName('');
       setLimite('');
       setError('');
-      setRevealedKey(data.key);
+      setRevealed({ key: data.key, snippets: data.snippets ?? [] });
     },
     onError: (err) =>
       setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Inténtalo de nuevo.'),
@@ -480,7 +423,13 @@ export default function ApiKeys({ user }: { user: User }) {
             </p>
 
             <div>
-              <PestanasLenguaje activo={lenguaje} onCambio={setLenguaje} panelId="ejemplo-envio" />
+              <Pestanas
+                opciones={LENGUAJES}
+                activo={lenguaje}
+                onCambio={setLenguaje}
+                panelId="ejemplo-envio"
+                etiqueta="Lenguaje del ejemplo"
+              />
               <div
                 id="ejemplo-envio"
                 role="tabpanel"
@@ -704,25 +653,38 @@ export default function ApiKeys({ user }: { user: User }) {
 
       {/* La clave, una sola vez: no se cierra sin confirmar que se ha guardado. */}
       <Dialogo
-        open={revealedKey !== null}
-        onClose={() => setRevealedKey(null)}
+        open={revealed !== null}
+        onClose={() => setRevealed(null)}
         title="Clave de API creada"
+        ancho={revealed && revealed.snippets.length > 0 ? 'amplio' : 'normal'}
         confirmarCierre={{ pregunta: '¿Has guardado la clave?', detalle: 'No se podrá volver a ver.' }}
         pie={
-          <Button variant="tinta" onClick={() => setRevealedKey(null)}>
+          <Button variant="tinta" onClick={() => setRevealed(null)}>
             Ya la he guardado
           </Button>
         }
       >
-        {revealedKey && (
+        {revealed && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
               Guárdala ahora en tu gestor de secretos o como variable de entorno:{' '}
               <strong className="text-tinta">no se volverá a mostrar</strong>.
             </p>
-            <Muestra rotulo="Clave de API" copiar={revealedKey}>
-              <code className="valor block break-all text-sm text-tinta">{revealedKey}</code>
+            <Muestra rotulo="Clave de API" copiar={revealed.key}>
+              <code className="valor block break-all text-sm text-tinta">{revealed.key}</code>
             </Muestra>
+            {revealed.snippets.length > 0 && (
+              <section aria-labelledby="variables-clave" className="flex flex-col gap-3">
+                <h3 id="variables-clave" className="rotulo">
+                  Variables para tu aplicación
+                </h3>
+                <p className="text-base text-tinta-2">
+                  Bloques listos para copiar: el <code className="valor text-sm">.env</code> lleva ya la clave y
+                  el código de Node, Laravel y Django lo lee del entorno. Tampoco se volverán a mostrar.
+                </p>
+                <VariablesIntegracion bloques={revealed.snippets} />
+              </section>
+            )}
           </div>
         )}
       </Dialogo>

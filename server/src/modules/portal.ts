@@ -9,7 +9,12 @@ import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
-import { createAppPassword, listAppPasswords, revokeAppPassword } from './apppasswords';
+import {
+  createAppPassword,
+  listAppPasswords,
+  revokeAppPassword,
+  variablesContrasenaAplicacion,
+} from './apppasswords';
 import {
   MOBILECONFIG_CONTENT_TYPE,
   getConnectionSettings,
@@ -808,8 +813,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       via: 'portal',
     });
     reply.header('Cache-Control', 'no-store');
-    // La contraseña en claro solo viaja en esta respuesta.
-    return created;
+    // La contraseña en claro (y los bloques que la contienen) solo viaja en
+    // esta respuesta.
+    return { ...created, snippets: variablesContrasenaAplicacion(created.appPassword, created.password) };
   });
 
   app.delete('/api/portal/app-passwords/:appId', async (req) => {

@@ -296,7 +296,7 @@ dirección completa del buzón.
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/mailboxes/:id/app-passwords` | `{ appPasswords: [{ id, mailboxId, email, name, createdAt, revokedAt }] }`. |
-| `POST /api/mailboxes/:id/app-passwords` | `{ name (1–60) }` → `{ appPassword, password }`; **`password` solo aparece aquí**. Máximo 25 activas por buzón: `409 app_password_limit`. |
+| `POST /api/mailboxes/:id/app-passwords` | `{ name (1–60) }` → `{ appPassword, password, snippets }` con `Cache-Control: no-store`; **`password` y `snippets` solo aparecen aquí**. Máximo 25 activas por buzón: `409 app_password_limit`. |
 | `DELETE /api/mailboxes/:id/app-passwords/:appId` | Revoca al instante → `{ ok }`. |
 
 El máximo de 25 contraseñas activas por buzón se comprueba al crearlas, sea cual
@@ -311,6 +311,23 @@ credenciales SMTP que crea cada clave de API ([API.md](API.md)).
 Una contraseña de aplicación **no sirve** para entrar en «Mi buzón» ni para
 cambiar la contraseña principal (`400 app_password_not_allowed`): quien
 encuentre un móvil perdido no puede adueñarse del buzón.
+
+**Variables listas para copiar.** La respuesta del alta (en el panel y en
+`POST /api/portal/app-passwords`) incluye `snippets`, bloques
+`{ id, label, language, filename, content }` para conectar una aplicación por
+SMTP, que el panel y «Mi buzón» muestran en pestañas con botón de copiar:
+
+| `id` | Contenido |
+|---|---|
+| `env` | `SMTP_HOST` (servidor de correo), `SMTP_PORT=587`, `SMTP_SECURE=false` (STARTTLS), `SMTP_USER` y `SMTP_FROM` (la dirección del buzón) y `SMTP_PASS` (la contraseña). |
+| `node` | Transporte de **nodemailer** que lee `SMTP_*` del entorno y un envío de prueba. |
+| `laravel` | `.env` de Laravel (`MAIL_MAILER=smtp`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_ENCRYPTION=tls` para Laravel 10 o anterior y `MAIL_SCHEME=smtp` para Laravel 11 o posterior). |
+| `django` | `settings.py` con `EmailBackend` SMTP que lee `SMTP_*` del entorno y la orden de prueba `sendtestemail`. |
+
+Son los mismos nombres y el mismo puerto que Skyway inyecta en modo SMTP. Los
+bloques se generan en `server/src/modules/connection.ts`, como el resto de
+datos de conexión, y **no se pueden volver a generar**: la contraseña no se
+guarda en claro.
 
 ### 2.7 Enlaces de configuración
 
@@ -704,7 +721,7 @@ aplicación.
 | `POST /api/portal/logout` | Cierra la sesión. |
 | `POST /api/portal/password` | `{ current, next (≥ 10) }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. |
 | `GET /api/portal/mobileconfig` | Perfil de Apple sin contraseña. |
-| `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }`). Máximo 25 activas por buzón: `409 app_password_limit`, igual que en el panel (sección 2.6). |
+| `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }` → `{ appPassword, password, snippets }`, con las variables listas para copiar de la sección 2.6). Máximo 25 activas por buzón: `409 app_password_limit`, igual que en el panel. |
 
 - La contraseña se comprueba **en local** contra el hash del motor, nunca
   pidiéndole al motor que autentique (sus fallos bloquearían la IP del proxy
@@ -821,6 +838,11 @@ con Mailway de dos formas:
   (SSL/TLS), usuario = dirección completa del buzón.
 - **API HTTP** con una clave `mw_…`:
   `POST https://panel.miempresa.com/v1/send` ([API.md](API.md)).
+
+En los dos casos, al crear la credencial el panel entrega el `.env` y el código
+de Node, Laravel y Django listos para copiar (sección 2.6 y
+[API.md](API.md#21-variables-listas-para-copiar)), con los mismos nombres de
+variables que Skyway.
 
 Y cualquier sistema puede **gestionar** el correo con un token de gestión y
 las rutas de la sección 2. Flujo típico de una integración que da correo a sus

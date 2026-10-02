@@ -5,6 +5,7 @@ import {
   ApiError,
   esCredencialIncorrecta,
   TEXTO_CREDENCIALES_INCORRECTAS,
+  type BloqueVariables,
   type SetupStatus,
 } from '../../lib/api';
 import { formatDate } from '../../lib/format';
@@ -20,6 +21,7 @@ import { Dialogo, Escala, Hoja, Marca, MarcaFondo, Midiendo, Muestra, Vacio } fr
 import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
+import { VariablesIntegracion } from '../../components/VariablesIntegracion';
 
 /**
  * «Mi buzón»: el titular entra con su dirección y la contraseña del buzón
@@ -282,7 +284,8 @@ function HojaContrasenasAplicacion() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [nombre, setNombre] = useState('');
-  const [nueva, setNueva] = useState<{ nombre: string; password: string } | null>(null);
+  const [nueva, setNueva] = useState<{ nombre: string; password: string; snippets: BloqueVariables[] } | null>(null);
+  const [verVariables, setVerVariables] = useState(false);
   const [aRevocar, setARevocar] = useState<ContrasenaAplicacion | null>(null);
   const [verRevocadas, setVerRevocadas] = useState(false);
 
@@ -293,9 +296,13 @@ function HojaContrasenasAplicacion() {
 
   const crear = useMutation({
     mutationFn: (name: string) =>
-      api.post<{ appPassword: ContrasenaAplicacion; password: string }>('/api/portal/app-passwords', { name }),
+      api.post<{ appPassword: ContrasenaAplicacion; password: string; snippets?: BloqueVariables[] }>(
+        '/api/portal/app-passwords',
+        { name },
+      ),
     onSuccess: async (data) => {
-      setNueva({ nombre: data.appPassword.name, password: data.password });
+      setNueva({ nombre: data.appPassword.name, password: data.password, snippets: data.snippets ?? [] });
+      setVerVariables(false);
       setNombre('');
       await queryClient.invalidateQueries({ queryKey: ['portal-app-passwords'] });
     },
@@ -342,6 +349,27 @@ function HojaContrasenasAplicacion() {
             <Nota>
               Escríbela ahora en el dispositivo, en el campo de la contraseña. Por seguridad, no se volverá a mostrar.
             </Nota>
+            {nueva.snippets.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <Button
+                  variant="plano"
+                  className={`${TACTIL} self-stretch sm:self-start`}
+                  aria-expanded={verVariables}
+                  onClick={() => setVerVariables((v) => !v)}
+                >
+                  {verVariables ? 'Ocultar las variables' : 'Ver las variables para una web o una aplicación'}
+                </Button>
+                {verVariables && (
+                  <>
+                    <Nota>
+                      Datos listos para copiar en la configuración de una web o una aplicación que envía correo con esta
+                      contraseña. Tampoco se volverán a mostrar.
+                    </Nota>
+                    <VariablesIntegracion bloques={nueva.snippets} tactil />
+                  </>
+                )}
+              </div>
+            )}
             <Button variant="perfil" className={`${TACTIL} self-stretch sm:self-start`} onClick={() => setNueva(null)}>
               Hecho
             </Button>

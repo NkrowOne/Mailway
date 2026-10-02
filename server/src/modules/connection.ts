@@ -503,3 +503,243 @@ export function thunderbirdAndroidQrPayload(
   const outgoing = [[0, settings.smtp.host, settings.smtp.port, 3, 1, email, ''], [email, displayName || email]];
   return JSON.stringify([1, [1, 1], incoming, [outgoing]]);
 }
+
+/* ----------------------- Variables para aplicaciones ------------------------ */
+
+/**
+ * Bloques «listos para copiar» que acompañan a una clave de API o a una
+ * contraseña de aplicación recién creadas: un .env genérico y el código de
+ * Node, Laravel y Django que lo usa.
+ *
+ * Solo existen en la respuesta que crea la credencial: el secreto no se
+ * guarda en claro, así que no se pueden volver a generar después.
+ *
+ * Los nombres de las variables son los mismos que Skyway inyecta al conectar
+ * el correo a un servicio (MAILWAY_API_URL, MAILWAY_API_KEY y MAIL_FROM en
+ * modo API; SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS y
+ * SMTP_FROM en modo SMTP): el código copiado de aquí funciona igual en una
+ * aplicación desplegada con Skyway.
+ */
+export interface BloqueVariables {
+  id: 'env' | 'node' | 'laravel' | 'django';
+  /** Nombre de la pestaña. */
+  label: string;
+  /** Lenguaje del contenido, para resaltarlo o elegir la extensión. */
+  language: 'dotenv' | 'javascript' | 'php' | 'python';
+  /** Fichero o ficheros donde va el bloque (orientativo). */
+  filename: string;
+  content: string;
+}
+
+/** Texto de usuario dentro de un comentario de una línea: sin saltos ni controles. */
+function comentario(texto: string): string {
+  return texto.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, 80);
+}
+
+/** Valor de .env: tal cual si es seguro, entre comillas dobles si no. */
+function valorEnv(valor: string): string {
+  return /^[A-Za-z0-9_.:/@+-]*$/.test(valor) ? valor : JSON.stringify(valor);
+}
+
+/** Cadena entre comillas dobles válida en JavaScript y en Python. */
+function cadena(valor: string): string {
+  return JSON.stringify(valor);
+}
+
+export function bloquesClaveApi(input: {
+  /** URL pública del panel, donde vive /v1/send. */
+  apiUrl: string;
+  key: string;
+  /** Buzón remitente de la clave. */
+  from: string;
+  name: string;
+}): BloqueVariables[] {
+  const { apiUrl, key, from } = input;
+  const env = [
+    `# Clave de API «${comentario(input.name)}» · remite ${comentario(from)}`,
+    `MAILWAY_API_URL=${valorEnv(apiUrl)}`,
+    `MAILWAY_API_KEY=${valorEnv(key)}`,
+    `MAIL_FROM=${valorEnv(from)}`,
+  ].join('\n');
+
+  const node = [
+    '// Node.js 18 o superior. Lee MAILWAY_API_URL y MAILWAY_API_KEY del entorno (bloque .env).',
+    "import { randomUUID } from 'node:crypto';",
+    '',
+    'export async function enviarCorreo(mensaje, idempotencyKey = randomUUID()) {',
+    '  const res = await fetch(`${process.env.MAILWAY_API_URL}/v1/send`, {',
+    "    method: 'POST',",
+    '    headers: {',
+    '      Authorization: `Bearer ${process.env.MAILWAY_API_KEY}`,',
+    "      'Content-Type': 'application/json',",
+    '      // Si reintentas, reutiliza el mismo valor: el mensaje no saldrá dos veces.',
+    "      'Idempotency-Key': idempotencyKey,",
+    '    },',
+    '    body: JSON.stringify(mensaje),',
+    '  });',
+    '  const data = await res.json();',
+    "  if (!res.ok || data.status !== 'sent') throw new Error(`${data.code ?? data.status}: ${data.error}`);",
+    "  return data; // { id, status: 'sent', messageId }",
+    '}',
+    '',
+    'await enviarCorreo({',
+    "  to: 'cliente@ejemplo.com',",
+    "  subject: 'Tu código de acceso',",
+    "  text: 'Tu código es 482913. Caduca en 10 minutos.',",
+    '});',
+  ].join('\n');
+
+  const laravel = [
+    '# .env',
+    `MAILWAY_API_URL=${valorEnv(apiUrl)}`,
+    `MAILWAY_API_KEY=${valorEnv(key)}`,
+    '',
+    '// config/services.php',
+    "'mailway' => [",
+    "    'url' => env('MAILWAY_API_URL'),",
+    "    'key' => env('MAILWAY_API_KEY'),",
+    '],',
+    '',
+    '// En un controlador o un job',
+    'use Illuminate\\Support\\Facades\\Http;',
+    'use Illuminate\\Support\\Str;',
+    '',
+    "$respuesta = Http::withToken(config('services.mailway.key'))",
+    "    ->withHeaders(['Idempotency-Key' => (string) Str::uuid()])",
+    '    ->acceptJson()',
+    '    ->timeout(30)',
+    "    ->post(config('services.mailway.url').'/v1/send', [",
+    "        'to' => 'cliente@ejemplo.com',",
+    "        'subject' => 'Tu código de acceso',",
+    "        'text' => 'Tu código es 482913. Caduca en 10 minutos.',",
+    '    ])',
+    '    ->throw()',
+    "    ->json(); // ['id' => …, 'status' => 'sent', 'messageId' => …]",
+  ].join('\n');
+
+  const django = [
+    '# settings.py: valores del entorno (bloque .env)',
+    'import os',
+    '',
+    `MAILWAY_API_URL = os.environ.get("MAILWAY_API_URL", ${cadena(apiUrl)})`,
+    'MAILWAY_API_KEY = os.environ["MAILWAY_API_KEY"]',
+    `DEFAULT_FROM_EMAIL = os.environ.get("MAIL_FROM", ${cadena(from)})`,
+    '',
+    '# correo.py',
+    'import uuid',
+    '',
+    'import requests',
+    'from django.conf import settings',
+    '',
+    '',
+    'def enviar_correo(to, subject, text, html=None, idempotency_key=None):',
+    '    mensaje = {"to": to, "subject": subject, "text": text}',
+    '    if html:',
+    '        mensaje["html"] = html',
+    '    respuesta = requests.post(',
+    '        f"{settings.MAILWAY_API_URL}/v1/send",',
+    '        headers={',
+    '            "Authorization": f"Bearer {settings.MAILWAY_API_KEY}",',
+    '            # Si reintentas, reutiliza el mismo valor: el mensaje no saldrá dos veces.',
+    '            "Idempotency-Key": idempotency_key or str(uuid.uuid4()),',
+    '        },',
+    '        json=mensaje,',
+    '        timeout=30,',
+    '    )',
+    '    datos = respuesta.json()',
+    '    if respuesta.status_code != 200 or datos.get("status") != "sent":',
+    '        raise RuntimeError(datos.get("error") or datos.get("status"))',
+    '    return datos',
+  ].join('\n');
+
+  return [
+    { id: 'env', label: '.env', language: 'dotenv', filename: '.env', content: env },
+    { id: 'node', label: 'Node.js', language: 'javascript', filename: 'enviar-correo.mjs', content: node },
+    { id: 'laravel', label: 'PHP · Laravel', language: 'php', filename: '.env y config/services.php', content: laravel },
+    { id: 'django', label: 'Python · Django', language: 'python', filename: 'settings.py y correo.py', content: django },
+  ];
+}
+
+export function bloquesContrasenaAplicacion(input: {
+  email: string;
+  password: string;
+  name: string;
+  settings: ConnectionSettings;
+}): BloqueVariables[] {
+  const { email, password } = input;
+  // El envío autenticado de las aplicaciones va por el 587 con STARTTLS, como
+  // en Skyway: es el puerto que menos redes de servidores bloquean.
+  const { host, port } = input.settings.smtpAlt;
+  const env = [
+    `# Contraseña de aplicación «${comentario(input.name)}» del buzón ${comentario(email)}`,
+    '# SMTP_SECURE=false: STARTTLS en el puerto 587 (con el 465, SMTP_SECURE=true).',
+    `SMTP_HOST=${valorEnv(host)}`,
+    `SMTP_PORT=${port}`,
+    'SMTP_SECURE=false',
+    `SMTP_USER=${valorEnv(email)}`,
+    `SMTP_PASS=${valorEnv(password)}`,
+    `SMTP_FROM=${valorEnv(email)}`,
+  ].join('\n');
+
+  const node = [
+    '// npm install nodemailer · Lee SMTP_* del entorno (bloque .env).',
+    "import nodemailer from 'nodemailer';",
+    '',
+    'const transporte = nodemailer.createTransport({',
+    '  host: process.env.SMTP_HOST,',
+    `  port: Number(process.env.SMTP_PORT ?? ${port}),`,
+    '  // false: STARTTLS en el 587; true: TLS directo en el 465.',
+    "  secure: process.env.SMTP_SECURE === 'true',",
+    '  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },',
+    '});',
+    '',
+    'await transporte.sendMail({',
+    '  from: process.env.SMTP_FROM,',
+    "  to: 'cliente@ejemplo.com',",
+    "  subject: 'Prueba de envío',",
+    "  text: 'El correo de la aplicación ya funciona.',",
+    '});',
+  ].join('\n');
+
+  const laravel = [
+    '# .env de Laravel',
+    'MAIL_MAILER=smtp',
+    `MAIL_HOST=${valorEnv(host)}`,
+    `MAIL_PORT=${port}`,
+    `MAIL_USERNAME=${valorEnv(email)}`,
+    `MAIL_PASSWORD=${valorEnv(password)}`,
+    '# Laravel 10 o anterior: STARTTLS en el puerto 587.',
+    'MAIL_ENCRYPTION=tls',
+    '# Laravel 11 o posterior: «smtp» usa STARTTLS en el puerto 587.',
+    'MAIL_SCHEME=smtp',
+    `MAIL_FROM_ADDRESS=${valorEnv(email)}`,
+    'MAIL_FROM_NAME="${APP_NAME}"',
+    '',
+    '# Prueba: php artisan tinker',
+    "# Mail::raw('El correo de la aplicación ya funciona.', fn ($m) => $m->to('cliente@ejemplo.com')->subject('Prueba de envío'));",
+  ].join('\n');
+
+  const django = [
+    '# settings.py: valores del entorno (bloque .env)',
+    'import os',
+    '',
+    'EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"',
+    `EMAIL_HOST = os.environ.get("SMTP_HOST", ${cadena(host)})`,
+    `EMAIL_PORT = int(os.environ.get("SMTP_PORT", "${port}"))`,
+    '# SMTP_SECURE=false: STARTTLS en el 587; true: TLS directo en el 465.',
+    'EMAIL_USE_SSL = os.environ.get("SMTP_SECURE", "false") == "true"',
+    'EMAIL_USE_TLS = not EMAIL_USE_SSL',
+    `EMAIL_HOST_USER = os.environ.get("SMTP_USER", ${cadena(email)})`,
+    'EMAIL_HOST_PASSWORD = os.environ["SMTP_PASS"]',
+    `DEFAULT_FROM_EMAIL = os.environ.get("SMTP_FROM", ${cadena(email)})`,
+    '',
+    '# Prueba: python manage.py sendtestemail cliente@ejemplo.com',
+  ].join('\n');
+
+  return [
+    { id: 'env', label: '.env', language: 'dotenv', filename: '.env', content: env },
+    { id: 'node', label: 'Node.js', language: 'javascript', filename: 'correo.mjs (nodemailer)', content: node },
+    { id: 'laravel', label: 'PHP · Laravel', language: 'php', filename: '.env de Laravel', content: laravel },
+    { id: 'django', label: 'Python · Django', language: 'python', filename: 'settings.py', content: django },
+  ];
+}

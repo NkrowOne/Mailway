@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, type BloqueVariables } from '../../lib/api';
 import { formatDate, plural } from '../../lib/format';
 import { mensajeDe, type AppPasswordInfo } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
 import { MarcaFondo, Midiendo, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
+import { VariablesIntegracion } from '../VariablesIntegracion';
 import { BandaError } from './comun';
 
 /**
@@ -28,7 +29,8 @@ export function ContrasenasAplicacion({
   const toast = useToast();
   const [name, setName] = useState('');
   const [error, setError] = useState('');
-  const [nueva, setNueva] = useState<{ name: string; password: string } | null>(null);
+  const [nueva, setNueva] = useState<{ name: string; password: string; snippets: BloqueVariables[] } | null>(null);
+  const [verVariables, setVerVariables] = useState(false);
   const [aRevocar, setARevocar] = useState<string | null>(null);
   const [verRevocadas, setVerRevocadas] = useState(false);
   const key = ['app-passwords', mailboxId];
@@ -46,11 +48,13 @@ export function ContrasenasAplicacion({
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<{ appPassword: AppPasswordInfo; password: string }>(`/api/mailboxes/${mailboxId}/app-passwords`, {
-        name,
-      }),
+      api.post<{ appPassword: AppPasswordInfo; password: string; snippets?: BloqueVariables[] }>(
+        `/api/mailboxes/${mailboxId}/app-passwords`,
+        { name },
+      ),
     onSuccess: async (data) => {
-      setNueva({ name: data.appPassword.name, password: data.password });
+      setNueva({ name: data.appPassword.name, password: data.password, snippets: data.snippets ?? [] });
+      setVerVariables(false);
       setName('');
       setError('');
       await queryClient.invalidateQueries({ queryKey: key });
@@ -105,6 +109,29 @@ export function ContrasenasAplicacion({
           <Muestra rotulo="Contraseña de aplicación" copiar={nueva.password}>
             <p className="valor break-all text-base text-tinta">{nueva.password}</p>
           </Muestra>
+          {nueva.snippets.length > 0 && (
+            <div className="flex flex-col gap-3">
+              {/* Plegado: casi siempre la contraseña es para un dispositivo; los
+                  bloques son para quien conecta una aplicación por SMTP. */}
+              <Button
+                variant="plano"
+                className="self-start px-2"
+                aria-expanded={verVariables}
+                onClick={() => setVerVariables((v) => !v)}
+              >
+                {verVariables ? 'Ocultar las variables' : 'Ver las variables para una aplicación (SMTP)'}
+              </Button>
+              {verVariables && (
+                <>
+                  <p className="text-sm text-tinta-2">
+                    Bloques listos para copiar con esta contraseña: el <code className="valor">.env</code> la incluye
+                    y el código de Node, Laravel y Django la lee del entorno. Tampoco se volverán a mostrar.
+                  </p>
+                  <VariablesIntegracion bloques={nueva.snippets} />
+                </>
+              )}
+            </div>
+          )}
           <Button variant="perfil" className="self-start" onClick={() => setNueva(null)}>
             Ya la he introducido
           </Button>

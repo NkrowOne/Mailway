@@ -9,6 +9,7 @@ import { getEngine } from '../engine';
 import { audit } from './audit';
 import { assertClientActive } from './clients';
 import { getMailbox, requireMailboxAccess } from './mailboxes';
+import { bloquesContrasenaAplicacion, getConnectionSettings, type BloqueVariables } from './connection';
 
 /**
  * Contraseñas de aplicación por buzón: una por dispositivo o aplicación
@@ -165,6 +166,24 @@ async function createAppPasswordNow(
   return { appPassword: toInfo(row, mailbox.email), password };
 }
 
+/**
+ * Bloques listos para copiar (.env, Node, Laravel y Django) de una contraseña
+ * recién creada. Solo existen en la respuesta del alta: la contraseña no se
+ * guarda en claro.
+ */
+export function variablesContrasenaAplicacion(
+  appPassword: AppPasswordInfo,
+  password: string,
+): BloqueVariables[] {
+  const mailbox = getMailbox(appPassword.mailboxId);
+  return bloquesContrasenaAplicacion({
+    email: mailbox.email,
+    password,
+    name: appPassword.name,
+    settings: getConnectionSettings(mailbox.domain, mailbox.clientId),
+  });
+}
+
 /** Revoca una contraseña de aplicación: deja de funcionar al instante. */
 export async function revokeAppPassword(mailboxId: string, appId: string): Promise<void> {
   const row = db
@@ -193,7 +212,7 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
     return { appPasswords: listAppPasswords(id) };
   });
 
-  app.post('/api/mailboxes/:id/app-passwords', async (req) => {
+  app.post('/api/mailboxes/:id/app-passwords', async (req, reply) => {
     const { id } = req.params as { id: string };
     const { user, mailbox, domain } = requireMailboxAccess(req, id);
     const body = createSchema.parse(req.body ?? {});
@@ -204,8 +223,10 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
       appPasswordId: result.appPassword.id,
       name: result.appPassword.name,
     }, domain.clientId);
-    // La contraseña en claro viaja solo en esta respuesta.
-    return result;
+    // La contraseña en claro (y los bloques que la contienen) viaja solo en
+    // esta respuesta.
+    reply.header('Cache-Control', 'no-store');
+    return { ...result, snippets: variablesContrasenaAplicacion(result.appPassword, result.password) };
   });
 
   app.delete('/api/mailboxes/:id/app-passwords/:appId', async (req) => {
