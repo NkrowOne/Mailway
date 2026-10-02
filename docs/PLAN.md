@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.0.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.1.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -161,12 +161,24 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     aplicación uno a uno. Todo sin proxy; SPF fusionado; DMARC existente
     respetado; MX ajenos solo con confirmación.
 15. **Cuentas de Cloudflare de la instancia solo para la administración.** Un
-    cliente usa sus propias cuentas; una de la instancia solo si la
-    administración ya aplicó con ella el DNS de ese dominio. `soloCliente=1`
-    fuerza esta regla aunque la petición llegue con un token de
-    administración (Skyway actuando por un usuario que no lo es), en el plan y
-    la aplicación del DNS de un dominio, en el alta con `autoDns` y en el DNS
-    de un dominio de marca blanca.
+    cliente usa sus propias cuentas y nunca una de la instancia, ni siquiera
+    la que quedó asociada a su dominio porque la administración aplicó su DNS
+    con ella (hasta la 1.0 sí podía, y eso le permitía reescribir una zona del
+    operador con solo dar de alta un subdominio suyo). `soloCliente=1` fuerza
+    esta regla aunque la petición llegue con un token de administración
+    (Skyway actuando por un usuario que no lo es), en el plan y la aplicación
+    del DNS de un dominio, en el alta con `autoDns`, en el DNS de un dominio de
+    marca blanca, en el listado, la conexión y el borrado de cuentas y en las
+    rutas que solo usan la cuenta de la instancia (DNS de la plataforma y
+    ACME del motor), que lo rechazan.
+
+    **El token de Cloudflare del instalador es la cuenta de la instancia.** El
+    instalador lo pasa al panel con `tools/cloudflare.js conectar` (y a Skyway
+    con su herramienta equivalente) por la entrada estándar, nunca como
+    argumento ni en `deploy/.env`. Desde entonces, las altas de dominios del
+    administrador (panel, alta de cliente con dominio o Skyway con `autoDns`
+    explícito) configuran el DNS solas sin pisar nada. `POST /api/domains` sin
+    `autoDns` sigue sin tocar Cloudflare: quien llama decide.
 
 ### 3.4 Autoconfiguración y Traefik
 
@@ -361,6 +373,16 @@ usa el mismo mundo con controles táctiles de 44 px y un paso a la vez.
 - Vigilante (motor, cola, webmail, DNS, marca blanca, autoconfiguración,
   listas negras, certificado) con avisos por Discord, Telegram o webhook.
 - Instalador idempotente con modo desatendido y migración desde 0.x.
+
+### Hecho en la 1.1
+
+- El token de Cloudflare del instalador queda conectado en el panel como
+  cuenta de la instancia (herramienta `tools/cloudflare.js`, por la entrada
+  estándar) y en Skyway: las altas de dominios del administrador configuran
+  el DNS solas, sin modificar registros existentes.
+- El alta de un cliente con su primer dominio admite el DNS automático.
+- Cierre de la vía por la que un cliente (o `soloCliente=1`) usaba la cuenta de
+  la instancia asociada a su dominio (decisión 15).
 
 ### Límites conocidos
 

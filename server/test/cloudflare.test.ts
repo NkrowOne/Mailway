@@ -1,5 +1,8 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { Readable } from 'node:stream';
 import {
   CloudflareClient,
   CloudflareError,
@@ -20,6 +23,12 @@ import { db } from '../src/core/db';
 import { getEngine } from '../src/engine';
 import { setInstanceSettings } from '../src/modules/settings';
 import { adminContext, createClient, createDomain, type TestContext } from './helpers';
+import {
+  ejecutarCloudflare,
+  leerEntradaEstandar,
+  MAX_ENTRADA as MAX_ENTRADA_CF,
+  pareceToken,
+} from '../src/tools/cloudflare';
 
 /* ------------------------------------------------------------------------ */
 /*  Cloudflare de mentira: zonas, registros y tokens en memoria, con la     */
@@ -726,7 +735,9 @@ test('un cliente no puede usar la cuenta de otro cliente ni la de la instancia',
   assert.equal((admin.json() as { available: boolean }).available, true);
   const trasVer = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: b.userCookie! } });
   assert.equal((trasVer.json() as { available: boolean }).available, false);
-  // …pero, cuando el administrador aplica el DNS, sí.
+  // …ni tampoco cuando el administrador aplica el DNS: la cuenta queda
+  // asociada al dominio, pero el token del operador nunca se usa en una
+  // acción del cliente (antes sí, y el cliente podía reescribir la zona).
   const aplicado = await ctx.app.inject({
     method: 'POST',
     url: `/api/domains/${domainId}/cloudflare/apply`,
@@ -734,8 +745,40 @@ test('un cliente no puede usar la cuenta de otro cliente ni la de la instancia',
     payload: {},
   });
   assert.equal(aplicado.statusCode, 200, aplicado.body);
+  const cuentaInstanciaId = (cuentaInstancia.json() as { account: { id: string } }).account.id;
+  const asociada = db.prepare('SELECT cloudflare_account_id AS id FROM domains WHERE id = ?').get(domainId) as { id: string };
+  assert.equal(asociada.id, cuentaInstanciaId, 'la asociación queda para el administrador');
+
+  cf.llamadas = [];
   const despues = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: b.userCookie! } });
-  assert.equal((despues.json() as { available: boolean }).available, true);
+  const cuerpoDespues = despues.json() as { available: boolean; reason: string };
+  assert.equal(cuerpoDespues.available, false);
+  assert.match(cuerpoDespues.reason, /lo configuró el administrador con la cuenta de Cloudflare de la instancia/);
+  const reaplicar = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply`,
+    headers: { cookie: b.userCookie! },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(reaplicar.statusCode, 400);
+  assert.equal((reaplicar.json() as { code: string }).code, 'cloudflare_unavailable');
+  // Ni siquiera se consulta Cloudflare con el token del operador.
+  assert.ok(
+    cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`),
+    'el token de la instancia no se usa en una acción del cliente',
+  );
+  // Lo mismo con un token de administración en nombre del cliente (Skyway).
+  const enNombre = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply?soloCliente=1`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(enNombre.statusCode, 400);
+  assert.ok(cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`));
+  // El administrador sí puede seguir usándola sobre ese dominio.
+  const admin2 = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: ctx.adminCookie } });
+  assert.equal((admin2.json() as { available: boolean }).available, true);
 
   for (const c of [cuentaA, cuentaInstancia]) {
     const id = (c.json() as { account: { id: string } }).account.id;
@@ -1111,6 +1154,142 @@ test('soloCliente=1: el administrador no usa las cuentas de la instancia', async
   await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
 });
 
+test('soloCliente=1: ninguna otra ruta llega a la cuenta de la instancia', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx);
+  const zInstancia = cf.zona('operador.es');
+  const zCliente = cf.zona('del-cliente.es');
+  const TOKEN_INSTANCIA = 'cfut_operador0123456789abcdefghijklmnop';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [zInstancia.id] });
+  cf.token(TOKEN_USUARIO, { zoneIds: [zCliente.id] });
+  const instancia = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(instancia.statusCode, 200, instancia.body);
+  const idInstancia = (instancia.json() as { account: { id: string } }).account.id;
+  const usaInstancia = () => cf.llamadas.some((l) => l.auth === `Bearer ${TOKEN_INSTANCIA}`);
+
+  // Cuentas visibles: sin cliente indicado, ninguna; con él, solo las suyas,
+  // y refrescar sus zonas no usa el token del operador.
+  cf.llamadas = [];
+  for (const url of [
+    '/api/cloudflare/accounts?soloCliente=1&refresh=1',
+    '/api/cloudflare/accounts?soloCliente=1&clientId=instancia&refresh=1',
+  ]) {
+    const res = await ctx.app.inject({ method: 'GET', url, headers: { cookie: ctx.adminCookie } });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual((res.json() as { accounts: unknown[] }).accounts, [], url);
+  }
+  assert.equal(usaInstancia(), false);
+
+  // Conectar en nombre del cliente: sin cliente sería una cuenta de la instancia.
+  const sinCliente = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/cloudflare/accounts?soloCliente=1',
+    headers: { cookie: ctx.adminCookie },
+    payload: { token: TOKEN_USUARIO },
+  });
+  assert.equal(sinCliente.statusCode, 403);
+  assert.equal((sinCliente.json() as { code: string }).code, 'cloudflare_instance_admin_only');
+  const conCliente = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/cloudflare/accounts?soloCliente=1',
+    headers: { cookie: ctx.adminCookie },
+    payload: { token: TOKEN_USUARIO, clientId: cliente.clientId },
+  });
+  assert.equal(conCliente.statusCode, 200, conCliente.body);
+  assert.equal((conCliente.json() as { account: { clientId: string } }).account.clientId, cliente.clientId);
+  const suyas = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/cloudflare/accounts?soloCliente=1&clientId=${cliente.clientId}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.deepEqual(
+    (suyas.json() as { accounts: { clientId: string }[] }).accounts.map((a) => a.clientId),
+    [cliente.clientId],
+  );
+
+  // Borrar la cuenta del operador en nombre de un cliente: no existe.
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${idInstancia}?soloCliente=1`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(borrar.statusCode, 404);
+  assert.ok(db.prepare('SELECT 1 FROM cloudflare_accounts WHERE id = ?').get(idInstancia), 'sigue conectada');
+
+  // DNS de la plataforma y certificado del motor: solo trabajan con la cuenta
+  // de la instancia, así que en nombre de un cliente se rechazan.
+  cf.llamadas = [];
+  for (const [method, url, payload] of [
+    ['GET', '/api/cloudflare/instance-dns?soloCliente=1', undefined],
+    ['POST', '/api/cloudflare/instance-dns?soloCliente=1', {}],
+    ['POST', '/api/engine/acme?soloCliente=1', { cloudflareAccountId: idInstancia, email: 'admin@operador.es' }],
+  ] as const) {
+    const res = await ctx.app.inject({ method, url, headers: { cookie: ctx.adminCookie }, payload });
+    assert.equal(res.statusCode, 403, `${method} ${url}: ${res.body}`);
+    assert.equal((res.json() as { code: string }).code, 'cloudflare_instance_admin_only');
+  }
+  assert.equal(usaInstancia(), false);
+
+  // Marca blanca: el dominio propio del cliente en una zona del operador.
+  const wl = 'wld_solo_cliente';
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+  ).run(wl, cliente.clientId, 'webmail.operador.es', Date.now());
+  const marca = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wl}/cloudflare?soloCliente=1`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(marca.statusCode, 400);
+  assert.equal((marca.json() as { code: string }).code, 'cloudflare_unavailable');
+  assert.equal(cf.enZona(zInstancia.id).length, 0, 'nada escrito en la zona del operador');
+  assert.equal(usaInstancia(), false);
+
+  db.prepare('DELETE FROM client_domains WHERE id = ?').run(wl);
+  for (const c of [instancia, conCliente]) {
+    const id = (c.json() as { account: { id: string } }).account.id;
+    await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
+  }
+});
+
+test('un cliente no consigue escribir en la zona del operador ni con un subdominio suyo', async () => {
+  // El cliente da de alta como propio un subdominio de una zona del operador
+  // y pide el DNS automático: con la cuenta de la instancia conectada, no se
+  // escribe nada en esa zona, ni al dar de alta ni al aplicar después.
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('zona-del-operador.es');
+  const TOKEN_INSTANCIA = 'cfut_zonaoperador0123456789abcdefghijk';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  const instancia = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(instancia.statusCode, 200);
+
+  cf.llamadas = [];
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { domain: 'correo.zona-del-operador.es', autoDns: true },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const cuerpo = alta.json() as { domain: { id: string }; cloudflare: unknown; cloudflareReason: string };
+  assert.equal(cuerpo.cloudflare, null);
+  assert.match(cuerpo.cloudflareReason, /solo las utiliza el administrador/);
+
+  const aplicar = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${cuerpo.domain.id}/cloudflare/apply`,
+    headers: { cookie: cliente.userCookie! },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(aplicar.statusCode, 400);
+  assert.equal(cf.enZona(z.id).length, 0);
+  assert.ok(cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`));
+
+  const id = (instancia.json() as { account: { id: string } }).account.id;
+  await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
+});
+
 /* ------------------------ Propiedad y zona pendiente ---------------------- */
 
 test('una zona pendiente de activación no prueba la propiedad del dominio', async () => {
@@ -1282,4 +1461,205 @@ test('DNS de la plataforma: con un servidor de dos etiquetas se proponen autocon
   const nombres = deseados.map((d) => `${d.type} ${d.name}`);
   assert.ok(nombres.includes('CNAME autoconfig.ejemplo.com'), nombres.join(', '));
   assert.ok(nombres.includes('CNAME autodiscover.ejemplo.com'));
+});
+
+/* ------------- Herramienta de terminal: la cuenta del instalador ---------- */
+
+interface SalidaHerramienta {
+  codigo: number;
+  out: string[];
+  err: string[];
+  leida: boolean;
+}
+
+/** Ejecuta la herramienta en este proceso (el doble de Cloudflare sustituye fetch). */
+async function herramienta(argv: string[], entrada = ''): Promise<SalidaHerramienta> {
+  const r: SalidaHerramienta = { codigo: -1, out: [], err: [], leida: false };
+  r.codigo = await ejecutarCloudflare(argv, {
+    out: (l) => r.out.push(l),
+    err: (l) => r.err.push(l),
+    leerEntrada: async () => {
+      r.leida = true;
+      return entrada;
+    },
+  });
+  return r;
+}
+
+function cuentasDeInstanciaEnBase(): { id: string; client_id: string | null; created_by: string | null; token_enc: string }[] {
+  return db.prepare('SELECT id, client_id, created_by, token_enc FROM cloudflare_accounts WHERE client_id IS NULL').all() as {
+    id: string;
+    client_id: string | null;
+    created_by: string | null;
+    token_enc: string;
+  }[];
+}
+
+test('herramienta: conecta la cuenta de la instancia con el token de la entrada estándar, una sola vez', async () => {
+  const z = cf.zona('instalador.es');
+  const TOKEN = 'cfut_instalador0123456789abcdefghijklmnop';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+
+  const r = await herramienta(['conectar', '--nombre', 'Instalador de Mailway'], `${TOKEN}\n`);
+  assert.equal(r.codigo, 0, r.err.join('\n'));
+  assert.equal(r.out.length, 1, 'una sola línea por la salida estándar');
+  const salida = JSON.parse(r.out[0]!) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(salida), ['ok', 'id', 'label', 'zones', 'creada']);
+  assert.equal(salida.ok, true);
+  assert.equal(salida.label, 'Instalador de Mailway');
+  assert.equal(salida.zones, 1);
+  assert.equal(salida.creada, true);
+  assert.deepEqual(r.err, []);
+
+  const filas = cuentasDeInstanciaEnBase();
+  assert.equal(filas.length, 1, 'cuenta de la instancia (sin cliente)');
+  assert.equal(filas[0]!.id, salida.id);
+  assert.equal(filas[0]!.created_by, null);
+  assert.ok(!filas[0]!.token_enc.includes(TOKEN), 'cifrado en la base');
+  const auditoria = db
+    .prepare("SELECT user_id, detail FROM audit_log WHERE action = 'cloudflare.account_connected' AND detail LIKE ?")
+    .all(`%${String(salida.id)}%`) as { user_id: string | null; detail: string }[];
+  assert.equal(auditoria.length, 1);
+  assert.equal(auditoria[0]!.user_id, null, 'como «Sistema»');
+  assert.equal((JSON.parse(auditoria[0]!.detail) as { origen: string }).origen, 'terminal');
+  assert.ok(!auditoria[0]!.detail.includes(TOKEN));
+
+  // Repetirla (otra ejecución del instalador) no duplica ni falla.
+  const otra = await herramienta(['conectar', '--nombre=Otro nombre'], TOKEN);
+  assert.equal(otra.codigo, 0, otra.err.join('\n'));
+  const repetida = JSON.parse(otra.out[0]!) as Record<string, unknown>;
+  assert.equal(repetida.id, salida.id);
+  assert.equal(repetida.creada, false);
+  assert.equal(repetida.label, 'Instalador de Mailway', 'la existente no se cambia');
+  assert.equal(cuentasDeInstanciaEnBase().length, 1);
+  const anotadas = db
+    .prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action = 'cloudflare.account_connected' AND detail LIKE ?")
+    .get(`%${String(salida.id)}%`) as { c: number };
+  assert.equal(anotadas.c, 1, 'sin una anotación nueva');
+
+  // El token nunca sale por ningún lado.
+  for (const linea of [...r.out, ...r.err, ...otra.out, ...otra.err]) assert.ok(!linea.includes(TOKEN));
+
+  // El administrador la usa al dar de alta un dominio con DNS automático; un
+  // cliente con un dominio en la misma zona, nunca.
+  const delAdministrador = await createClient(ctx);
+  const cliente = await createClient(ctx, { withUser: true });
+  const admin = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'instalador.es', clientId: delAdministrador.clientId, autoDns: true },
+  });
+  assert.equal(admin.statusCode, 200, admin.body);
+  assert.ok((admin.json() as { cloudflare: { applied: unknown[] } | null }).cloudflare!.applied.length > 0);
+  const delCliente = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { domain: 'sub.instalador.es', autoDns: true },
+  });
+  assert.equal(delCliente.statusCode, 200, delCliente.body);
+  assert.equal((delCliente.json() as { cloudflare: unknown }).cloudflare, null);
+  assert.ok(!cf.enZona(z.id).some((reg) => reg.name.endsWith('sub.instalador.es')));
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${String(salida.id)}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});
+
+test('herramienta: un token en los argumentos se rechaza sin leer la entrada ni repetirlo', async () => {
+  const TOKEN = 'cfut_argumento0123456789abcdefghijklmnopq';
+  const ANTIGUO = 'Ab3'.repeat(14);
+  const casos = [
+    ['conectar', '--token', TOKEN],
+    ['conectar', '--token=x'],
+    ['conectar', TOKEN],
+    ['conectar', '--nombre', TOKEN],
+    ['conectar', `--nombre=${TOKEN}`],
+    ['conectar', '--nombre', ANTIGUO],
+    [TOKEN, 'conectar'],
+  ];
+  for (const argv of casos) {
+    const r = await herramienta(argv, TOKEN);
+    assert.equal(r.codigo, 1, argv.join(' '));
+    assert.equal(r.leida, false, `no lee la entrada: ${argv.join(' ')}`);
+    assert.deepEqual(r.out, []);
+    assert.match(r.err.join('\n'), /solo se admite por la entrada estándar/);
+    assert.ok(r.err.every((l) => !l.includes(TOKEN) && !l.includes(ANTIGUO)));
+  }
+  assert.equal(cuentasDeInstanciaEnBase().length, 0);
+});
+
+test('herramienta: los errores de uso y de Cloudflare no repiten lo recibido', async () => {
+  const TOKEN = 'cfut_noconectado0123456789abcdefghijklmn';
+  // Opciones y orden: antes de leer la entrada.
+  for (const argv of [[], ['otra'], ['conectar', '--zona', 'x'], ['conectar', '--nombre'], ['conectar', '--nombre', 'a', '--nombre', 'b']]) {
+    const r = await herramienta(argv, TOKEN);
+    assert.equal(r.codigo, 1, argv.join(' '));
+    assert.equal(r.leida, false, argv.join(' '));
+  }
+  const control = await herramienta(['conectar', '--nombre', 'a\nb'], TOKEN);
+  assert.equal(control.codigo, 1);
+  assert.equal(control.leida, false);
+
+  const vacia = await herramienta(['conectar'], '  \n');
+  assert.equal(vacia.codigo, 1);
+  assert.match(vacia.err.join('\n'), /No ha llegado ningún token/);
+
+  const larga = await herramienta(['conectar'], 'x'.repeat(5000));
+  assert.equal(larga.codigo, 1);
+  assert.match(larga.err.join('\n'), /demasiado larga/);
+  assert.ok(larga.err.every((l) => !l.includes('xxxxxxxxxx')));
+
+  const espacios = await herramienta(['conectar'], 'cfut_con espacios 0123456789abcdef');
+  assert.equal(espacios.codigo, 1);
+  assert.match(espacios.err.join('\n'), /espacios/);
+  assert.ok(espacios.err.every((l) => !l.includes('cfut_con')));
+
+  // Cloudflare no conoce el token: el motivo, sin el token.
+  const invalido = await herramienta(['conectar'], TOKEN);
+  assert.equal(invalido.codigo, 1);
+  assert.deepEqual(invalido.out, []);
+  assert.ok(invalido.err.length > 0);
+  assert.ok(invalido.err.every((l) => !l.includes(TOKEN)));
+
+  // Sin zonas: no se guarda.
+  cf.token(TOKEN, { zoneIds: [] });
+  const sinZonas = await herramienta(['conectar'], TOKEN);
+  assert.equal(sinZonas.codigo, 1);
+  assert.match(sinZonas.err.join('\n'), /ninguna zona/);
+  assert.equal(cuentasDeInstanciaEnBase().length, 0);
+});
+
+test('herramienta: la entrada estándar no se lee desde un terminal y tiene tope', async () => {
+  const terminal = Object.assign(Readable.from(['cfut_x']), { isTTY: true });
+  await assert.rejects(leerEntradaEstandar(terminal), /solo se admite por la entrada estándar/);
+  await assert.rejects(leerEntradaEstandar(Readable.from([Buffer.alloc(MAX_ENTRADA_CF + 1, 'a')])), /demasiado larga/);
+  assert.equal(await leerEntradaEstandar(Readable.from(['cfut_', 'trozos\n'])), 'cfut_trozos\n');
+  assert.equal(pareceToken('Instalador de Mailway'), false);
+  assert.equal(pareceToken('cfat_abc'), true);
+});
+
+test('herramienta: como programa, rechaza el token en los argumentos y termina con código 1', () => {
+  const TOKEN = 'cfut_programa0123456789abcdefghijklmnopq';
+  const ejecutar = (args: string[], input: string) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'src/tools/cloudflare.ts', ...args], {
+      cwd: path.resolve(__dirname, '..'),
+      encoding: 'utf8',
+      timeout: 60_000,
+      input,
+      env: process.env,
+    });
+  const enArgumentos = ejecutar(['conectar', '--token', TOKEN], '');
+  assert.equal(enArgumentos.status, 1, enArgumentos.stderr);
+  assert.equal(enArgumentos.stdout, '');
+  assert.match(enArgumentos.stderr, /solo se admite por la entrada estándar/);
+  assert.ok(!enArgumentos.stderr.includes(TOKEN));
+
+  const sinEntrada = ejecutar(['conectar'], '');
+  assert.equal(sinEntrada.status, 1, sinEntrada.stderr);
+  assert.equal(sinEntrada.stdout, '');
+  assert.match(sinEntrada.stderr, /No ha llegado ningún token/);
 });

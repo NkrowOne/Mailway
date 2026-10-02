@@ -24,7 +24,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-VERSION_INSTALADOR="1.0.0"
+VERSION_INSTALADOR="1.1.0"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$RAIZ/deploy"
 ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"
@@ -67,6 +67,11 @@ PANEL_CONTENEDOR=""
 CF_TOKEN=""
 CF_ZONA_ID=""
 CF_ZONA_NOMBRE=""
+# Qué ha pasado con la cuenta de Cloudflare del operador en el panel y en
+# Skyway (ver conectar_cloudflare_en_panel); vacío = no se ha intentado.
+RESUMEN_CF_PANEL=""
+RESUMEN_CF_SKYWAY=""
+CF_PANEL_CONECTADA=0
 
 # Emparejado con Skyway (ver emparejar_con_skyway).
 ADMIN_EMAIL=""
@@ -152,6 +157,12 @@ administración del panel (su contraseña se muestra una sola vez en el resumen)
 la puesta en marcha y conecta Skyway → Ajustes → Correo (Mailway) sin pasos manuales.
 Si el emparejado falla, la instalación no se interrumpe: repítelo con --emparejar.
 
+Con un token de Cloudflare, el instalador lo pasa también al panel (como cuenta de la
+instancia) y a Skyway por la entrada estándar de sus herramientas: los dominios que da de
+alta el administrador configuran su DNS solos, sin modificar los registros existentes. Las
+acciones de los clientes nunca usan esa cuenta. --actualizar y --emparejar no tienen el token
+(no se guarda en deploy/.env) y conservan la cuenta ya conectada.
+
 Variables de entorno (ejecución desatendida):
   MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
   MAILWAY_MAIL_HOST         Nombre del servidor de correo (por defecto mail.<dominio>).
@@ -161,6 +172,9 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_MARCA             Nombre del servicio en el webmail (por defecto «Webmail»).
   LETSENCRYPT_EMAIL         Correo de contacto para Let's Encrypt.
   CLOUDFLARE_API_TOKEN      Token de Cloudflare (Zona: Lectura y DNS: Edición). Vacío = sin Cloudflare.
+                            Además del DNS de la plataforma, se guarda en el panel (cuenta de la
+                            instancia) y en Skyway para que el DNS de los dominios que da de alta el
+                            administrador se configure solo. Nunca se escribe en deploy/.env.
   MAILWAY_ADMIN_EMAIL       Correo de la cuenta de administración del panel que crea el emparejado
                             con Skyway (por defecto, el de Let's Encrypt).
   SKYWAY_TOKEN              Token de API de Skyway (sky_…). Si falta y Skyway corre en este servidor
@@ -2180,6 +2194,8 @@ env_json() {
 #     entrada estándar y lo guarda igual que Ajustes → Correo (Mailway)).
 #   - Panel: node server/dist/tools/emparejar.js (administrador, puesta en
 #     marcha y token de gestión «Skyway»).
+#   - Cloudflare: node server/dist/tools/cloudflare.js conectar, en el panel y
+#     en Skyway (lee el token de Cloudflare por la entrada estándar).
 
 # Las capturas de =~ quedan en BASH_REMATCH: tras extraer un secreto, una
 # coincidencia inocua las sustituye (hasta bash 5.1 no se puede vaciar a mano).
@@ -2283,6 +2299,117 @@ skyway_con_otro_panel() {
   return 0
 }
 
+# ------------------------------------------ cuenta de Cloudflare del operador --
+#
+# El token de Cloudflare que se da al instalar se guarda también en el panel,
+# como cuenta de la INSTANCIA, y en Skyway: desde entonces, los dominios que
+# da de alta el administrador (de correo en el panel o desde Skyway, y de
+# servicios en Skyway) configuran su DNS solos, sin modificar los registros
+# que ya existan. Nunca lo usa una acción de un cliente. El token va siempre
+# por la entrada estándar de la herramienta de cada uno: como argumento se
+# vería en «ps» y en el registro de Docker. No se escribe en deploy/.env, así
+# que --actualizar y --emparejar no lo tienen y conservan lo ya conectado.
+
+# Sin token en esta ejecución: lo que haya conectado se conserva.
+cloudflare_sin_token() {
+  [ -z "$CF_TOKEN" ] || return 1
+  if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then
+    RESUMEN_CF_PANEL="sin cambios: esta ejecución no tiene el token (no se guarda en deploy/.env); la cuenta ya conectada se conserva"
+    info "Cloudflare: esta ejecución no tiene el token; la cuenta que ya tenga conectada el panel se conserva."
+  fi
+  return 0
+}
+
+# Guarda el token como cuenta de Cloudflare de la instancia en el panel (que
+# debe estar sano). Nunca interrumpe la instalación: un fallo queda en el
+# resumen y se explica cómo conectarla a mano.
+#   conectar_cloudflare_en_panel <contenedor del panel>
+conectar_cloudflare_en_panel() {
+  local contenedor=$1 salida="" etiqueta="" zonas="" creada=""
+  local re_etiqueta='"label":"([^"\\[:cntrl:]]{1,80})"' re_zonas='"zones":([0-9]{1,6})' re_creada='"creada":(true|false)'
+  local a_mano="conéctala en el panel, en Conexiones → Cloudflare, con el ámbito «Toda la instancia»."
+  if cloudflare_sin_token; then return 0; fi
+  if ! docker exec "$contenedor" test -f server/dist/tools/cloudflare.js 2>/dev/null; then
+    RESUMEN_CF_PANEL="pendiente: el panel desplegado no guarda la cuenta desde el servidor"
+    aviso "El panel desplegado no puede guardar la cuenta de Cloudflare desde el servidor: $a_mano"
+    return 0
+  fi
+  # Como el usuario del panel («node»): lo que toque en /data debe seguir siendo suyo.
+  preparar_errores_herramienta
+  if ! salida=$(printf '%s' "$CF_TOKEN" | docker exec -i -u node "$contenedor" node server/dist/tools/cloudflare.js conectar \
+    --nombre "Instalador de Mailway" 2>"$ERR_TMP"); then
+    mostrar_errores_herramienta
+    RESUMEN_CF_PANEL="pendiente: el panel no ha podido guardar la cuenta"
+    aviso "El panel no ha podido guardar la cuenta de Cloudflare: $a_mano"
+    return 0
+  fi
+  mostrar_errores_herramienta
+  if [[ $salida =~ $re_etiqueta ]]; then etiqueta=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_zonas ]]; then zonas=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_creada ]]; then creada=${BASH_REMATCH[1]}; fi
+  salida=""
+  if [ -z "$creada" ]; then
+    RESUMEN_CF_PANEL="pendiente: respuesta inesperada de la herramienta del panel"
+    aviso "Respuesta inesperada de la herramienta de Cloudflare del panel: comprueba en Conexiones → Cloudflare que la cuenta está conectada."
+    return 0
+  fi
+  CF_PANEL_CONECTADA=1
+  if [ "$creada" = true ]; then
+    RESUMEN_CF_PANEL="cuenta de la instancia conectada («${etiqueta:-Cloudflare}», ${zonas:-?} zonas)"
+  else
+    RESUMEN_CF_PANEL="cuenta de la instancia ya conectada («${etiqueta:-Cloudflare}», ${zonas:-?} zonas)"
+  fi
+  ok "Cloudflare en el panel: $RESUMEN_CF_PANEL. Los dominios que des de alta como administrador configuran su DNS solos."
+}
+
+# Instalación autónoma: el panel es mailway-panel y se espera a que esté sano.
+conectar_cloudflare_autonoma() {
+  titulo "Cuenta de Cloudflare del panel"
+  if cloudflare_sin_token; then
+    if [ -z "$RESUMEN_CF_PANEL" ]; then info "Sin token de Cloudflare: no hay cuenta que conectar."; fi
+    return 0
+  fi
+  if ! esperar_sano mailway-panel 120; then
+    RESUMEN_CF_PANEL="pendiente: el panel no está sano"
+    aviso "El panel (mailway-panel) no está sano: conecta la cuenta de Cloudflare en Conexiones → Cloudflare cuando arranque."
+    return 0
+  fi
+  conectar_cloudflare_en_panel mailway-panel
+}
+
+# Guarda el token en Skyway para los dominios de servicios del administrador.
+# La herramienta llegó con una versión de Skyway posterior: si no está, se
+# avisa y se sigue.
+conectar_cloudflare_en_skyway() {
+  if [ -z "$CF_TOKEN" ]; then
+    if [ "$ACTUALIZAR" = 1 ]; then
+      RESUMEN_CF_SKYWAY="sin cambios: esta ejecución no tiene el token; el que ya tenga guardado Skyway se conserva"
+    fi
+    return 0
+  fi
+  titulo "Cloudflare en Skyway"
+  if ! en_marcha skyway; then
+    RESUMEN_CF_SKYWAY="sin cambios: Skyway no corre en este servidor como el contenedor «skyway»"
+    info "Skyway no corre en este servidor como el contenedor «skyway»: no se le pasa el token de Cloudflare."
+    return 0
+  fi
+  if ! docker exec skyway test -f server/dist/tools/cloudflare.js 2>/dev/null; then
+    RESUMEN_CF_SKYWAY="pendiente: esta versión de Skyway no guarda el token desde el servidor"
+    aviso "Esta versión de Skyway no guarda el token de Cloudflare desde el servidor: actualiza Skyway y repite la instalación para que el DNS de los dominios de tus servicios se configure solo."
+    return 0
+  fi
+  preparar_errores_herramienta
+  if ! printf '%s' "$CF_TOKEN" | docker exec -i skyway node server/dist/tools/cloudflare.js conectar >/dev/null 2>"$ERR_TMP"; then
+    mostrar_errores_herramienta
+    RESUMEN_CF_SKYWAY="pendiente: Skyway no ha podido guardar el token"
+    aviso "Skyway no ha podido guardar el token de Cloudflare (motivo arriba). El resto de la instalación no se ve afectado."
+    return 0
+  fi
+  mostrar_errores_herramienta
+  RESUMEN_CF_SKYWAY="token guardado: los dominios de servicios que des de alta como administrador configuran su DNS solos"
+  ok "Token de Cloudflare guardado en Skyway."
+}
+
 # Empareja el panel con Skyway: la herramienta del panel crea (si falta) el
 # administrador, completa la puesta en marcha y emite el token de gestión
 # «Skyway», que pasa por la entrada estándar a la herramienta de Skyway. Nunca
@@ -2349,6 +2476,9 @@ emparejar_con_skyway() {
   else
     ok "El panel ya tenía cuenta de administración ($correo)."
   fi
+  # El panel está sano y su puesta en marcha, hecha: es el momento de darle
+  # la cuenta de Cloudflare de la instancia (nada de esto interrumpe).
+  conectar_cloudflare_en_panel "$PANEL_CONTENEDOR"
   # Los avisos de la herramienta (arriba) dicen qué ha quedado pendiente: el
   # asistente del panel lo retoma al entrar y --emparejar lo vuelve a intentar.
   if [ "$HERRAMIENTA_CON_AVISOS" = 1 ]; then
@@ -2415,6 +2545,7 @@ emparejar_solo() {
   titulo "Resumen"
   printf '\n'
   info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
+  if [ -n "$RESUMEN_CF_PANEL" ]; then info "Cloudflare (panel): $RESUMEN_CF_PANEL"; fi
   resumen_administrador
   [ "$EMPAREJADO_OK" = 1 ]
 }
@@ -2623,6 +2754,8 @@ resumen() {
     info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; ponles delante un proxy con TLS."
   fi
   info "DNS de la plataforma: $RESUMEN_DNS"
+  if [ -n "$RESUMEN_CF_PANEL" ]; then info "Cloudflare (panel):  $RESUMEN_CF_PANEL"; fi
+  if [ "$CON_SKYWAY" = 1 ] && [ -n "$RESUMEN_CF_SKYWAY" ]; then info "Cloudflare (Skyway): $RESUMEN_CF_SKYWAY"; fi
   info "DNS inverso (PTR):   $RESUMEN_PTR"
   info "Puerto 25 de salida: $RESUMEN_P25"
   info "Certificado IMAP/SMTP: $RESUMEN_CERT"
@@ -2649,7 +2782,13 @@ resumen() {
   else
     info "  $((paso += 1)). Abre el panel con el enlace de arriba y completa la puesta en marcha."
   fi
-  info "  $((paso += 1)). En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
+  # Con la cuenta ya conectada (o conservada en una actualización), no se
+  # manda conectarla a mano: el estado está en la línea «Cloudflare (panel)».
+  if [ "$CF_PANEL_CONECTADA" = 0 ] && [ -z "$RESUMEN_CF_PANEL" ]; then
+    info "  $((paso += 1)). En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
+  elif [ "$CF_PANEL_CONECTADA" = 0 ] && [ "${RESUMEN_CF_PANEL#pendiente}" != "$RESUMEN_CF_PANEL" ]; then
+    info "  $((paso += 1)). En Conexiones → Cloudflare, conecta la cuenta de la instancia (ámbito «Toda la instancia»)."
+  fi
   info "  $((paso += 1)). En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
   if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ]; then
     info "  $((paso += 1)). Empareja Skyway con el panel: sudo bash deploy/instalar.sh --emparejar"
@@ -2894,6 +3033,7 @@ main() {
   comprobar_ptr
   levantar_servicios
   configurar_motor
+  if [ "$CON_SKYWAY" = 0 ]; then conectar_cloudflare_autonoma; fi
 
   if [ "$CON_SKYWAY" = 1 ]; then
     desplegar_en_skyway
@@ -2908,6 +3048,7 @@ main() {
     # Lo último que puede fallar: así la contraseña del administrador que
     # crea el emparejado llega al resumen sin que nada la interrumpa.
     emparejar_al_terminar
+    conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway
   fi
 

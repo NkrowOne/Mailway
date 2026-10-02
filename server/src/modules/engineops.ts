@@ -10,6 +10,7 @@ import type { EngineReloadResult, EngineSettings, MailEngine } from '../engine/t
 import { fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
 import { audit } from './audit';
 import { requireAdmin } from './auth';
+import { rechazarSoloCliente } from './cloudflare';
 import { getEngineSettings, getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 
 /**
@@ -634,6 +635,9 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
    */
   app.post('/api/engine/acme', async (req) => {
     requireAdmin(req);
+    // El reto DNS-01 usa el token de una cuenta de la instancia: nunca en
+    // nombre de un cliente, aunque el token de gestión sea de administración.
+    rechazarSoloCliente(req.query);
     const body = acmeSchema.parse(req.body);
     const host = normalizeHostname(getInstanceSettings().mailHostname);
     if (!host) {

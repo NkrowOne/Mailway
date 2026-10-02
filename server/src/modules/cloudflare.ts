@@ -191,9 +191,15 @@ async function zonasDeCuenta(row: CuentaRow, forzar = false): Promise<CacheZonas
   }
 }
 
-/** Cuentas que un usuario puede ver y usar. */
-function cuentasVisibles(user: AuthedUser, clientId?: string): CuentaRow[] {
+/**
+ * Cuentas que un usuario puede ver y usar. Con `soloCliente` (una integración
+ * que actúa en nombre de un cliente con un token de administración), las de
+ * la instancia no se listan: listar con `?refresh=1` ya usa su token, y sus
+ * zonas son del operador, no del cliente.
+ */
+function cuentasVisibles(user: AuthedUser, clientId: string | undefined, soloCliente: boolean): CuentaRow[] {
   if (user.role === 'admin') {
+    if (soloCliente) return clientId && clientId !== 'instancia' ? cuentasDeCliente(clientId) : [];
     if (clientId === 'instancia') return cuentasDeInstancia();
     if (clientId) return cuentasDeCliente(clientId);
     return db.prepare('SELECT * FROM cloudflare_accounts ORDER BY created_at').all() as CuentaRow[];
@@ -210,15 +216,29 @@ export interface Resolucion {
 }
 
 /**
+ * ¿Puede esta resolución usar la cuenta guardada en el dominio? Solo si es
+ * del mismo cliente, o si es de la instancia y quien actúa puede usar las de
+ * la instancia (el administrador sin `soloCliente`).
+ */
+function guardadaUtilizable(
+  guardada: CuentaRow,
+  opts: { clientId: string | null; permitirInstancia: boolean },
+): boolean {
+  if (guardada.client_id === null) return opts.permitirInstancia;
+  return guardada.client_id === opts.clientId;
+}
+
+/**
  * Busca la cuenta cuyo token ve la zona de `hostname`: primero la guardada
  * en el dominio, luego las del cliente y, por último, las de la instancia.
  *
- * Las cuentas de la instancia solo se prueban a petición del administrador.
- * Si un cliente pudiera usarlas, le bastaría con dar de alta como dominio
- * propio uno que viva en la cuenta del administrador (o un subdominio suyo)
- * para escribir en esa zona. Una cuenta de la instancia que quedó asociada
- * al dominio porque el administrador aplicó su DNS sí sirve después para el
- * cliente: esa asociación la ha decidido el administrador.
+ * Las cuentas de la instancia solo se prueban a petición del administrador,
+ * también cuando quedaron guardadas en el dominio porque el administrador
+ * aplicó su DNS: el token del operador nunca se usa en una acción del
+ * cliente. Si pudiera, le bastaría con dar de alta como dominio propio uno
+ * que viva en la cuenta del administrador (o un subdominio suyo), esperar a
+ * que el administrador aplicara su DNS una vez y, desde entonces, reescribir
+ * esa zona cuando quisiera (con `replaceConflicts`, incluso su MX).
  */
 export async function resolverZona(
   hostname: string,
@@ -226,9 +246,11 @@ export async function resolverZona(
 ): Promise<{ resolucion: Resolucion | null; motivo: string }> {
   const candidatas: CuentaRow[] = [];
   const guardada = opts.storedAccountId ? cuentaRow(opts.storedAccountId) : undefined;
-  if (guardada && (guardada.client_id === null || guardada.client_id === opts.clientId)) {
-    candidatas.push(guardada);
-  }
+  if (guardada && guardadaUtilizable(guardada, opts)) candidatas.push(guardada);
+  // La cuenta del administrador asociada al dominio que no se ha podido usar:
+  // el motivo lo explica, porque la ficha del dominio dice que el DNS se
+  // aplicó con ella.
+  const instanciaReservada = guardada?.client_id === null && !opts.permitirInstancia;
   if (opts.clientId) candidatas.push(...cuentasDeCliente(opts.clientId));
   if (opts.permitirInstancia) candidatas.push(...cuentasDeInstancia());
 
@@ -252,7 +274,12 @@ export async function resolverZona(
     }
   }
 
+  const reservada =
+    ' El DNS de este dominio lo configuró el administrador con la cuenta de Cloudflare de la instancia, que solo utiliza el administrador: para cambiarlo desde aquí, conecta una cuenta propia en Conexiones o solicita al administrador que vuelva a aplicarlo.';
   if (vistas.size === 0) {
+    if (instanciaReservada) {
+      return { resolucion: null, motivo: `No hay ninguna cuenta de Cloudflare propia conectada.${reservada}` };
+    }
     const hayInstancia = !opts.permitirInstancia && cuentasDeInstancia().length > 0;
     return {
       resolucion: null,
@@ -264,7 +291,7 @@ export async function resolverZona(
   const detalle = errores.length > 0 ? ` Último error: ${errores[errores.length - 1]}` : '';
   return {
     resolucion: null,
-    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${domainToUnicode(hostname) || hostname}. Comprueba que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}`,
+    motivo: `Ninguna de las cuentas de Cloudflare conectadas contiene la zona de ${domainToUnicode(hostname) || hostname}. Comprueba que el dominio está en esa cuenta de Cloudflare y que el token incluye su zona.${detalle}${instanciaReservada ? reservada : ''}`,
   };
 }
 
@@ -977,18 +1004,40 @@ async function deseadosDeDominio(domain: string, includeRecommended: boolean): P
 }
 
 /**
+ * ¿Pide la petición `soloCliente=1`? Skyway usa un token de administrador en
+ * nombre de sus proyectos y lo envía cuando quien actúa en Skyway no es
+ * administrador (el propietario o un miembro de un espacio de trabajo).
+ */
+export function pideSoloCliente(query: unknown): boolean {
+  const { soloCliente } = (query ?? {}) as { soloCliente?: unknown };
+  return soloCliente === '1' || soloCliente === 'true';
+}
+
+/**
  * ¿Puede esta petición usar las cuentas de Cloudflare de la instancia?
- * Solo el administrador, y nunca si pide `soloCliente=1`: Skyway usa un
- * token de administrador en nombre de sus proyectos y lo envía cuando quien
- * actúa en Skyway no es administrador, para que el plan y la aplicación se
- * limiten a las cuentas del propio cliente (más la de la instancia que el
- * administrador ya asoció al dominio al aplicar su DNS, igual que para un
- * usuario del cliente).
+ * Solo el administrador, y nunca con `soloCliente=1`: entonces el plan y la
+ * aplicación se limitan a las cuentas del propio cliente, igual que para un
+ * usuario del cliente. Tampoco sirve la cuenta de la instancia que el
+ * administrador dejó asociada al dominio al aplicar su DNS (resolverZona).
  */
 export function permiteInstancia(user: AuthedUser, query: unknown): boolean {
-  const { soloCliente } = (query ?? {}) as { soloCliente?: string };
-  if (soloCliente === '1' || soloCliente === 'true') return false;
+  if (pideSoloCliente(query)) return false;
   return user.role === 'admin';
+}
+
+/**
+ * Las rutas que solo trabajan con las cuentas de la instancia (DNS de la
+ * plataforma, certificado del motor) no se pueden usar en nombre de un
+ * cliente: con `soloCliente=1` se rechazan aunque el token sea de
+ * administración, en vez de usar el token del operador.
+ */
+export function rechazarSoloCliente(query: unknown): void {
+  if (pideSoloCliente(query)) {
+    throw forbidden(
+      'Esta acción usa la cuenta de Cloudflare de la instancia y no se puede realizar en nombre de un cliente.',
+      'cloudflare_instance_admin_only',
+    );
+  }
 }
 
 async function planDeDominio(
@@ -1005,9 +1054,9 @@ async function planDeDominio(
     return { available: false, reason: motivo, changes: [], resolucion: null };
   }
   // Una cuenta del propio cliente se asocia ya al consultar. Una de la
-  // instancia, solo cuando el administrador aplica: si bastara con que él
-  // abriera la ficha, el cliente podría usar la cuenta del administrador
-  // sobre un dominio que este nunca ha decidido gestionar.
+  // instancia, solo cuando el administrador aplica: la asociación indica con
+  // qué cuenta se configuró el DNS, y abrir la ficha no configura nada. Aun
+  // asociada, el cliente nunca la usa (resolverZona).
   if (resolucion.cuenta.client_id !== null) guardarAsociacion(domain.id, resolucion);
   const deseados = await deseadosDeDominio(domain.domain, includeRecommended);
   const existentes = await existentesPara(
@@ -1075,12 +1124,13 @@ export interface ResultadoDominio extends ResultadoAplicacion {
  */
 export async function aplicarDnsDominio(
   domainId: string,
-  user: AuthedUser,
-  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia?: boolean },
+  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia: boolean },
 ): Promise<ResultadoDominio | { unavailable: string }> {
   const domain = getDomain(domainId);
-  const permitirInstancia = opts.permitirInstancia ?? user.role === 'admin';
-  const plan = await planDeDominio(domain, opts.includeRecommended, permitirInstancia);
+  // Quien llama decide expresamente si se pueden usar las cuentas de la
+  // instancia (permiteInstancia): deducirlo aquí del rol pasaría por alto un
+  // `soloCliente=1` de la petición.
+  const plan = await planDeDominio(domain, opts.includeRecommended, opts.permitirInstancia);
   if (!plan.available || !plan.resolucion) return { unavailable: plan.reason || '' };
   const r = plan.resolucion;
   const resultado = await ejecutarPlan(r.cliente, r.zona.id, plan.changes, {
@@ -1213,14 +1263,90 @@ async function planDeInstancia(): Promise<{
   return { available: true, account: { id: primera.id, label: primera.label }, grupos: out, sinZona };
 }
 
-/* ---------------------------------- Rutas --------------------------------- */
+/* ------------------------------ Conectar cuenta --------------------------- */
 
-const tokenSchema = z
+export const tokenSchema = z
   .string({ required_error: 'Introduce el token de Cloudflare.' })
   .trim()
   .min(20, 'El token de Cloudflare no parece completo.')
   .max(400, 'El token de Cloudflare es demasiado largo.')
   .refine((t) => !/\s/.test(t), 'El token no puede contener espacios.');
+
+export const etiquetaSchema = z.string().trim().max(80, 'El nombre no puede superar 80 caracteres.');
+
+const conexionSchema = z.object({ token: tokenSchema, label: etiquetaSchema.optional() });
+
+export interface ConexionCloudflare {
+  cuenta: CuentaCloudflare;
+  /** false si el mismo token ya estaba conectado en ese ámbito (modo idempotente). */
+  creada: boolean;
+}
+
+/**
+ * Conecta una cuenta de Cloudflare: comprueba el token y que vea alguna
+ * zona, lo guarda cifrado y anota la acción con `auditar` (la ruta audita la
+ * petición; la herramienta de terminal, como «Sistema»). El token nunca se
+ * devuelve ni pasa a la auditoría.
+ *
+ * Con el mismo token ya conectado en el mismo ámbito (el mismo cliente, o la
+ * instancia con `clientId` null), `siYaExiste: 'error'` responde 409 (la
+ * ruta: así el formulario lo explica) y `'devolver'` devuelve la existente
+ * sin tocarla (la herramienta del instalador, que puede repetirse).
+ */
+export async function conectarCuentaCloudflare(opts: {
+  token: string;
+  label?: string;
+  clientId: string | null;
+  createdBy: string | null;
+  siYaExiste: 'error' | 'devolver';
+  auditar: (accion: string, detalle: Record<string, unknown>) => void;
+}): Promise<ConexionCloudflare> {
+  const { token, label: etiqueta } = conexionSchema.parse({ token: opts.token, label: opts.label });
+  const clientId = opts.clientId;
+
+  // Mismo token dos veces en el mismo ámbito: se avisa (o se reutiliza) en vez de duplicar.
+  const mismas = clientId ? cuentasDeCliente(clientId) : cuentasDeInstancia();
+  const existente = mismas.find((fila) => {
+    try {
+      return decryptSecret(fila.token_enc) === token;
+    } catch {
+      return false;
+    }
+  });
+  if (existente) {
+    if (opts.siYaExiste === 'error') throw conflict('Este token ya está conectado.', 'cloudflare_duplicate');
+    // Se refrescan sus zonas: si el token ha dejado de valer, la cuenta lo
+    // muestra (last_error) y quien la conecta de nuevo lo ve en el resultado.
+    const cache = await zonasDeCuenta(existente, true);
+    return { cuenta: toCuenta(cuentaRow(existente.id) || existente, cache), creada: false };
+  }
+
+  const cliente = new CloudflareClient(token);
+  await cliente.verifyToken();
+  const zonas = await cliente.listZones();
+  if (zonas.length === 0) {
+    throw badRequest(
+      'El token es válido, pero no da acceso a ninguna zona. Asigna el permiso «Zone · Zone · Read» e incluye las zonas de tus dominios.',
+      'cloudflare_no_zones',
+    );
+  }
+
+  const id = randomId('cf');
+  const label = etiqueta || zonas[0]!.accountName || 'Cloudflare';
+  db.prepare(
+    `INSERT INTO cloudflare_accounts (id, client_id, label, token_enc, token_hint, created_by,
+       created_at, last_verified_at, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
+  ).run(id, clientId, label, encryptSecret(token), pistaToken(token), opts.createdBy, now(), now());
+  const nombres = zonas.map((z) => z.name).sort((a, b) => a.localeCompare(b));
+  const cache: CacheZonas = { zones: nombres.slice(0, 500), total: nombres.length, at: now() };
+  setJsonSetting(claveCache(id), cache);
+
+  opts.auditar('cloudflare.account_connected', { id, label, clientId, zones: nombres.length });
+  return { cuenta: toCuenta(cuentaRow(id)!, cache), creada: true };
+}
+
+/* ---------------------------------- Rutas --------------------------------- */
 
 const booleano = (campo: string) =>
   z.boolean({ invalid_type_error: `El campo «${campo}» debe ser verdadero o falso.` }).optional();
@@ -1235,11 +1361,14 @@ const aplicarSchema = z
 const reemplazoSchema = z.object({ replaceConflicts: booleano('replaceConflicts') }).nullish();
 
 export function registerCloudflareRoutes(app: FastifyInstance): void {
-  /** Cuentas conectadas. El administrador ve todas; un cliente, las suyas. */
+  /**
+   * Cuentas conectadas. El administrador ve todas; un cliente, las suyas.
+   * Con `?soloCliente=1`, el administrador solo ve las del `?clientId` indicado.
+   */
   app.get('/api/cloudflare/accounts', async (req) => {
     const user = requireAuth(req);
     const { clientId, refresh } = req.query as { clientId?: string; refresh?: string };
-    const filas = cuentasVisibles(user, user.role === 'admin' ? clientId : undefined);
+    const filas = cuentasVisibles(user, user.role === 'admin' ? clientId : undefined, pideSoloCliente(req.query));
     const accounts = await Promise.all(
       filas.map(async (fila) => {
         const cache = await zonasDeCuenta(fila, refresh === '1');
@@ -1254,7 +1383,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const body = z
       .object({
         token: tokenSchema,
-        label: z.string().trim().max(80, 'El nombre no puede superar 80 caracteres.').optional(),
+        label: etiquetaSchema.optional(),
         clientId: z.string().trim().min(1, 'Selecciona un cliente.').nullable().optional(),
       })
       .parse(req.body);
@@ -1262,6 +1391,14 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     let clientId: string | null;
     if (user.role === 'admin') {
       clientId = body.clientId || null;
+      // En nombre de un cliente no se conectan cuentas de la instancia: la
+      // cuenta sería del operador y la usarían sus altas de dominios.
+      if (!clientId && pideSoloCliente(req.query)) {
+        throw forbidden(
+          'En nombre de un cliente solo se pueden conectar cuentas de ese cliente: indica su «clientId».',
+          'cloudflare_instance_admin_only',
+        );
+      }
       if (clientId) getClient(clientId);
     } else {
       if (!user.clientId) throw forbidden();
@@ -1271,40 +1408,15 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       clientId = user.clientId;
     }
 
-    // Mismo token dos veces en el mismo ámbito: se avisa en vez de duplicar.
-    const mismas = clientId ? cuentasDeCliente(clientId) : cuentasDeInstancia();
-    const duplicado = mismas.some((fila) => {
-      try {
-        return decryptSecret(fila.token_enc) === body.token;
-      } catch {
-        return false;
-      }
+    const { cuenta } = await conectarCuentaCloudflare({
+      token: body.token,
+      label: body.label,
+      clientId,
+      createdBy: user.id,
+      siYaExiste: 'error',
+      auditar: (accion, detalle) => audit(req, accion, detalle),
     });
-    if (duplicado) throw conflict('Este token ya está conectado.', 'cloudflare_duplicate');
-
-    const cliente = new CloudflareClient(body.token);
-    await cliente.verifyToken();
-    const zonas = await cliente.listZones();
-    if (zonas.length === 0) {
-      throw badRequest(
-        'El token es válido, pero no da acceso a ninguna zona. Asigna el permiso «Zone · Zone · Read» e incluye las zonas de tus dominios.',
-        'cloudflare_no_zones',
-      );
-    }
-
-    const id = randomId('cf');
-    const label = body.label || zonas[0]!.accountName || 'Cloudflare';
-    db.prepare(
-      `INSERT INTO cloudflare_accounts (id, client_id, label, token_enc, token_hint, created_by,
-         created_at, last_verified_at, last_error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
-    ).run(id, clientId, label, encryptSecret(body.token), pistaToken(body.token), user.id, now(), now());
-    const nombres = zonas.map((z) => z.name).sort((a, b) => a.localeCompare(b));
-    const cache: CacheZonas = { zones: nombres.slice(0, 500), total: nombres.length, at: now() };
-    setJsonSetting(claveCache(id), cache);
-
-    audit(req, 'cloudflare.account_connected', { id, label, clientId, zones: nombres.length });
-    return { account: toCuenta(cuentaRow(id)!, cache) };
+    return { account: cuenta };
   });
 
   app.delete('/api/cloudflare/accounts/:id', async (req) => {
@@ -1317,6 +1429,9 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       if (fila.client_id === null || fila.client_id !== user.clientId) {
         throw notFound('Cuenta de Cloudflare no encontrada.');
       }
+    } else if (fila.client_id === null && pideSoloCliente(req.query)) {
+      // En nombre de un cliente, la cuenta del operador no existe.
+      throw notFound('Cuenta de Cloudflare no encontrada.');
     }
     db.prepare('DELETE FROM cloudflare_accounts WHERE id = ?').run(id);
     db.prepare('DELETE FROM settings WHERE key = ?').run(claveCache(id));
@@ -1355,7 +1470,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const domain = getDomain(id);
     requireClientAccess(req, domain.clientId);
     const body = aplicarSchema.parse(req.body) || {};
-    const resultado = await aplicarDnsDominio(id, user, {
+    const resultado = await aplicarDnsDominio(id, {
       replaceConflicts: body.replaceConflicts === true,
       includeRecommended: body.includeRecommended !== false,
       permitirInstancia: permiteInstancia(user, req.query),
@@ -1423,6 +1538,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
   /** DNS de la plataforma: vista previa (solo administrador). */
   app.get('/api/cloudflare/instance-dns', async (req) => {
     requireAdmin(req);
+    rechazarSoloCliente(req.query);
     const plan = await planDeInstancia();
     const changes = plan.grupos.flatMap((g) => g.cambios.map(publico));
     return {
@@ -1438,6 +1554,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
 
   app.post('/api/cloudflare/instance-dns', async (req) => {
     requireAdmin(req);
+    rechazarSoloCliente(req.query);
     const body = reemplazoSchema.parse(req.body) || {};
     const plan = await planDeInstancia();
     if (!plan.available) throw badRequest(plan.reason || 'No es posible aplicar el DNS de la plataforma.', 'cloudflare_unavailable');

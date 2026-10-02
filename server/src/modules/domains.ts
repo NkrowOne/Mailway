@@ -411,7 +411,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     let cloudflareReason: string | undefined;
     if (body.autoDns) {
       try {
-        const r = await aplicarDnsDominio(id, user, {
+        const r = await aplicarDnsDominio(id, {
           replaceConflicts: false,
           includeRecommended: true,
           permitirInstancia: permiteInstancia(user, req.query),

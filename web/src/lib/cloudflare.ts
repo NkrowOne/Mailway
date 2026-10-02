@@ -154,6 +154,51 @@ export interface EstadoAltaDominio {
   cloudflareReason?: string;
 }
 
+/** Respuesta de POST /api/domains. */
+export interface RespuestaAltaDominio {
+  domain: DominioCorreo;
+  cloudflare: ResultadoAplicacion | null;
+  cloudflareReason?: string;
+}
+
+/**
+ * Aviso tras el alta según lo que pasó con Cloudflare (lo comparten el alta
+ * de Dominios y el alta de cliente con su primer dominio). Un motivo o unos
+ * conflictos sin aplicar reclaman atención: no se anuncian como un éxito.
+ */
+export function avisoAltaDominio(
+  data: Pick<RespuestaAltaDominio, 'cloudflare' | 'cloudflareReason'>,
+  pedido: boolean,
+): { tono: 'ok' | 'error'; texto: string } {
+  if (!pedido) return { tono: 'ok', texto: 'Dominio dado de alta. Configura ahora su DNS.' };
+  const cf = data.cloudflare;
+  if (!cf || data.cloudflareReason) {
+    return {
+      tono: 'error',
+      texto:
+        'Dominio dado de alta, pero no se ha configurado el DNS en Cloudflare. Consulta el motivo en la ficha del dominio.',
+    };
+  }
+  if (cf.errors.length > 0) {
+    return {
+      tono: 'error',
+      texto:
+        cf.applied.length > 0
+          ? 'Dominio dado de alta. Parte de los registros no se ha podido aplicar en Cloudflare: consulta el detalle en la ficha del dominio.'
+          : 'Dominio dado de alta, pero no se ha podido aplicar el DNS en Cloudflare. Consulta el detalle en la ficha del dominio.',
+    };
+  }
+  if ((cf.skipped ?? []).length > 0) {
+    return {
+      tono: 'error',
+      texto:
+        'Dominio dado de alta. Hay registros en conflicto en Cloudflare que no se han modificado: revísalos en la ficha del dominio.',
+    };
+  }
+  if (cf.applied.length > 0) return { tono: 'ok', texto: 'Dominio dado de alta y DNS aplicado en Cloudflare.' };
+  return { tono: 'ok', texto: 'Dominio dado de alta. Los registros ya estaban configurados en Cloudflare.' };
+}
+
 /**
  * Asistente de tokens de Cloudflare con los dos permisos que necesita
  * Mailway ya marcados: leer zonas (Zone · Zone · Read) y editar el DNS

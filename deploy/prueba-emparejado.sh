@@ -68,12 +68,34 @@ igual() { [ "$1" = "$2" ]; }
 FAKE_SALIDA=""
 FAKE_AVISO=""
 FAKE_IPS="172.18.0.5 "
+# Herramienta de Cloudflare: si existe en el panel y en Skyway, si falla y qué responde.
+FAKE_CF_PANEL=1
+FAKE_CF_SKYWAY=1
+FAKE_CF_FALLA=""
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":true}'
 docker() {
   printf 'docker %s\n' "$*" >>"$REGISTRO"
   case "$*" in
     "inspect --type container -f {{.State.Running}} skyway") echo true ;;
     "inspect --type container -f {{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}} skyway") echo "$FAKE_IPS" ;;
+    "exec skyway test -f server/dist/tools/cloudflare.js") [ "$FAKE_CF_SKYWAY" = 1 ] ;;
+    "exec panel-c test -f server/dist/tools/cloudflare.js" | "exec mailway-panel test -f server/dist/tools/cloudflare.js")
+      [ "$FAKE_CF_PANEL" = 1 ]
+      ;;
     "exec skyway test -f "* | "exec panel-c test -f "*) return 0 ;;
+    "exec -i -u node "*" node server/dist/tools/cloudflare.js conectar"*)
+      # Lo que llega por la entrada estándar queda en el registro (no es una línea «docker»).
+      echo "CF_PANEL_RECIBIDO=$(cat)" >>"$REGISTRO"
+      if [ -n "$FAKE_CF_FALLA" ]; then
+        echo "$FAKE_CF_FALLA" >&2
+        return 1
+      fi
+      printf '%s\n' "$FAKE_CF_SALIDA"
+      ;;
+    "exec -i skyway node server/dist/tools/cloudflare.js conectar"*)
+      echo "CF_SKYWAY_RECIBIDO=$(cat)" >>"$REGISTRO"
+      echo '{"ok":true}'
+      ;;
     "exec skyway node server/dist/tools/token.js crear"*) echo '{"id":"tok_tmp1","token":"sky_temporal12345"}' ;;
     "exec skyway node server/dist/tools/token.js revocar"*) echo "TOKEN_TEMPORAL_REVOCADO" >>"$REGISTRO" ;;
     "exec -i -u node panel-c node server/dist/tools/emparejar.js"*)
@@ -117,9 +139,31 @@ reiniciar() {
   EMPAREJADO_ADMIN_PASSWORD=""
   RESUMEN_EMPAREJADO=""
   FAKE_AVISO=""
+  CF_TOKEN=""
+  RESUMEN_CF_PANEL=""
+  RESUMEN_CF_SKYWAY=""
+  CF_PANEL_CONECTADA=0
+  FAKE_CF_PANEL=1
+  FAKE_CF_SKYWAY=1
+  FAKE_CF_FALLA=""
+  ACTUALIZAR=0
+  EMPAREJAR=0
+}
+# Ninguna línea «docker …» del registro (sus argumentos) contiene $1.
+docker_sin() {
+  grep '^docker ' "$REGISTRO" >"$TMP/lineas-docker" || true
+  ! grep -Fq -- "$1" "$TMP/lineas-docker"
+}
+# Las llamadas a la herramienta de Cloudflare van después de la de emparejado.
+cloudflare_tras_emparejado() {
+  local emparejado cloudflare
+  emparejado=$(grep -n 'emparejar.js --email' "$REGISTRO" | head -n 1 | cut -d: -f1)
+  cloudflare=$(grep -n 'cloudflare.js conectar' "$REGISTRO" | head -n 1 | cut -d: -f1)
+  [ -n "$emparejado" ] && [ -n "$cloudflare" ] && [ "$cloudflare" -gt "$emparejado" ]
 }
 
 TOKEN_MWT='mwt_0123abcd_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq'
+TOKEN_CF='cfut_TokenDeCloudflareDePrueba0123456789abcd'
 PANEL_CONTENEDOR=panel-c
 PANEL_SERVICIO_ID=svc1
 PANEL_PROYECTO_ID=prj1
@@ -182,6 +226,97 @@ emparejar_al_terminar >"$SALIDA" 2>&1
 comprobar "no ejecuta la herramienta del panel" no_contiene "$REGISTRO" "emparejar.js --email"
 comprobar "lo explica" contiene "$SALIDA" "Skyway ya está conectado con otro panel de Mailway"
 SKYWAY_TOKEN=""
+
+echo "# Con token de Cloudflare: llega por la entrada estándar al panel y a Skyway, nunca en argumentos"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+{ emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1
+comprobar "el panel recibe el token por la entrada estándar" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
+comprobar "como el usuario del panel y con su nombre" contiene "$REGISTRO" "docker exec -i -u node panel-c node server/dist/tools/cloudflare.js conectar --nombre Instalador de Mailway"
+comprobar "después de la herramienta de emparejado" cloudflare_tras_emparejado
+comprobar "Skyway lo recibe por la entrada estándar" contiene "$REGISTRO" "CF_SKYWAY_RECIBIDO=$TOKEN_CF"
+comprobar "ninguna línea docker lleva el token" docker_sin "$TOKEN_CF"
+comprobar "la salida del instalador no lo muestra" no_contiene "$SALIDA" "$TOKEN_CF"
+comprobar "el emparejado sigue" igual "$EMPAREJADO_OK" 1
+comprobar "el resumen dice qué cuenta quedó conectada" igual "$RESUMEN_CF_PANEL" "cuenta de la instancia conectada («Instalador de Mailway», 3 zonas)"
+comprobar "y lo de Skyway" contiene <(printf '%s' "$RESUMEN_CF_SKYWAY") "token guardado"
+
+echo "# Cuenta que ya estaba conectada (otra ejecución): se dice así"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":false}'
+emparejar_con_skyway >"$SALIDA" 2>&1
+comprobar "ya conectada" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "ya conectada"
+FAKE_CF_SALIDA='{"ok":true,"id":"cf_1","label":"Instalador de Mailway","zones":3,"creada":true}'
+
+echo "# Skyway sin la herramienta de Cloudflare: aviso y sigue"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_CF_SKYWAY=0
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+{ emparejar_con_skyway; conectar_cloudflare_en_skyway; echo "CODIGO=$?"; } >"$SALIDA" 2>&1
+comprobar "avisa" contiene "$SALIDA" "Esta versión de Skyway no guarda el token de Cloudflare"
+comprobar "no interrumpe" contiene "$SALIDA" "CODIGO=0"
+comprobar "no llama a una herramienta que no existe" no_contiene "$REGISTRO" "docker exec -i skyway node server/dist/tools/cloudflare.js"
+comprobar "el panel sí la recibe" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
+comprobar "el emparejado sigue" igual "$EMPAREJADO_OK" 1
+comprobar "el resumen lo recoge" contiene <(printf '%s' "$RESUMEN_CF_SKYWAY") "pendiente"
+
+echo "# Panel sin la herramienta o que falla: aviso, sin interrumpir el emparejado"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_CF_PANEL=0
+emparejar_con_skyway >"$SALIDA" 2>&1
+comprobar "explica cómo conectarla a mano" contiene "$SALIDA" "Conexiones → Cloudflare"
+comprobar "no la llama" no_contiene "$REGISTRO" "CF_PANEL_RECIBIDO"
+comprobar "Skyway queda emparejado" igual "$EMPAREJADO_OK" 1
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_CF_FALLA="Cloudflare ha rechazado el token."
+emparejar_con_skyway >"$SALIDA" 2>&1
+comprobar "muestra el motivo" contiene "$SALIDA" "Cloudflare ha rechazado el token."
+comprobar "queda pendiente" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "pendiente"
+comprobar "Skyway queda emparejado igualmente" igual "$EMPAREJADO_OK" 1
+comprobar "y la contraseña sigue para el resumen" igual "$EMPAREJADO_ADMIN_EMAIL" "admin@ejemplo.test"
+
+echo "# Si la herramienta de emparejado falla, no se pasa el token"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+FAKE_SALIDA='{"adminEmail":"admin@ejemplo.test"}'
+emparejar_con_skyway >"$SALIDA" 2>&1
+comprobar "no llama a la herramienta de Cloudflare del panel" no_contiene "$REGISTRO" "cloudflare.js"
+
+echo "# Sin token (instalación sin Cloudflare): no se llama a ninguna"
+reiniciar
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+{ emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1
+comprobar "ni en el panel ni en Skyway" no_contiene "$REGISTRO" "cloudflare.js"
+comprobar "el resumen no dice nada de una cuenta" igual "$RESUMEN_CF_PANEL$RESUMEN_CF_SKYWAY" ""
+
+echo "# --actualizar y --emparejar no tienen el token: no se pide y lo conectado se conserva"
+for modo in ACTUALIZAR EMPAREJAR; do
+  reiniciar
+  printf -v "$modo" '%s' 1
+  FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+  { emparejar_con_skyway; conectar_cloudflare_en_skyway; } >"$SALIDA" 2>&1 </dev/null
+  comprobar "$modo: no llama a ninguna herramienta de Cloudflare" no_contiene "$REGISTRO" "cloudflare.js"
+  comprobar "$modo: informa de que se conserva" contiene "$SALIDA" "la cuenta que ya tenga conectada el panel se conserva"
+  comprobar "$modo: el resumen lo recoge" contiene <(printf '%s' "$RESUMEN_CF_PANEL") "se conserva"
+done
+reiniciar
+
+echo "# Instalación autónoma: el token llega al panel mailway-panel por la entrada estándar"
+reiniciar
+CF_TOKEN=$TOKEN_CF
+conectar_cloudflare_autonoma >"$SALIDA" 2>&1
+comprobar "lo recibe por la entrada estándar" contiene "$REGISTRO" "CF_PANEL_RECIBIDO=$TOKEN_CF"
+comprobar "en el contenedor del panel autónomo" contiene "$REGISTRO" "docker exec -i -u node mailway-panel node server/dist/tools/cloudflare.js conectar"
+comprobar "sin el token en argumentos" docker_sin "$TOKEN_CF"
+comprobar "queda conectada" igual "$CF_PANEL_CONECTADA" 1
+reiniciar
+conectar_cloudflare_autonoma >"$SALIDA" 2>&1
+comprobar "sin token, no llama a nada" no_contiene "$REGISTRO" "cloudflare.js"
 
 echo "# Token temporal y la API de Skyway no responde: se omite el panel sin interrumpir"
 reiniciar
@@ -640,6 +775,32 @@ MAILWAY_PANEL_SERVICIO='../x'
 (detectar_panel_existente) >"$SALIDA" 2>&1
 comprobar "rechaza un identificador no válido" contiene "$SALIDA" "no es un identificador de servicio de Skyway válido"
 unset MAILWAY_PANEL_SERVICIO
+
+echo "# El token de Cloudflare nunca se escribe en deploy/.env y el resumen dice qué quedó conectado"
+reiniciar_panel
+(datos_instalacion; CF_TOKEN=$TOKEN_CF; escribir_env >/dev/null 2>&1)
+comprobar "deploy/.env existe" test -s "$ENV_FILE"
+comprobar "sin el token de Cloudflare" no_contiene "$ENV_FILE" "$TOKEN_CF"
+(
+  datos_instalacion
+  CON_SKYWAY=1 RESUMEN_SKYWAY=x RESUMEN_EMPAREJADO=x RESUMEN_DNS=x RESUMEN_PTR=x RESUMEN_P25=x RESUMEN_CERT=x
+  EMPAREJADO_ADMIN_EMAIL=admin@ejemplo.test EMPAREJADO_OK=1 PANEL_CONTENEDOR=panel-c
+  CF_PANEL_CONECTADA=1 RESUMEN_CF_PANEL="cuenta de la instancia conectada («Instalador de Mailway», 3 zonas)"
+  RESUMEN_CF_SKYWAY="token guardado"
+  resumen
+) >"$SALIDA" 2>&1
+comprobar "el resumen nombra la cuenta del panel" contiene "$SALIDA" "Cloudflare (panel):  cuenta de la instancia conectada («Instalador de Mailway», 3 zonas)"
+comprobar "y la de Skyway" contiene "$SALIDA" "Cloudflare (Skyway): token guardado"
+comprobar "no manda conectarla a mano" no_contiene "$SALIDA" "conecta una cuenta para publicar el DNS"
+(
+  datos_instalacion
+  CON_SKYWAY=1 RESUMEN_SKYWAY=x RESUMEN_EMPAREJADO=x RESUMEN_DNS=x RESUMEN_PTR=x RESUMEN_P25=x RESUMEN_CERT=x
+  EMPAREJADO_ADMIN_EMAIL=admin@ejemplo.test EMPAREJADO_OK=1 PANEL_CONTENEDOR=panel-c
+  CF_PANEL_CONECTADA=0 RESUMEN_CF_PANEL="" RESUMEN_CF_SKYWAY=""
+  resumen
+) >"$SALIDA" 2>&1
+comprobar "sin cuenta conectada, sí lo manda" contiene "$SALIDA" "conecta una cuenta para publicar el DNS"
+comprobar "y no hay línea de Cloudflare" no_contiene "$SALIDA" "Cloudflare (panel)"
 
 echo "# Instalación autónoma: no se busca nada en Skyway"
 reiniciar_panel

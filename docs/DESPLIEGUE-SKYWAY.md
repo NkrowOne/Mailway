@@ -149,7 +149,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     del propio motor por DNS-01 (sección 5.1); sin Cloudflare, el certificado
     de Traefik, que lleva al motor el extractor del perfil `tls` (sección
     5.2). Espera a que el extractor confirme el certificado servido en 993 y
-    465.
+    465. En la instalación autónoma, con un token de Cloudflare y el panel
+    sano, se lo pasa como cuenta de la instancia (sección 2.7).
 11. **Panel en Skyway**: sin `SKYWAY_TOKEN`, si Skyway corre en este
     servidor (contenedor `skyway`), crea un token de API temporal con la
     herramienta de terminal de Skyway (caduca en 60 minutos y se revoca al
@@ -181,9 +182,13 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     hace en cada ejecución, así que repetir el instalador completa lo que
     hubiera quedado pendiente (por ejemplo, el motor si no respondía); solo
     se salta si Skyway está conectado con **otro** panel de Mailway. Si algo
-    falla, avisa y la instalación sigue: se repite con `--emparejar`.
+    falla, avisa y la instalación sigue: se repite con `--emparejar`. Con un
+    token de Cloudflare (paso 6), tras crear la cuenta de administración se
+    lo pasa al panel como cuenta de la instancia y, al terminar, a Skyway
+    (sección 2.7).
 14. **Resumen**: dirección del panel, estado del DNS, del PTR, del puerto 25,
-    del certificado y del emparejado, el comando de copia de seguridad del
+    del certificado, del emparejado y de las cuentas de Cloudflare que han
+    quedado conectadas en el panel y en Skyway, el comando de copia de seguridad del
     correo y los de diagnóstico (sección 13.1). Con el emparejado hecho,
     muestra la cuenta de administración del panel y, si se acaba de crear, su
     contraseña: **una sola vez**, porque no se guarda en ningún sitio. Sin
@@ -214,7 +219,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_IP` | IPv4 pública (se detecta si falta). |
 | `MAILWAY_MARCA` | Nombre del servicio en el webmail (por defecto `Webmail`). |
 | `LETSENCRYPT_EMAIL` | Correo de contacto para Let's Encrypt. |
-| `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. |
+| `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. Se guarda también en el panel (cuenta de la instancia) y en Skyway (sección 2.7); nunca en `deploy/.env`. |
 | `MAILWAY_ADMIN_EMAIL` | Correo de la cuenta de administración del panel que crea el emparejado (por defecto, el de Let's Encrypt). Se comprueba al principio con las mismas reglas que el panel (sin `%`, sin `..` ni un punto al principio o al final de la parte local). Se guarda en `deploy/.env`; la contraseña, no. |
 | `SKYWAY_TOKEN` | Token de API de Skyway (`sky_…`). Sin él, si Skyway corre en este servidor, se crea uno temporal; si no, no se despliega el panel. |
 | `SKYWAY_URL` | API de Skyway (por defecto `http://127.0.0.1:4000`; si ahí no responde, se prueba la IP del contenedor `skyway`). |
@@ -319,6 +324,58 @@ ningún proceso. Nunca pegues el token ni la contraseña dentro de la orden
 Requiere un panel y un Skyway con estas herramientas; con versiones
 anteriores, el instalador lo avisa y la conexión se hace a mano (sección 4.1).
 
+### 2.7 El token de Cloudflare en el panel y en Skyway
+
+El token de Cloudflare que das al instalador (`CLOUDFLARE_API_TOKEN` o la
+pregunta del paso 6) sirve también para que, desde entonces, los dominios que
+**tú, como administrador**, das de alta configuren su DNS en Cloudflare solos:
+los de correo en el panel (también el primer dominio del alta de un cliente)
+o desde Skyway, y los de los servicios en Skyway, también en proyectos de tus
+clientes. Se crea lo que falta sin modificar los registros existentes; un
+registro que choca se informa y no se toca. Para ello el instalador guarda el
+token:
+
+1. **En el panel**, como cuenta de Cloudflare **de la instancia**
+   («Instalador de Mailway» en Conexiones → Cloudflare), con su herramienta de
+   terminal y el panel ya sano: junto a Skyway, dentro del emparejado y justo
+   después de crear la cuenta de administración; en la instalación autónoma,
+   en cuanto `mailway-panel` está sano.
+
+   ```bash
+   printf '%s' "$CF_TOKEN" | docker exec -i -u node <contenedor del panel> \
+     node server/dist/tools/cloudflare.js conectar --nombre "Instalador de Mailway"
+   ```
+
+2. **En Skyway**, con su herramienta equivalente, si la versión de Skyway la
+   incluye (si no, lo avisa y sigue):
+
+   ```bash
+   printf '%s' "$CF_TOKEN" | docker exec -i skyway node server/dist/tools/cloudflare.js conectar
+   ```
+
+Reglas:
+
+- El token va siempre por la **entrada estándar** (`printf` es una orden
+  interna de bash): nunca como argumento, que quedaría a la vista en `ps`, ni
+  en `deploy/.env`, ni en los registros. Las herramientas rechazan un token en
+  sus argumentos y no lo repiten en sus mensajes; en el panel queda cifrado.
+- Es **solo para el administrador**: las acciones de un cliente (un usuario de
+  un cliente en el panel, o un propietario o miembro de un espacio de trabajo
+  en Skyway, que llega al panel con `?soloCliente=1`) nunca usan esa cuenta,
+  ni siquiera en un dominio cuyo DNS aplicó antes el administrador. Un cliente
+  que quiera el DNS automático conecta su propia cuenta (docs/INTEGRACIONES.md,
+  sección 4.3).
+- **Nada de esto interrumpe la instalación**: un panel o un Skyway sin la
+  herramienta, o un fallo de Cloudflare, quedan como aviso y en el resumen,
+  que en ese caso indica que la conectes a mano en **Conexiones → Cloudflare**
+  con el ámbito «Toda la instancia».
+- Es **idempotente**: repetir la instalación con el mismo token no duplica la
+  cuenta.
+- `--actualizar` y `--emparejar` **no tienen el token** (no se guarda en
+  `deploy/.env`) y no lo piden: lo dicen y conservan la cuenta ya conectada.
+  Para cambiarlo, conéctalo en Conexiones → Cloudflare o ejecuta
+  `--actualizar` con `CLOUDFLARE_API_TOKEN`.
+
 ---
 
 ## 3. Puesta en marcha del panel
@@ -350,10 +407,11 @@ El asistente tiene cuatro pasos:
 
 Después, en el panel:
 
-- **Conexiones → Cloudflare**: conecta una cuenta con el ámbito «Toda la
-  instancia» si vas a usar Cloudflare para el certificado o para los dominios
-  de tus clientes. **DNS de la plataforma** crea los registros del propio
-  servidor si aún faltan.
+- **Conexiones → Cloudflare**: si diste un token al instalador, la cuenta de
+  la instancia («Instalador de Mailway») ya está conectada (sección 2.7); si
+  no, conecta una con el ámbito «Toda la instancia» si vas a usar Cloudflare
+  para el certificado o para los dominios de tus clientes. **DNS de la
+  plataforma** crea los registros del propio servidor si aún faltan.
 - **Ajustes → Servidor de correo**: comprueba el nombre del servidor, los
   ajustes recomendados y el certificado (sección 5).
 - **Avisos → Canales de aviso**: configura al menos un canal (sección 10).
@@ -1174,8 +1232,11 @@ menor):
    perfil `tls`. Además, `deploy/prueba-emparejado.sh` carga las funciones
    del instalador con `docker` y la API de Skyway simulados y comprueba el
    emparejado (correo de la cuenta, avisos de la puesta en marcha, que se
-   repite con Skyway ya conectado y no toca otro panel) y el paso «Panel en
-   Skyway» cuando su API no responde (token temporal revocado, IP del
+   repite con Skyway ya conectado y no toca otro panel), el paso del token de
+   Cloudflare (llega por la entrada estándar al panel y a Skyway y nunca
+   aparece en los argumentos de `docker` ni en `deploy/.env`; sin la
+   herramienta en Skyway, avisa y sigue; sin token, no llama a ninguna) y el
+   paso «Panel en Skyway» cuando su API no responde (token temporal revocado, IP del
    contenedor, sin interrumpir la instalación) y con un panel que Skyway ya
    despliega (se actualiza sin duplicarlo ni cambiar su clave maestra). Solo
    necesita bash y `jq`. `deploy/prueba-migracion.sh`, igual, comprueba la

@@ -544,9 +544,40 @@ DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/cloudflare/accounts` | Cuentas visibles: `{ accounts: [{ id, clientId, label, tokenHint, createdAt, lastVerifiedAt, lastError, zones?, zonesTotal? }] }`. Administración: `?clientId=<id>` o `?clientId=instancia`. `?refresh=1` vuelve a leer las zonas. |
-| `POST /api/cloudflare/accounts` | `{ token, label?, clientId? }` (`clientId` null o ausente = instancia; solo administración) → `{ account }`. Mismo token en el mismo ámbito: `409 cloudflare_duplicate`. |
-| `DELETE /api/cloudflare/accounts/:id` | Desconecta la cuenta. |
+| `GET /api/cloudflare/accounts` | Cuentas visibles: `{ accounts: [{ id, clientId, label, tokenHint, createdAt, lastVerifiedAt, lastError, zones?, zonesTotal? }] }`. Administración: `?clientId=<id>` o `?clientId=instancia`. `?refresh=1` vuelve a leer las zonas. Con `?soloCliente=1`, solo las del `?clientId` indicado (sin él, ninguna). |
+| `POST /api/cloudflare/accounts` | `{ token, label?, clientId? }` (`clientId` null o ausente = instancia; solo administración) → `{ account }`. Mismo token en el mismo ámbito: `409 cloudflare_duplicate`. Con `?soloCliente=1` hay que indicar el cliente: sin él, `403 cloudflare_instance_admin_only`. |
+| `DELETE /api/cloudflare/accounts/:id` | Desconecta la cuenta. Con `?soloCliente=1`, una cuenta de la instancia responde `404`. |
+
+#### La cuenta de la instancia que deja el instalador
+
+Si das un token de Cloudflare al instalar (`deploy/instalar.sh`, variable
+`CLOUDFLARE_API_TOKEN` o la pregunta del instalador), además de crear los
+registros de la plataforma se guarda en el panel como **cuenta de la
+instancia** («Instalador de Mailway»), así que no tienes que volver a pegarlo
+en Conexiones. Desde entonces, los dominios que da de alta **la
+administración** (en el panel, en el alta de un cliente con su primer dominio
+o desde Skyway) configuran su DNS en Cloudflare solos, sin modificar los
+registros existentes (sección 4.4): lo que falta se crea y lo que choca se
+informa y no se toca. Las acciones de un cliente nunca la usan (sección 4.3).
+
+El instalador usa la herramienta de terminal del panel, con el token por la
+entrada estándar (nunca como argumento, que se vería en `ps`):
+
+```bash
+printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
+  node server/dist/tools/cloudflare.js conectar [--nombre <nombre>]
+```
+
+- Rechaza `--token` y cualquier argumento que parezca un token antes de leer
+  nada, no lee desde un terminal y no repite nunca lo recibido.
+- Imprime una línea JSON `{"ok":true,"id","label","zones","creada"}`; los
+  avisos van a la salida de errores con «Aviso: » y un fallo termina con
+  código 1.
+- Es idempotente: con el mismo token ya conectado como cuenta de la instancia
+  devuelve esa cuenta (`creada: false`) sin cambiarla.
+- Queda en la Actividad como «Sistema» (`cloudflare.account_connected`, sin el
+  token). El token no se escribe en `deploy/.env`: `--actualizar` y
+  `--emparejar` no lo tienen y conservan la cuenta ya conectada.
 
 ### 4.2 Aplicar el DNS de un dominio
 
@@ -557,7 +588,9 @@ DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
    mide la propagación.
 3. Al dar de alta un dominio, la casilla **Configurar el DNS automáticamente
    en Cloudflare** (`autoDns: true`) hace todo en un paso, sin reemplazar nada
-   que ya exista.
+   que ya exista. Aparece en Dominios y, para la administración, en el alta de
+   un cliente con su primer dominio (con las cuentas de la instancia). Sin
+   `autoDns` en el cuerpo, `POST /api/domains` no toca Cloudflare.
 
 | Método y ruta | Descripción |
 |---|---|
@@ -571,13 +604,16 @@ indica los servidores de nombres que debes poner en tu registrador.
 
 ### 4.3 Qué cuentas se usan
 
-- Primero, la cuenta ya asociada al dominio; después, las del **cliente**
-  dueño del dominio; y, solo si actúa la **administración** (y no pide
-  `soloCliente=1`), las de la instancia.
-- Un cliente **no** puede usar las cuentas de la instancia: si pudiera, le
-  bastaría con dar de alta un dominio que vive en la cuenta del administrador
-  para escribir en esa zona. Excepción: una cuenta de la instancia que quedó
-  asociada al dominio porque la administración ya aplicó su DNS con ella.
+- Primero, la cuenta ya asociada al dominio, si quien actúa puede usarla;
+  después, las del **cliente** dueño del dominio; y, solo si actúa la
+  **administración** (y no pide `soloCliente=1`), las de la instancia.
+- Un cliente **nunca** usa las cuentas de la instancia, ni directa ni
+  indirectamente: si pudiera, le bastaría con dar de alta un dominio que vive
+  en la cuenta del administrador (o un subdominio suyo) para escribir en esa
+  zona. Tampoco cuando la cuenta quedó asociada al dominio porque la
+  administración aplicó su DNS con ella: la asociación solo la aprovecha la
+  administración, y el cliente recibe un motivo que lo explica (conectar una
+  cuenta propia o pedir a la administración que vuelva a aplicarlo).
 - **`?soloCliente=1`** (o `true`) limita la búsqueda a las cuentas del cliente
   aunque la petición llegue con un token de administración. Se aplica en las
   cuatro rutas que planifican o escriben DNS con una cuenta de Cloudflare:
@@ -591,8 +627,13 @@ indica los servidores de nombres que debes poner en tu registrador.
   Sin una cuenta propia que contenga la zona, el plan responde
   `available: false` y la aplicación `400 cloudflare_unavailable`: nunca se
   escribe en una zona de la instancia. Skyway lo envía cuando quien actúa en
-  Skyway no es administrador, para que su token de administración no abra a los
-  proyectos las cuentas de la instancia.
+  Skyway no es administrador (propietario o miembro de un espacio de trabajo),
+  para que su token de administración no abra a los proyectos las cuentas de la
+  instancia.
+- Con `soloCliente=1`, además, las cuentas de la instancia no se listan ni se
+  borran, no se puede conectar una cuenta sin cliente y las rutas que solo
+  trabajan con ellas (`/api/cloudflare/instance-dns` y `POST /api/engine/acme`)
+  responden `403 cloudflare_instance_admin_only`.
 
 ### 4.4 Reglas que protegen el correo existente
 

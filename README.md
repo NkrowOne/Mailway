@@ -24,7 +24,10 @@ de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
   Mailway muestra qué registros va a crear, cuáles ya están bien y cuáles
   chocan con otros, y los aplica en una sola operación. Si el DNS está en otro
   proveedor, el asistente da la tabla exacta de registros para copiar (o un
-  fichero de zona para importar) y verifica cada uno en vivo.
+  fichero de zona para importar) y verifica cada uno en vivo. El token que das
+  al instalador queda conectado como cuenta de la instancia: los dominios que
+  da de alta el administrador configuran su DNS solos, sin modificar los
+  registros existentes, y las acciones de los clientes nunca lo usan.
 - **Verificación de la propiedad de los dominios.** No se crean buzones ni
   alias en un dominio hasta comprobar que es de quien lo da de alta: su MX
   apunta a este servidor o tiene el registro TXT de verificación.
@@ -66,7 +69,9 @@ de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
 - **Instalador.** `deploy/instalar.sh` prepara motor, webmail, DNS en
   Cloudflare, certificado y panel en Skyway en una sola ejecución, deja el
   panel emparejado con Skyway (cuenta de administración, puesta en marcha y
-  conexión, sin copiar tokens) y se puede repetir sin riesgo.
+  conexión, sin copiar tokens), pasa el token de Cloudflare al panel y a
+  Skyway por la entrada estándar (nunca en argumentos ni en `deploy/.env`) y
+  se puede repetir sin riesgo.
 
 ## Puesta en marcha rápida
 

@@ -2,6 +2,13 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Client, type DomainRecord, type Plan } from '../../lib/api';
+import {
+  avisoAltaDominio,
+  cuentasUtilizables,
+  type CuentaCloudflare,
+  type EstadoAltaDominio,
+  type RespuestaAltaDominio,
+} from '../../lib/cloudflare';
 import { plural } from '../../lib/format';
 import { esCorreoValido, formatQuota, mensajeDe, vinculadoConSkyway } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
@@ -168,7 +175,15 @@ interface Resultado {
   client: Client;
   user?: { id: string; email: string; name: string };
   password?: string;
-  dominio?: { ok: true; domain: DomainRecord } | { ok: false; error: string };
+  dominio?:
+    | {
+        ok: true;
+        domain: DomainRecord;
+        /** Lo que pasó con Cloudflare, para la ficha del dominio. */
+        alta: EstadoAltaDominio;
+        aviso: { tono: 'ok' | 'error'; texto: string };
+      }
+    | { ok: false; error: string };
 }
 
 /**
@@ -194,11 +209,23 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [dominio, setDominio] = useState('');
+  const [autoDns, setAutoDns] = useState(true);
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Resultado | null>(null);
   // El cliente recibirá esta dirección: la pública de la instancia, no la
   // IP o la URL interna por la que haya entrado el administrador.
   const panel = useDireccionPanel();
+
+  // Un cliente recién creado aún no tiene cuentas de Cloudflare propias: el
+  // DNS de su primer dominio solo lo puede configurar una cuenta de la
+  // instancia, y solo porque quien da de alta es el administrador.
+  const cuentas = useQuery({
+    queryKey: ['cloudflare-accounts'],
+    queryFn: () => api.get<{ accounts: CuentaCloudflare[] }>('/api/cloudflare/accounts'),
+  });
+  const deInstancia = cuentasUtilizables(cuentas.data?.accounts ?? [], { clientId: null, isAdmin: true });
+  const hayCloudflare = deInstancia.length > 0;
+  const conDns = hayCloudflare && autoDns && Boolean(dominio.trim());
 
   const plan = planList.find((p) => p.id === planId) ?? planList[0];
   // Por defecto, el usuario del panel es la persona de contacto.
@@ -221,11 +248,17 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
         // El dominio se da de alta aparte: si falla, el cliente ya existe y
         // se explica en el resultado en lugar de perder todo lo anterior.
         try {
-          const d = await api.post<{ domain: DomainRecord }>('/api/domains', {
+          const d = await api.post<RespuestaAltaDominio>('/api/domains', {
             domain: dominio.trim().toLowerCase(),
             clientId: created.client.id,
+            ...(conDns ? { autoDns: true } : {}),
           });
-          out.dominio = { ok: true, domain: d.domain };
+          const alta: EstadoAltaDominio = {
+            autoDns: conDns,
+            cloudflare: d.cloudflare ?? null,
+            ...(d.cloudflareReason ? { cloudflareReason: d.cloudflareReason } : {}),
+          };
+          out.dominio = { ok: true, domain: d.domain, alta, aviso: avisoAltaDominio(d, conDns) };
         } catch (err) {
           out.dominio = { ok: false, error: mensajeDe(err, 'No se ha podido añadir el dominio.') };
         }
@@ -238,8 +271,12 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
         queryClient.invalidateQueries({ queryKey: ['plans'] }),
         queryClient.invalidateQueries({ queryKey: ['domains'] }),
       ]);
-      if (!data.password && (!data.dominio || data.dominio.ok)) {
-        toast('ok', `Cliente ${data.client.name} dado de alta.`);
+      // Con el DNS automático pedido, su resultado acompaña al aviso; si
+      // reclama atención (motivo, errores o conflictos), se muestra en el
+      // resumen en lugar de en un aviso que desaparece.
+      const dns = data.dominio?.ok && data.dominio.alta.autoDns ? data.dominio.aviso : null;
+      if (!data.password && (!data.dominio || data.dominio.ok) && dns?.tono !== 'error') {
+        toast('ok', dns ? `Cliente ${data.client.name} dado de alta. ${dns.texto}` : `Cliente ${data.client.name} dado de alta.`);
         navigate(`/clientes/${data.client.id}`);
         return;
       }
@@ -295,9 +332,12 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             {resultado.dominio?.ok && !conContrasena && (
               <Button
                 variant="perfil"
-                onClick={() => navigate(`/dominios/${(resultado.dominio as { domain: DomainRecord }).domain.id}`)}
+                onClick={() => {
+                  const alta = resultado.dominio as { domain: DomainRecord; alta: EstadoAltaDominio };
+                  navigate(`/dominios/${alta.domain.id}`, { state: { alta: alta.alta } });
+                }}
               >
-                Configurar el DNS
+                {resultado.dominio.alta.autoDns ? 'Revisar el DNS' : 'Configurar el DNS'}
               </Button>
             )}
             <Button variant="tinta" onClick={irAFicha}>
@@ -330,10 +370,20 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
           )}
           {resultado.dominio &&
             (resultado.dominio.ok ? (
-              <p className="text-base text-tinta-2">
-                Dominio <span className="valor">{resultado.dominio.domain.domain}</span> añadido. Configura su DNS
-                desde la ficha del dominio.
-              </p>
+              !resultado.dominio.alta.autoDns ? (
+                <p className="text-base text-tinta-2">
+                  Dominio <span className="valor">{resultado.dominio.domain.domain}</span> añadido. Configura su DNS
+                  desde la ficha del dominio.
+                </p>
+              ) : resultado.dominio.aviso.tono === 'error' ? (
+                <BandaAviso>
+                  <span className="valor">{resultado.dominio.domain.domain}</span>: {resultado.dominio.aviso.texto}
+                </BandaAviso>
+              ) : (
+                <p className="text-base text-tinta-2">
+                  <span className="valor">{resultado.dominio.domain.domain}</span>: {resultado.dominio.aviso.texto}
+                </p>
+              )
             ) : (
               <BandaError>
                 El cliente se ha creado, pero no se ha podido añadir el dominio: {resultado.dominio.error} Puedes
@@ -431,6 +481,16 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             placeholder="empresa.com"
             help="Después se indicarán los registros DNS que hay que configurar."
           />
+          {hayCloudflare && dominio.trim() && (
+            <Casilla
+              checked={autoDns}
+              onChange={setAutoDns}
+              label="Configurar el DNS automáticamente en Cloudflare"
+              help={`La zona del dominio debe estar en una cuenta de Cloudflare de la instancia (${deInstancia
+                .map((c) => c.label)
+                .join(', ')}). Solo se crean los registros que faltan y se completa el SPF existente; si hay registros en conflicto, no se modifican y podrás revisarlos en la ficha del dominio.`}
+            />
+          )}
         </section>
 
         {error && <BandaError>{error}</BandaError>}
@@ -439,7 +499,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             Cancelar
           </Button>
           <Button type="submit" variant="tinta" busy={alta.isPending} disabled={!plan}>
-            Dar de alta
+            {conDns ? 'Dar de alta y configurar' : 'Dar de alta'}
           </Button>
         </Botonera>
       </form>

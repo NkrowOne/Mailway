@@ -141,11 +141,19 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 - **Marca blanca**: solo subdominios de un dominio de correo del mismo cliente
   con la propiedad comprobada (no basta con que esté activo), sin prefijos
   reservados ni nombres de la instancia.
-- **Cloudflare**: un cliente solo usa sus cuentas; las de la instancia, solo
-  la administración (o una ya asociada por la administración a ese dominio).
-  `soloCliente=1` fuerza esta regla aunque llegue un token de administración,
-  en el plan y la aplicación del DNS de un dominio, en el alta con
-  `autoDns: true` y en el DNS de un dominio de marca blanca.
+- **Cloudflare**: un cliente solo usa sus cuentas; las de la instancia (el
+  token del operador, también la que deja el instalador), solo la
+  administración. Ni siquiera una cuenta de la instancia que la administración
+  dejó asociada al dominio al aplicar su DNS sirve después al cliente: si
+  sirviera, le bastaría con dar de alta un subdominio de una zona del operador,
+  esperar a que la administración aplicara su DNS una vez y, desde entonces,
+  reescribir esa zona (con `replaceConflicts`, incluso su MX). `soloCliente=1`
+  fuerza esta regla aunque llegue un token de administración: en el plan y la
+  aplicación del DNS de un dominio, en el alta con `autoDns: true`, en el DNS
+  de un dominio de marca blanca y en el listado, la conexión y el borrado de
+  cuentas; las rutas que solo trabajan con la cuenta de la instancia (DNS de
+  la plataforma y certificado del motor) responden
+  `403 cloudflare_instance_admin_only`.
 - **Lo que el cliente no ve de la administración**: las notas internas del
   cliente (`notes`: acuerdos, incidencias, precios) solo las recibe la
   administración, y en **Actividad** no ve el correo ni la IP de quien
@@ -307,6 +315,14 @@ Las herramientas de terminal se ejecutan también como `node`
 (`docker exec -u node …`). Si `emparejar` se lanza como `root`, cede los
 privilegios al dueño de `/data` antes de abrir la base de datos: un fichero de
 SQLite creado por `root` dejaría al panel sin poder escribir en su base.
+
+Los secretos llegan a las herramientas por la entrada estándar, nunca como
+argumento (los procesos del contenedor se ven con `ps` desde el host). La de
+Cloudflare (`tools/cloudflare.js conectar`, que usa el instalador para guardar
+el token del operador como cuenta de la instancia) rechaza `--token` y
+cualquier argumento que parezca un token antes de leer nada, no lee desde un
+terminal, limita el tamaño de la entrada y no repite nunca lo recibido; el
+token queda cifrado en la base y fuera de `deploy/.env` y de la actividad.
 
 ## 11. Recomendaciones operativas
 
