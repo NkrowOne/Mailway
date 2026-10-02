@@ -133,7 +133,7 @@ export function clientSentToday(clientId: string): number {
  * función que libera la reserva: se llama cuando el envío ya tiene su fila
  * en `messages` (desde ahí cuenta la base) o si se rechaza antes.
  */
-function reservarCupoCliente(clientId: string, limite: number): () => void {
+export function reservarCupoCliente(clientId: string, limite: number): () => void {
   if (limite > 0 && clientSentToday(clientId) >= limite) {
     throw tooMany(
       `Se ha alcanzado el límite diario de ${limite} envíos del plan para este cliente (sumando todas sus claves). El contador se reinicia a medianoche UTC.`,
@@ -359,6 +359,11 @@ export function transportCount(): number {
   return transports.size;
 }
 
+/** Cierra el pool SMTP de una credencial (una clave o un formulario) que ya no existe. */
+export function forgetTransport(id: string): void {
+  cerrarTransporte(id);
+}
+
 /**
  * Olvida todo lo que se guarda en memoria de una clave revocada: su ventana
  * por minuto y su pool SMTP, que si no seguiría abierto contra el motor.
@@ -372,7 +377,7 @@ export function forgetApiKey(keyId: string): void {
  * Traduce los errores de certificado a un mensaje accionable: el texto de
  * Node («self-signed certificate», «Hostname/IP does not match…») no dice qué hacer.
  */
-function describeSmtpError(err: unknown, host: string): string {
+export function describeSmtpError(err: unknown, host: string): string {
   const message = err instanceof Error ? err.message : String(err);
   if (/certificate|self[- ]signed|altname|does not match/i.test(message)) {
     return `el certificado TLS del servidor de correo no es válido para ${host || 'el nombre configurado'}. El administrador debe completar la emisión del certificado del servidor de correo (${message.slice(0, 200)})`;
@@ -545,12 +550,14 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
       smtp_message_id: string;
       size_bytes: number;
       created_at: number;
+      form_id: string | null;
     }[];
     return {
       messages: rows.map((r) => ({
         id: r.id,
         clientId: r.client_id,
         apiKeyId: r.api_key_id,
+        formId: r.form_id ?? null,
         from: r.from_address,
         to: JSON.parse(r.to_json) as string[],
         subject: r.subject,

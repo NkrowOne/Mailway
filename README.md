@@ -38,8 +38,15 @@ de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
 - **Webmail en español.** Roundcube con cambio de contraseña, filtros,
   reenvío, aviso de ausencia, archivo y botón para marcar correo no deseado.
 - **API de envío transaccional.** `POST /v1/send` con clave `mw_…` por
-  aplicación, límites del plan por cliente e historial de envíos. Ideal para
-  códigos OTP y avisos. [Documentación](docs/API.md).
+  aplicación, adjuntos (PDF, invitaciones `.ics`, imágenes…), reintentos sin
+  duplicados con `Idempotency-Key`, límites del plan por cliente e historial
+  de envíos. Al crear una clave o una contraseña de aplicación, el panel da el
+  `.env` y el código de Node, Laravel y Django listos para copiar.
+  [Documentación](docs/API.md).
+- **Formularios de contacto para webs estáticas.** Un fragmento HTML con una
+  clave pública: los mensajes llegan al buzón del cliente, solo desde sus
+  webs, con campo trampa, límites y Cloudflare Turnstile opcional.
+  [Integraciones](docs/INTEGRACIONES.md#9-formularios-de-contacto-para-webs-estáticas).
 - **Tokens de gestión.** Todo lo que hace el panel está disponible por API con
   un token `mwt_…`, para scripts, CI, agentes o Skyway.
   [Integraciones](docs/INTEGRACIONES.md).

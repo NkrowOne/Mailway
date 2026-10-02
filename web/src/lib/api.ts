@@ -208,10 +208,34 @@ export interface BloqueVariables {
   content: string;
 }
 
+/** Formulario de contacto para webs estáticas (GET /api/forms). */
+export interface FormInfo {
+  id: string;
+  clientId: string;
+  name: string;
+  /** Clave pública (mwf_…): va en el HTML de la web. */
+  publicKey: string;
+  recipientMailboxId: string;
+  recipientEmail: string;
+  allowedOrigins: string[];
+  subject: string;
+  /** Solo la clave de sitio; el secreto nunca llega al navegador. */
+  turnstile: { siteKey: string } | null;
+  enabled: boolean;
+  submissionsCount: number;
+  lastSubmissionAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  endpoint: string;
+  embedHtml: string;
+}
+
 export interface Message {
   id: string;
   clientId: string;
   apiKeyId: string | null;
+  /** Formulario del que salió el mensaje, si no vino de la API. */
+  formId?: string | null;
   from: string;
   to: string[];
   subject: string;

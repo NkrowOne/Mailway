@@ -25,6 +25,7 @@ import { registerAutoconfigRoutes } from './modules/autoconfig';
 import { registerPortalRoutes } from './modules/portal';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
 import { registerEngineOpsRoutes } from './modules/engineops';
+import { registerFormRoutes } from './modules/forms';
 
 const MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -146,13 +147,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerPortalRoutes(app);
   registerAppPasswordRoutes(app);
   registerEngineOpsRoutes(app);
+  registerFormRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');
   if (options.serveWeb !== false && fs.existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api/') || req.url.startsWith('/v1/')) {
+      if (req.url.startsWith('/api/') || req.url.startsWith('/v1/') || req.url.startsWith('/forms/')) {
         reply.status(404).send({ error: 'Ruta no encontrada.', code: 'not_found' });
         return;
       }

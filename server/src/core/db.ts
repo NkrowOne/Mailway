@@ -342,6 +342,40 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_send_idempotency_expires ON send_idempotency(expires_at);
     `,
   },
+  {
+    id: '006-formularios-web',
+    sql: `
+      -- Formularios de contacto para webs estáticas. La web publica una
+      -- clave pública (mwf_…, no es un secreto) y el panel entrega cada
+      -- mensaje en un buzón del propio cliente, con su remitente. Como las
+      -- claves de API, cada formulario envía con una contraseña de aplicación
+      -- propia del buzón (smtp_password_enc, cifrada). El secreto de
+      -- Turnstile va cifrado: hay que recuperarlo para verificar cada envío.
+      CREATE TABLE forms (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        public_key TEXT NOT NULL UNIQUE,
+        recipient_mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        allowed_origins_json TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        smtp_password_enc TEXT NOT NULL,
+        turnstile_site_key TEXT,
+        turnstile_secret_enc TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        submissions_count INTEGER NOT NULL DEFAULT 0,
+        last_submission_at INTEGER,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_forms_client ON forms(client_id);
+
+      -- Los mensajes de los formularios cuentan para el cupo diario del plan
+      -- como los de la API; form_id dice de qué formulario salieron.
+      ALTER TABLE messages ADD COLUMN form_id TEXT REFERENCES forms(id) ON DELETE SET NULL;
+    `,
+  },
 ];
 
 function runMigrations(): void {

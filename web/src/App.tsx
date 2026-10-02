@@ -31,6 +31,7 @@ const DominioDetalle = lazy(() => import('./pages/DominioDetalle'));
 const Buzones = lazy(() => import('./pages/Buzones'));
 const Alias = lazy(() => import('./pages/Alias'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
+const Formularios = lazy(() => import('./pages/Formularios'));
 const Actividad = lazy(() => import('./pages/Actividad'));
 const Cuenta = lazy(() => import('./pages/Cuenta'));
 const Conexiones = lazy(() => import('./pages/Conexiones'));
@@ -177,6 +178,7 @@ function PanelApp() {
             <Route path="/alias" element={<Alias />} />
             <Route path="/marca-blanca" element={<MarcaBlanca isAdmin={isAdmin} />} />
             <Route path="/api-envio" element={<ApiKeys user={user} />} />
+            <Route path="/formularios" element={<Formularios user={user} />} />
             <Route path="/actividad" element={<Actividad />} />
             <Route path="/cuenta" element={<Cuenta />} />
             <Route path="/conexiones" element={<Conexiones isAdmin={isAdmin} />} />

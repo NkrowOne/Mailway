@@ -690,6 +690,17 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
         'mailbox_in_use',
       );
     }
+    // Igual con los formularios: borrarlo se los llevaría por delante sin aviso
+    // y la web seguiría mostrando un formulario que ya no entrega.
+    const formCount = (
+      db.prepare('SELECT COUNT(*) AS c FROM forms WHERE recipient_mailbox_id = ?').get(id) as { c: number }
+    ).c;
+    if (formCount > 0) {
+      throw conflict(
+        `Este buzón recibe ${formCount === 1 ? '1 formulario' : `${formCount} formularios`} de la web. Elimínalos en «Formularios» antes de eliminarlo.`,
+        'mailbox_in_use',
+      );
+    }
 
     const engine = getEngine();
     const email = mailbox.email.toLowerCase();

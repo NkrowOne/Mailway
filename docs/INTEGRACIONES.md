@@ -9,7 +9,8 @@ Cómo conectar Mailway con otras piezas:
 - **programas de correo** de los titulares: autoconfiguración, enlaces de
   configuración y «Mi buzón» (secciones 5 y 6);
 - **Traefik**: marca blanca y rutas (sección 7);
-- **otras plataformas** que envían correo (sección 8).
+- **otras plataformas** que envían correo (sección 8);
+- **webs estáticas**: formularios de contacto sin claves secretas (sección 9).
 
 Base de todas las rutas: la URL pública del panel, p. ej.
 `https://panel.miempresa.com`.
@@ -370,7 +371,8 @@ titulares de sus buzones. La administración lo ve todo.
 
 ### 2.9 Otras rutas
 
-Envíos de la API (`GET /api/messages`), marca blanca (sección 7), Cloudflare
+Envíos de la API y de los formularios (`GET /api/messages`; los de un
+formulario llevan `formId`), formularios (sección 9), marca blanca (sección 7), Cloudflare
 (sección 4), alertas (`GET /api/alerts`, `POST /api/alerts/:id/dismiss`),
 canales de aviso (`GET|PUT /api/notify/channels`, `POST /api/notify/test`),
 entregabilidad (`GET /api/deliverability/server`), resúmenes
@@ -862,3 +864,153 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/mailbo
 curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/mailboxes/mbx_…/setup-links" \
   -d '{"ttlHours":72}'
 ```
+
+---
+
+## 9. Formularios de contacto para webs estáticas
+
+Una web estática (sin servidor propio: Netlify, GitHub Pages, un HTML en
+cualquier alojamiento) puede tener un formulario de contacto sin guardar
+ninguna clave secreta: el cliente crea un **formulario** en el panel
+(**Formularios**) y pega en su web un fragmento HTML con una **clave pública**
+`mwf_…`. Cada envío llega a un buzón del propio cliente.
+
+### 9.1 Gestión (panel o token de gestión)
+
+| Método y ruta | Descripción |
+|---|---|
+| `GET /api/forms?clientId=` | `{ forms }`. Un usuario de cliente solo ve los suyos (el filtro `clientId` solo lo usa la administración). |
+| `POST /api/forms` | `{ name (2–60), recipientMailboxId, allowedOrigins (1–10), subject? (1–150), turnstileSiteKey?, turnstileSecret?, clientId? }` → `{ form }`. |
+| `PATCH /api/forms/:id` | `{ name?, allowedOrigins?, subject?, enabled?, turnstileSiteKey?, turnstileSecret? }` → `{ form }`. Con `turnstileSiteKey: null` (o `turnstileSecret: null`) se retira Turnstile; un secreto omitido se conserva. El buzón destinatario no cambia: para otro buzón, crea otro formulario. |
+| `DELETE /api/forms/:id` | Elimina el formulario y retira su credencial SMTP del motor → `{ ok }`. |
+
+`form`: `{ id, clientId, name, publicKey, recipientMailboxId, recipientEmail,
+allowedOrigins, subject, turnstile: { siteKey } | null, enabled,
+submissionsCount, lastSubmissionAt, createdAt, updatedAt, endpoint,
+embedHtml }`. `endpoint` es `<panel>/forms/<publicKey>` y `embedHtml`, el
+fragmento listo para pegar; los dos se pueden volver a consultar cuando se
+quiera (la clave es pública). El secreto de Turnstile no se devuelve nunca.
+
+Reglas del alta:
+
+- El **buzón destinatario** debe ser del mismo cliente
+  (`400 recipient_other_client`), estar activo (`400 mailbox_suspended`) y
+  estar en un dominio con la **propiedad comprobada**
+  (`409 domain_ownership_pending`), también para la administración: los
+  mensajes salen con el remitente de ese dominio.
+- **Orígenes permitidos**: de 1 a 10, solo `https://` y sin comodines
+  (`400 invalid_origin`). Se guardan como los envía el navegador en la
+  cabecera `Origin`: `https://www.acme.es/contacto` se queda en
+  `https://www.acme.es`, y se puede escribir sin el esquema. `www.acme.es` y
+  `acme.es` son orígenes distintos.
+- **Turnstile** (opcional): la clave de sitio y la secreta, las dos o
+  ninguna (`400 turnstile_incomplete`). El secreto se guarda cifrado.
+- Máximo **20 formularios por cliente** (`409 form_limit`); las altas del
+  mismo cliente van en fila, así que las simultáneas no superan el máximo.
+- Cliente suspendido: `400 client_suspended`.
+- Cada formulario envía con una **contraseña de aplicación propia** del buzón
+  (como las claves de API), que no cuenta para el máximo de 25 del titular y
+  se retira al eliminarlo. Un buzón que recibe formularios no se puede
+  eliminar (`409 mailbox_in_use`).
+- Actividad: `form.created`, `form.updated` y `form.deleted`, con el cliente
+  afectado y sin secretos (de Turnstile solo consta `configurado` o
+  `retirado`).
+
+### 9.2 El fragmento para la web
+
+```html
+<form action="https://panel.miempresa.com/forms/mwf_…" method="post" data-mailway-form="mwf_…">
+  <p>
+    <label for="mw-nombre-x">Nombre</label>
+    <input id="mw-nombre-x" name="nombre" type="text" autocomplete="name" required maxlength="200">
+  </p>
+  <p>
+    <label for="mw-email-x">Correo electrónico</label>
+    <input id="mw-email-x" name="email" type="email" autocomplete="email" required maxlength="254">
+  </p>
+  <p>
+    <label for="mw-mensaje-x">Mensaje</label>
+    <textarea id="mw-mensaje-x" name="mensaje" rows="6" required maxlength="5000"></textarea>
+  </p>
+  <!-- Campo trampa: las personas no lo ven; si llega relleno, el envío se descarta. -->
+  <div aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden">
+    <label for="mw-web-x">No rellenes este campo</label>
+    <input id="mw-web-x" name="mw_web" type="text" tabindex="-1" autocomplete="off">
+  </div>
+  <button type="submit">Enviar</button>
+  <p data-mailway-estado role="status" aria-live="polite"></p>
+</form>
+<script src="https://panel.miempresa.com/forms/widget.js" data-form="mwf_…" defer></script>
+```
+
+- Los textos, el diseño y los campos se pueden cambiar: **todos los campos**
+  llegan en el mensaje (hasta 30, de hasta 5000 caracteres cada uno). Los
+  campos `email` (o `correo`) y `nombre` (o `name`) se usan para «Responder a».
+- Con Turnstile, el fragmento incluye además
+  `<div class="cf-turnstile" data-sitekey="…" data-language="es"></div>` y el
+  script `https://challenges.cloudflare.com/turnstile/v0/api.js`.
+- **`/forms/widget.js`** (sin dependencias, ES5): envía el formulario sin
+  recargar la página (`application/x-www-form-urlencoded`, sin cookies),
+  desactiva el botón mientras tanto, escribe el resultado en la región
+  `role="status"` y vacía el formulario al terminar. Muestra en español el
+  motivo de los errores (`400`) o un texto según el código (`403`, `404`,
+  `413`, `429`, red). Tras cada intento reinicia Turnstile (cada token sirve una
+  vez). Si el navegador no tiene `fetch`, no hace nada y el formulario se envía
+  de forma nativa.
+- **Sin JavaScript**: el envío nativo recibe una página en español con el
+  resultado y un enlace para volver a la web.
+
+### 9.3 Ruta pública `POST /forms/:clave`
+
+Admite `application/x-www-form-urlencoded` (el de un formulario HTML; no
+`multipart/form-data`), `application/json` y JSON en `text/plain`. Con
+`Accept: application/json` responde `{ ok: true }`; si el navegador pide
+HTML, una página.
+
+Por orden:
+
+1. Límite general: 60 peticiones por minuto e IP.
+2. La clave debe existir (`404 form_not_found`) y la cabecera `Origin` estar en
+   la lista del formulario (`403 origin_not_allowed`; sin `Origin`, también).
+3. Formulario desactivado: `403 form_disabled`; cliente o buzón suspendidos:
+   `403 form_unavailable`.
+4. Tamaño máximo de 32 KB (`413`), 30 campos (`400 too_many_fields`) de
+   5000 caracteres (`400 field_too_long`), una dirección de correo válida si
+   se indica (`400 invalid_email`) y algún contenido (`400 empty_submission`).
+   Estos errores no gastan el cupo de la IP.
+5. Límite por IP: **5 envíos cada 10 minutos** en cada formulario
+   (`429 rate_limited`).
+6. **Campo trampa** `mw_web` relleno: responde `200 { ok: true }` sin enviar
+   nada (el robot no aprende que lo han descartado).
+7. **Turnstile**, si está configurado: el token (`cf-turnstile-response`) es
+   obligatorio (`400 turnstile_required`) y se comprueba con Cloudflare,
+   incluido que el `hostname` que devuelve sea el de un origen permitido
+   (`400 turnstile_failed`). Si Cloudflare no responde,
+   `503 turnstile_unavailable`.
+8. Límite por formulario: **30 mensajes por hora** (`429 rate_limited`) y el
+   **límite diario de envíos del plan**, que comparten los formularios y la API
+   (`429 daily_limit_reached`, con un texto para el visitante sin detalles del
+   plan).
+9. Envío al buzón destinatario. Si el servidor de correo lo rechaza,
+   `502 send_failed` (el intento queda en el historial y cuenta para el cupo).
+
+**CORS solo en esta ruta**: la respuesta (también la de error, para que la web
+lea el motivo) lleva `Access-Control-Allow-Origin` con el origen de la
+petición si está en la lista, y `Vary: Origin`; la petición previa (`OPTIONS`)
+responde `204` con `POST`, `Content-Type` y `Accept`, o `403` a un origen no
+permitido. El resto de la API no responde con CORS.
+
+### 9.4 El mensaje que recibe el cliente
+
+- **De**: el propio buzón destinatario, con el nombre «<formulario> (formulario
+  web)». Nunca la dirección que escribe el visitante: sería suplantarla y el
+  mensaje no pasaría SPF ni DMARC. Así sale firmado con el DKIM del dominio.
+- **Para**: el buzón destinatario. No se puede enviar a otras direcciones.
+- **Responder a**: la dirección del visitante, si es válida (sin saltos de
+  línea, comas ni comillas), con su nombre saneado.
+- **Asunto**: el del formulario; el visitante no lo elige.
+- **Cuerpo**: solo texto, con cada campo en una línea (o en un bloque si tiene
+  varias), el origen y la hora en UTC. Sin los campos de control (trampa y
+  Turnstile). Cabecera `X-Web-Form: mwf_…` para filtrar.
+- Queda en el historial de envíos (`GET /api/messages`, con `formId`) y suma
+  en el contador del formulario.

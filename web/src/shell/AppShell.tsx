@@ -7,6 +7,7 @@ import {
   Building2,
   Cable,
   ClipboardList,
+  FormInput,
   Gauge,
   Globe,
   Inbox,
@@ -101,6 +102,7 @@ function buildNav(user: User): NavGroup[] {
         section: 'Configuración',
         items: [
           { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
+          { to: '/formularios', label: 'Formularios', icon: <FormInput className={iconClass} /> },
           { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
           { to: '/planes', label: 'Planes', icon: <ClipboardList className={iconClass} /> },
           { to: '/actividad', label: 'Actividad', icon: <Activity className={iconClass} /> },
@@ -129,6 +131,7 @@ function buildNav(user: User): NavGroup[] {
       section: 'Automatización',
       items: [
         { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
+        { to: '/formularios', label: 'Formularios', icon: <FormInput className={iconClass} /> },
         { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
       ],
     },

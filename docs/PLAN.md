@@ -274,6 +274,7 @@ edita una ya publicada.
 | `003-integraciones-y-portal` | `management_tokens`, `cloudflare_accounts`, `setup_links`, `mailbox_sessions`, `app_passwords`; columnas `domains.cloudflare_account_id`, `domains.cloudflare_zone_id`, `domains.dns_applied_at`, `mailboxes.used_bytes`, `mailboxes.usage_checked_at`, `clients.external_ref` (índice único parcial). |
 | `004-propiedad-de-dominios` | `domains.owner_verified_at`. Los dominios anteriores ya verificados o con buzones o alias se marcan como comprobados, para no romper nada. |
 | `005-idempotencia-de-envios` | `send_idempotency`: respuesta de cada envío con `Idempotency-Key`, 24 h por clave de API. |
+| `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -291,7 +292,11 @@ setup_links        enlaces de configuración: hash del token, contraseña cifrad
 mailbox_sessions   sesiones de «Mi buzón»
 api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP cifrada,
                    límite diario opcional, revocación
-messages           registro de cada envío por API (estado, error, message-id, tamaño)
+messages           registro de cada envío por API o formulario (estado, error, message-id,
+                   tamaño, form_id)
+forms              formularios de contacto: clave pública mwf_, buzón destinatario,
+                   orígenes permitidos, asunto, credencial SMTP cifrada, Turnstile
+                   (secreto cifrado), activo, contador
 api_usage          contador diario de envíos
 send_idempotency   Idempotency-Key de /v1/send: hash del valor y del cuerpo, respuesta
                    guardada 24 h por clave de API
@@ -307,8 +312,8 @@ settings           ajustes de instancia y motor, estado de autoconfiguración, c
 
 Reglas de integridad que protegen al usuario:
 
-- No se borra un plan en uso ni el último plan, un cliente con dominios ni un
-  buzón remitente de una clave activa.
+- No se borra un plan en uso ni el último plan, un cliente con dominios, un
+  buzón remitente de una clave activa ni un buzón que recibe formularios.
 - Borrar un dominio con buzones exige escribir su nombre; se limpia primero el
   motor y después el panel, buzón a buzón, de modo que un fallo a mitad deja
   el panel coherente y repetir completa el borrado. La respuesta cuenta las
@@ -346,7 +351,11 @@ usa el mismo mundo con controles táctiles de 44 px y un paso a la vez.
 - **Tokens de gestión**, API de integraciones y **Skyway** (correo por
   proyecto y puente de Traefik).
 - API de envío con límites por cliente, historial, **adjuntos** (lista cerrada
-  de tipos con firma comprobada) e **`Idempotency-Key`**.
+  de tipos con firma comprobada) e **`Idempotency-Key`**; al crear una clave o
+  una contraseña de aplicación, **variables listas para copiar** (.env, Node,
+  Laravel, Django) con los mismos nombres que Skyway.
+- **Formularios de contacto** para webs estáticas: clave pública, orígenes
+  permitidos, campo trampa, límites, Turnstile opcional y `widget.js`.
 - Vigilante (motor, cola, webmail, DNS, marca blanca, autoconfiguración,
   listas negras, certificado) con avisos por Discord, Telegram o webhook.
 - Instalador idempotente con modo desatendido y migración desde 0.x.
