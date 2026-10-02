@@ -240,6 +240,14 @@ docker() {
         *) return 1 ;;
       esac
       ;;
+    *skyway.project*)
+      case "$ultimo" in
+        skyway-mailway-panel) echo prj_mailway_cli ;;
+        skyway-correo-mailway) echo prj_correo ;;
+        *) return 1 ;;
+      esac
+      ;;
+    "exec skyway node server/dist/tools/token.js revocar"*) return 0 ;;
     "inspect --type container -f {{.State.Running}} "*)
       case " $FAKE_CONTENEDORES " in *[[:space:]]"$ultimo"[[:space:]]*) echo true ;; *) echo false ;; esac
       ;;
@@ -271,7 +279,10 @@ sky_api() {
   RESP_CODE=200
   case "$1 $2" in
     "GET /api/health") RESP_BODY='{"ok":true,"version":"0.34.0"}' ;;
-    "GET /api/projects") RESP_BODY='{"projects":[{"id":"prj_web","slug":"web","name":"Web","workspace_id":null},{"id":"prj_correo","slug":"correo","name":"Correo","workspace_id":null},{"id":"prj_cliente","slug":"cliente","name":"Cliente","workspace_id":"ws_cliente"}]}' ;;
+    "GET /api/projects") RESP_BODY=$FAKE_PROYECTOS ;;
+    "POST /api/projects") RESP_CODE=201 RESP_BODY='{"project":{"id":"prj_nuevo","slug":"mailway-2"}}' ;;
+    "GET /api/projects/prj_mailway_cli") RESP_BODY='{"project":{"id":"prj_mailway_cli","slug":"mailway","name":"mailway","workspace_id":"ws_cliente"},"services":[{"id":"svc_mailway_cli","slug":"panel","name":"panel","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway"}}]}' ;;
+    "GET /api/projects/prj_mailway") RESP_BODY="{\"project\":{\"id\":\"prj_mailway\",\"slug\":\"mailway\",\"name\":\"mailway\",\"workspace_id\":null},\"services\":$FAKE_SERVICIOS_MAILWAY}" ;;
     "GET /api/projects/prj_web") RESP_BODY='{"project":{"id":"prj_web","slug":"web"},"services":[{"id":"svc_web","slug":"app","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/codanuance"}}]}' ;;
     "GET /api/projects/prj_correo") RESP_BODY="{\"project\":{\"id\":\"prj_correo\",\"slug\":\"correo\"},\"services\":$FAKE_REPOS}" ;;
     "GET /api/projects/prj_cliente") RESP_BODY='{"project":{"id":"prj_cliente","slug":"cliente","workspace_id":"ws_cliente"},"services":[{"id":"svc_cliente","slug":"mailway","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway"}}]}' ;;
@@ -286,7 +297,11 @@ sky_api() {
   esac
 }
 sleep() { :; }
-crear_token_temporal_skyway() { SKYWAY_TOKEN=sky_temporal12345; }
+crear_token_temporal_skyway() {
+  SKYWAY_TOKEN=sky_temporal12345
+  SKY_TOKEN_TEMPORAL_ID=tok_tmp1
+}
+PROYECTOS_BASE='{"projects":[{"id":"prj_web","slug":"web","name":"Web","workspace_id":null},{"id":"prj_correo","slug":"correo","name":"Correo","workspace_id":null},{"id":"prj_cliente","slug":"cliente","name":"Cliente","workspace_id":"ws_cliente"}]}'
 
 # Estado de cada escenario: sin panel detectado, sin deploy/.env, el panel de
 # «Correo» en marcha con la clave en su volumen y el motor sin datos.
@@ -298,6 +313,9 @@ reiniciar_panel() {
   PANEL_EXISTENTE_ENV=()
   PANEL_ADOPTADO=""
   PANEL_SIN_ADOPCION=0
+  PANEL_RECHAZADO=""
+  SKY_TOKEN_TEMPORAL_ID=""
+  SKYWAY_URL_AUTOMATICA=0
   PANEL_CONTENEDOR=""
   TRAEFIK_TOKEN_PROPIO=1
   CON_SKYWAY=1
@@ -313,6 +331,8 @@ reiniciar_panel() {
   FAKE_VOLUMEN_MOTOR=0
   FAKE_ENV_PANEL='{"vars":{"STALWART_URL":"http://mailway-mail:8080","MAILWAY_SMTP_ALLOW_SELF_SIGNED":"1","MI_VARIABLE":"se-conserva"}}'
   FAKE_REPOS='[{"id":"svc_panel","slug":"mailway","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway.git"}}]'
+  FAKE_PROYECTOS=$PROYECTOS_BASE
+  FAKE_SERVICIOS_MAILWAY='[]'
 }
 # Lo que ya han fijado los pasos anteriores de la instalación.
 datos_instalacion() {
@@ -470,6 +490,15 @@ comprobar "retira MAILWAY_SMTP_ALLOW_SELF_SIGNED con certificado" no_contiene <(
 comprobar "deploy/.env guarda la clave que de verdad usa" contiene "$SALIDA" "ENV_SECRET=MAILWAY_SECRET='$FAKE_CLAVE_VOLUMEN'"
 comprobar "despliega ese servicio" contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/services/svc_panel/deploy"
 
+echo "# Con el token temporal que ya creó la detección, no se pregunta por otro"
+reiniciar_panel
+detectar_respondiendo s >/dev/null 2>&1
+comprobar "la detección deja la URL por defecto como automática" igual "$SKYWAY_URL_AUTOMATICA" 1
+datos_instalacion
+(INTERACTIVO=1 && desplegar_en_skyway <<<"n") >"$SALIDA" 2>&1
+comprobar "termina bien aunque la respuesta no sea un token" contiene "$SALIDA" "Panel desplegado (skyway-correo-mailway)"
+comprobar "sin pedir un token" no_contiene "$SALIDA" "El token de Skyway no es válido"
+
 echo "# Si sus variables ya llevan clave y token, se conservan aunque deploy/.env diga otros"
 reiniciar_panel
 detectar_respondiendo s >/dev/null 2>&1
@@ -521,6 +550,48 @@ codigo=$?
 comprobar "termina con código 1" igual "$codigo" 1
 comprobar "lista los dos" contiene "$SALIDA" "servicio «copia» del proyecto «correo» (id svc_copia)"
 comprobar "explica cómo elegir" contiene "$SALIDA" "MAILWAY_PANEL_SERVICIO"
+
+echo "# El proyecto «mailway» de un cliente no se usa: se crea uno propio"
+reiniciar_panel
+FAKE_PROYECTOS='{"projects":[{"id":"prj_mailway_cli","slug":"mailway","name":"mailway","workspace_id":"ws_cliente"},{"id":"prj_web","slug":"web","name":"Web","workspace_id":null}]}'
+PANEL_SIN_ADOPCION=1
+datos_instalacion
+(desplegar_en_skyway) >"$SALIDA" 2>&1
+comprobar "crea un proyecto propio" contiene "$REGISTRO" "sky_api POST http://127.0.0.1:4000/api/projects"
+comprobar "no toca el del cliente" no_contiene "$REGISTRO" "prj_mailway_cli"
+comprobar "ni su servicio" no_contiene "$REGISTRO" "svc_mailway_cli"
+
+echo "# El servicio «panel» que se dijo que no es el de esta instalación no se reutiliza por su nombre"
+reiniciar_panel
+FAKE_PROYECTOS='{"projects":[{"id":"prj_mailway","slug":"mailway","name":"mailway","workspace_id":null}]}'
+FAKE_SERVICIOS_MAILWAY='[{"id":"svc_rechazado","slug":"panel","name":"panel","type":"git","config":{"repoUrl":"https://github.com/NkrowOne/Mailway"}}]'
+PANEL_SIN_ADOPCION=1
+PANEL_RECHAZADO=svc_rechazado
+datos_instalacion
+(desplegar_en_skyway) >"$SALIDA" 2>&1
+codigo=$?
+comprobar "se detiene" igual "$codigo" 1
+comprobar "lo explica" contiene "$SALIDA" "es el que has dicho que no es de esta instalación"
+comprobar "sin tocar sus variables" no_contiene "$REGISTRO" "svc_rechazado/env"
+
+echo "# Un servicio «panel» que no despliega Mailway no se toma por el panel"
+reiniciar_panel
+FAKE_PROYECTOS='{"projects":[{"id":"prj_mailway","slug":"mailway","name":"mailway","workspace_id":null}]}'
+FAKE_SERVICIOS_MAILWAY='[{"id":"svc_otra_web","slug":"panel","name":"panel","type":"git","config":{"repoUrl":"https://github.com/alguien/otra-web"}}]'
+FAKE_REPOS='[]'
+datos_instalacion
+(desplegar_en_skyway) >"$SALIDA" 2>&1
+codigo=$?
+comprobar "se detiene" igual "$codigo" 1
+comprobar "lo explica" contiene "$SALIDA" "no despliega https://github.com/NkrowOne/Mailway"
+comprobar "sin tocar sus variables" no_contiene "$REGISTRO" "svc_otra_web/env"
+
+echo "# El contenedor del panel por defecto de un cliente no recibe las contraseñas del webmail"
+reiniciar_panel
+contenedor_de_cliente skyway-mailway-panel
+comprobar "reconoce el de un cliente" igual "$?" 0
+contenedor_de_cliente skyway-correo-mailway
+comprobar "y el propio" igual "$?" 1
 
 echo "# Sin panel en ningún sitio: instalación nueva en el proyecto «mailway»"
 reiniciar_panel

@@ -106,6 +106,11 @@ CF_ZONA_NOMBRE=""
 # 0.15 (HTTP 200 con { "error" }).
 FAKE_AJUSTES='{"data":{}}'
 FAKE_RECHAZO=""
+# FAKE_DEFAULT_ROTO=1: certificate.default apunta a ficheros que no existen
+# (lo normal tras retirar el volcador antiguo) y toda recarga falla hasta que
+# una petición lo borra. El estado va en un fichero: motor_api corre en $(…).
+FAKE_DEFAULT_ROTO=0
+DEFAULT_RETIRADO="$TMP/default-retirado"
 motor_api() {
   printf 'motor_api %s %s %s\n' "$1" "$2" "${3:-}" >>"$REGISTRO"
   case "$1 $2" in
@@ -114,10 +119,17 @@ motor_api() {
       if [ -n "$FAKE_RECHAZO" ] && [[ $3 == *"$FAKE_RECHAZO"* ]]; then
         echo '{"error":"other","details":"rechazado"}'
       else
+        if [[ $3 == *'"prefix":"certificate.default."'* ]]; then : >"$DEFAULT_RETIRADO"; fi
         echo '{"data":null}'
       fi
       ;;
-    "GET /api/reload" | "GET /api/reload/certificate") echo '{"data":{"errors":{}}}' ;;
+    "GET /api/reload" | "GET /api/reload/certificate")
+      if [ "$FAKE_DEFAULT_ROTO" = 1 ] && [ ! -e "$DEFAULT_RETIRADO" ]; then
+        echo '{"data":{"errors":{"certificate.default.cert":"No such file or directory"}}}'
+      else
+        echo '{"data":{"errors":{}}}'
+      fi
+      ;;
     *)
       echo "motor_api no simulado: $*" >>"$IMPREVISTOS"
       return 1
@@ -143,6 +155,14 @@ docker() {
 
 # Cuerpos de los POST de ajustes, en orden.
 cuerpos_post() { grep '^motor_api POST /api/settings ' "$REGISTRO" | sed 's/^motor_api POST \/api\/settings //'; }
+# ¿Hay una petición que contiene $2 y, más adelante en la misma, $3?
+en_la_misma_peticion() {
+  local linea
+  while IFS= read -r linea; do
+    [[ $linea == *"$2"*"$3"* ]] && return 0
+  done <"$1"
+  return 1
+}
 # Ejecuta configurar_motor como el instalador (con set -e) y deja su salida y
 # el estado del certificado en $SALIDA.
 probar_motor() {
@@ -215,11 +235,25 @@ CF_TOKEN=cf_token_de_prueba_0123456789
 CF_ZONA_NOMBRE=ejemplo.test
 probar_motor
 comprobar "configura el ACME del motor" contiene <(cuerpos_post) '["acme.mailway.provider","cloudflare"]'
-comprobar "borra certificate.default" contiene <(cuerpos_post) "[$OP_CLEAR]"
-comprobar "después de configurar el ACME" despues_de <(cuerpos_post) "acme.mailway.directory" "$OP_CLEAR"
+comprobar "borra certificate.default después del ACME, en la misma petición" \
+  en_la_misma_peticion <(cuerpos_post) "acme.mailway.directory" ",$OP_CLEAR]"
 comprobar "no crea certificate.mailway" no_contiene <(cuerpos_post) "certificate.mailway"
 comprobar "limpia el volumen aunque no exista el contenedor del extractor" contiene "$REGISTRO" "compose_q --profile tls run --rm --no-deps -T certs-dumper python /app/extractor.py purgar"
 comprobar "no arranca el extractor" no_contiene "$REGISTRO" "up -d --force-recreate certs-dumper"
+CF_TOKEN=""
+CF_ZONA_NOMBRE=""
+
+echo "# Con Cloudflare y los ficheros del volcador ya borrados: la recarga que activa el ACME no falla"
+FAKE_AJUSTES="{\"data\":{$DEFAULT_VOLCADO}}"
+CF_TOKEN=cf_token_de_prueba_0123456789
+CF_ZONA_NOMBRE=ejemplo.test
+FAKE_DEFAULT_ROTO=1
+rm -f "$DEFAULT_RETIRADO"
+probar_motor
+comprobar "da el certificado por configurado" contiene "$SALIDA" "CERT_CONFIGURADO=1"
+comprobar "sin avisar de que no se pudo" no_contiene "$SALIDA" "No se pudo configurar la emisión del certificado"
+FAKE_DEFAULT_ROTO=0
+rm -f "$DEFAULT_RETIRADO"
 CF_TOKEN=""
 CF_ZONA_NOMBRE=""
 

@@ -81,8 +81,12 @@ declare -A PANEL_EXISTENTE_ENV=()
 # Servicio de Skyway que se actualiza en lugar de crear otro: «proyecto
 # slug-del-proyecto servicio slug-del-servicio» (ver localizar_panel_en_skyway).
 PANEL_ADOPTADO=""
-# 1 si quien instala ha dicho que el panel detectado no es el de esta instalación.
+# 1 si quien instala ha dicho que el panel detectado no es el de esta instalación,
+# y el servicio de Skyway de ese panel (no se reutiliza por su nombre).
 PANEL_SIN_ADOPCION=0
+PANEL_RECHAZADO=""
+# 1 si SKYWAY_URL la fijó preparar_api_skyway_en_silencio (no la indicó nadie).
+SKYWAY_URL_AUTOMATICA=0
 # 1 si deploy/.env guarda el MAILWAY_TRAEFIK_TOKEN que usa el panel. Un panel
 # anterior a la 1.0 lo tiene en su base de datos, no en sus variables: el del
 # instalador no le sirve (ver la fusión de variables en desplegar_en_skyway).
@@ -1375,8 +1379,12 @@ configurar_motor() {
   fi
 
   if [ -n "$CF_TOKEN" ] && [ -n "$CF_ZONA_NOMBRE" ]; then
-    # Vía preferida: el motor pide y renueva su certificado por DNS-01.
-    if motor_ajustes \
+    # Vía preferida: el motor pide y renueva su certificado por DNS-01. El
+    # certificate.default de la guía 0.x se retira en la misma petición: si
+    # apunta a ficheros que ya no existen, haría fallar la recarga que activa
+    # el ACME (y cualquier recarga posterior).
+    local ops
+    ops="[$(motor_op_insertar \
       acme.mailway.directory "$LE_DIRECTORIO" \
       acme.mailway.challenge dns-01 \
       acme.mailway.provider cloudflare \
@@ -1385,11 +1393,16 @@ configurar_motor() {
       acme.mailway.domains.0 "$MAIL_HOSTNAME" \
       acme.mailway.origin "$CF_ZONA_NOMBRE" \
       acme.mailway.renew-before 30d \
-      acme.mailway.default true; then
+      acme.mailway.default true)"
+    if [ "$volcado_antiguo" = 1 ]; then ops+=",$OP_RETIRAR_CERT_ANTIGUO"; fi
+    ops+="]"
+    if motor_cambios "$ops"; then
       CERT_CONFIGURADO=1
       RESUMEN_CERT="Let's Encrypt emitido por el propio motor (DNS-01 en Cloudflare); tarda unos minutos"
       ok "Certificado de IMAP/SMTP solicitado a Let's Encrypt por DNS-01."
-      if [ "$volcado_antiguo" = 1 ]; then retirar_certificado_antiguo; fi
+      if [ "$volcado_antiguo" = 1 ]; then
+        ok "Retirado certificate.default, el certificado de la instalación anterior: el motor pasa a usar el de Let's Encrypt."
+      fi
       extractor_con_acme "$con_volcado" "$volcado_antiguo"
     else
       aviso "No se pudo configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
@@ -1715,10 +1728,22 @@ preparar_api_skyway_en_silencio() {
     crear_token_temporal_skyway >/dev/null 2>&1 || return 1
     ok "Token temporal de Skyway creado (caduca en 60 minutos y se revoca al terminar)."
   fi
+  if [ -z "${SKYWAY_URL:-}" ]; then SKYWAY_URL_AUTOMATICA=1; fi
   SKYWAY_URL=${SKYWAY_URL:-http://127.0.0.1:4000}
   SKYWAY_URL=${SKYWAY_URL%/}
   sky_api GET /api/health
   [ "$RESP_CODE" = "200" ] || skyway_por_ip_del_contenedor
+}
+
+# ¿Es de un proyecto de un cliente (workspace) el contenedor $1? Solo se sabe
+# si la API de Skyway responde; si no, o si no existe, devuelve 1.
+contenedor_de_cliente() {
+  local proyecto
+  proyecto=$(docker inspect --type container -f '{{index .Config.Labels "skyway.project"}}' "$1" 2>/dev/null || true)
+  id_simple "$proyecto" || return 1
+  preparar_api_skyway_en_silencio || return 1
+  sky_api GET "/api/projects/$proyecto"
+  [ "$RESP_CODE" = "200" ] && [ -n "$(campo_json '.project.workspace_id // empty')" ]
 }
 
 # Busca el panel entre los contenedores de Skyway antes de preguntar nada,
@@ -1800,6 +1825,7 @@ detectar_panel_existente() {
       PANEL_EXISTENTE_ENV=()
       PANEL_EXISTENTE_HOST=""
       PANEL_SIN_ADOPCION=1
+      PANEL_RECHAZADO=$servicio
       info "No se toca ese panel."
       return 0
     fi
@@ -1885,6 +1911,7 @@ localizar_panel_en_skyway() {
     fi
     if ! confirmar "¿Es el panel de esta instalación? Se actualizará ese, sin crear otro, conservando su clave maestra y sus datos." s; then
       PANEL_SIN_ADOPCION=1
+      PANEL_RECHAZADO=$s_id
       info "No se toca ese servicio."
       return 0
     fi
@@ -1896,13 +1923,16 @@ localizar_panel_en_skyway() {
 desplegar_en_skyway() {
   titulo "Panel en Skyway"
   local url_indicada=${SKYWAY_URL:+1}
+  if [ "$SKYWAY_URL_AUTOMATICA" = 1 ]; then url_indicada=""; fi
   SKYWAY_URL=${SKYWAY_URL:-http://127.0.0.1:4000}
   SKYWAY_URL=${SKYWAY_URL%/}
   coincide "$SKYWAY_URL" '^https?://[][A-Za-z0-9.:-]+(/[A-Za-z0-9._~/-]*)?$' ||
     fallo "SKYWAY_URL no es una dirección válida: «$SKYWAY_URL» (p. ej. http://127.0.0.1:4000)."
   # Sin token: si Skyway corre en este servidor, uno temporal creado desde su
   # terminal (caduca en 60 minutos y se revoca al terminar). Si no, se pide.
-  if [ -n "${SKYWAY_TOKEN:-}" ] || ! crear_token_temporal_skyway; then
+  # El token temporal puede existir ya (lo crea detectar_panel_existente para
+  # saber de quién es un panel): entonces no se pregunta nada.
+  if [ -z "$SKY_TOKEN_TEMPORAL_ID" ] && { [ -n "${SKYWAY_TOKEN:-}" ] || ! crear_token_temporal_skyway; }; then
     if [ "$INTERACTIVO" = 1 ] && [ -z "${SKYWAY_TOKEN:-}" ]; then
       info "Con un token de API de Skyway (Mi perfil → Tokens de API, «sky_…») se despliega el panel"
       info "desde GitHub con su dominio, volumen y variables. Intro para hacerlo a mano después."
@@ -1961,7 +1991,7 @@ desplegar_en_skyway() {
     sky_api GET /api/projects
     [ "$RESP_CODE" = "200" ] || fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)."
     proyecto=$(campo_json --arg n "$nombre_proyecto" \
-      'first((.projects // [])[] | select(.slug == $n or .name == $n)) | "\(.id) \(.slug)"')
+      'first((.projects // [])[] | select((.workspace_id // "") == "" and (.slug == $n or .name == $n))) | "\(.id) \(.slug)"')
     if [ -z "$proyecto" ]; then
       sky_api POST /api/projects "{\"name\":\"$(json_escape "$nombre_proyecto")\"}"
       [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
@@ -1977,7 +2007,17 @@ desplegar_en_skyway() {
     fi
     sky_api GET "/api/projects/$proyecto_id"
     [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el proyecto de Skyway: $(sky_error)."
+    # Un proyecto de un cliente nunca: se busca, y se vuelve a comprobar aquí.
+    [ -z "$(campo_json '.project.workspace_id // empty')" ] ||
+      fallo "El proyecto «$nombre_proyecto» de Skyway es de un cliente: elige otro con MAILWAY_PROYECTO=<nombre>."
     servicio=$(campo_json 'first((.services // [])[] | select(.name == "panel" and .type == "git")) | "\(.id) \(.slug)"')
+    if [ -n "$servicio" ]; then
+      if [ "${servicio%% *}" = "$PANEL_RECHAZADO" ]; then
+        fallo "El servicio «panel» del proyecto «$nombre_proyecto» es el que has dicho que no es de esta instalación: elige otro proyecto con MAILWAY_PROYECTO=<nombre>."
+      fi
+      [ -n "$(campo_json --arg r "$repo" "$NORMALIZAR_REPO"'(.services // [])[] | select(.name == "panel" and .type == "git" and ((.config.repoUrl // "") | norm) == ($r | norm)) | .id')" ] ||
+        fallo "El servicio «panel» del proyecto «$nombre_proyecto» no despliega $repo: elige otro proyecto con MAILWAY_PROYECTO=<nombre>."
+    fi
   fi
 
   # Sin MAILWAY_SMTP_ALLOW_SELF_SIGNED: el panel verifica el certificado del
@@ -2839,6 +2879,12 @@ main() {
   if [ "$CON_SKYWAY" = 0 ]; then PANEL_INTERNAL_URL="http://mailway-panel:4100"; fi
   if [ -z "$PANEL_INTERNAL_URL" ] && [ -n "$PANEL_EXISTENTE_CONTENEDOR" ]; then
     PANEL_INTERNAL_URL="http://$PANEL_EXISTENTE_CONTENEDOR:4100"
+  fi
+  # El nombre por defecto puede ser el de un cliente (un proyecto suyo con el
+  # slug «mailway»): el webmail le mandaría las contraseñas que se cambian
+  # hasta que desplegar_en_skyway lo corrija. Mientras, a ninguna parte.
+  if [ -z "$PANEL_INTERNAL_URL" ] && [ "$CON_SKYWAY" = 1 ] && contenedor_de_cliente skyway-mailway-panel; then
+    PANEL_INTERNAL_URL="http://panel-pendiente.invalid:4100"
   fi
   PANEL_INTERNAL_URL=${PANEL_INTERNAL_URL:-http://skyway-mailway-panel:4100}
 
