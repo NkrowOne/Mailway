@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { db } from '../core/db';
 import { decryptSecret } from '../core/crypto';
 import { badRequest, HttpError, notFound, upstream } from '../core/errors';
-import { getEngine } from '../engine';
+import { normalizeHostname } from '../core/hostnames';
+import { engineConfigured, getEngine } from '../engine';
 import type { EngineReloadResult, EngineSettings, MailEngine } from '../engine/types';
-import { fireAlert, resolveAlert } from './alerts';
+import { fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
 import { audit } from './audit';
 import { requireAdmin } from './auth';
 import { getEngineSettings, getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
@@ -74,10 +75,6 @@ export function recommendedEngineSettings(mailHostname: string): Record<string, 
   return values;
 }
 
-function normalizeHost(value: string): string {
-  return value.trim().toLowerCase().replace(/\.$/, '');
-}
-
 /**
  * Aplica los ajustes recomendados en el motor indicado (por defecto, el
  * configurado). La puesta en marcha lo usa con el motor que acaba de probar,
@@ -87,7 +84,7 @@ export async function applyRecommendedEngineSettings(
   mailHostname: string,
   engine: MailEngine = getEngine(),
 ): Promise<EngineReloadResult & { values: Record<string, string> }> {
-  const host = normalizeHost(mailHostname);
+  const host = normalizeHostname(mailHostname);
   if (!host) {
     throw badRequest(
       'Indica primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
@@ -240,7 +237,7 @@ export async function probeEngineTls(
   mailHostname: string,
   settings: EngineSettings | null = getEngineSettings(),
 ): Promise<EngineTlsStatus> {
-  const host = normalizeHost(mailHostname);
+  const host = normalizeHostname(mailHostname);
   if (!host) return emptyTls('', 'Falta el nombre del servidor de correo.');
   const direct = await probeTls(host, host, 'publico');
   if (!direct.error) return direct;
@@ -269,7 +266,7 @@ const TLS_REMEDY =
  */
 export function evaluateTlsAlerts(status: EngineTlsStatus, mailHostname: string): void {
   if (status.error) return;
-  const host = normalizeHost(mailHostname);
+  const host = normalizeHostname(mailHostname);
   const days = status.daysLeft;
 
   let critical: { title: string; message: string } | null = null;
@@ -341,7 +338,7 @@ export async function checkEngineTls(): Promise<void> {
   try {
     const settings = getEngineSettings();
     if (!settings || settings.kind !== 'stalwart') return;
-    const host = normalizeHost(getInstanceSettings().mailHostname);
+    const host = normalizeHostname(getInstanceSettings().mailHostname);
     if (!host) return;
     try {
       await getEngine().reloadCertificates();
@@ -350,6 +347,77 @@ export async function checkEngineTls(): Promise<void> {
     }
     const status = await probeEngineTls(host, settings);
     evaluateTlsAlerts(status, host);
+  } catch {
+    // Nunca propagar: el vigilante sigue con el resto de comprobaciones.
+  }
+}
+
+/* ------------------------- Nombre en ejecución ---------------------------- */
+
+/** Tipo de los avisos de nombre: su clave lleva los dos nombres que no coinciden. */
+const ALERT_HOSTNAME = 'engine_hostname';
+
+/**
+ * Avisa si el motor se anuncia con un nombre distinto del de Ajustes. El
+ * nombre en ejecución es con el que el motor genera los registros de los
+ * dominios (MX, SRV, autoconfiguración); si no es el de Ajustes, la ficha de
+ * cada dominio pide un MX distinto del nombre que figura en los datos de
+ * conexión de los titulares, y ese nombre no tiene por qué tener PTR ni
+ * certificado.
+ *
+ * Sin nombre en Ajustes no hay con qué comparar y el aviso se cierra; sin
+ * lectura del motor (null) no se abre ni se cierra nada: si el motor está
+ * caído ya avisa el vigilante del motor. Lo que mande es siempre lo guardado
+ * en Ajustes: aquí solo se avisa, no se cambia ningún nombre.
+ */
+export function evaluateHostnameAlert(expected: string, running: string | null): void {
+  const esperado = normalizeHostname(expected);
+  if (!esperado) {
+    resolveAlertsOfType(ALERT_HOSTNAME);
+    return;
+  }
+  if (running === null) return;
+  const actual = normalizeHostname(running);
+  if (actual === esperado) {
+    resolveAlertsOfType(ALERT_HOSTNAME, { notify: true, what: 'nombre del servidor de correo' });
+    return;
+  }
+  const clave = `${ALERT_HOSTNAME}:${actual}>${esperado}`;
+  // Un aviso de otra pareja de nombres ya no describe la situación.
+  resolveAlertsOfType(ALERT_HOSTNAME, { except: clave });
+  fireAlert({
+    severity: 'warning',
+    type: ALERT_HOSTNAME,
+    dedupeKey: clave,
+    title: `El servidor de correo se anuncia como ${actual}, no como ${esperado}`,
+    message:
+      `El motor genera los registros DNS de los dominios (MX, SRV y autoconfiguración) con el nombre ${actual}, pero en Ajustes figura ${esperado}. ` +
+      'La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.',
+    remedy:
+      'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
+      'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
+      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
+  });
+}
+
+/**
+ * Compara el nombre en ejecución con el de Ajustes y abre o cierra el aviso.
+ * La llama el vigilante. Si el nombre cambia, no se toca el estado DNS de los
+ * dominios: el vigilante los vuelve a medir con su ritmo normal y cada
+ * medición (refreshDomainDns) lee de nuevo los registros del motor. Borrar
+ * las mediciones haría pasar por pendientes dominios que siguen recibiendo
+ * correo. Nunca lanza.
+ */
+export async function checkEngineHostname(): Promise<void> {
+  try {
+    if (!engineConfigured()) return;
+    let running: string | null;
+    try {
+      running = await getEngine().getRunningHostname();
+    } catch {
+      return; // Motor sin respuesta: ya lo cubre el aviso del motor caído.
+    }
+    evaluateHostnameAlert(getInstanceSettings().mailHostname, running);
   } catch {
     // Nunca propagar: el vigilante sigue con el resto de comprobaciones.
   }
@@ -451,23 +519,31 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
   app.get('/api/engine/status', async (req) => {
     requireAdmin(req);
     const instance = getInstanceSettings();
-    const expected = normalizeHost(instance.mailHostname);
+    const expected = normalizeHostname(instance.mailHostname);
     const settings = getEngineSettings();
     const kind = settings?.kind ?? null;
 
     let values: Record<string, string> = {};
     let engineError: string | null = null;
+    // Lo guardado (server.hostname) y lo que el motor usa de verdad pueden no
+    // coincidir: se leen las dos cosas, en paralelo.
+    let running: string | null = null;
+    let runningError: string | null = null;
     if (!settings) {
       engineError = 'El motor de correo aún no está configurado.';
     } else {
-      try {
-        values = await getEngine().getServerSettings(statusKeys());
-      } catch (err) {
-        engineError = errorMessage(err);
-      }
+      const engine = getEngine();
+      const [leidos, enEjecucion] = await Promise.allSettled([
+        engine.getServerSettings(statusKeys()),
+        engine.getRunningHostname(),
+      ]);
+      if (leidos.status === 'fulfilled') values = leidos.value;
+      else engineError = errorMessage(leidos.reason);
+      if (enEjecucion.status === 'fulfilled') running = enEjecucion.value;
+      else runningError = errorMessage(enEjecucion.reason);
     }
 
-    const configured = values['server.hostname'] ? normalizeHost(values['server.hostname']) : null;
+    const configured = values['server.hostname'] ? normalizeHostname(values['server.hostname']) : null;
     const networks = trustedEngineNetworks();
     const recommendedApplied =
       !engineError &&
@@ -507,7 +583,15 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
 
     return {
       engine: { kind, error: engineError },
-      hostname: { configured, expected: expected || null, ok: Boolean(expected) && configured === expected },
+      hostname: {
+        configured,
+        expected: expected || null,
+        ok: Boolean(expected) && configured === expected,
+        // El nombre con el que el motor se anuncia: el destino del MX que genera.
+        running,
+        runningOk: running && expected ? running === expected : null,
+        runningError: engineError ? null : runningError,
+      },
       trustedNetworks: networks,
       forwardedHeaders: values['http.use-x-forwarded'] === 'true',
       recommendedApplied,
@@ -520,8 +604,15 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
   /** Nombre del servidor, confianza en el proxy y rango exento de baneo. */
   app.post('/api/engine/recommended', async (req) => {
     requireAdmin(req);
-    const host = normalizeHost(getInstanceSettings().mailHostname);
+    const host = normalizeHostname(getInstanceSettings().mailHostname);
     const result = await applyRecommendedEngineSettings(host);
+    // Tras la recarga, el nombre en ejecución dice si el cambio se ha aplicado
+    // de verdad (la configuración local del motor puede fijar otro) y cierra
+    // el aviso del vigilante sin esperar a su siguiente vuelta.
+    const running = await getEngine()
+      .getRunningHostname()
+      .catch(() => null);
+    evaluateHostnameAlert(host, running);
     audit(req, 'engine.recommended_applied', {
       hostname: host,
       trustedNetworks: trustedEngineNetworks(),
@@ -530,6 +621,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     return {
       applied: Object.keys(result.values),
       hostname: host,
+      running,
       errors: result.errors,
       warnings: result.warnings,
     };
@@ -543,7 +635,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
   app.post('/api/engine/acme', async (req) => {
     requireAdmin(req);
     const body = acmeSchema.parse(req.body);
-    const host = normalizeHost(getInstanceSettings().mailHostname);
+    const host = normalizeHostname(getInstanceSettings().mailHostname);
     if (!host) {
       throw badRequest(
         'Indica primero el nombre del servidor de correo (Ajustes → Identidad del servidor).',
@@ -646,7 +738,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     }
     await getEngine().reloadCertificates();
     audit(req, 'engine.certificate_reloaded', {});
-    const host = normalizeHost(getInstanceSettings().mailHostname);
+    const host = normalizeHostname(getInstanceSettings().mailHostname);
     const tlsStatus =
       settings.kind === 'stalwart' && host
         ? await probeEngineTls(host, settings)

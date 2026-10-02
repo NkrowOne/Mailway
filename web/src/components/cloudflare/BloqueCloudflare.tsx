@@ -44,11 +44,17 @@ export function BloqueCloudflare({
   dominio,
   isAdmin,
   alta,
+  bloqueo,
 }: {
   dominio: DominioCorreo;
   isAdmin: boolean;
   /** Resultado del «DNS automático» del alta, si se acaba de crear. */
   alta?: EstadoAltaDominio | null;
+  /**
+   * Motivo por el que no se puede aplicar nada (el servidor de correo anuncia
+   * un MX interno): el servidor respondería 409, así que ni se lee el plan.
+   */
+  bloqueo?: string | null;
 }) {
   const id = dominio.id;
   const queryClient = useQueryClient();
@@ -81,7 +87,7 @@ export function BloqueCloudflare({
   const pendiente = dominio.status !== 'active';
   // Con el dominio pendiente y la zona localizada, el plan se lee al abrir la
   // ficha: así se ve de entrada qué haría el clic, sin tener que pedirlo.
-  const resumenAutomatico = pendiente && (gestionado || Boolean(cuentaConZona));
+  const resumenAutomatico = !bloqueo && pendiente && (gestionado || Boolean(cuentaConZona));
 
   const plan = useQuery({
     queryKey: ['domain-cloudflare', id],
@@ -221,12 +227,19 @@ export function BloqueCloudflare({
         title={titulo}
         meta={meta}
         actions={
-          <Button variant="perfil" onClick={abrirRevision}>
+          <Button variant="perfil" disabled={Boolean(bloqueo)} onClick={abrirRevision}>
             Revisar cambios
           </Button>
         }
       >
         <div className="flex flex-col gap-3">
+          {bloqueo && (
+            <BandaAviso titulo="Pendiente del servidor de correo">
+              Mientras el servidor de correo anuncie un MX interno no se aplica nada en Cloudflare:
+              el registro rompería el correo del dominio. Antes hay que corregir el nombre del
+              servidor.
+            </BandaAviso>
+          )}
           {resultado ? (
             <ResultadoCloudflare resultado={resultado} apex={dominio.domain} />
           ) : alta?.autoDns && alta.cloudflareReason ? (

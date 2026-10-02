@@ -4,7 +4,8 @@ import { db } from '../src/core/db';
 import { upstream } from '../src/core/errors';
 import { getEngine } from '../src/engine';
 import { fireAlert } from '../src/modules/alerts';
-import { checkDomainDns, spfCubre, veredictoMx } from '../src/modules/deliverability';
+import { spfCubre } from '../src/core/mailauth';
+import { checkDomainDns, veredictoMx } from '../src/modules/deliverability';
 import {
   evaluarPropiedad,
   getDomain,
@@ -166,12 +167,17 @@ test('la comprobación DNS solo mide los registros seleccionados', async () => {
     { type: 'TXT', name: 'mail.servidor.es.', content: 'v=spf1 a -all' },
   ];
   const informe = await checkDomainDns(d, records);
-  const nombres = informe.checks.map((c) => c.name);
-  assert.deepEqual(nombres.sort(), [d, d, `_imaps._tcp.${d}`].sort());
-  assert.equal(informe.requiredTotal, 2);
+  const medidos = informe.checks.filter((c) => !c.engineMissing);
+  assert.deepEqual(medidos.map((c) => c.name).sort(), [d, d, `_imaps._tcp.${d}`].sort());
   assert.ok(informe.checks.every((c) => !c.name.endsWith('.')));
-  // Sin red, nada se da por bueno ni por malo.
-  assert.ok(informe.checks.every((c) => c.status === 'unknown'));
+  // Sin red, nada de lo que se mide se da por bueno ni por malo.
+  assert.ok(medidos.every((c) => c.status === 'unknown'));
+  // El motor no ha devuelto DKIM ni DMARC: constan como pendientes, no se omiten.
+  assert.deepEqual(
+    informe.checks.filter((c) => c.engineMissing).map((c) => c.id).sort(),
+    ['motor:dkim', 'motor:dmarc'],
+  );
+  assert.equal(informe.requiredTotal, 4);
 });
 
 test('GET /dns devuelve la misma selección, marcando lo obligatorio', async () => {

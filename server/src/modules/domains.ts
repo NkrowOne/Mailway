@@ -16,9 +16,12 @@ import { aplicarDnsDominio, permiteInstancia } from './cloudflare';
 import { checkDomainDns, type DomainDnsReport } from './deliverability';
 import {
   categoriaDe,
+  destinosMx,
   esObligatorio,
   evaluarConflicto,
+  exigirMxPublico,
   generarZona,
+  mxInternos,
   nombreFichero,
   registroPropiedad,
   registrosDelDominio,
@@ -479,10 +482,13 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const { domain } = requireDomainAccess(req, id);
     const engine = getEngine();
-    const records = registrosDelDominio(domain.domain, await engine.getDnsRecords(domain.domain)).map(
+    const delMotor = await engine.getDnsRecords(domain.domain);
+    const records = registrosDelDominio(domain.domain, delMotor).map(
       (r) => ({ ...r, required: esObligatorio(r), category: categoriaDe(r) }),
     );
-    return { records };
+    // Una integración que muestre la tabla debe poder avisar igual que la
+    // ficha: con un MX interno, el fichero de zona y Cloudflare responden 409.
+    return { records, mxInternos: mxInternos(domain.domain, delMotor) };
   });
 
   /**
@@ -492,16 +498,22 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   app.get('/api/domains/:id/conflicto', async (req) => {
     const { id } = req.params as { id: string };
     const { domain } = requireDomainAccess(req, id);
-    const [mx, txt, dmarc] = await Promise.all([
+    const [mx, txt, dmarc, delMotor] = await Promise.all([
       lookupMx(domain.domain),
       lookupTxt(domain.domain),
       lookupTxt(`_dmarc.${domain.domain}`),
+      // Sin respuesta del motor se compara solo con el nombre de Ajustes: un
+      // motor caído no puede dejar sin aviso a quien va a importar la zona.
+      getEngine()
+        .getDnsRecords(domain.domain)
+        .catch(() => null),
     ]);
     return evaluarConflicto({
       mx,
       txt,
       dmarc,
       mailHostname: getInstanceSettings().mailHostname,
+      mxEsperados: delMotor ? destinosMx(domain.domain, delMotor) : null,
     });
   });
 
@@ -520,6 +532,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
 
     const engine = getEngine();
     const records = await engine.getDnsRecords(domain.domain);
+    exigirMxPublico(domain.domain, records);
     const zona = generarZona({ domain: domain.domain, records, nivel: elegido });
 
     audit(req, 'domain.zonefile_downloaded', { id, domain: domain.domain, nivel: elegido }, domain.clientId);

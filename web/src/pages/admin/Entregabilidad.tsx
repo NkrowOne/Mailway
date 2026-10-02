@@ -208,6 +208,27 @@ export default function Entregabilidad() {
               }
             />
             <Medida
+              concepto="Registro AAAA (IPv6)"
+              valor={
+                <span className="valor">
+                  {data.hostnameIpv6 == null
+                    ? 'no comprobable'
+                    : data.hostnameIpv6.join(', ') || 'no existe'}
+                </span>
+              }
+              referencia="inverso = servidor"
+              veredicto={
+                data.ipv6Ok == null ? 'sin-dato' : data.ipv6Ok ? 'normal' : 'vigilar'
+              }
+              nota={
+                data.ipv6Ok === false
+                  ? 'Su inverso no apunta al servidor. Si esa dirección no es de este servidor, o el servidor no tiene IPv6, elimina el registro AAAA; si es suya, configura su PTR.'
+                  : data.hostnameIpv6?.length === 0
+                    ? 'Sin IPv6: el servidor solo recibe correo por IPv4, que admiten todos los servidores de correo.'
+                    : undefined
+              }
+            />
+            <Medida
               concepto="Inverso (PTR)"
               valor={
                 <span className="valor">

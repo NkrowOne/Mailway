@@ -134,14 +134,21 @@ test('el estado refleja lo aplicado y no mide TLS en demostración', async () =>
   assert.equal(res.statusCode, 200, res.body);
   const body = res.json() as {
     engine: { kind: string; error: string | null };
-    hostname: { configured: string; expected: string; ok: boolean };
+    hostname: Record<string, unknown>;
     recommendedApplied: boolean;
     tls: EngineTlsStatus;
     acme: { configured: boolean };
   };
   assert.equal(body.engine.kind, 'demo');
   assert.equal(body.engine.error, null);
-  assert.deepEqual(body.hostname, { configured: HOST, expected: HOST, ok: true });
+  assert.deepEqual(body.hostname, {
+    configured: HOST,
+    expected: HOST,
+    ok: true,
+    running: HOST,
+    runningOk: true,
+    runningError: null,
+  });
   assert.equal(body.recommendedApplied, true);
   assert.equal(body.tls.ok, false);
   assert.match(body.tls.error ?? '', /demostración/);

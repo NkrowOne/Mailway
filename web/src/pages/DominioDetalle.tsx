@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, type CheckStatus, type DnsCheck, type User } from '../lib/api';
@@ -12,6 +12,7 @@ import {
   type EstadoAltaDominio,
   type RegistroPropiedad,
 } from '../lib/cloudflare';
+import type { ConflictoDominio } from '../lib/dominios';
 import { BloqueCloudflare } from '../components/cloudflare/BloqueCloudflare';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
@@ -84,6 +85,19 @@ const CONSULTAS_DEL_DOMINIO = [['mailboxes'], ['aliases'], ['apikeys']];
 /** De dónde sale la medición: el botón del membrete o el de la propiedad. */
 type OrigenMedicion = 'dns' | 'propiedad';
 
+/**
+ * ¿Recibe ya el dominio en otro proveedor y anuncia el motor un MX interno?
+ * La comparten la ficha (aviso del servidor) y la descarga del fichero de
+ * zona: con la misma clave, React Query hace una sola petición.
+ */
+function useConflicto(domainId: string) {
+  return useQuery({
+    queryKey: ['domain-conflicto', domainId],
+    queryFn: () => api.get<ConflictoDominio>(`/api/domains/${domainId}/conflicto`),
+    enabled: Boolean(domainId),
+  });
+}
+
 export default function DominioDetalle() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -113,12 +127,17 @@ export default function DominioDetalle() {
     queryFn: () => api.get<{ domain: DominioCorreo }>(`/api/domains/${id}`),
   });
 
+  const conflicto = useConflicto(id);
+
   const verify = useMutation({
     mutationFn: (_origen: OrigenMedicion) => api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`),
     onSuccess: async (data, origen) => {
       const antes = queryClient.getQueryData<{ domain: DominioCorreo }>(['domain', id])?.domain;
       queryClient.setQueryData(['domain', id], data);
       await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      // Medir de nuevo también relee lo que propone el motor (su MX, por si
+      // se acaba de corregir el nombre del servidor).
+      void queryClient.invalidateQueries({ queryKey: ['domain-conflicto', id] });
       setJustVerified(true);
       const d = data.domain;
       const report = d.dnsStatus;
@@ -148,6 +167,30 @@ export default function DominioDetalle() {
     },
     onError: (err) =>
       toast('error', err instanceof ApiError ? err.message : 'No se ha podido medir el DNS.'),
+  });
+
+  /**
+   * El motor no generó la clave DKIM (la ficha la marca como pendiente): se
+   * pide de nuevo y se vuelve a medir, para ver ya el registro que publicar.
+   */
+  const generarDkim = useMutation({
+    mutationFn: async () => {
+      await api.post(`/api/domains/${id}/dkim`);
+      return api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`);
+    },
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], data);
+      await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      const sigue = (data.domain.dnsStatus.checks ?? []).some((c) => c.engineMissing && c.id === 'motor:dkim');
+      toast(
+        sigue ? 'error' : 'ok',
+        sigue
+          ? 'El servidor de correo sigue sin devolver la clave DKIM. Revisa su registro de errores.'
+          : 'Clave DKIM generada. Publica su registro en el DNS y vuelve a medir.',
+      );
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido generar la clave DKIM.'),
   });
 
   const clientId = domain.data?.domain.clientId;
@@ -242,6 +285,14 @@ export default function DominioDetalle() {
   const visible = nombreVisible(record);
   const conPropiedad = record.ownershipVerifiedAt !== undefined;
   const pendientePropiedad = propiedadPendiente(record);
+  // MX interno que anuncia el motor: ni el fichero de zona ni Cloudflare.
+  const avisoServidor = conflicto.data?.avisoServidor ?? null;
+  const accionDe = (check: DnsCheck): ReactNode =>
+    check.engineMissing && check.id === 'motor:dkim' ? (
+      <Button variant="perfil" busy={generarDkim.isPending} onClick={() => generarDkim.mutate()}>
+        Generar la clave DKIM
+      </Button>
+    ) : undefined;
 
   const veredictoObligatorios: Veredicto = !medido
     ? 'sin-dato'
@@ -329,6 +380,13 @@ export default function DominioDetalle() {
           </Hoja>
         )}
 
+        {avisoServidor && (
+          <div role="alert" className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-4 py-3">
+            <p className="rotulo text-fuera">Revisa el nombre del servidor de correo</p>
+            <p className="mt-1 max-w-[75ch] text-base text-tinta">{avisoServidor}</p>
+          </div>
+        )}
+
         {pendientePropiedad && record.ownershipRecord && (
           <BloquePropiedad
             registro={record.ownershipRecord}
@@ -350,13 +408,19 @@ export default function DominioDetalle() {
             </p>
             <ul>
               {porVeredicto(required).map((check) => (
-                <RegistroMedido key={check.id} check={check} recien={justVerified} />
+                <RegistroMedido key={check.id} check={check} recien={justVerified} accion={accionDe(check)} />
               ))}
             </ul>
           </Hoja>
         )}
 
-        <BloqueCloudflare key={record.id} dominio={record} isAdmin={isAdmin} alta={alta} />
+        <BloqueCloudflare
+          key={record.id}
+          dominio={record}
+          isAdmin={isAdmin}
+          alta={alta}
+          bloqueo={avisoServidor}
+        />
 
         {checks.length > 0 && (
           <>
@@ -505,7 +569,16 @@ function BloquePropiedad({
  * Una medición: el valor de referencia que hay que crear (lo que el usuario
  * se lleva a su proveedor) y, debajo, lo que el DNS devuelve ahora.
  */
-function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean }) {
+function RegistroMedido({
+  check,
+  recien,
+  accion,
+}: {
+  check: DnsCheck;
+  recien: boolean;
+  /** Acción que resuelve el registro desde la propia fila (p. ej. generar la clave DKIM). */
+  accion?: ReactNode;
+}) {
   const veredicto = veredictoDe[check.status];
   const fuera = veredicto === 'fuera';
 
@@ -521,16 +594,24 @@ function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean })
         </span>
       </div>
 
-      <Muestra rotulo="Valor de referencia" copiar={check.expected} className="mt-2.5">
-        <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
-          <dt className="rotulo sm:pt-px">Nombre</dt>
-          <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.name}</dd>
-          <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
-          <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.expected}</dd>
-        </dl>
-      </Muestra>
+      {check.engineMissing ? (
+        // Sin valor que copiar: el motor todavía no ha generado el registro.
+        <p className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="rotulo shrink-0">Valor de referencia</span>
+          <span className="text-sm text-tinta-3">pendiente de generar en el servidor de correo</span>
+        </p>
+      ) : (
+        <Muestra rotulo="Valor de referencia" copiar={check.expected} className="mt-2.5">
+          <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+            <dt className="rotulo sm:pt-px">Nombre</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.name}</dd>
+            <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.expected}</dd>
+          </dl>
+        </Muestra>
+      )}
 
-      {check.status !== 'ok' && (
+      {check.status !== 'ok' && !check.engineMissing && (
         <p className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <span className="rotulo shrink-0">El DNS devuelve ahora</span>
           <span
@@ -538,12 +619,15 @@ function RegistroMedido({ check, recien }: { check: DnsCheck; recien: boolean })
               check.found ? (fuera ? 'text-fuera' : 'text-tinta-2') : 'text-tinta-3'
             }`}
           >
-            {check.found || (check.status === 'unknown' ? 'no se ha podido consultar' : 'ningún registro')}
+            {/* null es «no se pudo consultar» aunque el veredicto sea definitivo
+                (un MX interno está fuera de rango mida lo que mida el DNS). */}
+            {check.found || (check.found === null ? 'no se ha podido consultar' : 'ningún registro')}
           </span>
         </p>
       )}
 
       <p className="mt-2 max-w-[75ch] text-sm text-tinta-2">{check.help}</p>
+      {accion && <div className="mt-2.5">{accion}</div>}
     </li>
   );
 }
@@ -607,13 +691,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
   const toast = useToast();
   const nombre = `${domain}-mailway-${nivel}.txt`;
 
-  const conflicto = useQuery({
-    queryKey: ['domain-conflicto', domainId],
-    queryFn: () =>
-      api.get<{ hayOtroProveedor: boolean; mxActuales: string[]; aviso: string | null }>(
-        `/api/domains/${domainId}/conflicto`,
-      ),
-  });
+  const conflicto = useConflicto(domainId);
 
   const descarga = useMutation({
     mutationFn: () => descargarZona(`/api/domains/${domainId}/zonefile?nivel=${nivel}`, nombre),
@@ -621,17 +699,41 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
   });
 
   const hayConflicto = conflicto.data?.hayOtroProveedor ?? false;
+  // Con un MX interno, el servidor rechaza la descarga (409): el botón no se ofrece.
+  const mxInterno = Boolean(conflicto.data?.avisoServidor);
 
   return (
     <Hoja
       title="Importar en el proveedor de DNS"
       meta="Fichero de zona"
       actions={
-        <Button variant="perfil" busy={descarga.isPending} onClick={() => descarga.mutate()}>
+        <Button
+          variant="perfil"
+          busy={descarga.isPending}
+          disabled={mxInterno}
+          onClick={() => descarga.mutate()}
+        >
           Descargar
         </Button>
       }
     >
+      {conflicto.isError && (
+        <AvisoError
+          className="mb-4"
+          onRetry={() => void conflicto.refetch()}
+          retrying={conflicto.isFetching}
+        >
+          No se ha podido comprobar si el dominio ya recibe correo en otro proveedor. Compruébalo
+          antes de importar el fichero.
+        </AvisoError>
+      )}
+      {mxInterno && (
+        <p className="mb-4 max-w-[75ch] text-base text-fuera">
+          No se puede descargar mientras el servidor de correo anuncie un MX interno: el fichero
+          publicaría un destino que no existe en Internet. Antes hay que corregir el nombre del
+          servidor.
+        </p>
+      )}
       {hayConflicto && conflicto.data?.aviso && (
         <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
           <p className="rotulo text-fuera">No lo importes todavía</p>

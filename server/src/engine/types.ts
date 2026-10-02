@@ -56,6 +56,15 @@ export interface MailEngine {
   /** Lee ajustes del servidor del motor por prefijo (p. ej. "server.hostname"). */
   getServerSettings(keys: string[]): Promise<Record<string, string>>;
 
+  /**
+   * Nombre con el que el motor se anuncia DE VERDAD: el destino del MX de los
+   * registros que genera para los dominios, en minúsculas y sin punto final.
+   * Puede no coincidir con el `server.hostname` guardado: una recarga
+   * pendiente o la configuración local del motor lo fijan a otro. null si no
+   * propone ningún MX.
+   */
+  getRunningHostname(): Promise<string | null>;
+
   /** Recarga los certificados TLS (tras una renovación). */
   reloadCertificates(): Promise<void>;
 

@@ -17,6 +17,7 @@ import {
 } from '../src/modules/cloudflare';
 import type { CfRegistro } from '../src/core/cloudflare';
 import { db } from '../src/core/db';
+import { getEngine } from '../src/engine';
 import { setInstanceSettings } from '../src/modules/settings';
 import { adminContext, createClient, createDomain, type TestContext } from './helpers';
 
@@ -425,6 +426,51 @@ test('fusionarSpf añade «mx» antes del all final y conserva lo demás', () =>
   assert.equal(fusionarSpf('v=spf1 include:x.com', 'v=spf1 mx -all')!.valor, 'v=spf1 include:x.com mx');
 });
 
+test('fusionarSpf: un «mx» detrás de «all» no cuenta y se añade delante del primer «all»', () => {
+  assert.deepEqual(fusionarSpf('v=spf1 include:_spf.google.com -all mx', 'v=spf1 mx ra=postmaster -all'), {
+    valor: 'v=spf1 include:_spf.google.com mx -all mx',
+    anadidos: ['mx'],
+  });
+  assert.equal(fusionarSpf('v=spf1 mx:ejemplo.es ~all', 'v=spf1 mx -all', { nombre: 'ejemplo.es' }), null);
+  assert.equal(
+    fusionarSpf('v=spf1 ip4:203.0.113.10 -all', 'v=spf1 mx -all', { nombre: APEX, ipServidor: '203.0.113.10' }),
+    null,
+    'la IP del servidor ya lo autoriza, igual que en la comprobación DNS',
+  );
+});
+
+test('SPF con «mx» detrás de «all»: el plan lo corrige, no lo conserva', () => {
+  const [c] = planificar([spf], [existente({ type: 'TXT', name: APEX, content: 'v=spf1 include:x.com -all mx' })], {
+    apex: APEX,
+  });
+  assert.equal(c!.action, 'update');
+  assert.equal(c!.content, 'v=spf1 include:x.com mx -all mx');
+});
+
+test('dos DMARC: conflicto que nunca se corrige solo, como con dos SPF', () => {
+  const [c] = planificar(
+    [dmarc],
+    [
+      existente({ type: 'TXT', name: `_dmarc.${APEX}`, content: 'v=DMARC1; p=reject' }),
+      existente({ type: 'TXT', name: `_dmarc.${APEX}`, content: 'v=DMARC1; p=none' }),
+    ],
+    { apex: APEX },
+  );
+  assert.equal(c!.action, 'conflict');
+  assert.equal(c!.reemplazo, null, 'ni con confirmación');
+  assert.match(c!.reason, /Hay 2 registros DMARC/);
+});
+
+test('DMARC existente con espacios: se conserva y se lee su política (p, no sp)', () => {
+  const [c] = planificar(
+    [dmarc],
+    [existente({ type: 'TXT', name: `_dmarc.${APEX}`, content: 'v = DMARC1; sp=none; p = quarantine' })],
+    { apex: APEX },
+  );
+  assert.equal(c!.action, 'keep');
+  assert.match(c!.reason, /p=quarantine/);
+});
+
 test('SPF existente: se fusiona con un cambio parcial del contenido', () => {
   const actual = existente({ type: 'TXT', name: APEX, content: '"v=spf1 include:_spf.google.com ~all"' });
   const [c] = planificar([spf], [actual], { apex: APEX });
@@ -788,6 +834,46 @@ test('plan y aplicación de un dominio: registros sin proxy, marcados y en un so
     .all() as { detail: string }[];
   assert.ok(auditoria.length >= 1);
   assert.ok(auditoria.every((a) => !a.detail.includes(TOKEN_USUARIO)));
+});
+
+test('con un MX interno del motor ni se planifica ni se aplica nada en Cloudflare', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('mx-interno-cf.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'mx-interno-cf.es');
+  const engine = getEngine();
+  const original = engine.getDnsRecords.bind(engine);
+  // Stalwart sin server.hostname: se presenta con el identificador del contenedor.
+  engine.getDnsRecords = async (dominio: string) => [
+    { type: 'MX', name: `${dominio}.`, content: '10 3f2a1b4c5d6e.' },
+    { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx ra=postmaster -all' },
+  ];
+  try {
+    const plan = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/domains/${domainId}/cloudflare`,
+      headers: { cookie: cliente.userCookie! },
+    });
+    assert.equal(plan.statusCode, 409, plan.body);
+    assert.equal((plan.json() as { code: string }).code, 'mx_hostname_internal');
+
+    cf.llamadas = [];
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/apply`,
+      headers: { cookie: cliente.userCookie! },
+      payload: { replaceConflicts: true },
+    });
+    assert.equal(res.statusCode, 409, res.body);
+    const error = res.json() as { error: string; code: string };
+    assert.equal(error.code, 'mx_hostname_internal');
+    assert.match(error.error, /«3f2a1b4c5d6e»/);
+    assert.equal(cf.llamadas.filter((l) => l.method !== 'GET').length, 0, 'nada se escribe en la zona');
+    assert.equal(cf.enZona(z.id).length, 0);
+  } finally {
+    engine.getDnsRecords = original;
+  }
 });
 
 test('reemplazar conflictos: borra los MX ajenos y crea el propio en el mismo lote', async () => {

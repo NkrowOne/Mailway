@@ -5,6 +5,7 @@ import { config } from '../config';
 import { lookupA, lookupPtr } from '../core/dns';
 import { db, now } from '../core/db';
 import { badRequest, forbidden, tooMany } from '../core/errors';
+import { isValidHostname } from '../core/hostnames';
 import { buildEngine, engineConfigured } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
@@ -79,18 +80,17 @@ function httpUrl(message: string) {
     .refine((value) => /^https?:\/\//i.test(value), message);
 }
 
-/** Nombre de host DNS (se escribe tal cual en la configuración del motor). */
-const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
-
 const instanceSchema = z.object({
   brandName: z.string().trim().min(1).max(60).optional(),
+  // Se escribe tal cual en la configuración del motor y en los registros MX:
+  // el mismo validador que usan la comprobación DNS y el fichero de zona.
   mailHostname: z
     .string()
     .trim()
     .max(253)
     .refine(
-      (value) => value === '' || HOSTNAME_RE.test(value.replace(/\.$/, '')),
-      'El nombre del servidor de correo no es válido (ej.: mail.miempresa.com).',
+      (value) => value === '' || isValidHostname(value),
+      'El nombre del servidor de correo no es válido: escribe un nombre completo, no una dirección IP (ej.: mail.miempresa.com).',
     )
     .optional(),
   publicIp: z

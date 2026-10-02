@@ -114,6 +114,8 @@ export interface DnsCheck {
   status: CheckStatus;
   required: boolean;
   help: string;
+  /** El motor no ha generado este registro obligatorio: no hay valor que copiar. */
+  engineMissing?: boolean;
 }
 
 export interface DomainRecord {
@@ -225,6 +227,10 @@ export interface ServerHealth {
   publicIp: string;
   hostnameResolves: boolean | null;
   hostnameIps: string[];
+  /** AAAA del nombre del servidor: null = no se pudo consultar; [] = solo IPv4. */
+  hostnameIpv6?: string[] | null;
+  /** Las IPv6 del nombre son de este servidor (su inverso apunta a él); null = sin dato. */
+  ipv6Ok?: boolean | null;
   ptr: string[] | null;
   ptrOk: boolean | null;
   dnsbl: { zone: string; label: string; status: 'clean' | 'listed' | 'inconclusive'; detail: string }[];

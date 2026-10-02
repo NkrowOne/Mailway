@@ -5,13 +5,17 @@ import {
   esObligatorio,
   esRegistroPropiedad,
   evaluarConflicto,
+  exigirMxPublico,
   filtrarPorNivel,
   generarZona,
+  mxInternos,
   registroPropiedad,
   registrosDelDominio,
+  registrosWebExcluidos,
   seleccionarRegistros,
   trocearTxt,
 } from '../src/modules/zonefile';
+import { HttpError } from '../src/core/errors';
 import type { EngineDnsRecord } from '../src/engine/types';
 
 const dominio = 'panaderialaura.com';
@@ -261,4 +265,102 @@ test('el TXT de verificación de la propiedad va una sola vez y con lo recomenda
   assert.equal(registrosDelDominio(dominio, [...delMotor, registroPropiedad(dominio)]).filter(esRegistroPropiedad).length, 1);
   const zona = generarZona({ domain: dominio, records: delMotor, nivel: 'recomendados' });
   assert.match(zona, /demuestra que el dominio es tuyo/);
+});
+
+/* ----------------------- Registros de la web del dominio ------------------ */
+
+// Registros que un motor podría proponer y que pisarían la web del cliente.
+const conWeb: EngineDnsRecord[] = [
+  ...registros,
+  { type: 'A', name: `${dominio}.`, content: '203.0.113.10' },
+  { type: 'AAAA', name: dominio, content: '2001:db8::25' },
+  { type: 'CNAME', name: `www.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'HTTPS', name: dominio, content: '1 . alpn="h2"' },
+  { type: 'SVCB', name: `www.${dominio}`, content: '1 . port=443' },
+  { type: 'CNAME', name: `mail.${dominio}.`, content: 'mail.nkrow.com.' },
+  { type: 'A', name: `servidor.${dominio}.`, content: '203.0.113.10' },
+];
+
+test('la selección nunca incluye A, AAAA, CNAME, HTTPS ni SVCB del dominio raíz ni de www', () => {
+  const sel = seleccionarRegistros(dominio, conWeb);
+  const web = sel.filter(
+    (r) => (r.name === dominio || r.name === `www.${dominio}`) && ['A', 'AAAA', 'CNAME', 'HTTPS', 'SVCB'].includes(r.type),
+  );
+  assert.deepEqual(web, []);
+  // El correo del dominio raíz (MX, SPF) y los demás nombres siguen.
+  assert.ok(sel.some((r) => r.type === 'MX' && r.name === dominio));
+  assert.ok(sel.some((r) => r.type === 'TXT' && r.name === dominio));
+  assert.ok(sel.some((r) => r.type === 'CNAME' && r.name === `mail.${dominio}`));
+  assert.ok(sel.some((r) => r.type === 'A' && r.name === `servidor.${dominio}`));
+  assert.equal(registrosWebExcluidos(dominio, conWeb).length, 5);
+});
+
+test('el fichero de zona dice al principio qué registros de la web ha dejado fuera', () => {
+  const zona = generarZona({ domain: dominio, records: conWeb, nivel: 'completo', generadoEn: '2026-10-02T00:00:00Z' });
+  const lineas = zona.split('\n');
+  const aviso = lineas.findIndex((l) => l.includes('REGISTROS DE LA WEB EXCLUIDOS'));
+  const importacion = lineas.findIndex((l) => l.includes('IMPORTACIÓN EN CLOUDFLARE'));
+  assert.ok(aviso > 0 && aviso < importacion, 'el aviso va en la cabecera, antes que nada más');
+  assert.ok(zona.includes(`;      ${dominio} A 203.0.113.10`));
+  assert.ok(zona.includes(`;      www.${dominio} CNAME mail.nkrow.com.`));
+  // Ninguna línea de registro (no comentario) los publica.
+  const cuerpo = lineas.filter((l) => l && !l.startsWith(';') && !l.startsWith('$'));
+  assert.ok(!cuerpo.some((l) => l.startsWith(`${dominio}.\t`) && /\t(A|AAAA|CNAME|HTTPS|SVCB)\t/.test(l)));
+  assert.ok(!cuerpo.some((l) => l.startsWith(`www.${dominio}.\t`)));
+  assert.ok(cuerpo.some((l) => l.startsWith(`mail.${dominio}.\t`)), 'mail.<dominio> no es la web');
+
+  const sinWeb = generarZona({ domain: dominio, records: registros, nivel: 'completo' });
+  assert.ok(!sinWeb.includes('REGISTROS DE LA WEB EXCLUIDOS'), 'sin nada excluido no hay aviso');
+});
+
+/* ------------------------ MX del motor e interno --------------------------- */
+
+test('el aviso de otro proveedor reconoce el MX que genera el motor como propio', () => {
+  const base = {
+    mx: [{ priority: 10, exchange: 'mx.servidor.es.' }],
+    txt: [],
+    dmarc: [],
+    mailHostname: 'mail.servidor.es',
+  };
+  assert.equal(evaluarConflicto({ ...base, mxEsperados: ['mx.servidor.es'] }).hayOtroProveedor, false);
+  const sinMotor = evaluarConflicto({ ...base, mxEsperados: null });
+  assert.equal(sinMotor.hayOtroProveedor, true, 'sin motor se compara con Ajustes, como siempre');
+  assert.match(sinMotor.aviso!, /ya recibe correo en mx\.servidor\.es/);
+  const ajeno = evaluarConflicto({
+    ...base,
+    mx: [{ priority: 1, exchange: 'smtp.google.com' }],
+    mxEsperados: ['mx.servidor.es'],
+  });
+  assert.equal(ajeno.hayOtroProveedor, true);
+});
+
+test('el aviso de otro proveedor lee DMARC con espacios y no da política con dos registros', () => {
+  const ajeno = { mx: [{ priority: 1, exchange: 'smtp.google.com' }], txt: [], mailHostname: 'mail.nkrow.com' };
+  assert.equal(evaluarConflicto({ ...ajeno, dmarc: ['v=DMARC1; sp=none; p = reject'] }).dmarcPolitica, 'reject');
+  assert.equal(
+    evaluarConflicto({ ...ajeno, dmarc: ['v=DMARC1; p=reject', 'v=DMARC1; p=none'] }).dmarcPolitica,
+    null,
+  );
+});
+
+test('un MX interno del motor se detecta y bloquea el fichero de zona con un código propio', () => {
+  const internos: EngineDnsRecord[] = [
+    { type: 'MX', name: `${dominio}.`, content: '10 3f2a1b4c5d6e.' },
+    { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx -all' },
+  ];
+  assert.deepEqual(mxInternos(dominio, internos), ['3f2a1b4c5d6e']);
+  assert.deepEqual(mxInternos(dominio, registros), []);
+  for (const destino of ['localhost', '10.0.0.5', 'mailway-mail', 'mail.local', 'stalwart.internal', 'mail.docker', 'mail.lan']) {
+    assert.deepEqual(mxInternos(dominio, [{ type: 'MX', name: dominio, content: `10 ${destino}.` }]), [destino], destino);
+  }
+  assert.throws(
+    () => exigirMxPublico(dominio, internos),
+    (err: HttpError) => err.status === 409 && err.code === 'mx_hostname_internal' && /nombre interno/.test(err.message),
+  );
+  exigirMxPublico(dominio, registros);
+
+  const conflicto = evaluarConflicto({ mx: [], txt: [], dmarc: [], mailHostname: '', mxEsperados: ['3f2a1b4c5d6e'] });
+  assert.deepEqual(conflicto.mxInternos, ['3f2a1b4c5d6e']);
+  assert.match(conflicto.avisoServidor!, /«3f2a1b4c5d6e»/);
+  assert.equal(evaluarConflicto({ mx: [], txt: [], dmarc: [], mailHostname: 'mail.nkrow.com' }).avisoServidor, null);
 });

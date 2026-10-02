@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type User } from '../lib/api';
 import { formatDay } from '../lib/format';
 import {
+  notaEnEjecucion,
   ORDEN_VEREDICTO,
   resumenTls,
+  veredictoEnEjecucion,
   veredictoTls,
   type CuentaCloudflare,
   type EngineStatus,
@@ -42,6 +44,13 @@ export function HojaServidorCorreo() {
     onSuccess: (res) => {
       if (res.errors.length > 0) {
         toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
+      } else if (res.running && res.running !== res.hostname) {
+        // Guardado y recargado, pero el motor sigue anunciándose con otro
+        // nombre: lo fija su configuración local, y eso no es un éxito.
+        toast(
+          'error',
+          `Ajustes aplicados, pero el motor sigue anunciándose como ${res.running}. Revisa su configuración local.`,
+        );
       } else {
         toast('ok', `Ajustes recomendados aplicados en el motor para ${res.hostname}.`);
       }
@@ -124,7 +133,7 @@ export function HojaServidorCorreo() {
       </div>
 
       <div className="flex flex-wrap gap-2 border-t border-regla px-4 py-3">
-        {!data.recommendedApplied && (
+        {(!data.recommendedApplied || data.hostname.runningOk === false) && (
           <Button
             variant="perfil"
             busy={aplicar.isPending}
@@ -175,7 +184,7 @@ function construirFilas(data: EngineStatus): Fila[] {
   const esperado = data.hostname.expected;
 
   filas.push({
-    concepto: 'Nombre del servidor en el motor',
+    concepto: 'Nombre guardado en el motor',
     valor: data.hostname.configured ?? 'Sin fijar',
     veredicto: data.engine.error
       ? 'sin-dato'
@@ -189,6 +198,15 @@ function construirFilas(data: EngineStatus): Fila[] {
       : esperado
         ? `El motor debe anunciarse como ${esperado}. Sin ese nombre, los registros MX y SRV que propone apuntan al identificador del contenedor.`
         : 'Falta el nombre del servidor de correo en la identidad del servidor.',
+  });
+
+  // Lo guardado no basta: el nombre que cuenta es con el que el motor genera
+  // los registros de los dominios (el destino de su MX).
+  filas.push({
+    concepto: 'Nombre en ejecución',
+    valor: data.hostname.running ?? 'Sin dato',
+    veredicto: veredictoEnEjecucion(data),
+    nota: notaEnEjecucion(data),
   });
 
   filas.push({

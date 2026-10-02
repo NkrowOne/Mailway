@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type SetupStatus, type User } from '../lib/api';
 import {
+  notaEnEjecucion,
   ORDEN_VEREDICTO,
   resumenTls,
   textoDns,
   veredictoDns,
+  veredictoEnEjecucion,
   veredictoTls,
   type EngineStatus,
   type PlatformDns,
@@ -603,7 +605,9 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
     mutationFn: () => api.post<RecommendedResult>('/api/engine/recommended'),
     onSuccess: (res) => {
       if (res.errors.length > 0) toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
-      else toast('ok', `Nombre del servidor ${res.hostname} aplicado en el motor.`);
+      else if (res.running && res.running !== res.hostname) {
+        toast('error', `Ajustes aplicados, pero el motor sigue anunciándose como ${res.running}. Revisa su configuración local.`);
+      } else toast('ok', `Nombre del servidor ${res.hostname} aplicado en el motor.`);
       void queryClient.invalidateQueries({ queryKey: ['engine-status'] });
     },
     onError: (err) => toast('error', err instanceof ApiError ? err.message : 'No se han podido aplicar los ajustes.'),
@@ -627,6 +631,15 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
           ? undefined
           : 'Faltan el nombre del servidor o los ajustes recomendados del motor (proxy y exención del webmail).',
       });
+      // Solo si no coincide: es informativo y no impide terminar la puesta en marcha.
+      if (m.hostname.runningOk === false) {
+        filas.push({
+          concepto: 'Nombre en ejecución',
+          valor: m.hostname.running ?? 'Sin dato',
+          veredicto: veredictoEnEjecucion(m),
+          nota: notaEnEjecucion(m),
+        });
+      }
       filas.push({
         concepto: `Certificado TLS (IMAP ${m.tls.port})`,
         valor: resumenTls(m.tls),
@@ -700,11 +713,12 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
 
       {!cargando && (
         <div className="flex flex-wrap gap-2">
-          {motor.data?.engine.kind === 'stalwart' && !motor.data.recommendedApplied && (
-            <Button variant="perfil" busy={aplicar.isPending} onClick={() => aplicar.mutate()}>
-              Aplicar ajustes recomendados
-            </Button>
-          )}
+          {motor.data?.engine.kind === 'stalwart' &&
+            (!motor.data.recommendedApplied || motor.data.hostname.runningOk === false) && (
+              <Button variant="perfil" busy={aplicar.isPending} onClick={() => aplicar.mutate()}>
+                Aplicar ajustes recomendados
+              </Button>
+            )}
           <Button
             variant="plano"
             busy={motor.isFetching || dns.isFetching}

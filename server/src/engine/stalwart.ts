@@ -1,4 +1,5 @@
 import { HttpError, upstream } from '../core/errors';
+import { normalizeHostname } from '../core/hostnames';
 import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
 import type {
   CreateMailboxInput,
@@ -10,6 +11,9 @@ import type {
   QueueSummary,
   UpdateMailboxPatch,
 } from './types';
+
+/** Dominio por el que se piden los registros para saber el nombre en ejecución. */
+const DOMINIO_SONDA = 'mailway.invalid';
 
 /**
  * Driver para Stalwart Mail Server v0.12–v0.15 a través de su API REST de
@@ -181,6 +185,21 @@ export class StalwartEngine implements MailEngine {
       `/api/dns/records/${encodeURIComponent(domain)}`,
     );
     return (records || []).map((r) => ({ type: r.type, name: r.name, content: r.content }));
+  }
+
+  /**
+   * Stalwart 0.15.5 genera sus registros con el nombre en ejecución
+   * (`core.network.server_name`, que solo cambia al recargar la
+   * configuración), no con el `server.hostname` guardado: el destino de su MX
+   * es el nombre que usa de verdad. La ruta genera los registros de cualquier
+   * nombre sin exigir que el dominio exista; se pregunta por uno reservado
+   * (.invalid, RFC 2606) para no mezclarlo con ningún dominio real.
+   */
+  async getRunningHostname(): Promise<string | null> {
+    const records = await this.getDnsRecords(DOMINIO_SONDA);
+    const mx = records.find((r) => r.type.toUpperCase() === 'MX');
+    const destino = normalizeHostname(mx?.content.trim().split(/\s+/).pop() ?? '');
+    return destino || null;
   }
 
   async createMailbox(input: CreateMailboxInput): Promise<void> {

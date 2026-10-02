@@ -161,9 +161,9 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | `GET /api/domains?clientId=` | `{ domains: DomainRecord[] }`. |
 | `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. |
 | `GET /api/domains/:id` | `{ domain }`. |
-| `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }] }`, sin punto final y sin SRV de puertos que no se publican. `category` es `obligatorio`, `autoconfiguracion`, `verificacion` (el TXT de propiedad, con `required: false`) o `endurecimiento` (MTA-STS y TLS-RPT). |
-| `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar (`recomendados` por defecto). Incluye el TXT de verificación salvo en `obligatorios`. |
-| `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? (MX, SPF, DMARC actuales). |
+| `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }], mxInternos }`, sin punto final, sin SRV de puertos que no se publican y sin registros de la web del dominio raíz ni de `www` (A, AAAA, CNAME, HTTPS y SVCB). `category` es `obligatorio`, `autoconfiguracion`, `verificacion` (el TXT de propiedad, con `required: false`) o `endurecimiento` (MTA-STS y TLS-RPT). `mxInternos` lista los destinos MX que propone el motor y son nombres internos (ver «MX interno»); si no está vacío, no publiques la tabla. |
+| `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar (`recomendados` por defecto). Incluye el TXT de verificación salvo en `obligatorios`. Nunca incluye registros de la web del dominio raíz ni de `www`: si el motor propusiera alguno, la cabecera del fichero lo dice. Con un MX interno: `409 mx_hostname_internal`. |
+| `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? → `{ hayOtroProveedor, mxActuales, spfActual, dmarcPolitica, aviso, mxInternos, avisoServidor }`. Los MX publicados se comparan con el nombre del servidor de Ajustes y con los destinos MX que genera el motor; si el motor no responde, solo con el de Ajustes. `dmarcPolitica` es `null` si hay varios DMARC. `avisoServidor` explica `mxInternos` (null si está vacío). |
 | `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain }`; mientras la propiedad esté pendiente, la comprueba también. Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
 | `POST /api/domains/:id/dkim` | Regenera las claves DKIM en el motor. |
 | `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias y dominio → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted }` (ver «Baja de un dominio»). Con buzones exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
@@ -173,6 +173,45 @@ pending_dns|active|error, dkimSelector, dnsStatus: { checks, requiredTotal,
 requiredOk, allRequiredOk, checkedAt }, lastCheckedAt, verifiedAt, createdAt,
 cloudflare: { accountId, zoneId } | null, dnsAppliedAt, ownershipVerifiedAt,
 ownershipRecord: { type: "TXT", name, content } }`.
+
+Cada elemento de `checks` es `{ id, label, type, name, expected, found, status:
+ok|missing|mismatch|unknown, required, help, engineMissing? }`. `found` es lo
+que devuelve el DNS público (`null` si no se pudo consultar; cadena vacía si no
+existe). `unknown` significa que no se pudo consultar, no que falte.
+
+**Comprobación DNS.** Se mide lo que genera el motor tras la selección común
+(la misma que la tabla, el fichero de zona y Cloudflare), con estas reglas:
+
+- **MX**: en rango si apunta al servidor y ningún MX de otro proveedor tiene la
+  misma o mayor preferencia. Cualquier prioridad vale, y un segundo MX propio o
+  un respaldo con menor preferencia no lo estropean.
+- **SPF**: uno solo por nombre (con dos, ninguno vale). Uno propio vale si
+  autoriza al servidor **antes de `all`**: `mx`, `+mx`, `mx:<el propio
+  dominio>` o `mx/24`, una `ip4:` que contenga la IP pública del servidor, o los
+  mismos mecanismos (`a`, `ip4:`, `include:`…) que proponga el motor. Lo que va
+  detrás de `all` no se evalúa, y `help` lo indica.
+- **DMARC**: uno solo por nombre (con varios, los receptores no aplican
+  ninguno) y con una política `p=none`, `p=quarantine` o `p=reject`; se
+  admiten espacios (`p = reject`).
+- **SRV**: se comparan destino y puerto; la prioridad y el peso no cuentan.
+- **A y AAAA**: se consultan de verdad; las IPv6 se comparan en forma canónica.
+- **Registros que el motor no generó**: si falta un obligatorio (MX, SPF, DKIM
+  o DMARC) en lo que devuelve el motor, por ejemplo porque la creación de la
+  clave DKIM falló, la comprobación añade una medida con `engineMissing: true`,
+  `status: "missing"`, `expected` vacío e `id` `motor:mx`, `motor:spf`,
+  `motor:dkim` o `motor:dmarc`. El dominio no puede quedar activo hasta que el
+  motor la genere (para el DKIM, `POST /api/domains/:id/dkim`).
+
+**MX interno.** Si el motor propone como destino MX un nombre interno (sin
+punto, como el identificador del contenedor de Stalwart sin `server.hostname`;
+`localhost`; una IP; una última etiqueta numérica; o los sufijos `.local`,
+`.internal`, `.lan`, `.docker`, `.localdomain` y `.home.arpa`), ningún servidor
+de Internet podría entregar correo al dominio. La medida del MX queda fuera de
+rango aunque el DNS coincida, el fichero de zona, el plan y la aplicación en
+Cloudflare responden `409 mx_hostname_internal` (sin escribir nada), y
+`/conflicto` y `/dns` lo indican en `mxInternos`. Se corrige fijando el nombre
+del servidor de correo (Ajustes → Servidor de correo, «Aplicar ajustes
+recomendados») y volviendo a medir.
 
 **Propiedad del dominio.** Cada dominio expone `ownershipVerifiedAt` (fecha en
 que quedó comprobada; `null` si está pendiente) y `ownershipRecord` (el TXT que
@@ -321,6 +360,35 @@ entregabilidad (`GET /api/deliverability/server`), resúmenes
 (`GET /api/dashboard/admin`, `GET /api/dashboard/client`) y ajustes y motor
 (`/api/settings`, `/api/engine/*`, solo administración).
 
+**Nombre del servidor de correo.** `mailHostname` (`PUT /api/settings/instance`
+y `POST /api/setup/instance`) debe ser un nombre completo: al menos dos
+etiquetas y una última etiqueta no numérica (una IP no vale; los dominios de
+primer nivel `xn--` sí). Si no: `400 validation`. Lo guardado en Ajustes manda:
+el entorno solo da el valor inicial.
+
+**Nombre en ejecución del motor.** `GET /api/engine/status` devuelve en
+`hostname` el `server.hostname` guardado en el motor (`configured`), el de
+Ajustes (`expected`), si coinciden (`ok`) y, además, el nombre con el que el
+motor genera de verdad los registros de los dominios (`running`, el destino de
+su MX; Stalwart solo lo cambia al recargar o reiniciar), si coincide con el de
+Ajustes (`runningOk`, `null` si no se pudo comparar) y, si no se pudo leer, el
+motivo (`runningError`). `POST /api/engine/recommended` devuelve también
+`running` tras recargar: si sigue siendo otro, lo fija la configuración local
+del motor. El vigilante compara ese nombre cada 10 minutos y, si difiere, abre
+un aviso (`engine_hostname`) que se cierra solo al coincidir; no reinicia el
+estado DNS de los dominios, que se vuelven a medir con su frecuencia habitual.
+Ni la puesta en marcha ni Ajustes se bloquean por ello.
+
+**Entregabilidad del servidor.** `GET /api/deliverability/server` incluye
+`hostnameIpv6` (AAAA del nombre del servidor; `null` si no se pudo consultar,
+vacío si solo tiene IPv4) e `ipv6Ok`: `false` si alguna IPv6 tiene un inverso
+(PTR) que no apunta al servidor, en cuyo caso el plan de acción recomienda
+eliminar el AAAA si no es de este servidor o el servidor no tiene IPv6, o
+configurar su PTR si lo es.
+
+**Webmail.** El vigilante solo da por disponible el webmail con una respuesta
+HTTP 2xx o 3xx; un 404, un 403 o un 5xx abren el aviso `webmail_down`.
+
 **Motor de correo.** Conectarlo, cambiarlo o probarlo (`POST /api/setup/engine`,
 `PUT /api/settings/engine`, `POST /api/settings/engine/test`) exige la **sesión
 del panel** de un administrador: con un token, aunque sea de administración,
@@ -468,7 +536,7 @@ DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required }], summary }`. `?includeRecommended=false` limita a los obligatorios. |
-| `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. |
+| `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
 | `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. |
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
@@ -504,9 +572,14 @@ indica los servidores de nombres que debes poner en tu registrador.
 
 - Todos los registros van **sin proxy** (nube gris): el proxy de Cloudflare
   rompe SMTP e IMAP. Un registro con proxy se corrige.
-- **SPF**: si ya existe uno, se fusiona (se añade `mx`) en lugar de crear un
-  segundo, que invalidaría ambos. Con dos SPF no se toca y se avisa.
-- **DMARC**: si ya existe, se respeta.
+- **SPF**: si ya existe uno, se fusiona (se añade `mx` delante del primer
+  `all`) en lugar de crear un segundo, que invalidaría ambos. Un `mx` escrito
+  detrás de `all` no cuenta, igual que en la comprobación DNS. Con dos SPF no
+  se toca y se avisa.
+- **DMARC**: si ya existe uno, se respeta. Con varios, es un conflicto que no
+  se corrige solo: conserva tú una única política.
+- **Web del dominio**: nunca se crean A, AAAA, CNAME, HTTPS ni SVCB en el
+  dominio raíz ni en `www`.
 - **MX de otro proveedor** (Google, Microsoft…): se marcan como conflicto y
   solo se sustituyen si se confirma expresamente (`replaceConflicts: true`),
   porque cambiarlos mueve el correo de todo el dominio.

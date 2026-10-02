@@ -16,17 +16,17 @@ import {
   type CfRegistroNuevo,
   type CfZona,
 } from '../core/cloudflare';
+import { diagnosticoSpf, esDmarc, esSpf, politicaDmarc, type ContextoSpf } from '../core/mailauth';
 import { getEngine } from '../engine';
 import type { EngineDnsRecord } from '../engine/types';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { getClient } from './clients';
-import { mecanismosSpf } from './deliverability';
 import { instanceAutoconfigBase } from './connection';
 import { getDomain, marcarPropiedadComprobada, refreshDomainDns, type DomainRecord } from './domains';
 import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import { getClientDomain, refreshClientDomain, type ClientDomain } from './whitelabel';
-import { esObligatorio, filtrarPorNivel, registrosDelDominio } from './zonefile';
+import { esObligatorio, exigirMxPublico, filtrarPorNivel, registrosDelDominio } from './zonefile';
 
 /**
  * Integración con Cloudflare: el DNS de correo de un dominio en un clic.
@@ -408,22 +408,21 @@ function mismoSrv(r: CfRegistro, d: Deseado): boolean {
 
 /**
  * Añade al SPF actual los mecanismos que faltan (normalmente «mx») justo
- * antes del «all» final, sin tocar el resto: los include de otros servicios
- * y el calificador final (~all, -all) son decisiones del titular.
+ * antes del primer «all», sin tocar el resto: los include de otros servicios
+ * y el calificador final (~all, -all) son decisiones del titular. Usa la
+ * misma lectura que la comprobación DNS (diagnosticoSpf): un «mx» escrito
+ * detrás de «all» no cuenta, porque ningún receptor llega a leerlo.
  * Devuelve null si no falta nada.
  */
-export function fusionarSpf(actual: string, deseado: string): { valor: string; anadidos: string[] } | null {
-  const presentes = new Set(mecanismosSpf(actual));
-  const faltan = mecanismosSpf(deseado).filter((m) => !presentes.has(m));
+export function fusionarSpf(
+  actual: string,
+  deseado: string,
+  ctx: ContextoSpf = {},
+): { valor: string; anadidos: string[] } | null {
+  const { faltan } = diagnosticoSpf(actual, deseado, ctx);
   if (faltan.length === 0) return null;
   const tokens = actual.trim().split(/\s+/);
-  let indice = -1;
-  for (let i = tokens.length - 1; i >= 0; i--) {
-    if (/^[-~?+]?all$/i.test(tokens[i]!)) {
-      indice = i;
-      break;
-    }
-  }
+  const indice = tokens.findIndex((t, i) => i > 0 && /^[-~?+]?all$/i.test(t));
   if (indice === -1) tokens.push(...faltan);
   else tokens.splice(indice, 0, ...faltan);
   return { valor: tokens.join(' '), anadidos: faltan };
@@ -594,8 +593,8 @@ function planificarUno(
       const txts = aqui.filter((r) => r.type === 'TXT');
       const valor = d.content.toLowerCase();
 
-      if (valor.startsWith('v=spf1')) {
-        const spfs = txts.filter((r) => txtDe(r).toLowerCase().startsWith('v=spf1'));
+      if (esSpf(valor)) {
+        const spfs = txts.filter((r) => esSpf(txtDe(r)));
         if (spfs.length === 0) {
           if (cnameEstorba) {
             return enConflicto('Existe un CNAME con este nombre; impide publicar el SPF.', cnames, borrarYCrear(cnames));
@@ -611,7 +610,7 @@ function planificarUno(
           );
         }
         const actual = spfs[0]!;
-        const fusion = fusionarSpf(txtDe(actual), d.content);
+        const fusion = fusionarSpf(txtDe(actual), d.content, { nombre: d.name, ipServidor: ctx.publicIp });
         if (!fusion) {
           return conservar('El SPF actual ya autoriza a los servidores de correo del dominio.', [actual]);
         }
@@ -628,10 +627,20 @@ function planificarUno(
         };
       }
 
-      if (valor.startsWith('v=dmarc1')) {
-        const dmarcs = txts.filter((r) => txtDe(r).toLowerCase().startsWith('v=dmarc1'));
+      if (esDmarc(valor)) {
+        const dmarcs = txts.filter((r) => esDmarc(txtDe(r)));
+        if (dmarcs.length > 1) {
+          // Igual que con dos SPF: con varios DMARC los receptores no aplican
+          // ninguno, y elegir cuál se queda es del titular. La comprobación DNS
+          // los da por incorrectos con el mismo criterio.
+          return enConflicto(
+            `Hay ${dmarcs.length} registros DMARC con este nombre y solo puede existir uno: los servidores receptores no aplican ninguno. Conserva manualmente una única política.`,
+            dmarcs,
+            null,
+          );
+        }
         if (dmarcs.length > 0) {
-          const politica = txtDe(dmarcs[0]!).match(/p=(\w+)/i)?.[1]?.toLowerCase();
+          const politica = politicaDmarc(txtDe(dmarcs[0]!));
           return conservar(
             `Ya existe una política DMARC${politica ? ` (p=${politica})` : ''}; se conserva para no alterar la política del dominio.`,
             dmarcs,
@@ -957,6 +966,9 @@ interface PlanDominio {
  */
 async function deseadosDeDominio(domain: string, includeRecommended: boolean): Promise<Deseado[]> {
   const records = await getEngine().getDnsRecords(domain);
+  // Un MX interno escrito en la zona rompería el correo del dominio: ni el
+  // plan ni la aplicación siguen adelante (409 mx_hostname_internal).
+  exigirMxPublico(domain, records);
   const seleccion = filtrarPorNivel(
     registrosDelDominio(domain, records),
     includeRecommended ? 'recomendados' : 'obligatorios',

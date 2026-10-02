@@ -1,6 +1,7 @@
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret } from '../core/crypto';
 import { badRequest } from '../core/errors';
+import { normalizeHostname } from '../core/hostnames';
 import { config } from '../config';
 import type { EngineSettings } from '../engine/types';
 
@@ -109,9 +110,7 @@ export function setInstanceSettings(patch: Partial<InstanceSettings>): InstanceS
   if (clean.panelUrl !== undefined) clean.panelUrl = normalizePanelUrl(clean.panelUrl);
   // El nombre del servidor se compara con CNAME y MX leídos del DNS, que
   // llegan en minúsculas y a veces con punto final.
-  if (clean.mailHostname !== undefined) {
-    clean.mailHostname = clean.mailHostname.trim().toLowerCase().replace(/\.$/, '');
-  }
+  if (clean.mailHostname !== undefined) clean.mailHostname = normalizeHostname(clean.mailHostname);
   const merged = { ...getInstanceSettings(), ...clean };
   setJsonSetting('instance', merged);
   return merged;

@@ -33,6 +33,11 @@ const principales = new Map<string, Principal>();
 const llamadas: Llamada[] = [];
 /** true = el servidor no conoce ninguna ruta (URL del motor mal configurada). */
 let rutaDesconocida = false;
+/**
+ * Nombre en ejecución del motor (core.network.server_name): con el que genera
+ * los registros DNS. null = no propone ningún MX; Error = fallo de gestión.
+ */
+let nombreEnEjecucion: string | null | Error = 'mail.acme.test';
 
 function respuesta(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -58,6 +63,21 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   const body = init?.body ? (JSON.parse(String(init.body)) as unknown) : undefined;
   llamadas.push({ method, path: url.pathname, body });
   if (rutaDesconocida) return respuesta(404, { status: 404, title: 'Not Found' });
+
+  // Como dns.rs de la v0.15.5: genera los registros de cualquier nombre, sin
+  // exigir que el dominio exista, con el nombre en ejecución del servidor.
+  if (url.pathname.startsWith('/api/dns/records/') && method === 'GET') {
+    const dominio = decodeURIComponent(url.pathname.slice('/api/dns/records/'.length));
+    if (nombreEnEjecucion instanceof Error) return respuesta(200, { error: 'other', details: nombreEnEjecucion.message });
+    if (nombreEnEjecucion === null) return respuesta(200, { data: [] });
+    return respuesta(200, {
+      data: [
+        { type: 'MX', name: `${dominio}.`, content: `10 ${nombreEnEjecucion}.` },
+        { type: 'CNAME', name: `mail.${dominio}.`, content: `${nombreEnEjecucion}.` },
+        { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx ra=postmaster -all' },
+      ],
+    });
+  }
 
   const nombre = decodeURIComponent(url.pathname.replace(/^\/api\/principal\/?/, ''));
   if (url.pathname === '/api/principal' && method === 'POST') {
@@ -104,6 +124,7 @@ beforeEach(() => {
   principales.clear();
   llamadas.length = 0;
   rutaDesconocida = false;
+  nombreEnEjecucion = 'mail.acme.test';
 });
 
 const motor = new StalwartEngine({
@@ -208,4 +229,30 @@ test('verifyCredentials: un buzón suspendido llega sin «roles» y se rechaza',
   // Una lista (alias) nunca autentica, aunque tuviera secretos.
   principales.set('lista@acme.test', { type: 'list', secrets: [sha512Crypt('clave-correcta')], roles: ['user'] });
   assert.equal(await motor.verifyCredentials('lista@acme.test', 'clave-correcta'), false);
+});
+
+/* --------------------------- Nombre en ejecución --------------------------- */
+
+test('getRunningHostname lee el destino del MX que genera el motor, con un dominio reservado', async () => {
+  nombreEnEjecucion = 'Mail.ACME.test';
+  assert.equal(await motor.getRunningHostname(), 'mail.acme.test');
+  assert.deepEqual(
+    llamadas.map((l) => `${l.method} ${l.path}`),
+    ['GET /api/dns/records/mailway.invalid'],
+    'pregunta por un dominio que no existe: la ruta no lo exige',
+  );
+
+  // Sin server.hostname, Stalwart se presenta con el nombre del contenedor.
+  nombreEnEjecucion = '3f2a1b4c5d6e';
+  assert.equal(await motor.getRunningHostname(), '3f2a1b4c5d6e');
+
+  nombreEnEjecucion = null;
+  assert.equal(await motor.getRunningHostname(), null);
+});
+
+test('getRunningHostname propaga los errores de gestión (HTTP 200 con { error })', async () => {
+  nombreEnEjecucion = new Error('Fallo simulado');
+  await assert.rejects(motor.getRunningHostname(), (err: HttpError) => err.code === 'engine_error');
+  rutaDesconocida = true;
+  await assert.rejects(motor.getRunningHostname(), (err: HttpError) => /no reconoce la ruta/.test(err.message));
 });

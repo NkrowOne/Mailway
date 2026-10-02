@@ -1,3 +1,4 @@
+import { normalizeHostname } from '../core/hostnames';
 import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
 import type {
   CreateMailboxInput,
@@ -120,6 +121,12 @@ export class DemoEngine implements MailEngine {
       if (value !== undefined) out[key] = value;
     }
     return out;
+  }
+
+  /** Sin motor real, «arranca» con el último nombre que se le aplicó (si alguno). */
+  async getRunningHostname(): Promise<string | null> {
+    const value = normalizeHostname(this.settings.get('server.hostname') ?? '');
+    return value || null;
   }
 
   async reloadCertificates(): Promise<void> {}

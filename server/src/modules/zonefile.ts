@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import { config } from '../config';
 import type { EngineDnsRecord } from '../engine/types';
 import { normalizarTxt, trocearTxt as trocear } from '../core/cloudflare';
+import { conflict } from '../core/errors';
+import { isInternalHost, normalizeHostname } from '../core/hostnames';
+import { esDmarc, esSpf, politicaDmarc } from '../core/mailauth';
 
 /**
  * Registros DNS de correo: selección común y fichero de zona.
@@ -32,6 +35,9 @@ const SRV_EXCLUIDOS = ['_imap._tcp.', '_pop3._tcp.', '_pop3s._tcp.'];
 
 /** Tipos que el panel no pide: TLSA exige DNSSEC y cambia con cada certificado. */
 const TIPOS_EXCLUIDOS = new Set(['TLSA']);
+
+/** Tipos que publican la web de un nombre (los navegadores consultan también HTTPS y SVCB). */
+const TIPOS_WEB = new Set(['A', 'AAAA', 'CNAME', 'HTTPS', 'SVCB']);
 
 function sinPunto(valor: string): string {
   return valor.trim().replace(/\.$/, '');
@@ -66,10 +72,44 @@ export function dentroDelDominio(name: string, domain: string): boolean {
 }
 
 /**
+ * ¿Es un registro de la web del dominio? El correo no necesita en el dominio
+ * raíz ni en www nada que no sea MX o TXT; un A, AAAA, CNAME, HTTPS o SVCB ahí
+ * sustituiría la web del cliente al importar el fichero en Cloudflare (o al
+ * aplicarlo desde Mailway), aunque lo hubiera propuesto el motor.
+ */
+export function esRegistroWeb(record: EngineDnsRecord, domain: string): boolean {
+  if (!TIPOS_WEB.has(record.type.toUpperCase())) return false;
+  const name = sinPunto(record.name).toLowerCase();
+  const d = sinPunto(domain).toLowerCase();
+  return name === d || name === `www.${d}`;
+}
+
+/** Registros de la web que el motor propuso y la selección deja fuera, sin duplicados. */
+export function registrosWebExcluidos(domain: string, records: EngineDnsRecord[]): EngineDnsRecord[] {
+  const vistos = new Set<string>();
+  const out: EngineDnsRecord[] = [];
+  for (const record of records) {
+    if (!esRegistroWeb(record, domain)) continue;
+    const limpio: EngineDnsRecord = {
+      type: record.type.toUpperCase(),
+      name: sinPunto(record.name).toLowerCase(),
+      content: record.content.trim().replace(/\s+/g, ' '),
+    };
+    const clave = `${limpio.type}|${limpio.name}|${limpio.content.toLowerCase()}`;
+    if (vistos.has(clave)) continue;
+    vistos.add(clave);
+    out.push(limpio);
+  }
+  return out;
+}
+
+/**
  * Registros del motor que de verdad hay que publicar para `domain`, con
  * nombres y destinos sin punto final:
  * - fuera los SRV de puertos no publicados;
  * - fuera TLSA;
+ * - fuera los registros de la web del dominio raíz y de www (A, AAAA, CNAME,
+ *   HTTPS y SVCB): publicar el correo nunca debe pisar la web del cliente;
  * - fuera los nombres ajenos al dominio (un importador los rechazaría y
  *   Cloudflare los crearía en otra zona);
  * - sin duplicados.
@@ -80,6 +120,7 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
   for (const record of records) {
     const type = record.type.toUpperCase();
     if (TIPOS_EXCLUIDOS.has(type)) continue;
+    if (esRegistroWeb(record, domain)) continue;
     const name = sinPunto(record.name).toLowerCase();
     if (!dentroDelDominio(name, domain)) continue;
     if (type === 'SRV') {
@@ -94,6 +135,53 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
     out.push(limpio);
   }
   return out;
+}
+
+/* ---------------------------- MX del servidor ------------------------------ */
+
+/** Destino de un MX («10 mail.ejemplo.com.» → «mail.ejemplo.com»). */
+export function destinoMx(content: string): string {
+  return normalizeHostname(content.trim().split(/\s+/).pop() ?? '');
+}
+
+/** Destinos de los MX que el motor propone para `domain` (sin repetir). */
+export function destinosMx(domain: string, records: EngineDnsRecord[]): string[] {
+  const destinos = seleccionarRegistros(domain, records)
+    .filter((r) => r.type === 'MX')
+    .map((r) => destinoMx(r.content))
+    .filter(Boolean);
+  return [...new Set(destinos)];
+}
+
+/**
+ * Destinos MX que el motor propone para `domain` y son nombres internos: el
+ * identificador del contenedor (Stalwart sin `server.hostname`), localhost,
+ * una IP… Publicarlos deja el dominio sin recibir correo de Internet aunque
+ * después el DNS «coincida» con lo pedido.
+ */
+export function mxInternos(domain: string, records: EngineDnsRecord[]): string[] {
+  return destinosMx(domain, records).filter(isInternalHost);
+}
+
+/** Explicación común (ficha, comprobación, fichero de zona, Cloudflare) de un MX interno. */
+export function avisoMxInterno(hosts: string[]): string {
+  const lista = hosts.map((h) => `«${h}»`).join(', ');
+  return (
+    `El servidor de correo anuncia ${lista} como destino MX: es un nombre interno que no existe en Internet, ` +
+    'así que ningún servidor podría entregar correo a este dominio aunque el DNS lo publique. ' +
+    'Hay que corregir el nombre del servidor de correo (Ajustes → Servidor de correo, «Aplicar ajustes recomendados») ' +
+    'y volver a medir antes de publicar estos registros.'
+  );
+}
+
+/**
+ * Exportar el fichero de zona o aplicar en Cloudflare con un MX interno
+ * publicaría un registro que rompe el correo del dominio: se detiene antes,
+ * con un error que dice qué corregir.
+ */
+export function exigirMxPublico(domain: string, records: EngineDnsRecord[]): void {
+  const internos = mxInternos(domain, records);
+  if (internos.length > 0) throw conflict(avisoMxInterno(internos), 'mx_hostname_internal');
 }
 
 /* ------------------------- Verificación de propiedad ---------------------- */
@@ -259,6 +347,23 @@ export function generarZona(opts: OpcionesZona): string {
     ';  Generados por Mailway · nivel: ' + nivelInfo.titulo.toLowerCase(),
     ';  ' + (opts.generadoEn ?? new Date().toISOString()),
     ';',
+  ];
+
+  // Lo primero que se lee: si el motor propuso registros de la web del
+  // dominio, no van en el fichero (importarlos sustituiría la web).
+  const web = registrosWebExcluidos(opts.domain, opts.records);
+  if (web.length > 0) {
+    cabecera.push(
+      ';  REGISTROS DE LA WEB EXCLUIDOS',
+      ';    El servidor de correo propuso estos registros para el dominio raíz o',
+      ';    para www. El correo no los necesita e importarlos sustituiría la web',
+      ';    del dominio, así que no se incluyen en este fichero:',
+      ...web.map((r) => `;      ${r.name} ${r.type} ${r.content}`),
+      ';',
+    );
+  }
+
+  cabecera.push(
     ';  IMPORTACIÓN EN CLOUDFLARE',
     ';    DNS  →  Records  →  Import and Export  →  Import DNS records',
     ';    y selecciona este fichero.',
@@ -272,7 +377,7 @@ export function generarZona(opts: OpcionesZona): string {
     ';    Importar NO borra los registros existentes. Si el dominio ya tiene',
     ';    un SPF, quedarán dos y ninguno será válido: conserva solo uno y',
     ';    combina en una única línea v=spf1 los mecanismos necesarios.',
-  ];
+  );
 
   if (seleccion.some(esRegistroPropiedad)) {
     cabecera.push(
@@ -313,6 +418,10 @@ export interface ConflictoCorreo {
   /** Política DMARC vigente: con p=reject, un SPF roto rebota el correo. */
   dmarcPolitica: string | null;
   aviso: string | null;
+  /** Destinos MX que propone el motor y son nombres internos (no se pueden publicar). */
+  mxInternos: string[];
+  /** Explicación de `mxInternos`, lista para mostrar; null si no hay ninguno. */
+  avisoServidor: string | null;
 }
 
 /**
@@ -320,20 +429,33 @@ export interface ConflictoCorreo {
  * estos registros sobre un dominio que ya recibe en otro sitio no da error:
  * rompe el correo, y con DMARC en `p=reject` lo rebota. Por eso se comprueba
  * ANTES de que el usuario descargue nada.
+ *
+ * Los MX publicados se comparan con el nombre de Ajustes y con los destinos
+ * MX que genera el motor (`mxEsperados`): si el motor se anuncia con otro
+ * nombre y el DNS ya apunta a él, ese MX es de este servidor y no de otro
+ * proveedor. Si el motor no respondió (`null`), se compara solo con el nombre
+ * de Ajustes, como siempre: el aviso no se pierde por un motor caído.
  */
 export function evaluarConflicto(input: {
   mx: { priority: number; exchange: string }[] | null;
   txt: string[] | null;
   dmarc: string[] | null;
   mailHostname: string;
+  mxEsperados?: string[] | null;
 }): ConflictoCorreo {
+  const propios = new Set(
+    [input.mailHostname, ...(input.mxEsperados ?? [])].map(normalizeHostname).filter(Boolean),
+  );
   const mxActuales = (input.mx ?? []).map((m) => m.exchange.replace(/\.$/, ''));
-  const propio = input.mailHostname.replace(/\.$/, '').toLowerCase();
-  const ajenos = mxActuales.filter((m) => m.toLowerCase() !== propio);
+  const ajenos = mxActuales.filter((m) => !propios.has(normalizeHostname(m)));
+  const mxInternos = [
+    ...new Set((input.mxEsperados ?? []).map(normalizeHostname).filter(isInternalHost)),
+  ];
 
-  const spfActual = (input.txt ?? []).find((t) => t.toLowerCase().startsWith('v=spf1')) ?? null;
-  const dmarcRaw = (input.dmarc ?? []).find((t) => t.toLowerCase().startsWith('v=dmarc1')) ?? null;
-  const dmarcPolitica = dmarcRaw?.match(/p=(none|quarantine|reject)/i)?.[1]?.toLowerCase() ?? null;
+  const spfActual = (input.txt ?? []).find(esSpf) ?? null;
+  // Con varios DMARC, los receptores no aplican ninguno: no hay política vigente.
+  const dmarcs = (input.dmarc ?? []).filter(esDmarc);
+  const dmarcPolitica = dmarcs.length === 1 ? politicaDmarc(dmarcs[0]!) : null;
 
   const hayOtroProveedor = ajenos.length > 0;
   let aviso: string | null = null;
@@ -359,5 +481,13 @@ export function evaluarConflicto(input: {
     aviso = partes.join(' ');
   }
 
-  return { hayOtroProveedor, mxActuales, spfActual, dmarcPolitica, aviso };
+  return {
+    hayOtroProveedor,
+    mxActuales,
+    spfActual,
+    dmarcPolitica,
+    aviso,
+    mxInternos,
+    avisoServidor: mxInternos.length > 0 ? avisoMxInterno(mxInternos) : null,
+  };
 }

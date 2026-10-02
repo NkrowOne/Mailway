@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   checkDnsbl,
   lookupA,
+  lookupAaaa,
   lookupCname,
   lookupMx,
   lookupPtr,
@@ -9,10 +10,12 @@ import {
   lookupTxt,
   type DnsblResult,
 } from '../core/dns';
+import { canonicalIpv6, isInternalHost, normalizeHostname } from '../core/hostnames';
+import { diagnosticoSpf, esDmarc, esSpf, politicaDmarc, spfCubre } from '../core/mailauth';
 import type { EngineDnsRecord } from '../engine/types';
 import { requireAdmin } from './auth';
 import { getInstanceSettings } from './settings';
-import { esObligatorio, seleccionarRegistros } from './zonefile';
+import { avisoMxInterno, destinoMx, esObligatorio, seleccionarRegistros } from './zonefile';
 
 /* ----------------------- Comprobación DNS de dominio ---------------------- */
 
@@ -31,6 +34,12 @@ export interface DnsCheck {
   status: CheckStatus;
   required: boolean;
   help: string;
+  /**
+   * El motor no ha generado este registro obligatorio (p. ej. la clave DKIM
+   * no se creó): no hay valor que publicar y el dominio no puede darse por
+   * bueno. Solo aparece cuando es true.
+   */
+  engineMissing?: true;
 }
 
 function normalizeValue(value: string): string {
@@ -41,32 +50,6 @@ function normalizeValue(value: string): string {
 function dkimKey(value: string): string {
   const match = value.replace(/\s|"/g, '').match(/p=([^;]*)/);
   return match ? match[1]! : normalizeValue(value);
-}
-
-/**
- * Mecanismos de un SPF (sin «v=spf1», sin modificadores como «ra=» o
- * «redirect=» y sin el «all» final), con el calificador «+» implícito
- * eliminado. Sirve para decidir si un SPF personalizado cubre lo esencial.
- */
-export function mecanismosSpf(spf: string): string[] {
-  return spf
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .slice(1)
-    .filter((t) => t && !t.includes('=') && !/^[-~?+]?all$/.test(t))
-    .map((t) => t.replace(/^\+/, ''));
-}
-
-/**
- * Un SPF distinto del propuesto también vale si incluye todos los mecanismos
- * que propone el motor (normalmente «mx»): así se respeta el SPF de un
- * dominio que además envía por otros servicios (Google, un CRM…).
- */
-export function spfCubre(encontrado: string, esperado: string): boolean {
-  const presentes = new Set(mecanismosSpf(encontrado));
-  const necesarios = mecanismosSpf(esperado);
-  return necesarios.length > 0 && necesarios.every((m) => presentes.has(m));
 }
 
 function etiquetaSrv(name: string): string {
@@ -205,7 +188,17 @@ async function aEquivalente(name: string, destino: string): Promise<string[] | n
   return ips.every((ip) => validas.has(ip)) ? ips : [];
 }
 
-async function checkRecord(record: EngineDnsRecord, domain: string): Promise<DnsCheck> {
+/** Datos de la instancia que la comprobación necesita y no cambian entre registros. */
+interface ContextoComprobacion {
+  /** IPv4 pública del servidor: un SPF con «ip4:» que la contenga lo autoriza. */
+  publicIp: string;
+}
+
+async function checkRecord(
+  record: EngineDnsRecord,
+  domain: string,
+  ctx: ContextoComprobacion,
+): Promise<DnsCheck> {
   const meta = classifyRecord(record, domain);
   const name = record.name.replace(/\.$/, '');
   const base: Omit<DnsCheck, 'found' | 'status'> = {
@@ -219,11 +212,17 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
   };
 
   if (record.type === 'MX') {
+    const expectedHost = destinoMx(record.content);
     const found = await lookupMx(name);
+    const foundText = found ? found.map((r) => `${r.priority} ${r.exchange}`).join(', ') : null;
+    // Un MX interno (el identificador del contenedor, una IP…) no recibe
+    // correo de Internet aunque el DNS lo publique tal cual: nunca está en
+    // rango, ni siquiera cuando el registro «coincide».
+    if (isInternalHost(expectedHost)) {
+      return { ...base, found: foundText, status: 'mismatch', help: avisoMxInterno([expectedHost]) };
+    }
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
-    const foundText = found.map((r) => `${r.priority} ${r.exchange}`).join(', ');
-    const expectedHost = normalizeValue(record.content.split(/\s+/).slice(-1)[0] || '');
     const veredicto = veredictoMx(found, expectedHost);
     if (veredicto.ajenosPorDelante.length > 0) {
       return {
@@ -239,38 +238,72 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
   if (record.type === 'TXT') {
     const found = await lookupTxt(name);
     if (found === null) return { ...base, found: null, status: 'unknown' };
-    const isSpf = record.content.includes('v=spf1');
+    const isSpf = esSpf(record.content);
     const isDmarc = name.startsWith('_dmarc');
     const isDkim = name.includes('_domainkey');
     const prefijo = record.content.trim().toLowerCase().match(/^v=[a-z0-9]+/)?.[0] ?? null;
     const relevant = found.filter((txt) => {
       const t = txt.toLowerCase();
-      if (isSpf) return t.startsWith('v=spf1');
-      if (isDmarc) return t.startsWith('v=dmarc1');
+      if (isSpf) return esSpf(txt);
+      if (isDmarc) return esDmarc(txt);
       if (isDkim) return t.includes('k=') || t.includes('p=');
       // MTA-STS, TLS-RPT…: solo cuentan los TXT del mismo tipo.
       return prefijo ? t.startsWith(prefijo) : true;
     });
     if (relevant.length === 0) return { ...base, found: '', status: 'missing' };
     const foundText = relevant.join(' | ');
-    let ok: boolean;
-    if (isDkim) {
-      ok = relevant.some((txt) => dkimKey(txt) === dkimKey(record.content));
-    } else if (isSpf) {
-      // Dos SPF invalidan los dos (RFC 7208): aunque uno sea el correcto,
-      // los receptores devuelven «permerror».
-      ok =
-        relevant.length === 1 &&
-        (normalizeValue(relevant[0]!) === normalizeValue(record.content) ||
-          spfCubre(relevant[0]!, record.content));
-    } else if (isDmarc) {
-      ok = relevant.some((txt) => /p=(none|quarantine|reject)/.test(txt.toLowerCase()));
-    } else if (name.startsWith('_mta-sts')) {
-      // El id cambia con cada política: basta con que exista un STSv1.
-      ok = relevant.length > 0;
-    } else {
-      ok = relevant.some((txt) => normalizeValue(txt) === normalizeValue(record.content));
+    if ((isSpf || isDmarc) && relevant.length > 1) {
+      // Dos SPF o dos DMARC en el mismo nombre invalidan todos (RFC 7208
+      // §4.5 y RFC 7489 §6.6.3): aunque uno sea el correcto, los receptores
+      // devuelven «permerror» o no aplican ninguna política.
+      return {
+        ...base,
+        found: foundText,
+        status: 'mismatch',
+        help: isSpf
+          ? `Hay ${relevant.length} registros SPF en este nombre y solo puede existir uno: los servidores receptores los descartan todos. Combínalos en un único registro v=spf1 que incluya «mx».`
+          : `Hay ${relevant.length} registros DMARC en este nombre y solo puede existir uno: los servidores receptores no aplican ninguno. Conserva una única política y elimina el resto.`,
+      };
     }
+    const actual = relevant[0]!;
+    if (isDkim) {
+      const ok = relevant.some((txt) => dkimKey(txt) === dkimKey(record.content));
+      return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
+    }
+    if (isSpf) {
+      const contexto = { nombre: name, ipServidor: ctx.publicIp };
+      if (normalizeValue(actual) === normalizeValue(record.content) || spfCubre(actual, record.content, contexto)) {
+        return { ...base, found: foundText, status: 'ok' };
+      }
+      const { faltan, detrasDeAll } = diagnosticoSpf(actual, record.content, contexto);
+      const lista = (detrasDeAll.length > 0 ? detrasDeAll : faltan).map((m) => `«${m}»`).join(', ');
+      return {
+        ...base,
+        found: foundText,
+        status: 'mismatch',
+        help:
+          detrasDeAll.length > 0
+            ? `El SPF incluye ${lista}, pero detrás de «all»: los receptores dejan de leer en «all», así que no autoriza a este servidor. Colócalo delante de «all».`
+            : lista
+              ? `El SPF actual no autoriza a este servidor de correo. Añade ${lista} delante de «all» y conserva el resto de mecanismos.`
+              : base.help,
+      };
+    }
+    if (isDmarc) {
+      if (politicaDmarc(actual) === null) {
+        return {
+          ...base,
+          found: foundText,
+          status: 'mismatch',
+          help: 'El registro DMARC no declara una política válida: debe incluir p=none, p=quarantine o p=reject.',
+        };
+      }
+      return { ...base, found: foundText, status: 'ok' };
+    }
+    // El id de MTA-STS cambia con cada política: basta con que exista un STSv1.
+    const ok = name.startsWith('_mta-sts')
+      ? relevant.length > 0
+      : relevant.some((txt) => normalizeValue(txt) === normalizeValue(record.content));
     return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
   }
 
@@ -304,16 +337,106 @@ async function checkRecord(record: EngineDnsRecord, domain: string): Promise<Dns
     return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
   }
 
-  if (record.type === 'A' || record.type === 'AAAA') {
-    const found = record.type === 'A' ? await lookupA(name) : null;
+  if (record.type === 'A') {
+    const found = await lookupA(name);
     if (found === null) return { ...base, found: null, status: 'unknown' };
     if (found.length === 0) return { ...base, found: '', status: 'missing' };
     const ok = found.some((ip) => ip === record.content.trim());
     return { ...base, found: found.join(', '), status: ok ? 'ok' : 'mismatch' };
   }
 
+  if (record.type === 'AAAA') {
+    // Se consulta de verdad: una IPv6 se puede escribir de varias formas
+    // (2001:db8::1 y 2001:0db8:0:0::1), así que se comparan en forma canónica.
+    const found = await lookupAaaa(name);
+    if (found === null) return { ...base, found: null, status: 'unknown' };
+    if (found.length === 0) return { ...base, found: '', status: 'missing' };
+    const esperada = canonicalIpv6(record.content);
+    const ok = esperada !== null && found.some((ip) => canonicalIpv6(ip) === esperada);
+    return {
+      ...base,
+      found: found.join(', '),
+      status: ok ? 'ok' : 'mismatch',
+      ...(ok
+        ? {}
+        : {
+            help: 'El nombre tiene una dirección IPv6 que no es la de este servidor. Los servidores con IPv6 la prueban antes que la IPv4: corrígela o elimina el registro AAAA.',
+          }),
+    };
+  }
+
   // Tipos que no se verifican en vivo: se muestran como informativos.
   return { ...base, found: null, status: 'unknown' };
+}
+
+/**
+ * Registros obligatorios que el motor NO ha generado. Si la creación de las
+ * claves DKIM falló, el motor devuelve el resto sin DKIM; medir solo lo que
+ * devuelve daría el dominio por bueno y el correo saldría sin firmar. Cada
+ * familia que falta se marca como pendiente, de forma explícita, sin valor que
+ * copiar: no hay nada que publicar hasta que el motor lo genere.
+ */
+function pendientesEnElMotor(domain: string, seleccion: EngineDnsRecord[]): DnsCheck[] {
+  const raiz = normalizeHostname(domain);
+  const nombre = (r: EngineDnsRecord) => normalizeHostname(r.name);
+  const familias: {
+    familia: string;
+    label: string;
+    type: string;
+    name: string;
+    presente: (r: EngineDnsRecord) => boolean;
+    help: string;
+  }[] = [
+    {
+      familia: 'mx',
+      label: 'MX (recepción de correo)',
+      type: 'MX',
+      name: raiz,
+      presente: (r) => r.type === 'MX' && nombre(r) === raiz,
+      help: 'El servidor de correo no ha propuesto el registro MX de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+    },
+    {
+      familia: 'spf',
+      label: 'SPF (autorización de envío)',
+      type: 'TXT',
+      name: raiz,
+      presente: (r) => r.type === 'TXT' && nombre(r) === raiz && esSpf(r.content),
+      help: 'El servidor de correo no ha propuesto el registro SPF de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+    },
+    {
+      familia: 'dkim',
+      label: 'DKIM (firma digital)',
+      type: 'TXT',
+      name: `_domainkey.${raiz}`,
+      // Una clave con «p=» vacío está revocada: no firma nada.
+      presente: (r) =>
+        nombre(r).endsWith(`._domainkey.${raiz}`) &&
+        (r.type === 'CNAME' || (r.type === 'TXT' && /(^|;)\s*p=[^;\s]/i.test(r.content))),
+      help: 'El servidor de correo no ha generado la clave DKIM de este dominio: no hay ningún registro que publicar y los mensajes saldrían sin firmar, de modo que Gmail y Outlook los clasificarían como spam. Genera la clave desde la ficha del dominio y vuelve a medir.',
+    },
+    {
+      familia: 'dmarc',
+      label: 'DMARC (política contra la suplantación)',
+      type: 'TXT',
+      name: `_dmarc.${raiz}`,
+      presente: (r) => r.type === 'TXT' && nombre(r) === `_dmarc.${raiz}` && esDmarc(r.content),
+      help: 'El servidor de correo no ha propuesto el registro DMARC de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+    },
+  ];
+  return familias
+    .filter((f) => !seleccion.some(f.presente))
+    .map((f) => ({
+      id: `motor:${f.familia}`,
+      label: f.label,
+      type: f.type,
+      name: f.name,
+      expected: '',
+      found: null,
+      status: 'missing' as const,
+      required: true,
+      help: f.help,
+      engineMissing: true as const,
+    }));
 }
 
 export interface DomainDnsReport {
@@ -334,7 +457,9 @@ export async function checkDomainDns(
   engineRecords: EngineDnsRecord[],
 ): Promise<DomainDnsReport> {
   const seleccion = seleccionarRegistros(domain, engineRecords);
-  const checks = await Promise.all(seleccion.map((r) => checkRecord(r, domain)));
+  const ctx: ContextoComprobacion = { publicIp: getInstanceSettings().publicIp.trim() };
+  const checks = await Promise.all(seleccion.map((r) => checkRecord(r, domain, ctx)));
+  checks.push(...pendientesEnElMotor(domain, seleccion));
   // Orden: obligatorios primero, luego por etiqueta, estable para la UI.
   checks.sort((a, b) =>
     a.required === b.required ? a.label.localeCompare(b.label) : a.required ? -1 : 1,
@@ -363,12 +488,45 @@ export interface ServerHealthReport {
   publicIp: string;
   hostnameResolves: boolean | null;
   hostnameIps: string[];
+  /** AAAA del nombre del servidor: null = no se pudo consultar; [] = no tiene (solo IPv4). */
+  hostnameIpv6: string[] | null;
+  /**
+   * Las IPv6 del nombre son de este servidor (su inverso apunta a él). true
+   * sin AAAA; false si alguna no lo es; null si no se pudo comprobar.
+   */
+  ipv6Ok: boolean | null;
   ptr: string[] | null;
   ptrOk: boolean | null;
   dnsbl: DnsblResult[];
   score: number;
   recommendations: Recommendation[];
   checkedAt: number;
+}
+
+/**
+ * Veredicto del AAAA del nombre del servidor. Mailway solo conoce la IPv4 del
+ * servidor; la prueba de que una IPv6 es suya es su inverso, que solo puede
+ * fijar quien tiene la dirección. Un AAAA cuyo inverso no lleva al servidor
+ * es de otra máquina (la página de aparcamiento del registrador, un servidor
+ * anterior) o de un servidor sin IPv6: los remitentes con IPv6 lo prueban
+ * antes que la IPv4, y su correo se retrasa o no llega. Función pura.
+ */
+export function evaluarIpv6(
+  host: string,
+  direcciones: string[] | null,
+  inversos: (string[] | null)[],
+): { ok: boolean | null; ajenas: string[] } {
+  if (direcciones === null) return { ok: null, ajenas: [] };
+  const propio = normalizeHostname(host);
+  const ajenas: string[] = [];
+  let sinDato = false;
+  direcciones.forEach((ip, i) => {
+    const inverso = inversos[i] ?? null;
+    if (inverso === null) sinDato = true;
+    else if (!inverso.some((h) => normalizeHostname(h) === propio)) ajenas.push(ip);
+  });
+  if (ajenas.length > 0) return { ok: false, ajenas };
+  return { ok: sinDato ? null : true, ajenas };
 }
 
 export async function checkServerHealth(): Promise<ServerHealthReport> {
@@ -385,6 +543,16 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
       hostnameIps = ips;
       hostnameResolves = ips.length > 0 && (!publicIp || ips.includes(publicIp));
     }
+  }
+
+  // El AAAA se consulta de verdad: si existe, los servidores con IPv6 lo
+  // prueban antes que el registro A.
+  let hostnameIpv6: string[] | null = null;
+  let ipv6: { ok: boolean | null; ajenas: string[] } = { ok: null, ajenas: [] };
+  if (mailHostname) {
+    hostnameIpv6 = await lookupAaaa(mailHostname);
+    const inversos = hostnameIpv6 ? await Promise.all(hostnameIpv6.map((ip) => lookupPtr(ip))) : [];
+    ipv6 = evaluarIpv6(mailHostname, hostnameIpv6, inversos);
   }
 
   let ptr: string[] | null = null;
@@ -432,6 +600,19 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
       detail: 'Comprueba manualmente que la IP resuelve al nombre del servidor (comando: dig -x IP).',
     });
   }
+  if (ipv6.ok === false) {
+    recommendations.push({
+      severity: 'warning',
+      title: `Revisa el registro AAAA de ${mailHostname}`,
+      detail: `${mailHostname} tiene la dirección IPv6 ${ipv6.ajenas.join(', ')}, pero su inverso (PTR) no apunta a ${mailHostname}. Los servidores con IPv6 prueban esa dirección antes que la IPv4: si no es de este servidor, o el servidor no tiene IPv6, elimina el registro AAAA. Si es suya, configura su PTR (${mailHostname}) en el panel del proveedor del servidor; sin él, Gmail y Outlook rechazan el correo que sale por IPv6.`,
+    });
+  } else if (ipv6.ok === null && hostnameIpv6 && hostnameIpv6.length > 0) {
+    recommendations.push({
+      severity: 'info',
+      title: `No se ha podido verificar el inverso de la IPv6 de ${mailHostname}`,
+      detail: `Comprueba manualmente que ${hostnameIpv6.join(', ')} es de este servidor y que su inverso devuelve ${mailHostname} (comando: dig -x IP).`,
+    });
+  }
   for (const list of dnsbl) {
     if (list.status === 'listed') {
       recommendations.push({
@@ -470,6 +651,8 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
     publicIp,
     hostnameResolves,
     hostnameIps,
+    hostnameIpv6,
+    ipv6Ok: ipv6.ok,
     ptr,
     ptrOk,
     dnsbl,

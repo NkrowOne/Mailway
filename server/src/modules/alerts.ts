@@ -140,6 +140,24 @@ export function resolveAlert(dedupeKey: string, opts: { notify?: boolean; what?:
   }
 }
 
+/**
+ * Cierra las alertas abiertas de un tipo, salvo la de la clave `except`. Sirve
+ * para los avisos cuya clave lleva los datos del problema (por ejemplo, los dos
+ * nombres que no coinciden): si el problema cambia, el aviso anterior ya no
+ * describe la situación y no debe quedarse abierto junto al nuevo.
+ */
+export function resolveAlertsOfType(
+  type: string,
+  opts: { except?: string; notify?: boolean; what?: string } = {},
+): void {
+  const keys = db
+    .prepare('SELECT DISTINCT dedupe_key FROM alerts WHERE type = ? AND resolved_at IS NULL AND dedupe_key IS NOT NULL')
+    .all(type) as { dedupe_key: string }[];
+  for (const { dedupe_key: key } of keys) {
+    if (key !== opts.except) resolveAlert(key, { notify: opts.notify, what: opts.what });
+  }
+}
+
 export function listAlerts(opts: { clientId?: string; includeResolved?: boolean }): Alert[] {
   const where: string[] = [];
   const params: unknown[] = [];

@@ -5,7 +5,7 @@ import { engineConfigured, getEngine } from '../engine';
 import { fireAlert, resolveAlert } from './alerts';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
-import { checkEngineTls } from './engineops';
+import { checkEngineHostname, checkEngineTls } from './engineops';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
 import { listClientDomains, refreshClientDomain, type ClientDomain } from './whitelabel';
@@ -96,18 +96,22 @@ async function checkQueue(): Promise<void> {
 
 /* ----------------------------- El webmail --------------------------------- */
 
-async function checkWebmail(): Promise<void> {
+export async function checkWebmail(): Promise<void> {
   const { webmailUrl } = getInstanceSettings();
   if (!webmailUrl) return;
   let ok = false;
+  let status: number | null = null;
   try {
     const res = await fetch(webmailUrl, {
       method: 'HEAD',
       redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
-    // Cualquier respuesta HTTP significa que el contenedor está sirviendo.
-    ok = res.status < 500;
+    // Solo una respuesta 2xx o una redirección (la del inicio de sesión)
+    // acreditan que el webmail atiende. Un 404 o un 403 son la página de
+    // error de Traefik o de otra aplicación: el webmail no está detrás.
+    status = res.status;
+    ok = res.status >= 200 && res.status < 400;
   } catch {
     ok = false;
   }
@@ -118,8 +122,10 @@ async function checkWebmail(): Promise<void> {
       severity: 'warning',
       type: 'webmail_down',
       dedupeKey: 'webmail_down',
-      title: 'El webmail no responde',
-      message: `No hay respuesta desde ${webmailUrl}. Los clientes no pueden leer su correo desde el navegador (los programas de correo y el móvil siguen funcionando).`,
+      title: 'El webmail no está disponible',
+      message: `${
+        status === null ? `No hay respuesta desde ${webmailUrl}.` : `${webmailUrl} responde con un error (HTTP ${status}).`
+      } Los clientes no pueden leer su correo desde el navegador (los programas de correo y el móvil siguen funcionando).`,
       remedy:
         'Ejecuta en el servidor: docker logs mailway-webmail y docker compose -f deploy/docker-compose.mail.yml up -d',
     });
@@ -307,6 +313,17 @@ async function checkTlsDelMotor(): Promise<void> {
   await checkEngineTls();
 }
 
+/**
+ * Nombre con el que se anuncia el motor (cada 10 minutos). Si difiere del de
+ * Ajustes abre un aviso; los dominios no se tocan: checkDomainDns los vuelve
+ * a medir con su frecuencia habitual contra los registros que genere el motor.
+ */
+async function checkNombreDelMotor(): Promise<void> {
+  if (!due('engine_hostname', 10 * MINUTE)) return;
+  markRun('engine_hostname');
+  await checkEngineHostname();
+}
+
 /* ------------------------------ Planificador ------------------------------ */
 
 let timer: NodeJS.Timeout | null = null;
@@ -338,6 +355,7 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('marca blanca', checkWhitelabelDomains, log);
     await paso('autoconfiguración', checkAutoconfigHosts, log);
     await paso('certificado del motor', checkTlsDelMotor, log);
+    await paso('nombre del motor', checkNombreDelMotor, log);
     // Limpieza: las alertas resueltas hace más de 30 días no aportan nada.
     await paso('limpieza', async () => {
       db.prepare('DELETE FROM alerts WHERE resolved_at IS NOT NULL AND resolved_at < ?').run(

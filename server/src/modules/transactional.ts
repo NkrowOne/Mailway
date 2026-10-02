@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import net from 'node:net';
 import type { ConnectionOptions } from 'node:tls';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import nodemailer, { type Transporter } from 'nodemailer';
@@ -15,6 +14,7 @@ import {
   randomId,
 } from '../core/crypto';
 import { badRequest, conflict, forbidden, notFound, tooMany, unauthorized } from '../core/errors';
+import { isInternalHost } from '../core/hostnames';
 import { getEngine } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { getEngineSettings, getInstanceSettings } from './settings';
@@ -236,19 +236,6 @@ export function minuteBucketCount(): number {
 }
 
 /* ------------------------------- Transportes ------------------------------ */
-
-/**
- * ¿Es un nombre que solo se resuelve dentro de la red del despliegue? Un
- * servicio de Docker (`mailway-mail`), una IP o `localhost` nunca figuran en
- * el certificado del servidor de correo, que se emite para su nombre público.
- */
-export function isInternalHost(host: string): boolean {
-  const h = host.trim().toLowerCase().replace(/\.$/, '');
-  if (!h) return false;
-  if (net.isIP(h) !== 0 || h === 'localhost') return true;
-  if (!h.includes('.')) return true;
-  return /\.(internal|local|localhost|lan|docker)$/.test(h);
-}
 
 /**
  * Opciones TLS de la conexión SMTP con el motor.

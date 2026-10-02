@@ -2,13 +2,13 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Transporter } from 'nodemailer';
 import { db } from '../src/core/db';
+import { isInternalHost } from '../src/core/hostnames';
 import { getEngine } from '../src/engine';
 import {
   checkPerMinute,
   effectiveDailyLimit,
   forgetApiKey,
   getTransport,
-  isInternalHost,
   messageSizeBytes,
   minuteBucketCount,
   setTransportFactoryForTests,
