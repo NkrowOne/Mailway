@@ -5,7 +5,10 @@
 
 **/node_modules
 **/dist
-data/
+# Datos locales de desarrollo en cualquier carpeta (server/data guarda la
+# base de datos y la clave maestra .secret cuando se arranca desde server/).
+**/data/
+**/.secret
 **/*.db
 **/*.db-*
 .git/
@@ -14,12 +17,12 @@ data/
 .agents/
 .impeccable/
 docs/
-*.md
+**/*.md
 server/test/
 deploy/*
 !deploy/docker-entrypoint.sh
 .env
 **/.env
 **/.env.*
-*.log
-.DS_Store
+**/*.log
+**/.DS_Store

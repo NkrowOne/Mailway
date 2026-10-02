@@ -35,10 +35,11 @@ services:
       STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Defina STALWART_ADMIN_PASSWORD en deploy/.env}
       STALWART_SMTP_HOST: mailway-mail
       STALWART_SMTP_PORT: '587'
-      # El envío por la API usa el SMTP interno (mailway-mail:587), cuyo
-      # certificado es de MAIL_HOSTNAME y no de «mailway-mail». Se permite
-      # explícitamente por ir por la red interna de Docker.
-      MAILWAY_SMTP_ALLOW_SELF_SIGNED: '1'
+      # La API de envío entra por el SMTP interno (mailway-mail:587) y
+      # verifica su certificado contra MAIL_HOSTNAME. Solo mientras el motor
+      # no tenga certificado válido (sin proxy ni Cloudflare) puede ponerse a
+      # 1 en deploy/.env para aceptar el autofirmado; retírelo después.
+      MAILWAY_SMTP_ALLOW_SELF_SIGNED: ${MAILWAY_SMTP_ALLOW_SELF_SIGNED:-}
       MAILWAY_SECRET: ${MAILWAY_SECRET:-}
       MAILWAY_SETUP_TOKEN: ${MAILWAY_SETUP_TOKEN:-}
       MAILWAY_TRAEFIK_TOKEN: ${MAILWAY_TRAEFIK_TOKEN:-}

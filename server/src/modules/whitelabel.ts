@@ -594,7 +594,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
         note:
           'Con Skyway 0.34 o posterior no es necesario instalar nada: el Traefik de Skyway consulta ' +
           'estas rutas a través de Skyway (/api/traefik/mailway), que las filtra y conserva la última ' +
-          'configuración válida. Basta con conectar Mailway en Skyway, en Ajustes → Correo, con un ' +
+          'configuración válida. Basta con conectar Mailway en Skyway, en Ajustes → Correo (Mailway), con un ' +
           'token de gestión; Skyway obtiene el token de Traefik por sí mismo.',
       },
       publishedDomains: (

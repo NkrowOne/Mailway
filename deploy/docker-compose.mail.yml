@@ -14,7 +14,11 @@
 # Redes:
 #   - skyway-edge (de Skyway): Traefik da HTTPS al webmail y a la web del
 #     motor, y el panel (desplegado por Skyway) llega al motor por
-#     http://mailway-mail:8080.
+#     http://mailway-mail:8080 y al SMTP interno por mailway-mail:587 (con
+#     verificación del certificado contra MAIL_HOSTNAME). En esta red están
+#     también las demás aplicaciones de Skyway con dominio: alcanzan los
+#     puertos internos del motor, pero sin exención del bloqueo automático y
+#     con la API de gestión protegida por la contraseña del administrador.
 #   - mailway-internal (propia, subred FIJA): el webmail habla con el motor
 #     por dentro (IMAP 993, SMTP 465, ManageSieve 4190). Ver la explicación
 #     de la subred al final del fichero.

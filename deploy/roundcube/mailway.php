@@ -178,8 +178,14 @@ if ($mailwayToken !== '' && $mailwayPanelInterno !== '') {
     $config['password_httpapi_var_curpass'] = 'curpass';
     $config['password_httpapi_var_newpass'] = 'newpass';
     $config['password_httpapi_expect'] = '/^ok$/';
+    // Sin «http_errors», el cliente HTTP convierte cualquier respuesta 4xx en
+    // una excepción y el usuario vería «error de conexión» aunque el panel
+    // haya contestado (p. ej. contraseña actual incorrecta o demasiados
+    // intentos). Así el complemento distingue el rechazo de la caída.
     $config['password_http_client'] = [
         'timeout' => 10,
+        'connect_timeout' => 5,
+        'http_errors' => false,
         'headers' => ['X-Mailway-Token' => $mailwayToken],
     ];
     $config['password_confirm_current'] = true;

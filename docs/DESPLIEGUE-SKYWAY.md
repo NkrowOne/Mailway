@@ -109,20 +109,30 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 1. **Comprobaciones previas**: Docker y Compose v2, contenedor
    `skyway-traefik` y red `skyway-edge` (salvo con `--sin-skyway`), puertos de
    correo libres y puerto 25 de salida.
-2. **Datos**: dominio, nombres, marca, correo de Let's Encrypt, IP; con
-   Skyway, detecta el volumen de certificados de su Traefik y la carpeta de
-   Skyway.
-3. **Secretos**: genera los que falten (`MAILWAY_SECRET`,
+2. **Datos**: dominio, nombres, marca, correo de Let's Encrypt (rechaza los
+   de `example.com`, que Let's Encrypt no admite) e IP. Comprueba que la
+   subred interna no se solapa con otra red de Docker ni con una ruta del
+   servidor (VPN, red privada del proveedor). Con Skyway, detecta el volumen
+   de certificados de su Traefik y la carpeta de Skyway, y avisa si su
+   Traefik no tiene un correo válido para Let's Encrypt.
+3. **Migración**: si detecta una instalación anterior a la 1.0, reutiliza sus
+   volúmenes (sección 8.2).
+4. **Secretos**: genera los que falten (`MAILWAY_SECRET`,
    `ROUNDCUBE_DES_KEY`, `MAILWAY_TRAEFIK_TOKEN`, `MAILWAY_SETUP_TOKEN`,
    `MAILWAY_WEBMAIL_TOKEN` y la contraseña del motor).
-4. **Migración**: si detecta una instalación anterior a la 1.0, reutiliza sus
-   volúmenes (sección 8.2).
-5. **`deploy/.env`**: lo escribe con permisos 600. Conserva las claves que se
-   hayan añadido a mano y guarda la versión anterior como `.env.anterior`.
-6. **DNS en Cloudflare** (si hay token): crea o corrige, sin proxy, los
-   registros A de `mail.`, `webmail.` y `panel.` hacia la IP, y los CNAME
-   `autoconfig.` y `autodiscover.` del dominio base hacia `mail.`. Si un nombre
-   ya apunta a otro sitio, pregunta antes de cambiarlo.
+5. **`deploy/.env`**: lo escribe con permisos 600 y los valores entre
+   comillas simples (Compose no interpreta `$`, `#` ni los espacios). Guarda
+   el modo de instalación (`MAILWAY_INSTALACION`), conserva las claves que se
+   hayan añadido a mano y guarda la versión con la que empezó la ejecución
+   como `.env.anterior` (también con permisos 600).
+6. **DNS en Cloudflare** (si hay token): verifica el token (también los
+   tokens de cuenta) y crea o corrige, sin proxy, los registros A de `mail.`,
+   `webmail.` y `panel.` hacia la IP, y los CNAME `autoconfig.` y
+   `autodiscover.` del dominio base hacia `mail.`. Si un nombre ya apunta a
+   otro sitio, pregunta antes de cambiarlo. En `autoconfig.` y
+   `autodiscover.`, que pueden estar sirviendo a otro proveedor (por ejemplo,
+   Microsoft 365), la respuesta por defecto es no cambiarlos, también en la
+   ejecución desatendida.
 7. **Propagación**: espera (hasta `MAILWAY_ESPERA_DNS` segundos, 300 por
    defecto) a que los tres nombres resuelvan a la IP. Así Traefik no pide
    certificados que Let's Encrypt rechazaría.
@@ -136,16 +146,23 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     certificado de Traefik (sección 5.2).
 11. **Panel en Skyway** (si hay token): crea (o reutiliza) el proyecto
     `mailway` y su servicio `panel` desde GitHub, con puerto 4100, dominio,
-    volumen `/data`, comprobación `/api/health` y todas las variables; lanza
-    el despliegue y espera a que termine. Después enlaza el webmail con el
-    contenedor real del panel (`MAILWAY_PANEL_INTERNAL_URL`).
-12. **Traefik**: si el Traefik de Skyway no consulta todavía ningún proveedor
-    HTTP (Skyway anterior a 0.34), ofrece crear el
-    `docker-compose.override.yml` en la carpeta de Skyway (sección 4.3). Con
-    Skyway 0.34 o posterior no hace nada: el puente ya viene incluido.
-13. **Resumen**: dirección de la puesta en marcha con el token, estado del
-    DNS, del PTR, del puerto 25 y del certificado, y el comando de copia de
-    seguridad del correo.
+    volumen `/data`, comprobación `/api/health` y todas las variables, sin
+    perder los volúmenes, dominios ni variables que se hayan añadido a mano;
+    lanza el despliegue y espera a que termine. Después enlaza el webmail con
+    el contenedor real del panel (`MAILWAY_PANEL_INTERNAL_URL`). Si el motor
+    ya tiene certificado, retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` de las
+    variables del panel (sección 5.4).
+12. **Traefik**: con Skyway 0.34 o posterior no instala nada, porque el
+    puente ya viene incluido (sección 4.2); si encuentra el
+    `docker-compose.override.yml` que generó una versión anterior del
+    instalador, ofrece retirarlo (lo conserva como
+    `docker-compose.override.yml.mailway-retirado`) y recrear Traefik. Con
+    Skyway anterior a 0.34, si su Traefik no consulta todavía ningún
+    proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
+    (sección 4.3).
+13. **Resumen**: dirección de la puesta en marcha con su token (el único
+    secreto que se muestra en pantalla), estado del DNS, del PTR, del puerto
+    25 y del certificado, y el comando de copia de seguridad del correo.
 
 ### 2.4 Opciones
 
@@ -153,7 +170,7 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 |---|---|
 | `--sin-skyway` | Instalación autónoma con `docker-compose.standalone.yml`: panel, motor y webmail, y un Traefik propio en 80/443 si esos puertos están libres (sección 7). |
 | `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean a mano. |
-| `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Ejecute antes `git pull`. |
+| `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecute antes `git pull`. |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
 ### 2.5 Ejecución desatendida
@@ -174,7 +191,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `SKYWAY_DIR` | Carpeta de Skyway (se detecta a partir de su Traefik). |
 | `MAILWAY_PROYECTO` | Proyecto de Skyway para el panel (por defecto `mailway`). |
 | `MAILWAY_REPO`, `MAILWAY_RAMA` | Repositorio y rama del panel (por defecto `https://github.com/NkrowOne/Mailway`, `main`). |
-| `MAILWAY_TRAEFIK_PROVEEDOR` | `1` configura el proveedor HTTP de Traefik sin preguntar; `0` lo omite. |
+| `MAILWAY_TRAEFIK_PROVEEDOR` | `1` ajusta el Traefik de Skyway sin preguntar (paso 12); `0` no lo toca. |
 | `STALWART_ADMIN_PASSWORD` | Contraseña del motor existente, si `deploy/.env` se perdió. |
 | `MAILWAY_INTERNAL_SUBNET`, `MAILWAY_MAIL_INTERNAL_IP` | Red interna (por defecto `10.203.53.0/24` y `10.203.53.10`). |
 | `MAILWAY_ESPERA_DNS` | Segundos máximos de espera a la propagación del DNS (por defecto 300). |
@@ -275,7 +292,8 @@ Traefik** y **Ajustes → Autoconfiguración de dispositivos**.
 > `docker-compose.override.yml` para Mailway en la carpeta de Skyway,
 > **elimínelo** y ejecute `docker compose up -d traefik` en esa carpeta: el
 > fichero sustituye los parámetros de Traefik de la 0.34 (Traefik solo admite
-> un proveedor HTTP) y dejaría sin efecto el puente.
+> un proveedor HTTP) y dejaría sin efecto el puente. Si lo generó el
+> instalador, `deploy/instalar.sh --actualizar` lo retira por usted.
 
 ### 4.3 Skyway anterior a 0.34 o Traefik propio
 
@@ -371,11 +389,15 @@ servidor o si la cadena no es de confianza.
 
 La API de envío entrega al motor por la red interna (`mailway-mail:587`). El
 panel verifica su certificado contra el nombre público del servidor
-(`mail.<dominio>`), así que funciona en cuanto el certificado es válido. La
-variable `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1`, que el instalador pone para que
-los envíos funcionen desde el primer minuto, desactiva esa verificación: una
-vez emitido el certificado, **elimínela** de las variables del panel (en
-Skyway, pestaña Variables) y vuelva a desplegar.
+(`mail.<dominio>`), así que funciona en cuanto el certificado es válido. El
+instalador no desactiva esa verificación. Solo mientras el motor no tenga un
+certificado válido (por ejemplo, sin Cloudflare y con el certificado de
+Traefik aún pendiente), `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` acepta el
+autofirmado: en las variables del panel (en Skyway, pestaña Variables) o, en
+la instalación autónoma, en `deploy/.env`. Una vez emitido el certificado,
+**elimínela** y vuelva a desplegar; `deploy/instalar.sh --actualizar` la
+retira de las variables del panel en Skyway si el certificado ya está
+configurado.
 
 ---
 
@@ -448,7 +470,6 @@ En Skyway:
    STALWART_ADMIN_PASSWORD=<la de deploy/.env>
    STALWART_SMTP_HOST=mailway-mail
    STALWART_SMTP_PORT=587
-   MAILWAY_SMTP_ALLOW_SELF_SIGNED=1        # retírela cuando haya certificado (sección 5.4)
    MAILWAY_SECRET=<el de deploy/.env>
    MAILWAY_SETUP_TOKEN=<el de deploy/.env>
    MAILWAY_TRAEFIK_TOKEN=<el de deploy/.env>
@@ -539,7 +560,8 @@ y los volúmenes se llamaban `deploy_mailway-mail-data`,
 proyecto fijo `mailway` y una red interna con subred fija.
 
 **Con el instalador** (recomendado): `git pull` y `sudo bash
-deploy/instalar.sh`. Detecta la instalación anterior, fija los volúmenes
+deploy/instalar.sh`. Detecta la instalación anterior (también si sus
+contenedores ya se borraron, por los volúmenes `deploy_*`), fija los volúmenes
 antiguos en `deploy/.env`, retira los contenedores anteriores (conservando
 los volúmenes) y recrea la red `mailway-internal` con su subred. No copia
 datos: el correo sigue en el mismo volumen.
@@ -661,8 +683,12 @@ en volumen:
   - volumen `mailway-webmail-db` (ajustes de los usuarios del webmail);
   - `deploy/.env` (secretos; guárdelo cifrado).
   ```bash
+  # Se detiene el motor unos segundos: copiar su base de datos en marcha
+  # puede dejarla incoherente.
+  docker stop mailway-mail
   docker run --rm -v mailway-mail-data:/origen:ro -v /root/copias:/destino alpine \
     tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
+  docker start mailway-mail
   ```
   Con una instalación migrada desde 0.x, sustituya `mailway-mail-data` por el
   valor de `MAILWAY_MAIL_VOLUME`.

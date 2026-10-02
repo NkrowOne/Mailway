@@ -37,11 +37,13 @@ ENV NODE_ENV=production \
     MAILWAY_DATA_DIR=/data \
     PORT=4100
 
-COPY --chown=node:node package.json ./
-COPY --chown=node:node server/package.json server/
-COPY --from=prod-deps --chown=node:node /app/node_modules node_modules
-COPY --from=build --chown=node:node /app/server/dist server/dist
-COPY --from=build --chown=node:node /app/web/dist web/dist
+# El código queda a nombre de root (solo lectura para el servidor): un fallo
+# en el proceso no puede reescribir el propio panel. Solo /data es de «node».
+COPY package.json ./
+COPY server/package.json server/
+COPY --from=prod-deps /app/node_modules node_modules
+COPY --from=build /app/server/dist server/dist
+COPY --from=build /app/web/dist web/dist
 COPY deploy/docker-entrypoint.sh /usr/local/bin/mailway-entrypoint
 
 VOLUME /data
