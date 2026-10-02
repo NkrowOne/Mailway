@@ -72,6 +72,15 @@ CF_ZONA_NOMBRE=""
 ADMIN_EMAIL=""
 PANEL_SERVICIO_ID=""
 PANEL_PROYECTO_ID=""
+# Panel que Skyway ya despliega (ver detectar_panel_existente): servicio,
+# contenedor, nombre público y lo que interesa de su entorno en ejecución.
+PANEL_EXISTENTE_SERVICIO=""
+PANEL_EXISTENTE_CONTENEDOR=""
+PANEL_EXISTENTE_HOST=""
+declare -A PANEL_EXISTENTE_ENV=()
+# Servicio de Skyway que se actualiza en lugar de crear otro: «proyecto
+# slug-del-proyecto servicio slug-del-servicio» (ver localizar_panel_en_skyway).
+PANEL_ADOPTADO=""
 SKY_TOKEN_TEMPORAL_ID=""
 RESUMEN_EMPAREJADO="sin emparejar: no se ha desplegado el panel"
 EMPAREJADO_OK=0
@@ -619,6 +628,8 @@ recoger_datos() {
 
   local mail_prev dominio_def
   mail_prev=$(leer_env MAIL_HOSTNAME)
+  # Sin deploy/.env (panel creado a mano en Skyway), los nombres que ya usa.
+  mail_prev=${mail_prev:-$(valor_panel MAILWAY_MAIL_HOSTNAME)}
   dominio_def=${MAILWAY_DOMINIO:-}
   # Los nombres cuelgan de un solo nivel bajo el dominio base: quitar la
   # primera etiqueta lo recupera también con un nombre propio (correo.x.com).
@@ -628,9 +639,17 @@ recoger_datos() {
   host_valido "$DOMINIO" ||
     fallo "Dominio no válido: «$DOMINIO». Indica un dominio como miempresa.com (variable MAILWAY_DOMINIO)."
 
-  elegir_host MAIL_HOSTNAME mail "${MAILWAY_MAIL_HOST:-}" MAILWAY_MAIL_HOST "$(leer_env MAIL_HOSTNAME)"
-  elegir_host WEBMAIL_HOSTNAME webmail "${MAILWAY_WEBMAIL_HOST:-}" MAILWAY_WEBMAIL_HOST "$(leer_env WEBMAIL_HOSTNAME)"
-  elegir_host PANEL_HOSTNAME panel "${MAILWAY_PANEL_HOST:-}" MAILWAY_PANEL_HOST "$(leer_env PANEL_HOSTNAME)"
+  local webmail_prev panel_prev
+  webmail_prev=$(leer_env WEBMAIL_HOSTNAME)
+  webmail_prev=${webmail_prev:-$(host_de_url "$(valor_panel MAILWAY_WEBMAIL_URL)")}
+  panel_prev=$(leer_env PANEL_HOSTNAME)
+  panel_prev=${panel_prev:-$PANEL_EXISTENTE_HOST}
+  elegir_host MAIL_HOSTNAME mail "${MAILWAY_MAIL_HOST:-}" MAILWAY_MAIL_HOST "$mail_prev"
+  elegir_host WEBMAIL_HOSTNAME webmail "${MAILWAY_WEBMAIL_HOST:-}" MAILWAY_WEBMAIL_HOST "$webmail_prev"
+  elegir_host PANEL_HOSTNAME panel "${MAILWAY_PANEL_HOST:-}" MAILWAY_PANEL_HOST "$panel_prev"
+  if [ -n "$PANEL_EXISTENTE_HOST" ] && [ "$PANEL_HOSTNAME" != "$PANEL_EXISTENTE_HOST" ]; then
+    info "El panel también se publicará en $PANEL_HOSTNAME (hoy está en $PANEL_EXISTENTE_HOST, que se conserva)."
+  fi
   if [ "$MAIL_HOSTNAME" = "$WEBMAIL_HOSTNAME" ] || [ "$MAIL_HOSTNAME" = "$PANEL_HOSTNAME" ] ||
     [ "$WEBMAIL_HOSTNAME" = "$PANEL_HOSTNAME" ]; then
     fallo "El servidor de correo, el webmail y el panel necesitan tres nombres distintos."
@@ -659,6 +678,7 @@ recoger_datos() {
 
   local ip_def
   ip_def=${MAILWAY_IP:-$(leer_env MAILWAY_PUBLIC_IP)}
+  ip_def=${ip_def:-$(valor_panel MAILWAY_PUBLIC_IP)}
   if [ -z "$ip_def" ]; then ip_def=$(detectar_ip); fi
   preguntar IP_PUBLICA "IPv4 pública del servidor" "$ip_def"
   ipv4_valida "$IP_PUBLICA" || fallo "IPv4 no válida: «$IP_PUBLICA» (variable MAILWAY_IP)."
@@ -757,6 +777,12 @@ preparar_secretos() {
   MAILWAY_TRAEFIK_TOKEN=$(leer_env MAILWAY_TRAEFIK_TOKEN)
   MAILWAY_SETUP_TOKEN=$(leer_env MAILWAY_SETUP_TOKEN)
   MAILWAY_WEBMAIL_TOKEN=$(leer_env MAILWAY_WEBMAIL_TOKEN)
+  # Con un panel que Skyway ya despliega, sus valores antes que unos nuevos.
+  # Su clave maestra manda incluso sobre deploy/.env: es la que usa.
+  if [ -n "$(valor_panel MAILWAY_SECRET)" ]; then MAILWAY_SECRET=$(valor_panel MAILWAY_SECRET); fi
+  if [ -z "$MAILWAY_TRAEFIK_TOKEN" ]; then MAILWAY_TRAEFIK_TOKEN=$(valor_panel MAILWAY_TRAEFIK_TOKEN); fi
+  if [ -z "$MAILWAY_SETUP_TOKEN" ]; then MAILWAY_SETUP_TOKEN=$(valor_panel MAILWAY_SETUP_TOKEN); fi
+  if [ -z "$MAILWAY_WEBMAIL_TOKEN" ]; then MAILWAY_WEBMAIL_TOKEN=$(valor_panel MAILWAY_WEBMAIL_TOKEN); fi
   if [ -z "$MAILWAY_SECRET" ]; then MAILWAY_SECRET=$(aleatorio_hex 32); fi
   if [ -z "$ROUNDCUBE_DES_KEY" ]; then ROUNDCUBE_DES_KEY=$(aleatorio_hex 12); fi
   if [ -z "$MAILWAY_TRAEFIK_TOKEN" ]; then MAILWAY_TRAEFIK_TOKEN=$(aleatorio_hex 24); fi
@@ -768,6 +794,7 @@ preparar_secretos() {
   # la guardada o se pide.
   local previa volumen
   previa=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
+  previa=${previa:-$(valor_panel STALWART_ADMIN_PASSWORD)}
   volumen=$(volumen_datos_motor)
   if [ -n "$previa" ]; then
     STALWART_ADMIN_PASSWORD=$previa
@@ -1368,6 +1395,188 @@ skyway_por_ip_del_contenedor() {
   return 1
 }
 
+# ------------------------------------------------- panel que ya está en Skyway --
+#
+# Antes de la 1.0, el panel se creaba a mano en Skyway (con el nombre de
+# proyecto y de servicio que cada uno eligiera) y su clave maestra se generaba
+# sola en su volumen /data. El instalador tiene que actualizar ESE panel: crear
+# otro lo duplicaría, y darle otra MAILWAY_SECRET le haría perder sus secretos
+# cifrados (Cloudflare, motor), invalidaría tokens de gestión, claves de API y
+# sesiones y cambiaría el TXT _mailway con el que se verificaron los dominios.
+
+# Entorno de un contenedor, una variable por línea.
+entorno_contenedor() {
+  docker inspect --type container -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null || true
+}
+
+# ¿Es un panel de Mailway? Su imagen fija MAILWAY_DATA_DIR desde la primera
+# versión: no depende de las variables que se pusieran a mano. Se comprueba
+# con bash, sin pasar el entorno (con secretos) a otro programa.
+es_panel_mailway() {
+  local entorno
+  entorno=$'\n'$(entorno_contenedor "$1")
+  [[ $entorno == *$'\nMAILWAY_DATA_DIR='* ]]
+}
+
+# Guarda en PANEL_EXISTENTE_ENV las variables del panel en ejecución que el
+# instalador reutiliza (secretos, nombres e IP).
+leer_entorno_panel() {
+  local linea clave
+  PANEL_EXISTENTE_ENV=()
+  while IFS= read -r linea; do
+    clave=${linea%%=*}
+    case "$clave" in
+      MAILWAY_SECRET | MAILWAY_TRAEFIK_TOKEN | MAILWAY_WEBMAIL_TOKEN | MAILWAY_SETUP_TOKEN | \
+        STALWART_ADMIN_PASSWORD | MAILWAY_MAIL_HOSTNAME | MAILWAY_WEBMAIL_URL | MAILWAY_PANEL_URL | MAILWAY_PUBLIC_IP)
+        if [ "$clave" != "$linea" ]; then PANEL_EXISTENTE_ENV[$clave]=${linea#*=}; fi
+        ;;
+    esac
+  done <<<"$(entorno_contenedor "$1")"
+}
+
+# Valor de una variable del panel existente (vacío si no hay panel o no la tiene).
+valor_panel() { printf '%s' "${PANEL_EXISTENTE_ENV[$1]:-}"; }
+
+# Nombre de una URL (https://Panel.x.com:443/ruta → panel.x.com).
+host_de_url() {
+  local resto=${1#*://}
+  resto=${resto%%/*}
+  resto=${resto%%:*}
+  printf '%s' "$resto" | tr '[:upper:]' '[:lower:]'
+}
+
+# Primer Host(`…`) de las reglas de Traefik de un contenedor: el dominio con
+# el que Skyway publica el panel.
+host_traefik_contenedor() {
+  local etiquetas linea re='Host\(`([^`]+)`\)'
+  etiquetas=$(docker inspect --type container \
+    -f '{{range $k, $v := .Config.Labels}}{{$k}}={{$v}}{{println}}{{end}}' "$1" 2>/dev/null || true)
+  while IFS= read -r linea; do
+    case "$linea" in traefik.http.routers.*.rule=*) ;; *) continue ;; esac
+    if [[ $linea =~ $re ]]; then
+      printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]'
+      return 0
+    fi
+  done <<<"$etiquetas"
+}
+
+# Contenedores que despliega Skyway (con -a, también los parados).
+contenedores_skyway() {
+  docker ps "$@" --filter label=skyway.service --format '{{.Names}}' 2>/dev/null || true
+}
+
+# Busca el panel entre los contenedores de Skyway (sin token: va antes de
+# preguntar nada, para proponer sus nombres y reutilizar sus secretos). Primero
+# los que están en marcha; si no hay ninguno, también los parados. Con
+# MAILWAY_PANEL_SERVICIO se indica el servicio de Skyway a mano.
+detectar_panel_existente() {
+  [ "$CON_SKYWAY" = 1 ] || return 0
+  local forzado=${MAILWAY_PANEL_SERVICIO:-} c servicio vistos=" " par
+  local -a encontrados=()
+  if [ -n "$forzado" ] && ! id_simple "$forzado"; then
+    fallo "MAILWAY_PANEL_SERVICIO no es un identificador de servicio de Skyway válido."
+  fi
+  for par in en-marcha todos; do
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      servicio=$(docker inspect --type container -f '{{index .Config.Labels "skyway.service"}}' "$c" 2>/dev/null || true)
+      id_simple "$servicio" || continue
+      # Las réplicas y los contenedores de un despliegue anterior son el mismo servicio.
+      case "$vistos" in *" $servicio "*) continue ;; esac
+      vistos+="$servicio "
+      if [ -n "$forzado" ]; then
+        [ "$servicio" = "$forzado" ] || continue
+      else
+        es_panel_mailway "$c" || continue
+      fi
+      encontrados+=("$servicio $c")
+    done < <(if [ "$par" = en-marcha ]; then contenedores_skyway; else contenedores_skyway -a; fi)
+    [ "${#encontrados[@]}" -eq 0 ] || break
+  done
+
+  if [ "${#encontrados[@]}" -gt 1 ]; then
+    titulo "Panel existente en Skyway"
+    aviso "Skyway despliega varios paneles de Mailway:"
+    for par in "${encontrados[@]}"; do info "servicio ${par%% *} (contenedor ${par#* })"; done
+    fallo "Indica el de esta instalación con MAILWAY_PANEL_SERVICIO=<servicio> y vuelve a ejecutar."
+  fi
+  if [ "${#encontrados[@]}" -eq 0 ]; then
+    # Indicado pero sin contenedor (parado y retirado): se localiza por la API.
+    PANEL_EXISTENTE_SERVICIO=$forzado
+    return 0
+  fi
+
+  PANEL_EXISTENTE_SERVICIO=${encontrados[0]%% *}
+  PANEL_EXISTENTE_CONTENEDOR=${encontrados[0]#* }
+  leer_entorno_panel "$PANEL_EXISTENTE_CONTENEDOR"
+  PANEL_EXISTENTE_HOST=$(host_de_url "$(valor_panel MAILWAY_PANEL_URL)")
+  if ! host_valido "$PANEL_EXISTENTE_HOST"; then
+    PANEL_EXISTENTE_HOST=$(host_traefik_contenedor "$PANEL_EXISTENTE_CONTENEDOR")
+    host_valido "$PANEL_EXISTENTE_HOST" || PANEL_EXISTENTE_HOST=""
+  fi
+  titulo "Panel existente en Skyway"
+  ok "Skyway ya despliega un panel de Mailway (contenedor $PANEL_EXISTENTE_CONTENEDOR${PANEL_EXISTENTE_HOST:+, $PANEL_EXISTENTE_HOST}): se actualiza ese, sin crear otro."
+  if [ -n "$(valor_panel MAILWAY_SECRET)" ]; then
+    info "Se conservan su clave maestra y sus secretos."
+  else
+    info "Su clave maestra está en su volumen /data y no se cambia."
+  fi
+}
+
+# Repositorio de GitHub normalizado para compararlo (https://github.com/A/B.git,
+# github.com/a/b y A/B son el mismo).
+NORMALIZAR_REPO='def norm: ascii_downcase | sub("^\\s+"; "") | sub("\\s+$"; "") | sub("^git@github\\.com:"; "")
+  | sub("^[a-z+]+://"; "") | sub("^www\\."; "") | sub("^github\\.com/"; "") | sub("/+$"; "") | sub("\\.git$"; "");'
+
+# Decide qué servicio de Skyway es el panel y lo deja en PANEL_ADOPTADO:
+#   1. el detectado por su contenedor (o indicado con MAILWAY_PANEL_SERVICIO);
+#   2. si no, el único servicio git de cualquier proyecto que despliega el
+#      repositorio de Mailway ($1), se llame como se llame.
+# Si no hay ninguno, PANEL_ADOPTADO queda vacío y se usa (o crea) el proyecto
+# «mailway» con el servicio «panel». Necesita el token de Skyway.
+localizar_panel_en_skyway() {
+  local repo=$1 proyectos id coincidencias="" n
+  PANEL_ADOPTADO=""
+  if [ -n "$PANEL_EXISTENTE_SERVICIO" ]; then
+    sky_api GET "/api/services/$PANEL_EXISTENTE_SERVICIO"
+    case "$RESP_CODE" in
+      200) ;;
+      401) fallo "Skyway rechazó el token: no existe, ha caducado o se ha revocado." ;;
+      *) fallo "No se pudo leer el servicio del panel en Skyway ($PANEL_EXISTENTE_SERVICIO): $(sky_error)." ;;
+    esac
+    PANEL_ADOPTADO=$(campo_json '"\(.project.id) \(.project.slug) \(.service.id) \(.service.slug)"')
+    return 0
+  fi
+
+  sky_api GET /api/projects
+  case "$RESP_CODE" in
+    200) ;;
+    401) fallo "Skyway rechazó el token: no existe, ha caducado o se ha revocado." ;;
+    *) fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)." ;;
+  esac
+  proyectos=$(campo_json '(.projects // [])[] | .id')
+  for id in $proyectos; do
+    id_simple "$id" || continue
+    sky_api GET "/api/projects/$id"
+    [ "$RESP_CODE" = "200" ] || continue
+    # $(…) quita los saltos de línea finales: se añade uno por proyecto.
+    coincidencias+=$(campo_json --arg r "$repo" "$NORMALIZAR_REPO"'
+      .project as $p | (.services // [])[]
+      | select(.type == "git" and ((.config.repoUrl // "") | norm) == ($r | norm))
+      | "\($p.id) \($p.slug) \(.id) \(.slug)"')$'\n'
+  done
+  n=$(printf '%s' "$coincidencias" | grep -c . || true)
+  if [ "$n" -gt 1 ]; then
+    aviso "Hay varios servicios en Skyway que despliegan $repo:"
+    printf '%s' "$coincidencias" | while read -r _ proyecto id servicio; do
+      if [ -n "$id" ]; then info "servicio «$servicio» del proyecto «$proyecto» (id $id)"; fi
+    done
+    fallo "Indica el del panel con MAILWAY_PANEL_SERVICIO=<id del servicio> y vuelve a ejecutar."
+  fi
+  if [ "$n" = 1 ]; then PANEL_ADOPTADO=$(printf '%s' "$coincidencias" | grep -m 1 .); fi
+  return 0
+}
+
 desplegar_en_skyway() {
   titulo "Panel en Skyway"
   local url_indicada=${SKYWAY_URL:+1}
@@ -1410,31 +1619,49 @@ desplegar_en_skyway() {
   SKYWAY_VERSION=$(campo_json '.version // empty')
   ok "Skyway ${SKYWAY_VERSION:-(versión desconocida)} en $SKYWAY_URL"
 
-  local nombre_proyecto proyecto proyecto_id proyecto_slug
-  nombre_proyecto=${MAILWAY_PROYECTO:-mailway}
-  if tiene_control "$nombre_proyecto" || [ "${#nombre_proyecto}" -gt 60 ]; then
-    fallo "Nombre de proyecto no válido (variable MAILWAY_PROYECTO): hasta 60 caracteres, sin caracteres de control."
-  fi
-  sky_api GET /api/projects
-  case "$RESP_CODE" in
-    200) ;;
-    401) fallo "Skyway rechazó el token: no existe, ha caducado o se ha revocado." ;;
-    *) fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)." ;;
-  esac
-  proyecto=$(campo_json --arg n "$nombre_proyecto" \
-    'first((.projects // [])[] | select(.slug == $n or .name == $n)) | "\(.id) \(.slug)"')
-  if [ -z "$proyecto" ]; then
-    sky_api POST /api/projects "{\"name\":\"$(json_escape "$nombre_proyecto")\"}"
-    [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
-      fallo "No se pudo crear el proyecto en Skyway: $(sky_error). Usa un token de un administrador o propietario."
-    proyecto=$(campo_json '.project | "\(.id) \(.slug)"')
-    ok "Proyecto «$nombre_proyecto» creado en Skyway."
+  local repo rama
+  repo=${MAILWAY_REPO:-https://github.com/NkrowOne/Mailway}
+  rama=${MAILWAY_RAMA:-main}
+  if tiene_control "$repo$rama"; then fallo "MAILWAY_REPO o MAILWAY_RAMA contienen caracteres de control."; fi
+
+  # El panel que Skyway ya despliega (aunque se creara a mano con otro nombre)
+  # se actualiza; solo sin él se usa o crea el proyecto «mailway».
+  local proyecto proyecto_id proyecto_slug servicio="" servicio_id servicio_slug
+  localizar_panel_en_skyway "$repo"
+  if [ -n "$PANEL_ADOPTADO" ]; then
+    read -r proyecto_id proyecto_slug servicio_id servicio_slug <<<"$PANEL_ADOPTADO"
+    if ! id_simple "$proyecto_id" || ! id_simple "$proyecto_slug" || ! id_simple "$servicio_id" ||
+      ! id_simple "$servicio_slug"; then
+      fallo "Respuesta inesperada de Skyway al leer el servicio del panel."
+    fi
+    servicio="$servicio_id $servicio_slug"
+    ok "Se actualiza el panel que ya despliega Skyway (servicio «$servicio_slug» del proyecto «$proyecto_slug»)."
   else
-    ok "Proyecto «$nombre_proyecto» ya existe en Skyway."
-  fi
-  read -r proyecto_id proyecto_slug <<<"$proyecto"
-  if ! id_simple "$proyecto_id" || ! id_simple "$proyecto_slug"; then
-    fallo "Respuesta inesperada de Skyway al leer el proyecto."
+    local nombre_proyecto
+    nombre_proyecto=${MAILWAY_PROYECTO:-mailway}
+    if tiene_control "$nombre_proyecto" || [ "${#nombre_proyecto}" -gt 60 ]; then
+      fallo "Nombre de proyecto no válido (variable MAILWAY_PROYECTO): hasta 60 caracteres, sin caracteres de control."
+    fi
+    sky_api GET /api/projects
+    [ "$RESP_CODE" = "200" ] || fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)."
+    proyecto=$(campo_json --arg n "$nombre_proyecto" \
+      'first((.projects // [])[] | select(.slug == $n or .name == $n)) | "\(.id) \(.slug)"')
+    if [ -z "$proyecto" ]; then
+      sky_api POST /api/projects "{\"name\":\"$(json_escape "$nombre_proyecto")\"}"
+      [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
+        fallo "No se pudo crear el proyecto en Skyway: $(sky_error). Usa un token de un administrador o propietario."
+      proyecto=$(campo_json '.project | "\(.id) \(.slug)"')
+      ok "Proyecto «$nombre_proyecto» creado en Skyway."
+    else
+      ok "Proyecto «$nombre_proyecto» ya existe en Skyway."
+    fi
+    read -r proyecto_id proyecto_slug <<<"$proyecto"
+    if ! id_simple "$proyecto_id" || ! id_simple "$proyecto_slug"; then
+      fallo "Respuesta inesperada de Skyway al leer el proyecto."
+    fi
+    sky_api GET "/api/projects/$proyecto_id"
+    [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el proyecto de Skyway: $(sky_error)."
+    servicio=$(campo_json 'first((.services // [])[] | select(.name == "panel" and .type == "git")) | "\(.id) \(.slug)"')
   fi
 
   # Sin MAILWAY_SMTP_ALLOW_SELF_SIGNED: el panel verifica el certificado del
@@ -1455,14 +1682,9 @@ desplegar_en_skyway() {
     "MAILWAY_WEBMAIL_URL=https://$WEBMAIL_HOSTNAME" \
     "MAILWAY_PANEL_URL=https://$PANEL_HOSTNAME" \
     "MAILWAY_ENGINE_TRUSTED_NETWORK=$INTERNAL_SUBNET")
+  [ -n "$variables" ] || fallo "No se pudieron preparar las variables del panel."
 
-  local servicio servicio_id servicio_slug despliegue_inicial repo rama
-  repo=${MAILWAY_REPO:-https://github.com/NkrowOne/Mailway}
-  rama=${MAILWAY_RAMA:-main}
-  if tiene_control "$repo$rama"; then fallo "MAILWAY_REPO o MAILWAY_RAMA contienen caracteres de control."; fi
-  sky_api GET "/api/projects/$proyecto_id"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el proyecto de Skyway: $(sky_error)."
-  servicio=$(campo_json 'first((.services // [])[] | select(.name == "panel" and .type == "git")) | "\(.id) \(.slug)"')
+  local despliegue_inicial
   if [ -z "$servicio" ]; then
     local cuerpo
     cuerpo=$(printf '{"type":"git","name":"panel","repoUrl":"%s","branch":"%s","port":4100,"domains":["%s"],"autoDeploy":true,"env":%s}' \
@@ -1486,15 +1708,25 @@ desplegar_en_skyway() {
     # Instalaciones anteriores desactivaban la verificación del certificado
     # del SMTP interno; con el certificado ya configurado deja de hacer falta.
     if [ "$CERT_CONFIGURADO" = 1 ]; then retirar=true; fi
+    # La clave maestra de un panel que ya existe no se toca nunca: si la tiene
+    # en sus variables se conserva, y si no la tiene (vive en su volumen
+    # /data) no se añade. Con otra, perdería sus secretos y sus tokens.
     fusion=$(printf '%s\n%s' "$RESP_BODY" "$variables" | jqr -s -c --argjson retirar "$retirar" \
-      '{vars: ((.[0].vars // {}) + .[1] | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end)}' 2>/dev/null || true)
+      '(.[0].vars // {}) as $antes | {vars: ($antes + .[1]
+        | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end
+        | if ($antes | has("MAILWAY_SECRET")) then .MAILWAY_SECRET = $antes.MAILWAY_SECRET else del(.MAILWAY_SECRET) end)}' \
+      2>/dev/null || true)
     [ -n "$fusion" ] || fallo "Respuesta inesperada de Skyway al leer las variables del panel."
+    if [ -n "$(campo_json '.vars.MAILWAY_SECRET // empty')" ] &&
+      [ "$(campo_json '.vars.MAILWAY_SECRET // empty')" != "$MAILWAY_SECRET" ]; then
+      aviso "La clave maestra del panel en Skyway no coincide con la de deploy/.env: se conserva la del panel."
+    fi
     if [ "$retirar" = true ] && [ -n "$(campo_json '.vars.MAILWAY_SMTP_ALLOW_SELF_SIGNED // empty')" ]; then
       info "Se retira MAILWAY_SMTP_ALLOW_SELF_SIGNED: el motor ya tiene certificado y el panel lo verifica."
     fi
     sky_api PUT "/api/services/$servicio_id/env" "$fusion"
     [ "$RESP_CODE" = "200" ] || fallo "No se pudieron actualizar las variables del panel: $(sky_error)."
-    ok "Servicio «panel» ya existe: variables actualizadas."
+    ok "Servicio «$servicio_slug» ya existe: variables actualizadas."
   fi
   read -r servicio_id servicio_slug <<<"$servicio"
   if ! id_simple "$servicio_id" || ! id_simple "$servicio_slug"; then
@@ -2222,6 +2454,7 @@ main() {
   if [ "$ACTUALIZAR" = 1 ]; then info "Actualización: se reutiliza deploy/.env sin preguntas."; fi
 
   comprobaciones_previas
+  detectar_panel_existente
   recoger_datos
   migrar_instalacion_anterior
   preparar_secretos
@@ -2238,6 +2471,9 @@ main() {
   PANEL_INTERNAL_URL=$(leer_env MAILWAY_PANEL_INTERNAL_URL)
   if ! coincide "$PANEL_INTERNAL_URL" '^http://[a-z0-9][a-z0-9_.-]*:[0-9]{1,5}$'; then PANEL_INTERNAL_URL=""; fi
   if [ "$CON_SKYWAY" = 0 ]; then PANEL_INTERNAL_URL="http://mailway-panel:4100"; fi
+  if [ -z "$PANEL_INTERNAL_URL" ] && [ -n "$PANEL_EXISTENTE_CONTENEDOR" ]; then
+    PANEL_INTERNAL_URL="http://$PANEL_EXISTENTE_CONTENEDOR:4100"
+  fi
   PANEL_INTERNAL_URL=${PANEL_INTERNAL_URL:-http://skyway-mailway-panel:4100}
 
   escribir_env
