@@ -41,7 +41,10 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
     sha512-crypt.
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
-    del panel desde la terminal.
+    del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
+    Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
+    una línea JSON por la salida estándar), que usa el instalador. Los pasos
+    del asistente que comparte viven en `modules/setup.ts`.
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
   `src/pages/admin/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades

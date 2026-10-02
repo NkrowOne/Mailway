@@ -9,13 +9,22 @@ import { isValidHostname } from '../core/hostnames';
 import { buildEngine, engineConfigured } from '../engine';
 import type { EngineSettings } from '../engine/types';
 import { audit } from './audit';
-import { countUsers, createInitialAdmin, createSession, requireAdmin, requireAdminSession } from './auth';
+import {
+  type AuthedUser,
+  countUsers,
+  createInitialAdmin,
+  createSession,
+  requireAdmin,
+  requireAdminSession,
+} from './auth';
 import { ensureDefaultPlans } from './clients';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
 import {
+  type InstanceSettings,
   getEngineSettings,
   getInstanceSettings,
+  getJsonSetting,
   isSetupComplete,
   markSetupComplete,
   setEngineSettings,
@@ -103,6 +112,8 @@ const instanceSchema = z.object({
   systemFrom: z.string().email().or(z.literal('')).optional(),
 });
 
+export type InstanceInput = z.infer<typeof instanceSchema>;
+
 /**
  * Intentos fallidos del token de puesta en marcha por IP. El token del
  * instalador tiene 128 bits, pero un operador puede fijar uno corto a mano:
@@ -159,7 +170,7 @@ function sameSecret(given: string, expected: string): boolean {
 }
 
 /** El motor definido por el entorno (STALWART_*), si trae lo imprescindible. */
-function engineFromEnv(): EngineSettings | null {
+export function engineFromEnv(): EngineSettings | null {
   const d = config.engineDefaults;
   if (!d.url || !d.adminPassword) return null;
   let smtpHost = d.smtpHost;
@@ -182,7 +193,7 @@ function engineFromEnv(): EngineSettings | null {
 }
 
 /** Quita la contraseña de cualquier texto que vaya a salir hacia el navegador. */
-function scrub(text: string, secret: string): string {
+export function scrub(text: string, secret: string): string {
   return secret ? text.split(secret).join('•••') : text;
 }
 
@@ -192,7 +203,7 @@ async function testEngine(settings: EngineSettings): Promise<{ ok: boolean; deta
   return { ok: health.ok, detail: health.detail ? scrub(health.detail, settings.adminPassword) : undefined };
 }
 
-interface RecommendedOutcome {
+export interface RecommendedOutcome {
   applied: boolean;
   hostname: string;
   errors: string[];
@@ -205,7 +216,7 @@ interface RecommendedOutcome {
  * en el motor los ajustes recomendados. Nunca hace fallar el paso: si el
  * motor no los acepta, el resultado lo explica y Ajustes permite repetirlo.
  */
-async function applyRecommendedQuietly(settings: EngineSettings | null): Promise<RecommendedOutcome | null> {
+export async function applyRecommendedQuietly(settings: EngineSettings | null): Promise<RecommendedOutcome | null> {
   if (!settings || settings.kind !== 'stalwart') return null;
   const hostname = getInstanceSettings().mailHostname.trim().toLowerCase();
   if (!hostname) return null;
@@ -221,6 +232,90 @@ async function applyRecommendedQuietly(settings: EngineSettings | null): Promise
       error: scrub((err as Error).message, settings.adminPassword),
     };
   }
+}
+
+/* ---------------- Pasos de la puesta en marcha, reutilizables -------------- */
+/*
+ * Las rutas del asistente y la herramienta de emparejado con Skyway
+ * (`tools/emparejar.ts`) hacen lo mismo con estas funciones: así el panel
+ * queda igual se ponga en marcha desde el navegador o desde el instalador.
+ */
+
+/**
+ * Paso 1: el primer administrador y los planes iniciales. La comprobación de
+ * que no existe ninguno y el alta van en una sola transacción
+ * (`createInitialAdmin`): si ya hay usuarios, lanza 403 `admin_exists`.
+ */
+export function createFirstAdmin(input: { email: string; name: string; password: string }): AuthedUser {
+  const user = createInitialAdmin(input);
+  ensureDefaultPlans();
+  return user;
+}
+
+/**
+ * Paso 2: prueba el motor, lo guarda como el activo y le aplica los ajustes
+ * recomendados (sin hacer fallar el paso si no los acepta). Un motor que no
+ * responde no se guarda: lanza 400 `engine_test_failed`, sin la contraseña.
+ */
+export async function connectEngine(settings: EngineSettings): Promise<RecommendedOutcome | null> {
+  if (settings.kind === 'stalwart') {
+    if (!settings.url) throw badRequest('Indica la URL de la API de gestión de Stalwart.');
+    if (!settings.adminPassword) throw badRequest('Indica la contraseña del administrador del motor.');
+    const result = await testEngine(settings);
+    if (!result.ok) {
+      throw badRequest(
+        `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}. Revisa la URL y las credenciales.`,
+        'engine_test_failed',
+      );
+    }
+  }
+  setEngineSettings(settings);
+  return applyRecommendedQuietly(settings);
+}
+
+/**
+ * Paso 3: guarda la identidad del servidor y, con el nombre ya conocido, se
+ * lo fija al motor: sin él, Stalwart anuncia el identificador del contenedor
+ * en su DNS.
+ */
+export async function saveInstanceIdentity(
+  body: InstanceInput,
+): Promise<{ instance: InstanceSettings; recommended: RecommendedOutcome | null }> {
+  const instance = setInstanceSettings(body);
+  const recommended = await applyRecommendedQuietly(getEngineSettings());
+  return { instance, recommended };
+}
+
+/** Campos de la identidad que el instalador define en el entorno del panel. */
+const INSTANCE_FROM_ENV = [
+  ['mailHostname', 'MAILWAY_MAIL_HOSTNAME', () => config.mailHostnameDefault],
+  ['publicIp', 'MAILWAY_PUBLIC_IP', () => config.publicIpDefault],
+  ['webmailUrl', 'MAILWAY_WEBMAIL_URL', () => config.webmailUrlDefault],
+  ['panelUrl', 'MAILWAY_PANEL_URL', () => config.panelUrlDefault],
+] as const;
+
+/**
+ * Identidad del servidor que trae el entorno (`MAILWAY_MAIL_HOSTNAME`,
+ * `MAILWAY_PUBLIC_IP`, `MAILWAY_WEBMAIL_URL`, `MAILWAY_PANEL_URL`), solo para
+ * los campos que aún no se han guardado: lo que la administración cambió en
+ * el panel no se pisa. Cada valor pasa por la misma validación que el
+ * asistente; uno no válido se descarta con un aviso, sin repetir el valor.
+ */
+export function instanceFromEnv(): { patch: InstanceInput; warnings: string[] } {
+  const stored = getJsonSetting<Partial<InstanceSettings>>('instance') || {};
+  const patch: InstanceInput = {};
+  const warnings: string[] = [];
+  for (const [field, variable, read] of INSTANCE_FROM_ENV) {
+    const value = read().trim();
+    if (!value || (stored[field] ?? '').trim()) continue;
+    const parsed = instanceSchema.shape[field].safeParse(value);
+    if (parsed.success && parsed.data) {
+      patch[field] = parsed.data;
+    } else {
+      warnings.push(`El valor de ${variable} del entorno del panel no es válido y no se ha guardado.`);
+    }
+  }
+  return { patch, warnings };
 }
 
 type DnsVerdict = 'ok' | 'missing' | 'mismatch' | 'unknown';
@@ -295,8 +390,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     }
     // Comprobación y alta en una sola transacción: dos peticiones simultáneas
     // no pueden crear dos administradores (la de arriba solo ahorra trabajo).
-    const user = createInitialAdmin({ email: body.email, name: body.name, password: body.password });
-    ensureDefaultPlans();
+    const user = createFirstAdmin({ email: body.email, name: body.name, password: body.password });
     createSession(req, reply, user.id);
     req.user = user;
     audit(req, 'setup.admin_created', { email: user.email });
@@ -327,19 +421,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       settings = engineSchema.parse(req.body);
     }
 
-    if (settings.kind === 'stalwart') {
-      if (!settings.url) throw badRequest('Indica la URL de la API de gestión de Stalwart.');
-      if (!settings.adminPassword) throw badRequest('Indica la contraseña del administrador del motor.');
-      const result = await testEngine(settings);
-      if (!result.ok) {
-        throw badRequest(
-          `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}. Revisa la URL y las credenciales.`,
-          'engine_test_failed',
-        );
-      }
-    }
-    setEngineSettings(settings);
-    const recommended = await applyRecommendedQuietly(settings);
+    const recommended = await connectEngine(settings);
     audit(req, 'setup.engine_configured', {
       kind: settings.kind,
       url: settings.url,
@@ -353,10 +435,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
   app.post('/api/setup/instance', async (req) => {
     requireAdmin(req);
     const body = instanceSchema.parse(req.body);
-    const instance = setInstanceSettings(body);
-    // Con el nombre del servidor ya conocido, el motor lo recibe aquí mismo:
-    // sin él, Stalwart anuncia el identificador del contenedor en su DNS.
-    const recommended = await applyRecommendedQuietly(getEngineSettings());
+    const { instance, recommended } = await saveInstanceIdentity(body);
     // Los hosts de autoconfiguración dependen del nombre y la IP del servidor.
     void refreshAutoconfigHosts().catch(() => undefined);
     audit(req, 'setup.instance_configured', { recommendedApplied: recommended?.applied ?? false });

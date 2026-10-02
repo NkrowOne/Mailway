@@ -6,6 +6,7 @@ import { config } from '../src/config';
 import { db } from '../src/core/db';
 import { getEngineSettings, setInstanceSettings } from '../src/modules/settings';
 import { cookieFrom, getTestApp } from './helpers';
+import { fakeStalwart } from './stalwart-falso';
 
 /*
  * Puesta en marcha tal y como la hace el instalador: token de puesta en
@@ -17,55 +18,11 @@ import { cookieFrom, getTestApp } from './helpers';
 const SETUP_TOKEN = 'token-de-puesta-en-marcha-0123456789abcdef';
 const ENGINE_SECRET = 'contraseña-del-motor-que-nunca-sale';
 
-interface Received {
-  method: string;
-  path: string;
-  body: string;
-  authorization: string | undefined;
-}
-
-/** Stalwart mínimo: lo que usan ping, ajustes y recarga. */
-function fakeStalwart(password: string) {
-  const received: Received[] = [];
-  const settings = new Map<string, string>();
-  const expectedAuth = `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`;
-  const server = http.createServer((req, res) => {
-    let raw = '';
-    req.on('data', (chunk) => (raw += chunk));
-    req.on('end', () => {
-      const url = new URL(req.url || '/', 'http://motor');
-      received.push({ method: req.method || '', path: url.pathname, body: raw, authorization: req.headers.authorization });
-      res.setHeader('content-type', 'application/json');
-      if (req.headers.authorization !== expectedAuth) {
-        res.writeHead(401);
-        res.end(JSON.stringify({ status: 401, title: 'Unauthorized', detail: 'You have to authenticate first.' }));
-        return;
-      }
-      if (url.pathname === '/api/principal') {
-        res.end(JSON.stringify({ data: { items: [], total: 0 } }));
-      } else if (url.pathname === '/api/settings' && req.method === 'POST') {
-        for (const op of JSON.parse(raw) as { type: string; prefix: string | null; values: [string, string][] }[]) {
-          if (op.type !== 'insert') continue;
-          for (const [key, value] of op.values) settings.set(op.prefix ? `${op.prefix}.${key}` : key, value);
-        }
-        res.end(JSON.stringify({ data: null }));
-      } else if (url.pathname === '/api/reload') {
-        res.end(JSON.stringify({ data: { errors: {}, warnings: {} } }));
-      } else {
-        res.writeHead(404);
-        res.end(JSON.stringify({ status: 404, title: 'Not Found' }));
-      }
-    });
-  });
-  return { server, received, settings };
-}
-
 const motor = fakeStalwart(ENGINE_SECRET);
 let motorUrl = '';
 
 before(async () => {
-  await new Promise<void>((resolve) => motor.server.listen(0, '127.0.0.1', resolve));
-  motorUrl = `http://127.0.0.1:${(motor.server.address() as AddressInfo).port}`;
+  motorUrl = await motor.listen();
   // Instalación real: sin modo demostración, con token y motor en el entorno.
   config.demoMode = false;
   config.setupToken = SETUP_TOKEN;
@@ -78,10 +35,7 @@ before(async () => {
   };
 });
 
-after(() => {
-  motor.server.closeAllConnections();
-  motor.server.close();
-});
+after(() => motor.close());
 
 let adminCookie = '';
 

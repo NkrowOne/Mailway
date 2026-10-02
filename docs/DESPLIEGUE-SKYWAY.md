@@ -10,8 +10,9 @@ Guía para dejar Mailway funcionando en un servidor propio, junto a Skyway
 - la **conexión con Skyway** para gestionar el correo de cada proyecto desde
   su botón «Correo».
 
-La forma recomendada es el instalador (`deploy/instalar.sh`, sección 2). La
-sección 6 describe el mismo proceso a mano.
+La forma recomendada es el instalador (`deploy/instalar.sh`, sección 2): junto
+a Skyway lo deja todo emparejado, sin tokens que copiar ni asistentes que
+completar (sección 2.6). La sección 6 describe el mismo proceso a mano.
 
 > **Por qué hay dos piezas.** Skyway publica un solo puerto por servicio, y un
 > servidor de correo necesita varios (25, 465, 587, 993 y 4190). Por eso el
@@ -65,8 +66,10 @@ sección 6 describe el mismo proceso a mano.
      Cloudflare, con los permisos *Zona → Zona → Leer* y *Zona → DNS →
      Editar*. El instalador crea con él los registros de la plataforma y el
      motor obtiene su certificado por DNS;
-   - un **token de API de Skyway** de administrador (`sky_…`, en Skyway → Mi
-     perfil → Tokens de API) para que el instalador despliegue el panel.
+   - solo si Skyway **no** corre en este mismo servidor: un **token de API de
+     Skyway** de administrador (`sky_…`, en Skyway → Mi perfil → Tokens de
+     API) para que el instalador despliegue el panel. Si Skyway corre aquí
+     (contenedor `skyway`), el instalador crea uno temporal por sí mismo.
 
 ---
 
@@ -92,9 +95,10 @@ un motor que ya tiene datos.
 | Dominio base de la plataforma | el de una ejecución anterior | `MAILWAY_DOMINIO` |
 | Nombre del servicio en el webmail | `Webmail` | `MAILWAY_MARCA` |
 | Correo de contacto para Let's Encrypt | `postmaster@<dominio>` | `LETSENCRYPT_EMAIL` |
+| Correo de la cuenta de administración del panel (junto a Skyway) | el de Let's Encrypt | `MAILWAY_ADMIN_EMAIL` |
 | IPv4 pública del servidor | la detectada | `MAILWAY_IP` |
 | Token de API de Cloudflare (Intro para omitir) | — | `CLOUDFLARE_API_TOKEN` |
-| Token de API de Skyway (Intro para omitir) | — | `SKYWAY_TOKEN` |
+| Token de API de Skyway (solo si Skyway no corre en este servidor; Intro para omitir) | — | `SKYWAY_TOKEN` |
 | ¿Configurar el Traefik de Skyway para los dominios de los clientes? | sí | `MAILWAY_TRAEFIK_PROVEEDOR` |
 
 Los nombres `mail.`, `webmail.` y `panel.` cuelgan del dominio base; se
@@ -146,11 +150,14 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     de Traefik, que lleva al motor el extractor del perfil `tls` (sección
     5.2). Espera a que el extractor confirme el certificado servido en 993 y
     465.
-11. **Panel en Skyway** (si hay token): crea (o reutiliza) el proyecto
-    `mailway` y su servicio `panel` desde GitHub, con puerto 4100, dominio,
-    volumen `/data`, comprobación `/api/health` y todas las variables, sin
-    perder los volúmenes, dominios ni variables que se hayan añadido a mano;
-    lanza el despliegue y espera a que termine. Después enlaza el webmail con
+11. **Panel en Skyway**: sin `SKYWAY_TOKEN`, si Skyway corre en este
+    servidor (contenedor `skyway`), crea un token de API temporal con la
+    herramienta de terminal de Skyway (caduca en 60 minutos y se revoca al
+    terminar, también si la instalación falla); si no, lo pide. Con él crea
+    (o reutiliza) el proyecto `mailway` y su servicio `panel` desde GitHub,
+    con puerto 4100, dominio, volumen `/data`, comprobación `/api/health` y
+    todas las variables, sin perder los volúmenes, dominios ni variables que
+    se hayan añadido a mano; lanza el despliegue y espera a que termine. Después enlaza el webmail con
     el contenedor real del panel (`MAILWAY_PANEL_INTERNAL_URL`). Si el motor
     ya tiene certificado, retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` de las
     variables del panel (sección 5.4).
@@ -162,10 +169,19 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     Skyway anterior a 0.34, si su Traefik no consulta todavía ningún
     proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
     (sección 4.3).
-13. **Resumen**: dirección de la puesta en marcha con su token (el único
-    secreto que se muestra en pantalla), estado del DNS, del PTR, del puerto
-    25 y del certificado, el comando de copia de seguridad del correo y los
-    de diagnóstico (sección 13.1).
+13. **Emparejado con Skyway** (sección 2.6): con el panel desplegado y sano,
+    crea su cuenta de administración si aún no existe, completa su puesta en
+    marcha y conecta Skyway con un token de gestión, sin pasos manuales. Si
+    Skyway ya está conectado con este panel y la conexión funciona, no cambia
+    nada. Si algo falla, avisa y la instalación sigue: se repite con
+    `--emparejar`.
+14. **Resumen**: dirección del panel, estado del DNS, del PTR, del puerto 25,
+    del certificado y del emparejado, el comando de copia de seguridad del
+    correo y los de diagnóstico (sección 13.1). Con el emparejado hecho,
+    muestra la cuenta de administración del panel y, si se acaba de crear, su
+    contraseña: **una sola vez**, porque no se guarda en ningún sitio. Sin
+    emparejado, muestra en su lugar la dirección de la puesta en marcha con
+    su token.
 
 ### 2.4 Opciones
 
@@ -176,6 +192,7 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecuta antes `git pull`. |
 | `--comprobar` | Diagnóstico de solo lectura: contenedores, ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail y estado del extractor (sección 13.1). Termina con código 1 si algo falla. |
 | `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, e inicia sesión desde el webmail con un único intento (sección 13.1). |
+| `--emparejar` | Repite solo el emparejado con Skyway (sección 2.6) con la configuración de `deploy/.env`, sin preguntas. Renueva siempre el token de gestión «Skyway». Termina con código 1 si no se completa. |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
 ### 2.5 Ejecución desatendida
@@ -191,7 +208,8 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_MARCA` | Nombre del servicio en el webmail (por defecto `Webmail`). |
 | `LETSENCRYPT_EMAIL` | Correo de contacto para Let's Encrypt. |
 | `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. |
-| `SKYWAY_TOKEN` | Token de API de Skyway (`sky_…`). Vacío = no desplegar el panel. |
+| `MAILWAY_ADMIN_EMAIL` | Correo de la cuenta de administración del panel que crea el emparejado (por defecto, el de Let's Encrypt). Se guarda en `deploy/.env`; la contraseña, no. |
+| `SKYWAY_TOKEN` | Token de API de Skyway (`sky_…`). Sin él, si Skyway corre en este servidor, se crea uno temporal; si no, no se despliega el panel. |
 | `SKYWAY_URL` | API de Skyway (por defecto `http://127.0.0.1:4000`). |
 | `SKYWAY_DIR` | Carpeta de Skyway (se detecta a partir de su Traefik). |
 | `MAILWAY_PROYECTO` | Proyecto de Skyway para el panel (por defecto `mailway`). |
@@ -207,18 +225,88 @@ Ejemplo:
 
 ```bash
 sudo MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
-     CLOUDFLARE_API_TOKEN=... SKYWAY_TOKEN=sky_... MAILWAY_TRAEFIK_PROVEEDOR=1 \
-     bash deploy/instalar.sh < /dev/null
+     MAILWAY_ADMIN_EMAIL=admin@miempresa.com CLOUDFLARE_API_TOKEN=... \
+     MAILWAY_TRAEFIK_PROVEEDOR=1 bash deploy/instalar.sh < /dev/null
 ```
 
 > Los tokens pasados como variables quedan en el historial de la terminal.
-> Bórralo después (`history -c`) o expórtalos desde un fichero protegido.
+> Bórralo después (`history -c`) o expórtalos desde un fichero protegido. Si
+> guardas la salida del instalador en un fichero, ten en cuenta que el
+> resumen incluye la contraseña del administrador del panel cuando la crea.
+
+### 2.6 Emparejado con Skyway
+
+Al final de la instalación junto a Skyway, el panel y Skyway quedan
+conectados sin copiar tokens ni completar el asistente. Lo hacen dos
+herramientas de terminal, que solo puede usar quien ya es root en el
+servidor; ninguna abre un puerto ni recibe nada por la red:
+
+1. **En el panel** (`node server/dist/tools/emparejar.js --email <correo>`,
+   dentro de su contenedor y como el usuario `node`):
+   - si el panel no tiene cuenta de administración, la crea con el correo
+     indicado (`MAILWAY_ADMIN_EMAIL`) y una contraseña aleatoria; si ya la
+     tiene, usa la que tiene ese correo o, si no, la primera que se creó;
+   - completa la puesta en marcha con las variables del panel, con los mismos
+     pasos que el asistente: identidad del servidor (solo lo que falte: lo que
+     se haya cambiado en el panel no se pisa), motor de correo (`STALWART_*`)
+     si aún no hay ninguno conectado y ajustes recomendados del motor. Si el
+     motor no responde, lo avisa: la puesta en marcha queda abierta y el
+     asistente continúa en ese paso al entrar;
+   - crea el token de gestión de administración «Skyway», sin caducidad, y
+     revoca el que hubiera activo con ese nombre (de cualquier
+     administrador; nunca el de un usuario de cliente).
+
+   Imprime una línea JSON (`adminEmail`, `adminPassword` solo si acaba de
+   crear la cuenta, y `token`). La auditoría anota cada paso como «Sistema»,
+   sin ningún secreto.
+2. **En Skyway** (`node server/dist/tools/mailway.js conectar`, en el
+   contenedor `skyway`): recibe el token **por la entrada estándar** (nunca
+   como argumento, que quedaría a la vista en la lista de procesos), lo
+   prueba como «Probar conexión» y lo guarda como **Ajustes → Correo
+   (Mailway)**, con el servicio del panel y su URL pública.
+
+El instalador lo ejecuta en el paso 13 de la sección 2.3. Si Skyway ya está
+conectado con este panel y la conexión funciona, no cambia nada; si está
+conectado con **otro** panel de Mailway, tampoco: avisa y solo lo cambia
+`--emparejar`.
+
+Para repetir solo el emparejado (por ejemplo, tras un aviso del instalador o
+si se ha revocado el token «Skyway»):
+
+```bash
+sudo bash deploy/instalar.sh --emparejar
+```
+
+Toma de `deploy/.env` el correo de la cuenta de administración
+(`MAILWAY_ADMIN_EMAIL`, o el de Let's Encrypt), la URL del panel y su
+contenedor (`MAILWAY_PANEL_INTERNAL_URL`); el servicio y el proyecto de
+Skyway salen de las etiquetas del contenedor. No necesita token de Skyway.
+
+A mano, el mismo emparejado es:
+
+```bash
+# Contenedor del panel: skyway-<proyecto>-<servicio> (p. ej. skyway-mailway-panel).
+docker exec -i -u node skyway-mailway-panel node server/dist/tools/emparejar.js --email admin@miempresa.com
+# Con el token mwt_… de la salida anterior, por la entrada estándar:
+printf '%s' 'mwt_…' | docker exec -i skyway node server/dist/tools/mailway.js conectar \
+  --servicio panel --proyecto mailway --url https://panel.miempresa.com
+```
+
+Requiere un panel y un Skyway con estas herramientas; con versiones
+anteriores, el instalador lo avisa y la conexión se hace a mano (sección 4.1).
 
 ---
 
 ## 3. Puesta en marcha del panel
 
-Abre la dirección que muestra el instalador:
+Junto a Skyway, el emparejado (sección 2.6) ya deja creada la cuenta de
+administración y la puesta en marcha completa: entra en
+`https://panel.miempresa.com` con el correo y la contraseña del resumen del
+instalador. Si el motor no respondía al emparejar, al entrar con esa cuenta
+el asistente continúa en el paso del motor.
+
+Sin emparejado (instalación autónoma, Skyway en otro servidor), abre la
+dirección que muestra el instalador:
 `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>`. El token de
 puesta en marcha evita que el primer visitante de un panel recién publicado
 se quede con la instancia; también está en `deploy/.env`. Sin él, el paso 1
@@ -253,6 +341,9 @@ Después, en el panel:
 ### 4.1 Skyway 0.34 o posterior
 
 Skyway gestiona el correo de cada proyecto a través de la API de Mailway.
+Con el instalador, el emparejado (sección 2.6) hace esta conexión solo; los
+pasos siguientes son la **alternativa manual** (Skyway en otro servidor, o
+versiones de Skyway o del panel sin las herramientas de emparejado):
 
 1. En Mailway, con la cuenta de administración: **Conexiones → Tokens de
    gestión → Crear token** (p. ej. «Skyway», sin caducidad). Copia el token
@@ -569,11 +660,14 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d ma
 
 ### 6.6 Puesta en marcha, rutas y certificado
 
-1. Abre `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>` y
-   completa el asistente (sección 3). Al conectar el motor se aplican los
-   ajustes recomendados; si fallan, repítelos en **Ajustes → Servidor de
-   correo**.
-2. Conecta Skyway (sección 4).
+1. Empareja el panel con Skyway con las dos herramientas de terminal de la
+   sección 2.6 (o con `sudo bash deploy/instalar.sh --emparejar`, que solo
+   necesita `deploy/.env`). Si no puedes, abre
+   `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>`, completa
+   el asistente (sección 3) y conecta Skyway a mano (sección 4.1). Al
+   conectar el motor se aplican los ajustes recomendados; si fallan,
+   repítelos en **Ajustes → Servidor de correo**.
+2. Comprueba las rutas de Traefik (sección 4.2).
 3. Configura el certificado (sección 5).
 
 ---
@@ -617,6 +711,10 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
   O a mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml pull && docker compose --env-file deploy/.env
   -f deploy/docker-compose.mail.yml up -d`. Los volúmenes no se tocan.
+  Junto a Skyway, `--actualizar` también actualiza las variables del panel y
+  lo vuelve a desplegar (con `SKYWAY_TOKEN` o, si Skyway corre en este
+  servidor, con un token temporal), y empareja de nuevo solo si Skyway no
+  está ya conectado con el panel.
   Stalwart está fijado a `v0.15.5`, así que `pull` nunca salta a la v0.16.
 - **Extractor del certificado** (perfil `tls`): `--actualizar` lo recrea con
   el código nuevo. A mano: `docker compose --env-file deploy/.env -f
@@ -927,7 +1025,9 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Ajustes → Rutas de Traefik indica «Destino del panel: Sin detectar» | El panel no se desplegó con Skyway y no define `MAILWAY_PANEL_BACKEND_URL` | Define `MAILWAY_PANEL_BACKEND_URL=http://<contenedor del panel>:4100`. Sin él no se publican los nombres de autoconfiguración ni los dominios de tipo panel. |
 | Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no consulta el panel, o el puerto 80 está cerrado | Revisa la sección 4. Let's Encrypt valida por el puerto 80: debe estar abierto. |
 | Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
-| El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | Sección 4.1. |
+| El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | `sudo bash deploy/instalar.sh --emparejar` (sección 2.6) o sección 4.1. |
+| El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
+| Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo> <contraseña nueva>`. |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
 
 ---
@@ -952,6 +1052,11 @@ menor):
    otros dominios, el TLS de 993 y 465, el inicio de sesión IMAP desde el
    webmail y directo, la autenticación SMTP en 465 y 587 (sin enviar correo),
    la renovación y el paso a un comodín, `--comprobar` y `--probar-acceso`.
+   El Skyway simulado no tiene el contenedor `skyway` ni panel desplegado:
+   la prueba recorre el camino en el que el instalador no despliega el panel
+   ni empareja, y comprueba que eso no interrumpe la instalación. El
+   emparejado se prueba en `server/test/emparejar.test.ts` (la herramienta
+   del panel) y en las pruebas de las herramientas de Skyway.
 
 Las pruebas unitarias se ejecutan en cualquier equipo con Python 3 y openssl.
 La prueba de la pila crea y borra contenedores, redes y volúmenes con los

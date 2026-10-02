@@ -67,6 +67,16 @@ cliente puede usar la API directamente, no solo la interfaz.
   actúa con la sesión de un navegador que comparta la petición.
 - Caducidad opcional; máximo 25 activos por usuario; último uso (fecha e IP)
   visible en **Conexiones**.
+- **Emparejado con Skyway** (`server/src/tools/emparejar.ts`): solo desde la
+  terminal del servidor (`docker exec` en el contenedor del panel), sin
+  ninguna ruta HTTP; quien la ejecuta ya es root en el servidor. Crea el token
+  de administración «Skyway» sin caducidad y revoca antes los que hubiera
+  activos con ese nombre de cualquier administrador (nunca los de un usuario
+  de cliente), en una sola transacción. El token y, si la crea, la contraseña
+  aleatoria del primer administrador solo salen por su salida estándar: no
+  pasan por argumentos, registros ni auditoría, que anota cada paso como
+  «Sistema» y sin secretos. El instalador pasa el token a Skyway por la
+  entrada estándar y muestra la contraseña una sola vez.
 
 ### 3.3 Claves de API
 
@@ -287,6 +297,11 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 La imagen se ejecuta como el usuario `node` (no `root`) con `tini` como
 proceso inicial. El punto de entrada solo usa `root` para asegurar que `/data`
 pertenece a `node` tras actualizar desde imágenes antiguas.
+
+Las herramientas de terminal se ejecutan también como `node`
+(`docker exec -u node …`). Si `emparejar` se lanza como `root`, cede los
+privilegios al dueño de `/data` antes de abrir la base de datos: un fichero de
+SQLite creado por `root` dejaría al panel sin poder escribir en su base.
 
 ## 11. Recomendaciones operativas
 

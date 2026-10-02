@@ -52,6 +52,20 @@ export function audit(
   );
 }
 
+/**
+ * Anota una acción que no llega por una petición (una herramienta de terminal
+ * como la de emparejado con Skyway): sin usuario ni IP, así que la Actividad
+ * la muestra como hecha por el «Sistema». Igual que `audit`, nunca con
+ * secretos en el detalle.
+ */
+export function auditSystem(
+  action: string,
+  detail: Record<string, unknown> = {},
+  targetClientId: string | null = null,
+): void {
+  insertStmt.run(null, targetClientId, action, JSON.stringify(detail), '', now());
+}
+
 export interface AuditActor {
   name: string;
   /** Solo se muestra el correo de usuarios del propio cliente o a un administrador. */

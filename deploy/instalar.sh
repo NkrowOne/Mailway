@@ -13,6 +13,7 @@
 #   sudo bash deploy/instalar.sh --actualizar    # reaplicar sin preguntas
 #   sudo bash deploy/instalar.sh --comprobar     # diagnóstico de solo lectura
 #   sudo bash deploy/instalar.sh --probar-acceso # abrir un buzón desde el webmail
+#   sudo bash deploy/instalar.sh --emparejar     # repetir solo el emparejado con Skyway
 #   bash deploy/instalar.sh --ayuda
 #
 # Ejecución desatendida: todas las preguntas se pueden responder con
@@ -44,6 +45,7 @@ CON_CLOUDFLARE=1
 ACTUALIZAR=0
 COMPROBAR=0
 PROBAR_ACCESO=0
+EMPAREJAR=0
 INTERACTIVO=0
 if [ -t 0 ] && [ -t 1 ]; then INTERACTIVO=1; fi
 
@@ -65,6 +67,21 @@ PANEL_CONTENEDOR=""
 CF_TOKEN=""
 CF_ZONA_ID=""
 CF_ZONA_NOMBRE=""
+
+# Emparejado con Skyway (ver emparejar_con_skyway).
+ADMIN_EMAIL=""
+PANEL_SERVICIO_ID=""
+PANEL_PROYECTO_ID=""
+SKY_TOKEN_TEMPORAL_ID=""
+RESUMEN_EMPAREJADO="sin emparejar: no se ha desplegado el panel"
+EMPAREJADO_OK=0
+EMPAREJADO_ADMIN_EMAIL=""
+# La contraseña del administrador que crea el emparejado: solo vive en esta
+# variable hasta que el resumen la muestra (una vez) y la borra.
+EMPAREJADO_ADMIN_PASSWORD=""
+# Ficheros temporales que hay que borrar al salir, pase lo que pase.
+ENV_TMP=""
+ERR_TMP=""
 
 # ------------------------------------------------------------------ salida --
 
@@ -104,7 +121,15 @@ Opciones:
   --probar-acceso   Pide la dirección y la contraseña de un buzón (sin mostrarla ni
                     guardarla) e inicia sesión desde el webmail: un único intento, porque
                     cada contraseña incorrecta cuenta para el bloqueo automático del motor.
+  --emparejar       Repite solo el emparejado del panel con Skyway con la configuración de
+                    deploy/.env: crea el administrador del panel si aún no existe, completa su
+                    puesta en marcha y conecta Skyway con un token de gestión nuevo.
   --ayuda           Muestra esta ayuda.
+
+Junto a Skyway, el instalador termina emparejando el panel con Skyway: crea la cuenta de
+administración del panel (su contraseña se muestra una sola vez en el resumen), completa
+la puesta en marcha y conecta Skyway → Ajustes → Correo (Mailway) sin pasos manuales.
+Si el emparejado falla, la instalación no se interrumpe: repítelo con --emparejar.
 
 Variables de entorno (ejecución desatendida):
   MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
@@ -115,7 +140,11 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_MARCA             Nombre del servicio en el webmail (por defecto «Webmail»).
   LETSENCRYPT_EMAIL         Correo de contacto para Let's Encrypt.
   CLOUDFLARE_API_TOKEN      Token de Cloudflare (Zona: Lectura y DNS: Edición). Vacío = sin Cloudflare.
-  SKYWAY_TOKEN              Token de API de Skyway (sky_…). Vacío = no desplegar el panel.
+  MAILWAY_ADMIN_EMAIL       Correo de la cuenta de administración del panel que crea el emparejado
+                            con Skyway (por defecto, el de Let's Encrypt).
+  SKYWAY_TOKEN              Token de API de Skyway (sky_…). Si falta y Skyway corre en este servidor
+                            (contenedor «skyway»), se crea uno temporal (60 min) que se revoca al
+                            terminar. Sin él ni Skyway en este servidor, no se despliega el panel.
   SKYWAY_URL                API de Skyway (por defecto http://127.0.0.1:4000).
   SKYWAY_DIR                Carpeta de Skyway (se detecta a partir de su Traefik).
   MAILWAY_PROYECTO          Proyecto de Skyway para el panel (por defecto «mailway»).
@@ -146,6 +175,7 @@ while [ $# -gt 0 ]; do
     --actualizar) ACTUALIZAR=1 ;;
     --comprobar) COMPROBAR=1 ;;
     --probar-acceso) PROBAR_ACCESO=1 ;;
+    --emparejar) EMPAREJAR=1 ;;
     --ayuda | -h | --help)
       ayuda
       exit 0
@@ -155,10 +185,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO))" -gt 1 ]; then
-  fallo "Las opciones --actualizar, --comprobar y --probar-acceso no se combinan: usa una."
+if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO + EMPAREJAR))" -gt 1 ]; then
+  fallo "Las opciones --actualizar, --comprobar, --probar-acceso y --emparejar no se combinan: usa una."
 fi
-if [ "$ACTUALIZAR" = 1 ]; then INTERACTIVO=0; fi
+if [ "$EMPAREJAR" = 1 ] && [ "$CON_SKYWAY" = 0 ]; then
+  fallo "El emparejado solo existe junto a Skyway: --emparejar no se combina con --sin-skyway."
+fi
+# --emparejar usa lo que ya está en deploy/.env: no pregunta nada.
+if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then INTERACTIVO=0; fi
 if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ] && [ ! -f "$MAILWAY_COMPOSE_EXTRA" ]; then
   fallo "No existe el fichero de MAILWAY_COMPOSE_EXTRA: $MAILWAY_COMPOSE_EXTRA."
 fi
@@ -166,6 +200,25 @@ fi
 # -------------------------------------------------------------- utilidades --
 
 tiene() { command -v "$1" >/dev/null 2>&1; }
+
+# Al salir, también tras un fallo o una interrupción: sin ficheros temporales,
+# sin el token temporal de Skyway y sin perder la contraseña del administrador
+# que acaba de crear el emparejado (si el resumen no llegó a mostrarla).
+al_salir() {
+  if [ -n "$ENV_TMP" ]; then rm -f "$ENV_TMP"; fi
+  if [ -n "$ERR_TMP" ]; then rm -f "$ERR_TMP"; fi
+  revocar_token_temporal_skyway || true
+  if [ -n "$EMPAREJADO_ADMIN_PASSWORD" ]; then
+    printf '\n'
+    info "Cuenta de administración del panel creada por el emparejado (la contraseña se muestra solo esta vez):"
+    info "  Correo:     $EMPAREJADO_ADMIN_EMAIL"
+    info "  Contraseña: $EMPAREJADO_ADMIN_PASSWORD"
+    EMPAREJADO_ADMIN_PASSWORD=""
+  fi
+}
+trap al_salir EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Pregunta con valor por defecto. Sin terminal, devuelve el valor por defecto.
 preguntar() {
@@ -252,6 +305,9 @@ json_escape() {
 # ¿Casa el texto ENTERO con la expresión regular extendida? Con «grep» bastaría
 # con que casara una de sus líneas: un valor con un salto de línea pasaría.
 coincide() { [[ $1 =~ $2 ]]; }
+
+# Dirección de correo razonable (la validación completa la hace quien la usa).
+correo_valido() { coincide "$1" '^[A-Za-z0-9._%+-]+@([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$'; }
 
 # ¿Tiene el texto caracteres de control (saltos de línea incluidos)?
 tiene_control() { case "$1" in *[[:cntrl:]]*) return 0 ;; *) return 1 ;; esac; }
@@ -582,11 +638,11 @@ recoger_datos() {
   local correo_def
   correo_def=${LETSENCRYPT_EMAIL:-$(leer_env LETSENCRYPT_EMAIL)}
   preguntar LE_EMAIL "Correo de contacto para Let's Encrypt" "${correo_def:-postmaster@$DOMINIO}"
-  coincide "$LE_EMAIL" '^[A-Za-z0-9._%+-]+@([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$' ||
-    fallo "Correo no válido: «$LE_EMAIL» (variable LETSENCRYPT_EMAIL)."
+  correo_valido "$LE_EMAIL" || fallo "Correo no válido: «$LE_EMAIL» (variable LETSENCRYPT_EMAIL)."
   case "$LE_EMAIL" in
     *@example.com | *@example.org | *@example.net) fallo "Let's Encrypt rechaza los correos de ${LE_EMAIL#*@}: indica uno real (variable LETSENCRYPT_EMAIL)." ;;
   esac
+  if [ "$CON_SKYWAY" = 1 ]; then elegir_correo_admin "$LE_EMAIL"; fi
 
   local ip_def
   ip_def=${MAILWAY_IP:-$(leer_env MAILWAY_PUBLIC_IP)}
@@ -617,6 +673,17 @@ recoger_datos() {
     TRAEFIK_ACME_VOLUME=""
     SKYWAY_DIR=""
   fi
+}
+
+# Correo de la cuenta de administración del panel que crea el emparejado con
+# Skyway (solo si el panel aún no tiene ninguna). Por defecto, el de Let's
+# Encrypt ($1) o el de una ejecución anterior.
+elegir_correo_admin() {
+  local def
+  def=${MAILWAY_ADMIN_EMAIL:-$(leer_env MAILWAY_ADMIN_EMAIL)}
+  preguntar ADMIN_EMAIL "Correo de la cuenta de administración del panel" "${def:-$1}"
+  ADMIN_EMAIL=$(printf '%s' "$ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')
+  correo_valido "$ADMIN_EMAIL" || fallo "Correo no válido: «$ADMIN_EMAIL» (variable MAILWAY_ADMIN_EMAIL)."
 }
 
 # La red interna tiene subred fija (el motor la exime de su bloqueo
@@ -780,9 +847,8 @@ escribir_env() {
   umask_previa=$(umask)
   umask 077
   tmp=$(mktemp "$(dirname "$ENV_FILE")/.env.XXXXXX")
-  # Si algo falla a medias, no queda una copia parcial con secretos.
-  # shellcheck disable=SC2064 # la ruta se fija ahora, no al salir
-  trap "rm -f '$tmp'" EXIT
+  # Si algo falla a medias, no queda una copia parcial con secretos (al_salir).
+  ENV_TMP=$tmp
   {
     printf '# Generado por deploy/instalar.sh %s el %s. Contiene secretos: permisos 600.\n' \
       "$VERSION_INSTALADOR" "$(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -794,6 +860,7 @@ escribir_env() {
     linea_env MAILWAY_PUBLIC_IP "$IP_PUBLICA"
     linea_env MAILWAY_BRAND "$MARCA"
     linea_env LETSENCRYPT_EMAIL "$LE_EMAIL"
+    if [ -n "$ADMIN_EMAIL" ]; then linea_env MAILWAY_ADMIN_EMAIL "$ADMIN_EMAIL"; fi
     printf '\n# Motor: contraseña VIGENTE del administrador. El motor solo la toma en su primer\n'
     printf '# arranque; si la cambias en el motor, cámbiala también aquí (la usa el extractor).\n'
     linea_env STALWART_ADMIN_PASSWORD "$STALWART_ADMIN_PASSWORD"
@@ -818,6 +885,7 @@ escribir_env() {
 
   # Las claves añadidas a mano se conservan.
   claves=" MAILWAY_INSTALACION MAIL_HOSTNAME WEBMAIL_HOSTNAME PANEL_HOSTNAME MAILWAY_PUBLIC_IP MAILWAY_BRAND LETSENCRYPT_EMAIL"
+  claves+=" MAILWAY_ADMIN_EMAIL"
   claves+=" STALWART_ADMIN_PASSWORD ROUNDCUBE_DES_KEY MAILWAY_PANEL_URL MAILWAY_WEBMAIL_URL MAILWAY_PANEL_INTERNAL_URL"
   claves+=" MAILWAY_SECRET MAILWAY_SETUP_TOKEN MAILWAY_TRAEFIK_TOKEN MAILWAY_WEBMAIL_TOKEN MAILWAY_INTERNAL_SUBNET"
   claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME "
@@ -841,7 +909,7 @@ escribir_env() {
   fi
   chmod 600 "$tmp"
   mv "$tmp" "$ENV_FILE"
-  trap - EXIT
+  ENV_TMP=""
   umask "$umask_previa"
   ok "Escrito $ENV_FILE (permisos 600)."
 }
@@ -1275,11 +1343,15 @@ desplegar_en_skyway() {
   SKYWAY_URL=${SKYWAY_URL%/}
   coincide "$SKYWAY_URL" '^https?://[][A-Za-z0-9.:-]+(/[A-Za-z0-9._~/-]*)?$' ||
     fallo "SKYWAY_URL no es una dirección válida: «$SKYWAY_URL» (p. ej. http://127.0.0.1:4000)."
-  if [ "$INTERACTIVO" = 1 ] && [ -z "${SKYWAY_TOKEN:-}" ]; then
-    info "Con un token de API de Skyway (Mi perfil → Tokens de API, «sky_…») se despliega el panel"
-    info "desde GitHub con su dominio, volumen y variables. Intro para hacerlo a mano después."
+  # Sin token: si Skyway corre en este servidor, uno temporal creado desde su
+  # terminal (caduca en 60 minutos y se revoca al terminar). Si no, se pide.
+  if [ -n "${SKYWAY_TOKEN:-}" ] || ! crear_token_temporal_skyway; then
+    if [ "$INTERACTIVO" = 1 ] && [ -z "${SKYWAY_TOKEN:-}" ]; then
+      info "Con un token de API de Skyway (Mi perfil → Tokens de API, «sky_…») se despliega el panel"
+      info "desde GitHub con su dominio, volumen y variables. Intro para hacerlo a mano después."
+    fi
+    preguntar_secreto SKYWAY_TOKEN "Token de API de Skyway" "${SKYWAY_TOKEN:-}"
   fi
-  preguntar_secreto SKYWAY_TOKEN "Token de API de Skyway" "${SKYWAY_TOKEN:-}"
   if [ -z "$SKYWAY_TOKEN" ]; then
     info "Omitido. Variables del panel para crearlo a mano: consulta el final de deploy/.env.example."
     return 0
@@ -1383,6 +1455,8 @@ desplegar_en_skyway() {
     fallo "Respuesta inesperada de Skyway al leer el servicio del panel."
   fi
   PANEL_CONTENEDOR="skyway-$proyecto_slug-$servicio_slug"
+  PANEL_SERVICIO_ID=$servicio_id
+  PANEL_PROYECTO_ID=$proyecto_id
 
   # Volumen /data (sin él, la base de datos del panel se perdería en cada
   # despliegue), comprobación de salud y dominio. Se parte de la
@@ -1443,6 +1517,244 @@ env_json() {
     printf '"%s":"%s"' "${par%%=*}" "$(json_escape "${par#*=}")"
   done
   printf '}'
+}
+
+# ------------------------------------------------------ emparejado con Skyway --
+#
+# El panel y Skyway se emparejan con dos herramientas de terminal, sin red de
+# entrada y sin que ningún secreto pase por argumentos: quien ejecuta esto ya
+# es root en el servidor.
+#   - Skyway: node server/dist/tools/token.js (token sky_ temporal) y
+#     node server/dist/tools/mailway.js conectar (lee el token mwt_ por la
+#     entrada estándar y lo guarda igual que Ajustes → Correo (Mailway)).
+#   - Panel: node server/dist/tools/emparejar.js (administrador, puesta en
+#     marcha y token de gestión «Skyway»).
+
+# Las capturas de =~ quedan en BASH_REMATCH: tras extraer un secreto, una
+# coincidencia inocua las sustituye (hasta bash 5.1 no se puede vaciar a mano).
+olvidar_coincidencias() { coincide x x; }
+
+# ¿Existe y está en marcha ese contenedor? (--type: una imagen o una red con
+# el mismo nombre no cuentan).
+en_marcha() { [ "$(docker inspect --type container -f '{{.State.Running}}' "$1" 2>/dev/null || true)" = "true" ]; }
+
+# Muestra como avisos lo que una herramienta escribió en su salida de errores.
+mostrar_errores_herramienta() {
+  local linea
+  [ -n "$ERR_TMP" ] && [ -f "$ERR_TMP" ] || return 0
+  while IFS= read -r linea || [ -n "$linea" ]; do
+    linea=${linea#Aviso: }
+    if [ -n "$linea" ]; then aviso "$linea"; fi
+  done <"$ERR_TMP"
+  rm -f "$ERR_TMP"
+  ERR_TMP=""
+}
+
+# Fichero para la salida de errores de una herramienta (no lleva secretos).
+preparar_errores_herramienta() {
+  ERR_TMP=$(mktemp)
+}
+
+# Token de API temporal de Skyway, creado con su herramienta de terminal si
+# Skyway corre en este servidor (contenedor «skyway»). Caduca en 60 minutos y
+# al_salir lo revoca al terminar, también si la instalación falla.
+crear_token_temporal_skyway() {
+  local salida="" id="" token="" re_id='"id":"([A-Za-z0-9_-]{1,100})"' re_token='"token":"(sky_[A-Za-z0-9_-]{8,200})"'
+  en_marcha skyway || return 1
+  if ! docker exec skyway test -f server/dist/tools/token.js 2>/dev/null; then
+    info "Esta versión de Skyway no crea tokens desde el servidor: indica uno de Mi perfil → Tokens de API (o actualiza Skyway)."
+    return 1
+  fi
+  preparar_errores_herramienta
+  if ! salida=$(docker exec skyway node server/dist/tools/token.js crear \
+    --nombre "Instalador de Mailway" --caduca-min 60 </dev/null 2>"$ERR_TMP"); then
+    mostrar_errores_herramienta
+    aviso "Skyway no ha podido crear un token temporal."
+    return 1
+  fi
+  mostrar_errores_herramienta
+  # Se extrae con bash: el JSON lleva el token y no pasa por ningún otro programa.
+  if [[ $salida =~ $re_id ]]; then id=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_token ]]; then token=${BASH_REMATCH[1]}; fi
+  salida=""
+  olvidar_coincidencias
+  if [ -z "$id" ] || [ -z "$token" ]; then
+    aviso "Respuesta inesperada de la herramienta de tokens de Skyway."
+    return 1
+  fi
+  SKY_TOKEN_TEMPORAL_ID=$id
+  SKYWAY_TOKEN=$token
+  ok "Token temporal de Skyway creado (caduca en 60 minutos y se revoca al terminar)."
+}
+
+revocar_token_temporal_skyway() {
+  [ -n "$SKY_TOKEN_TEMPORAL_ID" ] || return 0
+  local id=$SKY_TOKEN_TEMPORAL_ID
+  SKY_TOKEN_TEMPORAL_ID=""
+  SKYWAY_TOKEN=""
+  if docker exec skyway node server/dist/tools/token.js revocar --id "$id" </dev/null >/dev/null 2>&1; then
+    ok "Token temporal de Skyway revocado."
+  else
+    aviso "No se pudo revocar el token temporal de Skyway «Instalador de Mailway»: caduca en una hora, o revócalo en Skyway → Mi perfil → Tokens de API."
+  fi
+}
+
+# Deja constancia de por qué no se ha emparejado y de cómo repetirlo.
+aviso_emparejado() {
+  RESUMEN_EMPAREJADO="pendiente: $1"
+  aviso "$1"
+  aviso "Cuando esté resuelto, repite solo el emparejado: sudo bash deploy/instalar.sh --emparejar"
+}
+
+# ¿Está ya Skyway conectado con este panel y la conexión funciona? Así, volver
+# a ejecutar el instalador no renueva el token de gestión sin necesidad. Si
+# Skyway está conectado con OTRO panel de Mailway, no se toca: eso solo lo
+# cambia --emparejar. Necesita el token de Skyway (se consulta su API).
+skyway_ya_emparejado() {
+  [ -n "${SKYWAY_TOKEN:-}" ] || return 1
+  local servicio url
+  sky_api GET /api/mailway/config
+  if [ "$RESP_CODE" != "200" ] || [ "$(campo_json '.configured')" != "true" ]; then return 1; fi
+  servicio=$(campo_json '.serviceId // empty')
+  url=$(campo_json '.baseUrl // empty' | tr -d '[:cntrl:]')
+  if [ "$servicio" != "$PANEL_SERVICIO_ID" ] && [ "${url%/}" != "https://$PANEL_HOSTNAME" ]; then
+    titulo "Emparejado del panel con Skyway"
+    RESUMEN_EMPAREJADO="sin cambios: Skyway ya está conectado con otro panel de Mailway"
+    aviso "Skyway ya está conectado con otro panel de Mailway (${url:-otro servicio}): no se cambia."
+    aviso "Para conectarlo con este panel: sudo bash deploy/instalar.sh --emparejar"
+    return 0
+  fi
+  sky_api POST /api/mailway/test '{}'
+  if [ "$RESP_CODE" = "200" ] && [ "$(campo_json '.ok')" = "true" ] && [ "$(campo_json '.info.role // empty')" = "admin" ]; then
+    titulo "Emparejado del panel con Skyway"
+    EMPAREJADO_OK=1
+    RESUMEN_EMPAREJADO="Skyway ya estaba conectado con este panel"
+    ok "Skyway ya está conectado con este panel y la conexión funciona: no se cambia nada."
+    return 0
+  fi
+  return 1
+}
+
+# Empareja el panel con Skyway: la herramienta del panel crea (si falta) el
+# administrador, completa la puesta en marcha y emite el token de gestión
+# «Skyway», que pasa por la entrada estándar a la herramienta de Skyway. Nunca
+# interrumpe la instalación: si algo falla, avisa y explica cómo repetirlo.
+emparejar_con_skyway() {
+  titulo "Emparejado del panel con Skyway"
+  local salida="" conexion="" token="" correo="" clave="" version marca
+  local re_token='"token":"(mwt_[0-9a-f]{8}_[A-Za-z0-9_-]{43})"'
+  local re_correo='"adminEmail":"([^"\\]{3,254})"' re_clave='"adminPassword":"([A-Za-z0-9_-]{10,200})"'
+  if [ -z "$PANEL_CONTENEDOR" ] || ! id_simple "$PANEL_SERVICIO_ID" || ! id_simple "$PANEL_PROYECTO_ID"; then
+    aviso_emparejado "No se conoce el servicio del panel en Skyway."
+    return 0
+  fi
+  if ! en_marcha skyway; then
+    aviso_emparejado "Skyway no corre en este servidor como el contenedor «skyway»: conecta Mailway en Skyway → Ajustes → Correo (Mailway) (sección 4.1 de docs/DESPLIEGUE-SKYWAY.md)."
+    return 0
+  fi
+  if ! docker exec skyway test -f server/dist/tools/mailway.js 2>/dev/null; then
+    aviso_emparejado "Esta versión de Skyway no conecta Mailway desde el servidor: actualiza Skyway o conéctalo en Ajustes → Correo (Mailway)."
+    return 0
+  fi
+  info "Esperando a que el panel ($PANEL_CONTENEDOR) esté sano…"
+  if ! esperar_sano "$PANEL_CONTENEDOR" 180; then
+    aviso_emparejado "El panel ($PANEL_CONTENEDOR) no está en marcha y sano. Revisa: docker logs $PANEL_CONTENEDOR"
+    return 0
+  fi
+  if ! docker exec "$PANEL_CONTENEDOR" test -f server/dist/tools/emparejar.js 2>/dev/null; then
+    aviso_emparejado "El panel desplegado no incluye la herramienta de emparejado: despliega la versión actual de Mailway en Skyway."
+    return 0
+  fi
+
+  # Como el usuario del panel («node»): lo que toque en /data debe seguir siendo suyo.
+  preparar_errores_herramienta
+  if ! salida=$(docker exec -i -u node "$PANEL_CONTENEDOR" node server/dist/tools/emparejar.js \
+    --email "$ADMIN_EMAIL" </dev/null 2>"$ERR_TMP"); then
+    mostrar_errores_herramienta
+    aviso_emparejado "La herramienta de emparejado del panel ha fallado."
+    return 0
+  fi
+  mostrar_errores_herramienta
+  # Se extrae con bash: el JSON lleva secretos y no pasa por ningún otro programa.
+  if [[ $salida =~ $re_token ]]; then token=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_correo ]]; then correo=${BASH_REMATCH[1]}; fi
+  if [[ $salida =~ $re_clave ]]; then clave=${BASH_REMATCH[1]}; fi
+  salida=""
+  olvidar_coincidencias
+  if [ -z "$token" ] || ! correo_valido "$correo"; then
+    token=""
+    aviso_emparejado "Respuesta inesperada de la herramienta de emparejado del panel."
+    return 0
+  fi
+  # Desde aquí la cuenta existe: su contraseña (si es nueva) se muestra en el
+  # resumen aunque lo siguiente falle, porque no hay otra forma de saberla.
+  EMPAREJADO_ADMIN_EMAIL=$correo
+  EMPAREJADO_ADMIN_PASSWORD=$clave
+  clave=""
+  if [ -n "$EMPAREJADO_ADMIN_PASSWORD" ]; then
+    ok "Cuenta de administración del panel creada ($correo); la contraseña aparece en el resumen."
+  else
+    ok "El panel ya tenía cuenta de administración ($correo)."
+  fi
+  ok "Puesta en marcha del panel completada con el entorno y token de gestión «Skyway» emitido."
+
+  preparar_errores_herramienta
+  if ! conexion=$(printf '%s' "$token" | docker exec -i skyway node server/dist/tools/mailway.js conectar \
+    --servicio "$PANEL_SERVICIO_ID" --proyecto "$PANEL_PROYECTO_ID" --url "https://$PANEL_HOSTNAME" 2>"$ERR_TMP"); then
+    token=""
+    mostrar_errores_herramienta
+    aviso_emparejado "Skyway no ha podido guardar la conexión con el panel."
+    return 0
+  fi
+  token=""
+  mostrar_errores_herramienta
+  version=$(printf '%s' "$conexion" | jqr -r '.version // empty' 2>/dev/null | tr -d '[:cntrl:]' || true)
+  marca=$(printf '%s' "$conexion" | jqr -r '.brandName // empty' 2>/dev/null | tr -d '[:cntrl:]' || true)
+  EMPAREJADO_OK=1
+  RESUMEN_EMPAREJADO="Skyway conectado con el panel (Mailway ${version:-?}${marca:+, «$marca»})"
+  ok "$RESUMEN_EMPAREJADO."
+}
+
+# Paso final de la instalación junto a Skyway: solo si el panel se ha
+# desplegado y Skyway no está ya conectado con él.
+emparejar_al_terminar() {
+  if [ -z "$PANEL_CONTENEDOR" ]; then return 0; fi
+  if skyway_ya_emparejado; then return 0; fi
+  emparejar_con_skyway
+}
+
+# --emparejar: repite solo el emparejado con la configuración de deploy/.env.
+# El contenedor del panel sale de MAILWAY_PANEL_INTERNAL_URL y su servicio y
+# proyecto, de las etiquetas que Skyway pone a sus contenedores.
+emparejar_solo() {
+  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
+  tiene docker || fallo "Falta Docker."
+  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  if [ "$(leer_env MAILWAY_INSTALACION)" = autonoma ]; then
+    fallo "Esta instalación es autónoma (sin Skyway): no hay nada que emparejar."
+  fi
+  PANEL_HOSTNAME=$(leer_env PANEL_HOSTNAME)
+  host_valido "$PANEL_HOSTNAME" || fallo "PANEL_HOSTNAME no es válido en $ENV_FILE."
+  local le interna re_panel='^http://(skyway-[a-z0-9][a-z0-9_.-]*):[0-9]{1,5}$'
+  le=$(leer_env LETSENCRYPT_EMAIL)
+  elegir_correo_admin "$le"
+  interna=$(leer_env MAILWAY_PANEL_INTERNAL_URL)
+  PANEL_CONTENEDOR=skyway-mailway-panel
+  if [[ $interna =~ $re_panel ]]; then PANEL_CONTENEDOR=${BASH_REMATCH[1]}; fi
+  docker inspect --type container "$PANEL_CONTENEDOR" >/dev/null 2>&1 ||
+    fallo "No existe el contenedor del panel ($PANEL_CONTENEDOR). Despliégalo con el instalador completo: sudo bash deploy/instalar.sh"
+  PANEL_SERVICIO_ID=$(docker inspect --type container -f '{{index .Config.Labels "skyway.service"}}' "$PANEL_CONTENEDOR" 2>/dev/null || true)
+  PANEL_PROYECTO_ID=$(docker inspect --type container -f '{{index .Config.Labels "skyway.project"}}' "$PANEL_CONTENEDOR" 2>/dev/null || true)
+  if ! id_simple "$PANEL_SERVICIO_ID" || ! id_simple "$PANEL_PROYECTO_ID"; then
+    fallo "El contenedor $PANEL_CONTENEDOR no lo gestiona Skyway (le faltan sus etiquetas skyway.service y skyway.project)."
+  fi
+  info "Panel: $PANEL_CONTENEDOR (https://$PANEL_HOSTNAME)"
+  emparejar_con_skyway
+  titulo "Resumen"
+  printf '\n'
+  info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
+  resumen_administrador
+  [ "$EMPAREJADO_OK" = 1 ]
 }
 
 # Comillas simples de YAML y «$» doblado (Compose interpola los dólares).
@@ -1573,22 +1885,45 @@ traefik_con_puente() {
     fi
   fi
   ok "Skyway sirve a Traefik las rutas de Mailway: no hace falta ningún fichero adicional."
-  info "Tras la puesta en marcha, conecta Mailway en Skyway → Ajustes → Correo (Mailway) (URL del panel y un token de gestión)."
+  info "Las lee a través de la conexión con el panel que deja el emparejado (siguiente paso)."
 }
 
 # ---------------------------------------------------------------- resumen --
 
+# Cuenta de administración del panel que ha dejado el emparejado. La
+# contraseña (solo si se acaba de crear) se muestra aquí una vez y se olvida:
+# no está en deploy/.env ni en ningún registro.
+resumen_administrador() {
+  [ -n "$EMPAREJADO_ADMIN_EMAIL" ] || return 0
+  info "Administración del panel: $EMPAREJADO_ADMIN_EMAIL"
+  if [ -n "$EMPAREJADO_ADMIN_PASSWORD" ]; then
+    info "Contraseña:          $EMPAREJADO_ADMIN_PASSWORD"
+    info "  Se muestra solo esta vez y no se guarda en ningún sitio: guárdala en un lugar seguro"
+    info "  o cámbiala al entrar en el panel (Mi cuenta → Cambiar contraseña)."
+    EMPAREJADO_ADMIN_PASSWORD=""
+  fi
+}
+
 resumen() {
   titulo "Resumen"
-  local copia volumen
+  local copia volumen paso=0
   volumen=${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
   copia="docker stop mailway-mail && docker run --rm -v $volumen:/origen:ro -v /root/copias:/destino alpine tar czf /destino/mailway-correo-\$(date +%F).tar.gz -C /origen . ; docker start mailway-mail"
   printf '\n'
-  info "Panel:               https://$PANEL_HOSTNAME/setup?token=$MAILWAY_SETUP_TOKEN"
+  # Con la cuenta de administración ya creada, el enlace de puesta en marcha
+  # (y su token) no sirven de nada: no se muestran.
+  if [ -n "$EMPAREJADO_ADMIN_EMAIL" ]; then
+    info "Panel:               https://$PANEL_HOSTNAME"
+  else
+    info "Panel:               https://$PANEL_HOSTNAME/setup?token=$MAILWAY_SETUP_TOKEN"
+  fi
   info "Webmail:             https://$WEBMAIL_HOSTNAME"
   info "Web del motor:       https://$MAIL_HOSTNAME (usuario admin; contraseña en deploy/.env)"
-  info "Token de puesta en marcha: $MAILWAY_SETUP_TOKEN"
-  if [ "$CON_SKYWAY" = 1 ]; then info "Panel en Skyway:     $RESUMEN_SKYWAY"; fi
+  if [ -z "$EMPAREJADO_ADMIN_EMAIL" ]; then info "Token de puesta en marcha: $MAILWAY_SETUP_TOKEN"; fi
+  if [ "$CON_SKYWAY" = 1 ]; then
+    info "Panel en Skyway:     $RESUMEN_SKYWAY"
+    info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
+  fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
     info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; ponles delante un proxy con TLS."
   fi
@@ -1609,12 +1944,21 @@ resumen() {
   info "Diagnóstico en cualquier momento (no cambia nada): sudo bash deploy/instalar.sh --comprobar"
   info "Prueba de acceso a un buzón desde el webmail:      sudo bash deploy/instalar.sh --probar-acceso"
   printf '\n'
+  if [ -n "$EMPAREJADO_ADMIN_EMAIL" ]; then
+    resumen_administrador
+    printf '\n'
+  fi
   info "Siguientes pasos:"
-  info "  1. Abre el panel con el enlace de arriba y completa la puesta en marcha."
-  info "  2. En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
-  info "  3. En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
-  if [ "$CON_SKYWAY" = 1 ] && version_ge "$SKYWAY_VERSION" 0.34.0; then
-    info "  4. En Skyway → Ajustes → Correo (Mailway), pega la URL del panel y un token de gestión (Mailway → Conexiones)."
+  if [ -n "$EMPAREJADO_ADMIN_EMAIL" ]; then
+    info "  $((paso += 1)). Entra en el panel con la cuenta de administración de arriba."
+  else
+    info "  $((paso += 1)). Abre el panel con el enlace de arriba y completa la puesta en marcha."
+  fi
+  info "  $((paso += 1)). En Conexiones → Cloudflare, conecta una cuenta para publicar el DNS de los dominios de los clientes."
+  info "  $((paso += 1)). En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
+  if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ]; then
+    info "  $((paso += 1)). Empareja Skyway con el panel: sudo bash deploy/instalar.sh --emparejar"
+    info "     (o a mano, en Skyway → Ajustes → Correo (Mailway): sección 4.1 de docs/DESPLIEGUE-SKYWAY.md)."
   fi
 }
 
@@ -1793,6 +2137,11 @@ probar_acceso() {
 
 main() {
   printf '%sInstalador de Mailway %s%s\n' "$C_TIT" "$VERSION_INSTALADOR" "$C_0"
+  if [ "$EMPAREJAR" = 1 ]; then
+    info "Emparejado del panel con Skyway (configuración de deploy/.env)."
+    if emparejar_solo; then exit 0; fi
+    exit 1
+  fi
   if [ "$COMPROBAR" = 1 ] || [ "$PROBAR_ACCESO" = 1 ]; then
     preparar_diagnostico
     if [ "$CON_SKYWAY" = 1 ]; then info "Modo: junto a Skyway."; else info "Modo: instalación autónoma (sin Skyway)."; fi
@@ -1851,6 +2200,10 @@ main() {
       ok "Webmail enlazado con el panel ($PANEL_INTERNAL_URL)."
     fi
     configurar_proveedor_traefik
+    # Lo último que puede fallar: así la contraseña del administrador que
+    # crea el emparejado llega al resumen sin que nada la interrumpa.
+    emparejar_al_terminar
+    revocar_token_temporal_skyway
   fi
 
   resumen

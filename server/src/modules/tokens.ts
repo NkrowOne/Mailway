@@ -126,6 +126,63 @@ function newManagementToken(): { token: string; prefix: string; hash: string } {
 
 const DAY_MS = 24 * 3600_000;
 
+/**
+ * Crea un token de gestión para un usuario, respetando el tope de tokens
+ * activos. Devuelve el token completo (solo existe en esta llamada; en la base
+ * queda el hash) y su ficha. Quien llama anota la auditoría: la ruta, con la
+ * petición; la herramienta de emparejado, como acción del sistema.
+ */
+export function createManagementToken(input: {
+  userId: string;
+  name: string;
+  expiresAt: number | null;
+}): { token: string; info: ManagementTokenInfo } {
+  const at = now();
+  const active = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM management_tokens
+         WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .get(input.userId, at) as { c: number }
+  ).c;
+  if (active >= MAX_ACTIVE_TOKENS_PER_USER) {
+    throw conflict(
+      `Has alcanzado el máximo de ${MAX_ACTIVE_TOKENS_PER_USER} tokens activos. Revoca los que ya no utilices antes de crear otro.`,
+      'token_limit',
+    );
+  }
+  const { token, prefix, hash } = newManagementToken();
+  const id = randomId('mwt');
+  db.prepare(
+    `INSERT INTO management_tokens (id, user_id, name, prefix, token_hash, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, input.userId, input.name, prefix, hash, at, input.expiresAt);
+  return { token, info: toInfo(getTokenRow(id)!, null) };
+}
+
+/** Revoca un token (sin comprobar permisos: lo hace quien llama). */
+export function revokeManagementToken(id: string): void {
+  db.prepare('UPDATE management_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now(), id);
+}
+
+/**
+ * Tokens activos (ni revocados ni caducados) con ese nombre exacto cuyo
+ * dueño es un administrador. Los de usuarios de cliente nunca entran: un
+ * cliente puede llamar «Skyway» a un token suyo y no es asunto de la
+ * administración revocarlo.
+ */
+export function activeAdminTokensNamed(name: string): ManagementTokenInfo[] {
+  const rows = db
+    .prepare(
+      `${SELECT_TOKENS}
+       WHERE t.name = ? AND u.role = 'admin' AND t.revoked_at IS NULL
+         AND (t.expires_at IS NULL OR t.expires_at > ?)`,
+    )
+    .all(name, now()) as TokenRow[];
+  return rows.map((row) => toInfo(row, null));
+}
+
 const createSchema = z.object({
   name: z
     .string({ required_error: 'Indica un nombre para el token.' })
@@ -163,31 +220,11 @@ export function registerTokenRoutes(app: FastifyInstance): void {
     // filtrado podría perpetuarse aunque se revocara el original.
     const user = requireSession(req);
     const body = createSchema.parse(req.body ?? {});
-    const at = now();
-    const active = (
-      db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM management_tokens
-           WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-        )
-        .get(user.id, at) as { c: number }
-    ).c;
-    if (active >= MAX_ACTIVE_TOKENS_PER_USER) {
-      throw conflict(
-        `Has alcanzado el máximo de ${MAX_ACTIVE_TOKENS_PER_USER} tokens activos. Revoca los que ya no utilices antes de crear otro.`,
-        'token_limit',
-      );
-    }
-    const { token, prefix, hash } = newManagementToken();
-    const id = randomId('mwt');
-    const expiresAt = body.expiresInDays ? at + body.expiresInDays * DAY_MS : null;
-    db.prepare(
-      `INSERT INTO management_tokens (id, user_id, name, prefix, token_hash, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, user.id, body.name, prefix, hash, at, expiresAt);
-    audit(req, 'token.created', { id, name: body.name, prefix, expiresAt });
+    const expiresAt = body.expiresInDays ? now() + body.expiresInDays * DAY_MS : null;
+    const { token, info } = createManagementToken({ userId: user.id, name: body.name, expiresAt });
+    audit(req, 'token.created', { id: info.id, name: info.name, prefix: info.prefix, expiresAt });
     // El token completo solo viaja en esta respuesta; en la base queda el hash.
-    return { token, info: toInfo(getTokenRow(id)!, null) };
+    return { token, info };
   });
 
   app.delete('/api/tokens/:id', async (req) => {
@@ -201,7 +238,7 @@ export function registerTokenRoutes(app: FastifyInstance): void {
     }
     const currentTokenId = req.authVia?.kind === 'token' ? req.authVia.tokenId : null;
     if (row.revoked_at) return { ok: true, token: toInfo(row, currentTokenId) };
-    db.prepare('UPDATE management_tokens SET revoked_at = ? WHERE id = ?').run(now(), id);
+    revokeManagementToken(id);
     const detail: Record<string, unknown> = { id, name: row.name, prefix: row.prefix };
     if (row.user_id !== user.id) detail.owner = row.owner_email;
     // Se anota en el cliente del dueño: si el administrador revoca el token de

@@ -64,8 +64,9 @@ de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
 - **Asesor de entregabilidad.** PTR, registro A, listas negras y una lista de
   tareas priorizada en español.
 - **Instalador.** `deploy/instalar.sh` prepara motor, webmail, DNS en
-  Cloudflare, certificado y panel en Skyway en una sola ejecución, y se puede
-  repetir sin riesgo.
+  Cloudflare, certificado y panel en Skyway en una sola ejecución, deja el
+  panel emparejado con Skyway (cuenta de administración, puesta en marcha y
+  conexión, sin copiar tokens) y se puede repetir sin riesgo.
 
 ## Puesta en marcha rápida
 
@@ -81,11 +82,15 @@ sudo bash deploy/instalar.sh              # junto a Skyway (recomendado)
 sudo bash deploy/instalar.sh --sin-skyway # sin Skyway: todo en un compose propio
 ```
 
-El instalador pregunta el dominio base, la IP y, de forma opcional, un token
-de Cloudflare y un token de API de Skyway. Al terminar muestra la dirección
-de la puesta en marcha (`https://panel.<dominio>/setup?token=…`): ábrela y
-completa el asistente. Guía completa, variables de ejecución desatendida y
-camino manual en **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**.
+El instalador pregunta el dominio base, la IP, el correo de la cuenta de
+administración del panel y, de forma opcional, un token de Cloudflare. Junto
+a Skyway en el mismo servidor no hace falta ningún token de Skyway: el
+instalador despliega el panel, lo empareja con Skyway y al terminar muestra
+la cuenta de administración y su contraseña (una sola vez). Sin Skyway,
+muestra la dirección de la puesta en marcha
+(`https://panel.<dominio>/setup?token=…`): ábrela y completa el asistente.
+Guía completa, variables de ejecución desatendida y camino manual en
+**[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**.
 
 ## Desarrollo
 

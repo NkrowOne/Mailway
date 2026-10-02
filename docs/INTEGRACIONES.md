@@ -442,6 +442,12 @@ de ese proyecto (si no, responde 404 sin llegar a Mailway).
 
 ### 3.1 Conectar (una vez)
 
+Si Mailway se instala con `deploy/instalar.sh` en el mismo servidor que
+Skyway, el instalador hace esta conexión solo al terminar (emparejado:
+[DESPLIEGUE-SKYWAY.md, sección 2.6](DESPLIEGUE-SKYWAY.md#26-emparejado-con-skyway)),
+con un token de gestión de administración llamado «Skyway»; se repite con
+`sudo bash deploy/instalar.sh --emparejar`. A mano:
+
 1. En Mailway: **Conexiones → Tokens de gestión → Crear token** con la cuenta
    de administración (p. ej. «Skyway», sin caducidad).
 2. En Skyway: **Ajustes → Correo (Mailway)**. Selecciona el servicio de Skyway
