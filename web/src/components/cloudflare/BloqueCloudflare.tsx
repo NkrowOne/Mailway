@@ -12,7 +12,7 @@ import {
   type ResultadoAplicacion,
 } from '../../lib/cloudflare';
 import { Button } from '../../ui/Button';
-import { Dialogo, Hoja, Midiendo } from '../../ui/kit';
+import { Dialogo, Hoja, Cargando } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, ResultadoCloudflare, claseEnlacePerfil } from './comun';
 import { RevisionCambios } from './RevisionCambios';
@@ -159,7 +159,7 @@ export function BloqueCloudflare({
       }
       if (activo) {
         void queryClient.invalidateQueries({ queryKey: ['domains'] });
-        toast('ok', 'Los registros obligatorios ya están en rango. El dominio ya puede enviar y recibir correo.');
+        toast('ok', 'Los registros obligatorios ya son correctos. El dominio ya puede enviar y recibir correo.');
       }
       setSondeo((s) => {
         if (!s) return s;
@@ -193,7 +193,7 @@ export function BloqueCloudflare({
   if (cuentas.isPending && !gestionado) {
     return (
       <Hoja title={titulo}>
-        <Midiendo label="Consultando las cuentas de Cloudflare…" />
+        <Cargando label="Consultando las cuentas de Cloudflare…" />
       </Hoja>
     );
   }
@@ -276,7 +276,7 @@ export function BloqueCloudflare({
           ) : alta?.autoDns && alta.cloudflareReason ? (
             <BandaAviso titulo="No se ha aplicado el DNS automáticamente">{alta.cloudflareReason}</BandaAviso>
           ) : resumenAutomatico && plan.isPending ? (
-            <Midiendo label="Leyendo la zona en Cloudflare…" />
+            <Cargando label="Leyendo la zona en Cloudflare…" />
           ) : resumenAutomatico && plan.isError ? (
             <BandaError onRetry={() => void plan.refetch()} retrying={plan.isFetching}>
               {mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.')}
@@ -356,7 +356,7 @@ function ProgresoSondeo({
   if (sondeo.estado === 'completado') {
     return (
       <p className="revelar text-base text-normal" role="status">
-        Los registros obligatorios ya están en rango: el dominio ya puede enviar y recibir correo.
+        Los registros obligatorios ya son correctos: el dominio ya puede enviar y recibir correo.
       </p>
     );
   }
@@ -365,7 +365,7 @@ function ProgresoSondeo({
       <div className="flex flex-wrap items-center justify-between gap-3" role="status">
         <p className="max-w-[75ch] text-base text-tinta-2">
           Transcurridos 5 minutos, el DNS público todavía no muestra todos los registros. La
-          propagación puede tardar más; Mailway seguirá midiendo este dominio cada 10 minutos.
+          propagación puede tardar más; Mailway seguirá comprobando este dominio cada 10 minutos.
         </p>
         <Button variant="perfil" onClick={onReanudar}>
           Seguir comprobando

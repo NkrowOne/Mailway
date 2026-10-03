@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Tag } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -26,7 +27,7 @@ import {
   Hoja,
   MarcaFondo,
   Membrete,
-  Midiendo,
+  Cargando,
   Muestra,
   Vacio,
   type Veredicto,
@@ -156,7 +157,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
             : 'Tu webmail en tu propio dominio, con certificado. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
         }
         actions={
-          <Button variant="campo" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
+          <Button variant="principal" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
             Añadir dominio
           </Button>
         }
@@ -201,11 +202,11 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
         </AvisoError>
       ) : me.isPending || domains.isPending ? (
         <Hoja>
-          <Midiendo label="Cargando los dominios propios…" />
+          <Cargando label="Cargando los dominios propios…" />
         </Hoja>
       ) : lista.length === 0 ? (
         <Hoja>
-          <Vacio
+          <Vacio icono={Tag}
             title="No hay dominios propios"
             action={
               <Button variant="perfil" onClick={() => setAbierto(true)}>
@@ -268,7 +269,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
               .map((i) => (
                 <RegistroDns key={i.type} instruccion={i} />
               ))}
-            <Button variant="tinta" onClick={() => setNuevo(null)}>
+            <Button variant="principal" onClick={() => setNuevo(null)}>
               Aceptar
             </Button>
           </div>
@@ -372,7 +373,7 @@ function DialogoAlta({
         )}
 
         {sinCliente ? null : dominiosCorreo.isPending ? (
-          <Midiendo label="Cargando los dominios de correo…" />
+          <Cargando label="Cargando los dominios de correo…" />
         ) : dominiosCorreo.isError ? (
           <AvisoError onRetry={() => void dominiosCorreo.refetch()} retrying={dominiosCorreo.isFetching}>
             No se han podido leer los dominios de correo del cliente.
@@ -390,7 +391,7 @@ function DialogoAlta({
               El dominio propio debe ser un subdominio de un dominio de correo con la propiedad comprobada: así se
               garantiza que {isAdmin ? 'el cliente controla su' : 'controlas tu'} DNS.
             </p>
-            <Link to="/dominios" className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta">
+            <Link to="/dominios" className="text-sm text-petroleo underline underline-offset-2 hover:text-tinta">
               Ir a Dominios
             </Link>
           </div>
@@ -434,7 +435,7 @@ function DialogoAlta({
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={crear.isPending} disabled={!hostname || sinCliente}>
+          <Button type="submit" variant="principal" busy={crear.isPending} disabled={!hostname || sinCliente}>
             Añadir
           </Button>
         </div>
@@ -453,7 +454,7 @@ function RegistroDns({ instruccion }: { instruccion: DnsInstruction }) {
         {/* Se parte por caracteres en vez de recortarse: el botón copia el valor exacto. */}
         <dd className="valor min-w-0 break-all text-tinta">{instruccion.name}</dd>
         <dt className="rotulo self-baseline">Valor</dt>
-        <dd className="valor min-w-0 break-all text-tinta">{instruccion.value}</dd>
+        <dd className="codigo min-w-0 break-all text-tinta">{instruccion.value}</dd>
       </dl>
       <p className="mt-2 text-sm text-tinta-2">{instruccion.help}</p>
     </Muestra>
@@ -609,7 +610,7 @@ function FichaDominio({
             href={`https://${domain.hostname}`}
             target="_blank"
             rel="noreferrer"
-            className="valor break-all text-laboratorio underline underline-offset-2"
+            className="valor break-all text-petroleo underline underline-offset-2"
           >
             https://{domain.hostname}
           </a>

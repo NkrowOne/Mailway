@@ -4,21 +4,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Superficies: mesa de trabajo y hoja de informe.
+        // Superficies: fondo de la aplicación y tarjetas.
         mesa: 'rgb(var(--mesa) / <alpha-value>)',
         hoja: 'rgb(var(--hoja) / <alpha-value>)',
         'hoja-2': 'rgb(var(--hoja-2) / <alpha-value>)',
         'hoja-3': 'rgb(var(--hoja-3) / <alpha-value>)',
-        // Tinta impresa.
+        // Texto: principal, secundario y metadatos.
         tinta: 'rgb(var(--tinta) / <alpha-value>)',
         'tinta-2': 'rgb(var(--tinta-2) / <alpha-value>)',
         'tinta-3': 'rgb(var(--tinta-3) / <alpha-value>)',
-        // Membrete del laboratorio: identidad y orientación, no adorno.
-        laboratorio: 'rgb(var(--laboratorio) / <alpha-value>)',
-        'laboratorio-hondo': 'rgb(var(--laboratorio-hondo) / <alpha-value>)',
-        'laboratorio-vivo': 'rgb(var(--laboratorio-vivo) / <alpha-value>)',
-        'laboratorio-claro': 'rgb(var(--laboratorio-claro) / <alpha-value>)',
-        // Veredictos: el único color que califica un dato.
+        // Verde petróleo: identidad, acción principal y orientación.
+        petroleo: 'rgb(var(--petroleo) / <alpha-value>)',
+        'petroleo-hondo': 'rgb(var(--petroleo-hondo) / <alpha-value>)',
+        'petroleo-claro': 'rgb(var(--petroleo-claro) / <alpha-value>)',
+        // Estados: el único color que califica un dato.
         normal: 'rgb(var(--normal) / <alpha-value>)',
         vigilar: 'rgb(var(--vigilar) / <alpha-value>)',
         fuera: 'rgb(var(--fuera) / <alpha-value>)',
@@ -32,36 +31,34 @@ export default {
         'regla-fuerte': 'var(--regla-fuerte)',
       },
       fontFamily: {
-        ui: ['"Archivo Variable"', 'system-ui', 'sans-serif'],
-        estrecha: ['"Archivo Narrow"', '"Archivo Variable"', 'sans-serif'],
-        valor: ['"Azeret Mono Variable"', 'ui-monospace', 'monospace'],
+        ui: ['"Figtree Variable"', 'system-ui', 'sans-serif'],
+        codigo: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
       },
       fontSize: {
-        // Escala de informe: densa y precisa, cuerpo 14.
-        micro: ['11px', { lineHeight: '15px' }],
-        sm: ['12px', { lineHeight: '17px' }],
-        base: ['14px', { lineHeight: '21px' }],
-        md: ['15px', { lineHeight: '22px' }],
-        lg: ['17px', { lineHeight: '24px' }],
-        xl: ['21px', { lineHeight: '27px' }],
-        '2xl': ['26px', { lineHeight: '31px' }],
-        '3xl': ['34px', { lineHeight: '36px' }],
-        '4xl': ['46px', { lineHeight: '44px' }],
-        '5xl': ['68px', { lineHeight: '62px' }],
+        // Escala cómoda: cuerpo de 15 px con interlineado amplio.
+        micro: ['12px', { lineHeight: '16px' }],
+        sm: ['13px', { lineHeight: '19px' }],
+        base: ['15px', { lineHeight: '23px' }],
+        md: ['16px', { lineHeight: '24px' }],
+        lg: ['18px', { lineHeight: '26px' }],
+        xl: ['21px', { lineHeight: '28px' }],
+        '2xl': ['24px', { lineHeight: '31px' }],
+        '3xl': ['28px', { lineHeight: '35px' }],
+        '4xl': ['34px', { lineHeight: '41px' }],
       },
       boxShadow: {
         suave: 'var(--sombra-suave)',
-        panel: 'var(--sombra-panel)',
-        flotante: '0 18px 48px -20px rgb(var(--tinta) / 0.38)',
+        boton: 'var(--sombra-boton)',
+        flotante: 'var(--sombra-flotante)',
       },
       keyframes: {
         aparecer: {
-          '0%': { transform: 'translateY(6px)', opacity: '0' },
+          '0%': { transform: 'translateY(4px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
         },
       },
       animation: {
-        aparecer: 'aparecer 220ms cubic-bezier(0.16, 1, 0.3, 1) both',
+        aparecer: 'aparecer 200ms cubic-bezier(0.16, 1, 0.3, 1) both',
       },
     },
   },

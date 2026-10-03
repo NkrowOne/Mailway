@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { History } from 'lucide-react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { api, ApiError, type Client, type User } from '../lib/api';
 import { formatDate, plural } from '../lib/format';
@@ -12,7 +13,7 @@ import {
 } from '../lib/tokens';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Field';
-import { AvisoError, Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
+import { AvisoError, Hoja, Membrete, Cargando, Vacio } from '../ui/kit';
 
 /** Anotaciones por página: suficiente para una jornada sin cargar el registro entero. */
 const POR_PAGINA = 50;
@@ -67,7 +68,7 @@ export default function Actividad() {
               realizó una integración, el token que utilizó.
             </p>
             {registro.isSuccess && anotaciones.length > 0 && (
-              <p className="rotulo mt-1.5 text-white/70">
+              <p className="mt-1 text-sm text-tinta-3">
                 {plural(anotaciones.length, 'anotación cargada', 'anotaciones cargadas')}
               </p>
             )}
@@ -100,7 +101,7 @@ export default function Actividad() {
         flush
       >
         {registro.isPending ? (
-          <Midiendo label="Cargando el registro de actividad…" />
+          <Cargando label="Cargando el registro de actividad…" />
         ) : errorInicial ? (
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void registro.refetch()} retrying={registro.isFetching}>
@@ -109,7 +110,7 @@ export default function Actividad() {
             </AvisoError>
           </div>
         ) : anotaciones.length === 0 ? (
-          <Vacio title="No hay actividad registrada">
+          <Vacio icono={History} title="No hay actividad registrada">
             {filtro
               ? 'No constan acciones sobre este cliente.'
               : 'Las acciones sobre clientes, dominios, buzones y claves aparecerán aquí a medida que se realicen.'}

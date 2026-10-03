@@ -79,7 +79,7 @@ export function FichaBuzon({
   const pie =
     mailbox && vista === 'credenciales' ? (
       <Button
-        variant="tinta"
+        variant="principal"
         onClick={() => {
           setPassword(undefined);
           volver();
@@ -97,7 +97,7 @@ export function FichaBuzon({
             <button
               type="button"
               onClick={() => (contrasenaPendiente && vista === 'conectar' ? setVista('credenciales') : volver())}
-              className="self-start text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta"
+              className="self-start text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
             >
               {contrasenaPendiente && vista === 'conectar'
                 ? 'Volver a las credenciales'
@@ -287,7 +287,7 @@ function Credenciales({
             <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
           </Muestra>
           <Muestra rotulo="Contraseña" copiar={password}>
-            <p className="valor break-all text-base text-tinta">{password}</p>
+            <p className="codigo break-all text-base text-tinta">{password}</p>
           </Muestra>
         </>
       ) : (
@@ -405,7 +405,7 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
         <Button type="button" variant="plano" onClick={onHecho}>
           Cancelar
         </Button>
-        <Button type="submit" variant="tinta" busy={save.isPending}>
+        <Button type="submit" variant="principal" busy={save.isPending}>
           Guardar cambios
         </Button>
       </Botonera>
@@ -525,7 +525,7 @@ function Restablecer({
         <Button type="button" variant="plano" onClick={onHecho}>
           Cancelar
         </Button>
-        <Button type="submit" variant="tinta" busy={reset.isPending}>
+        <Button type="submit" variant="principal" busy={reset.isPending}>
           Restablecer contraseña
         </Button>
       </Botonera>
@@ -583,7 +583,7 @@ function Estado({
           Cancelar
         </Button>
         <Button
-          variant={suspender ? 'peligro' : 'tinta'}
+          variant={suspender ? 'peligro' : 'principal'}
           busy={change.isPending}
           disabled={!suspender && clienteSuspendido}
           onClick={() => change.mutate()}

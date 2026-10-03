@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Cable } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { formatDate, formatDay, plural } from '../../lib/format';
@@ -11,7 +12,7 @@ import {
 } from '../../lib/tokens';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { AvisoError, Dialogo, Hoja, MarcaFondo, Midiendo, Muestra, Vacio, type Veredicto } from '../../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Cargando, Muestra, Vacio, type Veredicto } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { useDireccionPanel } from '../gestion/consultas';
 
@@ -142,7 +143,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         {tokens.isPending ? (
-          <Midiendo label="Leyendo los tokens de gestión…" />
+          <Cargando label="Leyendo los tokens de gestión…" />
         ) : tokens.isError ? (
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void tokens.refetch()} retrying={tokens.isFetching}>
@@ -151,7 +152,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
             </AvisoError>
           </div>
         ) : vigentes.length === 0 && revocados.length === 0 ? (
-          <Vacio title="No hay tokens de gestión">
+          <Vacio icono={Cable} title="No hay tokens de gestión">
             Crea un token con «Crear token» para conectar Skyway o automatizar tareas por API. El
             token completo se muestra una sola vez.
           </Vacio>
@@ -248,7 +249,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
             <Button type="button" variant="plano" onClick={() => setCrearAbierto(false)}>
               Cancelar
             </Button>
-            <Button type="submit" variant="tinta" busy={crear.isPending}>
+            <Button type="submit" variant="principal" busy={crear.isPending}>
               Crear token
             </Button>
           </div>
@@ -262,7 +263,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         title="Token de gestión creado"
         confirmarCierre={{ pregunta: '¿Has guardado el token?', detalle: 'No se podrá volver a ver.' }}
         pie={
-          <Button variant="tinta" onClick={() => setCreado(null)}>
+          <Button variant="principal" onClick={() => setCreado(null)}>
             Ya lo he guardado
           </Button>
         }
@@ -324,7 +325,7 @@ function FilaToken({
       <div className="min-w-0 basis-full sm:basis-0 sm:grow">
         <p className="break-words text-base font-medium text-tinta">{token.name}</p>
         <p className="mt-0.5 break-all text-sm text-tinta-3">
-          <span className="valor text-tinta-2">{tokenEnmascarado(token.prefix)}</span>
+          <span className="codigo text-tinta-2">{tokenEnmascarado(token.prefix)}</span>
           {mostrarTitular && (
             <>
               {' · '}

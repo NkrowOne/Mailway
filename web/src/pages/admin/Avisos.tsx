@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BellRing } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Alert, type NotifyChannelsView } from '../../lib/api';
 import { Button } from '../../ui/Button';
@@ -9,7 +10,7 @@ import {
   Marca,
   MarcaFondo,
   Membrete,
-  Midiendo,
+  Cargando,
   Vacio,
   type Veredicto,
 } from '../../ui/kit';
@@ -84,7 +85,7 @@ export default function Avisos() {
         }
         actions={
           <Button
-            variant="contorno"
+            variant="perfil"
             aria-pressed={verResueltas}
             onClick={() => setVerResueltas((v) => !v)}
           >
@@ -100,7 +101,7 @@ export default function Avisos() {
           flush
         >
           {alerts.isPending ? (
-            <Midiendo label="Cargando los avisos…" />
+            <Cargando label="Cargando los avisos…" />
           ) : !alerts.data ? (
             <div className="p-4">
               <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
@@ -109,7 +110,7 @@ export default function Avisos() {
               </AvisoError>
             </div>
           ) : list.length === 0 ? (
-            <Vacio title={verResueltas ? 'Sin avisos registrados' : 'Todo en orden'}>
+            <Vacio icono={BellRing} title={verResueltas ? 'Sin avisos registrados' : 'Todo en orden'}>
               El vigilante comprueba cada minuto el servidor de correo, el webmail y la cola de
               salida y, una vez al día, las listas negras. Si algo falla, aparecerá aquí y se
               notificará por los canales configurados más abajo.
@@ -281,7 +282,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
       }
     >
       {channels.isPending ? (
-        <Midiendo label="Cargando los canales de aviso…" />
+        <Cargando label="Cargando los canales de aviso…" />
       ) : !channels.data ? (
         <AvisoError onRetry={() => void channels.refetch()} retrying={channels.isFetching}>
           No se han podido leer los canales de aviso.
@@ -367,7 +368,7 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
               </Button>
               <Button
                 type="submit"
-                variant="tinta"
+                variant="principal"
                 busy={save.isPending && !save.variables?.clearTelegramToken}
               >
                 Guardar canales

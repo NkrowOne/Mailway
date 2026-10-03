@@ -186,7 +186,7 @@ export function SelectorDominio({
               {i > 0 && (i === pendientes.length - 1 ? ' y ' : ', ')}
               <Link
                 to={`/dominios/${d.id}`}
-                className="valor break-all text-laboratorio underline underline-offset-2 hover:text-tinta"
+                className="valor break-all text-petroleo underline underline-offset-2 hover:text-tinta"
               >
                 {d.domainUnicode || d.domain}
               </Link>

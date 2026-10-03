@@ -61,14 +61,13 @@ export function Pestanas<T extends string>({
             aria-controls={panelId}
             tabIndex={seleccionado ? 0 : -1}
             onClick={() => onCambio(o.id)}
-            // Como la navegación activa: fondo petróleo tenue, sin filete de
-            // acento (DESIGN.md solo admite dos bordes de petróleo).
+            // Como la navegación activa: fondo petróleo tenue y texto petróleo.
             className={`rounded-lg border px-3 py-1.5 text-base transition-colors duration-100 ${
               tactil ? 'min-h-11 sm:min-h-0' : ''
             } ${
               seleccionado
-                ? 'border-[rgb(var(--laboratorio)/0.35)] bg-laboratorio-claro font-semibold text-laboratorio'
-                : 'border-regla text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
+                ? 'border-[rgb(var(--petroleo)/0.3)] bg-petroleo-claro font-semibold text-petroleo'
+                : 'border-regla-fuerte bg-hoja text-tinta-2 hover:bg-hoja-2 hover:text-tinta'
             }`}
           >
             {o.label}

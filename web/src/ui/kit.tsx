@@ -1,20 +1,23 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import { Button } from './Button';
 
 /*
-  Primitivas del informe de laboratorio.
+  Primitivas del panel.
 
-  Reglas del mundo:
-  - La estructura la llevan los FILETES, no las cajas ni las sombras.
-  - El color solo aparece para calificar un valor (veredicto). Nunca decora.
-  - Todo lo medido o copiable va en cifras tabulares (clase .valor).
+  Reglas del sistema (DESIGN.md):
+  - Tarjetas blancas con borde fino y sombra mínima sobre el fondo claro.
+  - El verde petróleo orienta (acción principal, navegación, foco); los
+    colores de estado solo califican un dato. Nada de color decorativo.
+  - Cifras con ancho fijo (.valor); lo que se copia tal cual, en
+    monoespaciada (.codigo).
 */
 
 /* ------------------------------- Hoja ------------------------------------- */
 
 /**
- * La hoja del informe. Fondo blanco sobre la mesa, filete perimetral fino y
- * cabecera separada por regla pesada — como una sección de un parte impreso.
+ * Tarjeta de contenido: fondo blanco, borde fino, esquinas suaves y una
+ * cabecera con título, contexto y acciones.
  */
 export function Hoja({
   title,
@@ -37,10 +40,10 @@ export function Hoja({
       className={`hoja-panel min-w-0 overflow-hidden rounded-xl border border-regla bg-hoja ${className}`}
     >
       {(title || actions) && (
-        <header className="regla-cabecera flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 bg-hoja-2/70 px-4 py-3.5">
+        <header className="regla-cabecera flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3.5">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
             {typeof title === 'string' ? (
-              <h2 className="text-md font-semibold tracking-[-0.01em] text-tinta">
+              <h2 className="text-md font-semibold text-tinta">
                 {title}
               </h2>
             ) : (
@@ -82,8 +85,8 @@ const veredictoFondo: Record<Veredicto, string> = {
 };
 
 /**
- * Marca de veredicto en el margen, como la columna de banderas de un análisis.
- * El glifo es geometría dibujada, no un emoji ni un carácter suelto.
+ * Estado de un dato en línea: glifo y texto en el color del estado, sin
+ * fondo. El glifo es un trazo dibujado, no un emoji ni un carácter suelto.
  */
 export function Marca({ veredicto, children }: { veredicto: Veredicto; children?: ReactNode }) {
   return (
@@ -112,20 +115,20 @@ export function MarcaFondo({ veredicto, children }: { veredicto: Veredicto; chil
 }
 
 function GlifoVeredicto({ veredicto }: { veredicto: Veredicto }) {
-  // Un solo trazo, un solo peso, en la gramática del instrumento.
+  // Un solo trazo y un solo peso, con las puntas redondeadas.
   return (
     <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 shrink-0" aria-hidden>
       {veredicto === 'normal' && (
-        <path d="M1 5.4L3.8 8 9 2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M1 5.4L3.8 8 9 2.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       )}
       {veredicto === 'fuera' && (
-        <path d="M2 2l6 6M8 2l-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M2 2l6 6M8 2l-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       )}
       {veredicto === 'vigilar' && (
-        <path d="M5 1.4v4.4M5 8.2v.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M5 1.4v4.4M5 8.2v.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       )}
       {veredicto === 'sin-dato' && (
-        <path d="M1.6 5h6.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M1.6 5h6.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       )}
     </svg>
   );
@@ -134,9 +137,9 @@ function GlifoVeredicto({ veredicto }: { veredicto: Veredicto }) {
 /* -------------------------------- Medida ---------------------------------- */
 
 /**
- * LA firma del mundo: un valor medido junto a su rango de referencia y su
- * veredicto. Es la fila del análisis, y sirve igual para el uso del plan, la
- * puntuación de entregabilidad, la cola de salida o un registro DNS.
+ * Fila de indicador: un valor junto a su objetivo y su estado. Sirve igual
+ * para el uso del plan, la puntuación de entregabilidad, la cola de salida o
+ * un registro DNS.
  */
 export function Medida({
   concepto,
@@ -154,7 +157,7 @@ export function Medida({
   veredicto: Veredicto;
   nota?: ReactNode;
 }) {
-  // El veredicto tiñe la fila entera: así «fuera de rango primero» se ve de un
+  // El estado tiñe la fila entera: lo que necesita atención se ve de un
   // vistazo en lugar de tener que leer la columna de la derecha.
   const fondo =
     veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
@@ -169,13 +172,12 @@ export function Medida({
   // 1280 px, las cuatro columnas tampoco caben y deben plegarse como en móvil.
   return (
     <div className={`regla-fila last:border-b-0 [container-type:inline-size] ${fondo}`}>
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-3.5">
         <span className="min-w-0 flex-1 basis-40 text-base text-tinta">{concepto}</span>
-        {/* El dato medido es el contenido del informe: va a plena escala. Con
-            max-w-full y corte libre, un PTR o un nombre de host largo baja de
-            línea en lugar de desbordar la hoja a 360 px. */}
+        {/* Con max-w-full y corte libre, un PTR o un nombre de host largo baja
+            de línea en lugar de desbordar la tarjeta a 360 px. */}
         <span
-          className={`valor min-w-0 max-w-full shrink-0 text-xl font-medium leading-none [overflow-wrap:anywhere] ${tinta}`}
+          className={`valor min-w-0 max-w-full shrink-0 text-lg font-semibold leading-tight [overflow-wrap:anywhere] ${tinta}`}
         >
           {valor}
           {unidad && <span className="ml-1.5 text-sm font-normal text-tinta-3">{unidad}</span>}
@@ -183,7 +185,7 @@ export function Medida({
         {referencia && (
           <span className="valor shrink-0 text-sm text-tinta-3 [@container(min-width:36rem)]:basis-28">
             {/* Plegada, la cabecera de columnas se oculta: la celda lleva su rótulo. */}
-            <span className="rotulo mr-1.5 [@container(min-width:36rem)]:hidden">Objetivo</span>
+            <span className="mr-1 [@container(min-width:36rem)]:hidden">Esperado:</span>
             {referencia}
           </span>
         )}
@@ -211,11 +213,11 @@ export function CabeceraMedidas({
   // lleva el suyo (mismo umbral de contenedor que Medida).
   return (
     <div className="[container-type:inline-size]">
-      <div className="regla-cabecera hidden flex-wrap items-baseline gap-x-4 gap-y-1 px-3 pb-1.5 [@container(min-width:36rem)]:flex">
-        <span className="rotulo min-w-0 flex-1 basis-40">Indicador</span>
-        <span className="rotulo shrink-0">Estado</span>
-        {referencia && <span className="rotulo shrink-0 basis-28">Objetivo</span>}
-        <span className="rotulo shrink-0 basis-32 text-right">Resultado</span>
+      <div className="regla-cabecera hidden flex-wrap items-baseline gap-x-4 gap-y-1 bg-hoja-2 px-4 py-2 [@container(min-width:36rem)]:flex">
+        <span className="rotulo min-w-0 flex-1 basis-40">Comprobación</span>
+        <span className="rotulo shrink-0">Valor</span>
+        {referencia && <span className="rotulo shrink-0 basis-28">Esperado</span>}
+        <span className="rotulo shrink-0 basis-32 text-right">Estado</span>
       </div>
     </div>
   );
@@ -224,8 +226,8 @@ export function CabeceraMedidas({
 /* --------------------------------- Barra ---------------------------------- */
 
 /**
- * Medición con escala: uso frente al límite del plan. La marca de referencia
- * al 80 % avisa antes de agotarlo, como el límite superior de un rango.
+ * Barra de uso frente al límite del plan. A partir del 80 % cambia a ámbar
+ * para avisar antes de agotarlo.
  *
  * Alcanzar el cupo del plan no es un fallo (un plan de 1 dominio con 1
  * dominio está bien): se vigila, y fuera de rango queda para lo que lo
@@ -270,17 +272,11 @@ export function Escala({
         aria-valuemin={0}
         aria-valuemax={maximo}
         aria-label={label}
-        className="relative h-1.5 bg-hoja-3"
+        className="h-2 overflow-hidden rounded-full bg-hoja-3"
       >
         <div
-          className={`h-full transition-[width] duration-500 ${relleno}`}
+          className={`h-full rounded-full transition-[width] duration-500 ${relleno}`}
           style={{ width: `${Math.max(ratio * 100, usado > 0 ? 2 : 0)}%` }}
-        />
-        {/* Marca del rango: el 80 %, donde conviene empezar a mirar. */}
-        <span
-          aria-hidden
-          className="absolute top-0 h-full w-px bg-[rgb(var(--tinta)/0.3)]"
-          style={{ left: '80%' }}
         />
       </div>
     </div>
@@ -291,8 +287,8 @@ export function Escala({
 
 /**
  * Bloque de valor exacto que el usuario debe llevarse fuera del sistema
- * (registro DNS, credencial, cadena de conexión). En un parte, es el apartado
- * que se recorta: filete de laboratorio arriba y el valor en cifras.
+ * (registro DNS, credencial, cadena de conexión): fondo embutido, rótulo y
+ * botón de copiar arriba, y el valor debajo.
  */
 export function Muestra({
   rotulo,
@@ -309,9 +305,10 @@ export function Muestra({
   const valorRef = useRef<HTMLDivElement>(null);
   return (
     <div
-      className={`min-w-0 overflow-hidden rounded-lg border border-regla border-t-2 border-t-[rgb(var(--laboratorio))] bg-hoja-2 ${className}`}
+      // Lo que se lleva fuera del panel se copia tal cual: en monoespaciada.
+      className={`min-w-0 overflow-hidden rounded-lg border border-regla bg-hoja-2 [&_.valor]:font-codigo ${className}`}
     >
-      <div className="flex items-center justify-between gap-3 px-3 pt-2">
+      <div className="flex items-center justify-between gap-3 px-3 pt-2.5">
         <span className="rotulo">{rotulo}</span>
         {copiar !== undefined && <BotonCopiar text={copiar} objetivo={valorRef} />}
       </div>
@@ -425,7 +422,7 @@ export function BotonCopiar({
       ? 'border-[rgb(var(--normal)/0.45)] text-normal'
       : estado === 'fallo'
         ? 'border-[rgb(var(--fuera)/0.45)] text-fuera'
-        : 'border-regla-fuerte text-tinta-2 hover:bg-hoja-3 hover:text-tinta';
+        : 'border-regla-fuerte text-tinta-2 hover:bg-hoja-2 hover:text-tinta';
 
   return (
     <>
@@ -433,11 +430,11 @@ export function BotonCopiar({
         ref={botonRef}
         type="button"
         onClick={() => void copiar()}
-        className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 font-estrecha text-micro
-          font-semibold uppercase tracking-[0.08em] transition-colors duration-100 active:translate-y-px
+        className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-hoja px-2 text-sm
+          font-medium transition-colors duration-100 active:translate-y-px
           ${tono}`}
       >
-        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden>
+        <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden>
           {estado === 'copiado' ? (
             <path d="M1.5 6.5L4.5 9.5 10.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
           ) : estado === 'fallo' ? (
@@ -654,13 +651,13 @@ export function Dialogo({
       // ello; con overflow-hidden un diálogo largo quedaría cortado en el móvil.
       className={`${ancho === 'amplio' ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(520px,calc(100vw-32px))]'}
         rounded-xl border border-regla-fuerte bg-hoja p-0 text-tinta shadow-flotante
-        backdrop:bg-[rgb(var(--tinta)/0.45)] open:animate-aparecer`}
+        backdrop:bg-[rgb(var(--tinta)/0.4)] open:animate-aparecer`}
     >
-      <div className="regla-cabecera flex items-center justify-between gap-3 px-5 py-3">
+      <div className="regla-cabecera flex items-center justify-between gap-3 px-5 py-3.5">
         <h2
           id={tituloId}
-          // Mismo título que la cabecera de una Hoja.
-          className="min-w-0 text-md font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]"
+          // Un punto por encima del título de una tarjeta: está en primer plano.
+          className="min-w-0 text-lg font-semibold [overflow-wrap:anywhere]"
         >
           {title}
         </h2>
@@ -668,10 +665,10 @@ export function Dialogo({
           type="button"
           onClick={pedirCierre}
           aria-label="Cerrar"
-          className="flex h-7 w-7 shrink-0 items-center justify-center text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
         >
           <svg viewBox="0 0 14 14" className="h-3.5 w-3.5" aria-hidden>
-            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" fill="none" />
+            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
           </svg>
         </button>
       </div>
@@ -702,7 +699,7 @@ export function Dialogo({
             </Button>
             <Button
               ref={volverRef}
-              variant="tinta"
+              variant="principal"
               onClick={() => {
                 setConfirmando(false);
                 if (ref.current) enfocarContenido(ref.current, cuerpoRef.current);
@@ -735,7 +732,7 @@ export function Dialogo({
 /* ----------------------------- Aviso de error ------------------------------ */
 
 /**
- * Banda carmín de error: nombra el problema y, si la operación se puede
+ * Banda roja de error: nombra el problema y, si la operación se puede
  * repetir, ofrece reintentarla ahí mismo. `role="alert"` para anunciarse al
  * aparecer sin que el usuario tenga que buscarla.
  */
@@ -774,50 +771,108 @@ export function AvisoError({
   );
 }
 
+/* ------------------------------- Logotipo --------------------------------- */
+
+/**
+ * Marca de la instancia: un sobre blanco en una tesela petróleo. Es la
+ * misma forma que la tesela de los estados vacíos, en su versión llena.
+ */
+export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }) {
+  return (
+    <span
+      aria-hidden
+      className={`flex shrink-0 items-center justify-center bg-petroleo text-white ${
+        tamano === 'grande' ? 'h-11 w-11 rounded-[13px]' : 'h-9 w-9 rounded-[11px]'
+      }`}
+    >
+      <svg viewBox="0 0 24 24" className={tamano === 'grande' ? 'h-6 w-6' : 'h-5 w-5'}>
+        <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+        <path
+          d="m4.5 7.5 6.3 4.7a2 2 0 0 0 2.4 0l6.3-4.7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
 /* ------------------------------ Sin resultados ----------------------------- */
 
+/**
+ * Icono de una vista dentro de una tesela redondeada en petróleo tenue. Es
+ * el único motivo gráfico del sistema: lo usan los estados vacíos, con el
+ * icono de lo que falta, y la marca de la instancia, con el sobre.
+ */
+export function Tesela({
+  icono: Icono,
+  tamano = 'normal',
+}: {
+  icono: LucideIcon;
+  tamano?: 'normal' | 'pequena';
+}) {
+  return (
+    <span
+      aria-hidden
+      className={`flex shrink-0 items-center justify-center bg-petroleo-claro text-petroleo ${
+        tamano === 'normal' ? 'h-12 w-12 rounded-2xl' : 'h-9 w-9 rounded-xl'
+      }`}
+    >
+      <Icono className={tamano === 'normal' ? 'h-[22px] w-[22px]' : 'h-[18px] w-[18px]'} strokeWidth={1.75} />
+    </span>
+  );
+}
+
+/**
+ * Estado vacío: el icono de lo que falta, qué es y el siguiente paso. Cada
+ * vista pasa su propio icono (sobre, llave, globo…) para que se reconozca de
+ * un vistazo dónde se está.
+ */
 export function Vacio({
+  icono,
   title,
   children,
   action,
 }: {
+  icono: LucideIcon;
   title: string;
   children?: ReactNode;
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-      {/* Geometría de instrumento: una escala sin lectura. */}
-      <svg viewBox="0 0 56 20" className="mb-1 h-5 w-14 text-tinta-3" aria-hidden>
-        <path d="M1 15h54" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M8 15v-5M20 15v-8M32 15v-5M44 15v-8" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M1 5h54" stroke="currentColor" strokeWidth="1" strokeDasharray="2 5" opacity=".5" />
-      </svg>
+    <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center sm:py-12">
+      <span className="mb-2">
+        <Tesela icono={icono} />
+      </span>
       <p className="text-md font-semibold text-tinta">{title}</p>
       {children && <div className="max-w-md text-base text-tinta-2">{children}</div>}
-      {action && <div className="mt-2 flex flex-wrap justify-center gap-2">{action}</div>}
+      {action && <div className="mt-3 flex flex-wrap justify-center gap-2">{action}</div>}
     </div>
   );
 }
 
-/* ------------------------------- Midiendo --------------------------------- */
+/* ------------------------------- Cargando --------------------------------- */
 
 /**
- * Carga: el instrumento barriendo la muestra, no un spinner genérico. Aparece
- * con un breve retraso (`.entrada-diferida` en styles.css): una lectura que
- * tarda 80 ms no debe hacer parpadear el instrumento.
+ * Carga: un aro pequeño que gira y el texto de lo que se espera. Aparece con
+ * un breve retraso (`.entrada-diferida` en styles.css): una petición que
+ * tarda 80 ms no debe hacer parpadear la vista.
  */
-export function Midiendo({ label = 'Cargando…' }: { label?: string }) {
+export function Cargando({ label = 'Cargando…' }: { label?: string }) {
   return (
     <div
       className="entrada-diferida flex flex-col items-center gap-3 px-6 py-12"
       role="status"
       aria-label={label}
     >
-      <div className="medir relative h-px w-48 overflow-hidden bg-[rgb(var(--tinta)/0.15)]" />
-      <span className="text-center font-estrecha text-micro font-semibold uppercase tracking-[0.1em] text-tinta-3">
-        {label}
-      </span>
+      <span
+        aria-hidden
+        className="girar h-6 w-6 rounded-full border-2 border-[rgb(var(--petroleo)/0.18)] border-t-[rgb(var(--petroleo))]"
+      />
+      <span className="text-center text-sm text-tinta-3">{label}</span>
     </div>
   );
 }
@@ -825,36 +880,26 @@ export function Midiendo({ label = 'Cargando…' }: { label?: string }) {
 /* ------------------------------- Membrete --------------------------------- */
 
 /**
- * Cabecera de página: el membrete del parte. Título, línea de contexto
- * (cuándo se midió, sobre qué) y la acción que reclama la página.
+ * Cabecera de página: título, una línea de contexto y la acción que la vista
+ * espera. Sin caja ni fondo: la página empieza por lo que es.
  */
 export function Membrete({
   title,
   meta,
   actions,
-  illustration,
 }: {
   title: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
-  illustration?: string;
 }) {
   return (
-    <div className="campo-lab membrete-panel mb-5 rounded-xl px-5 py-6 sm:px-7 sm:py-7">
-      <div className={`relative z-10 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 ${illustration ? 'pb-24 sm:pb-0 sm:pr-[32%]' : ''}`}>
-        <div className="min-w-0">
-          <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Gestión de correo</p>
-          {/* Un dominio largo en el título parte en lugar de desbordar en móvil. */}
-          <h1 className="titular text-3xl text-white [overflow-wrap:anywhere] sm:text-4xl">{title}</h1>
-          {meta && (
-            <div className="mt-2.5 max-w-2xl text-base text-white/70">{meta}</div>
-          )}
-        </div>
-        {actions && (
-          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
-        )}
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 sm:mb-7">
+      <div className="min-w-0 max-w-3xl">
+        {/* Un dominio largo en el título parte en lugar de desbordar en móvil. */}
+        <h1 className="titular text-2xl text-tinta [overflow-wrap:anywhere] sm:text-3xl">{title}</h1>
+        {meta && <div className="mt-1.5 text-base text-tinta-2">{meta}</div>}
       </div>
-      {illustration && <img src={illustration} alt="" aria-hidden className="pointer-events-none absolute -bottom-8 right-0 h-40 w-52 object-contain sm:h-56 sm:w-[30%]" />}
+      {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

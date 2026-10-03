@@ -1,54 +1,54 @@
-/* Mailway visual layer for Elastic 1.7. Preserve its responsive panes and dark mode. */
+/* Capa visual de Mailway para Elastic 1.7: los colores y las formas del panel
+   (verde petróleo, fondo gris verdoso claro, esquinas suaves). Conserva los
+   paneles adaptables y el modo oscuro de Elastic. */
 html:not(.dark-mode) {
-  --mw-brand: #0a3e45;
-  --mw-paper: #f8f7f3;
-  --mw-border: #deded8;
+  --mw-brand: #0d5c5e;
+  --mw-brand-hover: #09484a;
+  --mw-brand-soft: #e2f0ed;
+  --mw-paper: #f9faf9;
+  --mw-border: #e1e5e4;
 }
-html:not(.dark-mode) body { color: #161513; background: #eeece5; }
+html:not(.dark-mode) body { color: #171f1e; background: #f4f6f4; }
 html:not(.dark-mode) #layout-menu,
 html:not(.dark-mode) #taskmenu { background: var(--mw-brand); }
-html:not(.dark-mode) #taskmenu a { color: #d7e7e8; }
-html:not(.dark-mode) #taskmenu a:hover { background: #164f56; color: white; }
+html:not(.dark-mode) #taskmenu a { color: #d9ebe8; }
+html:not(.dark-mode) #taskmenu a:hover { background: var(--mw-brand-hover); color: white; }
 html:not(.dark-mode) #taskmenu a.selected { background: white; color: var(--mw-brand); }
 html:not(.dark-mode) #layout-sidebar { background: var(--mw-paper); }
 html:not(.dark-mode) #layout-sidebar > .header,
 html:not(.dark-mode) #layout-list > .header,
 html:not(.dark-mode) #layout-content > .header {
-  background: var(--mw-paper); border-color: var(--mw-border); color: var(--mw-brand);
+  background: var(--mw-paper); border-color: var(--mw-border); color: #171f1e;
 }
 html:not(.dark-mode) #mailboxlist li.selected > a,
 html:not(.dark-mode) #messagelist tr.selected td {
-  background: #deeeee; color: #0a3e45;
+  background: var(--mw-brand-soft); color: var(--mw-brand);
 }
 html:not(.dark-mode) #messagelist tr.unread td { font-weight: 600; }
 html:not(.dark-mode) .btn-primary {
   background: var(--mw-brand); border-color: var(--mw-brand); border-radius: 8px;
 }
-html:not(.dark-mode) .btn-primary:hover { background: #164f56; border-color: #164f56; }
+html:not(.dark-mode) .btn-primary:hover { background: var(--mw-brand-hover); border-color: var(--mw-brand-hover); }
 html:not(.dark-mode) .form-control,
-html:not(.dark-mode) .custom-select { border-radius: 8px; border-color: var(--mw-border); }
+html:not(.dark-mode) .custom-select { border-radius: 8px; border-color: #cfd5d4; }
 html:not(.dark-mode) .form-control:focus,
-html:not(.dark-mode) .custom-select:focus { border-color: var(--mw-brand); box-shadow: 0 0 0 2px #0a3e451a; }
+html:not(.dark-mode) .custom-select:focus { border-color: var(--mw-brand); box-shadow: 0 0 0 3px #0d5c5e26; }
 html:not(.dark-mode) :is(a, button, input, select, textarea):focus-visible {
-  outline: 2px solid #00868b; outline-offset: 2px;
+  outline: 2px solid var(--mw-brand); outline-offset: 2px;
 }
 html:not(.dark-mode) .task-login #layout-content {
-  background: #eeece5;
+  background: #f4f6f4;
   padding: 3rem 1rem;
   overflow-y: auto;
 }
 html:not(.dark-mode) .task-login #logo { top: auto; margin-bottom: 2rem; }
 html:not(.dark-mode) #login-form {
-  top: auto; max-width: 400px; padding: 1.5rem;
+  top: auto; max-width: 400px; padding: 1.75rem;
   border: 1px solid var(--mw-border); border-radius: 16px;
-  background: white; box-shadow: 0 10px 32px -22px #072c4960;
+  background: white; box-shadow: 0 1px 2px #171f1e0a, 0 1px 3px #171f1e08;
 }
 @media (min-width: 1025px) {
-  html:not(.dark-mode) .task-login #layout-content {
-    padding-left: 53%; padding-top: 15vh;
-    background: url('mail-server.png') left 5vw center / 40vw auto no-repeat,
-      linear-gradient(90deg, #0a3e45 0 48%, #eeece5 48% 100%);
-  }
+  html:not(.dark-mode) .task-login #layout-content { padding-top: 15vh; }
 }
 @media (max-width: 480px) {
   html:not(.dark-mode) #login-form { width: 100%; padding: 1.25rem; }

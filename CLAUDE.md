@@ -125,8 +125,9 @@ prueba que lo reproduce.
   `modules/connection.ts` para que panel, portal, enlaces y rutas públicas
   digan lo mismo. Solo se publican en Traefik los nombres cuyo DNS ya apunta
   al servidor.
-- **Web**: seguir `DESIGN.md` (parte de laboratorio). Estados de carga
-  (`Midiendo`), vacío (`Vacio`) y error (`AvisoError`) en cada vista; tablas
+- **Web**: seguir `DESIGN.md` (tarjetas blancas, un solo acento petróleo,
+  sin adornos de instrumento). Estados de carga (`Cargando`), vacío (`Vacio`,
+  con el icono de la vista) y error (`AvisoError`) en cada vista; tablas
   regladas con flex, nunca `<table>`; enlaces con aspecto de botón mediante
   `estiloBoton`; sin desplazamiento horizontal en móvil.
 - **Migraciones**: se añaden al final de `core/db.ts` (`005-…`); nunca se

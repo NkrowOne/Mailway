@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../ui/Button';
-import { Midiendo } from '../../ui/kit';
+import { Cargando } from '../../ui/kit';
 import type { PlanCloudflare, PlanInstancia, ZonaCloudflare } from '../../lib/cloudflare';
 import { BandaAviso, BandaError, TablaCambios, claseEnlacePerfil } from './comun';
 
@@ -60,7 +60,7 @@ export function RevisionCambios({
 }: Props) {
   const idCasilla = useId();
 
-  if (cargando) return <Midiendo label="Leyendo la zona en Cloudflare…" />;
+  if (cargando) return <Cargando label="Leyendo la zona en Cloudflare…" />;
   if (error || !plan) {
     return (
       <div className="flex flex-col gap-4">
@@ -131,7 +131,7 @@ export function RevisionCambios({
       <TablaCambios cambios={plan.changes} apex={apex} />
 
       {summary.conflict > 0 && (
-        <div className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
+        <div className="rounded-lg border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
           <label htmlFor={idCasilla} className="flex cursor-pointer items-baseline gap-2.5">
             <input
               id={idCasilla}
@@ -164,7 +164,7 @@ export function RevisionCambios({
         <Button variant="plano" onClick={onCancelar}>
           Cancelar
         </Button>
-        <Button variant="tinta" busy={aplicando} disabled={!puedeAplicar} onClick={onAplicar}>
+        <Button variant="principal" busy={aplicando} disabled={!puedeAplicar} onClick={onAplicar}>
           Aplicar en Cloudflare
         </Button>
       </div>

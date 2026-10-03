@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { ClipboardList } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type Client, type Plan } from '../../lib/api';
@@ -6,7 +7,7 @@ import { plural } from '../../lib/format';
 import { formatQuota, mensajeDe } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input, Textarea } from '../../ui/Field';
-import { Dialogo, Hoja, Membrete, Midiendo, Vacio } from '../../ui/kit';
+import { Dialogo, Hoja, Membrete, Cargando, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera } from '../../components/gestion/comun';
 
@@ -56,12 +57,12 @@ export default function Planes() {
               usan.
             </p>
             {plans.isSuccess && list.length > 0 && (
-              <p className="rotulo mt-1.5 text-white/70">{plural(list.length, 'plan', 'planes')}</p>
+              <p className="mt-1 text-sm text-tinta-3">{plural(list.length, 'plan', 'planes')}</p>
             )}
           </>
         }
         actions={
-          <Button variant="campo" onClick={() => setEditor({ modo: 'crear' })}>
+          <Button variant="principal" onClick={() => setEditor({ modo: 'crear' })}>
             Crear plan
           </Button>
         }
@@ -69,7 +70,7 @@ export default function Planes() {
 
       {plans.isPending ? (
         <Hoja flush>
-          <Midiendo label="Leyendo los planes…" />
+          <Cargando label="Leyendo los planes…" />
         </Hoja>
       ) : plans.isError ? (
         <BandaError onRetry={() => void plans.refetch()}>
@@ -77,7 +78,7 @@ export default function Planes() {
         </BandaError>
       ) : list.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={ClipboardList}
             title="No hay planes"
             action={
               <Button variant="perfil" onClick={() => setEditor({ modo: 'crear' })}>
@@ -158,14 +159,14 @@ export default function Planes() {
                   .filter((c) => c.planId === toDelete.id)
                   .map((c) => (
                     <li key={c.id} className="regla-fila px-3 py-2 last:border-b-0">
-                      <Link to={`/clientes/${c.id}`} className="text-base text-tinta hover:text-laboratorio hover:underline">
+                      <Link to={`/clientes/${c.id}`} className="text-base text-tinta hover:text-petroleo hover:underline">
                         {c.name}
                       </Link>
                     </li>
                   ))}
               </ul>
               <Botonera>
-                <Button variant="tinta" onClick={() => setToDelete(null)}>
+                <Button variant="principal" onClick={() => setToDelete(null)}>
                   Entendido
                 </Button>
               </Botonera>
@@ -431,7 +432,7 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={save.isPending}>
+          <Button type="submit" variant="principal" busy={save.isPending}>
             {plan ? 'Guardar cambios' : 'Crear plan'}
           </Button>
         </Botonera>

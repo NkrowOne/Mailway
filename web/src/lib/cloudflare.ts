@@ -56,7 +56,7 @@ export function medicionIlegible(d: DominioCorreo): boolean {
  */
 export function lecturaDominio(d: DominioCorreo): { veredicto: Veredicto; etiqueta: string } {
   if (d.status === 'active') return { veredicto: 'normal', etiqueta: 'Activo' };
-  if (!d.lastCheckedAt) return { veredicto: 'sin-dato', etiqueta: 'Sin medir' };
+  if (!d.lastCheckedAt) return { veredicto: 'sin-dato', etiqueta: 'Sin comprobar' };
   if (medicionIlegible(d)) return { veredicto: 'sin-dato', etiqueta: 'Sin dato' };
   if (d.verifiedAt) return { veredicto: 'fuera', etiqueta: 'DNS incorrecto' };
   return { veredicto: 'vigilar', etiqueta: 'DNS pendiente' };

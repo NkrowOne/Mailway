@@ -1,10 +1,11 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 
 /*
-  En un parte impreso la acción no se pinta de colores: se imprime en tinta.
-  La jerarquía la dan el peso y la posición, no un acento decorativo.
+  Jerarquía de acciones: una principal en petróleo por zona, secundarias con
+  borde y terciarias solo con texto. El color de identidad marca la acción
+  que la vista espera; el resto no compite con ella.
 */
-export type VarianteBoton = 'tinta' | 'campo' | 'contorno' | 'perfil' | 'plano' | 'peligro';
+export type VarianteBoton = 'principal' | 'perfil' | 'plano' | 'peligro';
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: VarianteBoton;
@@ -15,32 +16,24 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 // `min-h-11 sm:min-h-0`) y los botones compactos (`!h-7`) la sustituyen; con
 // un min-height de base, `sm:min-h-0` dejaría el botón a la altura del texto.
 const base =
-  'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3.5 text-base ' +
+  'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3.5 text-base font-medium ' +
   'transition duration-150 select-none';
 
 const styles: Record<VarianteBoton, string> = {
-  // Acción principal: sólida en tinta, como un sello de conformidad.
-  tinta:
-    'bg-tinta text-hoja font-semibold shadow-sm hover:bg-[rgb(var(--laboratorio))] active:translate-y-px ' +
-    'disabled:opacity-35 disabled:hover:bg-tinta',
-  // Acción principal SOBRE el campo de laboratorio (membrete): invertida.
-  campo:
-    'bg-white text-laboratorio font-semibold shadow-sm hover:bg-laboratorio-claro active:translate-y-px ' +
-    'disabled:opacity-40 disabled:hover:bg-white',
-  // Secundaria SOBRE el campo: filete blanco. `plano` o `perfil` ahí serían
-  // tinta sobre petróleo, es decir, un botón que no se ve.
-  contorno:
-    'border border-white/40 text-white hover:bg-white/10 active:translate-y-px ' +
-    'disabled:opacity-40 disabled:hover:bg-transparent',
-  // Acción secundaria: filete, sin relleno.
+  // Acción principal: relleno petróleo, la única con color de la zona.
+  principal:
+    'bg-petroleo text-white shadow-boton hover:bg-petroleo-hondo active:translate-y-px ' +
+    'disabled:opacity-40 disabled:hover:bg-petroleo',
+  // Acción secundaria: fondo blanco con borde, como un control.
   perfil:
-    'border border-regla-fuerte text-tinta hover:bg-hoja-3 active:translate-y-px disabled:opacity-35',
+    'border border-regla-fuerte bg-hoja text-tinta shadow-boton hover:bg-hoja-2 hover:border-[rgb(var(--tinta)/0.32)] ' +
+    'active:translate-y-px disabled:opacity-40',
   // Terciaria: solo texto.
-  plano: 'text-tinta-2 hover:bg-hoja-3 hover:text-tinta active:translate-y-px disabled:opacity-35',
-  // Destructiva: el carmín de fuera de rango, coherente con el veredicto.
+  plano: 'text-tinta-2 hover:bg-hoja-3 hover:text-tinta active:translate-y-px disabled:opacity-40',
+  // Destructiva: el rojo de los avisos, sin relleno hasta que se señala.
   peligro:
-    'border border-[rgb(var(--fuera)/0.4)] text-fuera hover:bg-fuera-fondo active:translate-y-px ' +
-    'disabled:opacity-35',
+    'border border-[rgb(var(--fuera)/0.35)] bg-hoja text-fuera hover:bg-fuera-fondo active:translate-y-px ' +
+    'disabled:opacity-40',
 };
 
 /**

@@ -118,7 +118,7 @@ export default function Cuenta() {
             <p className="text-sm text-tinta-3">
               Al cambiarla se cierran las demás sesiones abiertas con esta cuenta.
             </p>
-            <Button type="submit" variant="tinta" busy={busy} className="self-start">
+            <Button type="submit" variant="principal" busy={busy} className="self-start">
               Cambiar contraseña
             </Button>
           </form>

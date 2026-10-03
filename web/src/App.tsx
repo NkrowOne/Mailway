@@ -5,7 +5,7 @@ import { api, type SetupStatus, type User } from './lib/api';
 // Se lee aquí, en el paquete principal, para capturar la dirección de arranque
 // antes de cualquier redirección (la pantalla de acceso se descarga después).
 import { enlaceDeArranque } from './lib/arranque';
-import { Midiendo } from './ui/kit';
+import { Cargando } from './ui/kit';
 
 /*
   Cada área se descarga cuando se visita. El titular que abre su enlace de
@@ -45,17 +45,17 @@ export function esRutaPortal(pathname: string): boolean {
   return pathname.startsWith('/conectar/') || pathname === '/mi-buzon' || pathname.startsWith('/mi-buzon/');
 }
 
-/** Mientras llega el código de una vista, el instrumento de carga del sistema. */
-function Cargando({ pantalla = false, children }: { pantalla?: boolean; children: ReactNode }) {
+/** Mientras llega el código de una vista, el indicador de carga del sistema. */
+function ConCarga({ pantalla = false, children }: { pantalla?: boolean; children: ReactNode }) {
   return (
     <Suspense
       fallback={
         pantalla ? (
           <div className="grid min-h-screen place-items-center">
-            <Midiendo label="Cargando…" />
+            <Cargando label="Cargando…" />
           </div>
         ) : (
-          <Midiendo label="Cargando…" />
+          <Cargando label="Cargando…" />
         )
       }
     >
@@ -68,9 +68,9 @@ export default function App() {
   const location = useLocation();
   if (esRutaPortal(location.pathname)) {
     return (
-      <Cargando pantalla>
+      <ConCarga pantalla>
         <PortalApp />
-      </Cargando>
+      </ConCarga>
     );
   }
   return <PanelApp />;
@@ -92,7 +92,7 @@ function PanelApp() {
   if (setup.isPending || me.isPending) {
     return (
       <div className="grid min-h-screen place-items-center">
-        <Midiendo label="Preparando tu panel…" />
+        <Cargando label="Preparando tu panel…" />
       </div>
     );
   }
@@ -120,44 +120,44 @@ function PanelApp() {
   // navegador…), el asistente no puede continuar: primero hay que entrar.
   if (needsSetup && status.hasAdmin && !user) {
     return (
-      <Cargando pantalla>
+      <ConCarga pantalla>
         <Routes>
           <Route path="/login" element={<Login brand={marca} enlaceDeArranque={enlaceDeArranque} />} />
           <Route path="*" element={<Navigate to={irALogin} replace />} />
         </Routes>
-      </Cargando>
+      </ConCarga>
     );
   }
 
   if (needsSetup) {
     return (
-      <Cargando pantalla>
+      <ConCarga pantalla>
         <Routes>
           <Route path="/setup" element={<Setup status={status} user={user} />} />
           <Route path="*" element={<Navigate to="/setup" replace />} />
         </Routes>
-      </Cargando>
+      </ConCarga>
     );
   }
 
   if (!user) {
     return (
-      <Cargando pantalla>
+      <ConCarga pantalla>
         <Routes>
           <Route path="/login" element={<Login brand={marca} enlaceDeArranque={enlaceDeArranque} />} />
           <Route path="*" element={<Navigate to={irALogin} replace />} />
         </Routes>
-      </Cargando>
+      </ConCarga>
     );
   }
 
   const isAdmin = user.role === 'admin';
   return (
-    <Cargando pantalla>
+    <ConCarga pantalla>
       <AppShell user={user} brand={marca}>
         {/* Dentro del marco: al cambiar de vista, la navegación sigue en su
             sitio mientras llega el código de la nueva. */}
-        <Cargando>
+        <ConCarga>
           <Routes>
             {isAdmin ? (
               <>
@@ -184,8 +184,8 @@ function PanelApp() {
             <Route path="/conexiones" element={<Conexiones isAdmin={isAdmin} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </Cargando>
+        </ConCarga>
       </AppShell>
-    </Cargando>
+    </ConCarga>
   );
 }

@@ -37,12 +37,13 @@ export function FieldWrap({ label, help, error, children }: FieldWrapProps) {
   );
 }
 
-// Casilla de formulario impreso: filete perimetral fino, fondo de hoja.
+// Control de formulario: borde visible, esquinas suaves y anillo petróleo al
+// enfocarlo.
 const controlBase =
-  'h-10 w-full min-w-0 rounded-lg border border-regla bg-hoja px-3 text-base text-tinta shadow-sm ' +
+  'h-10 w-full min-w-0 rounded-lg border border-regla-fuerte bg-hoja px-3 text-base text-tinta shadow-boton ' +
   'placeholder:text-tinta-3 transition duration-150 ' +
-  'hover:border-regla-fuerte focus:border-[rgb(var(--laboratorio))] focus:ring-2 focus:ring-laboratorio/10 ' +
-  'disabled:opacity-35 ' +
+  'hover:border-[rgb(var(--tinta)/0.32)] focus:border-[rgb(var(--petroleo))] focus:outline-none focus:ring-[3px] focus:ring-petroleo/15 ' +
+  'disabled:bg-hoja-2 disabled:opacity-60 ' +
   // Un campo con error lleva el filete del veredicto, no solo el texto de debajo.
   'aria-[invalid=true]:border-[rgb(var(--fuera)/0.6)]';
 
@@ -65,7 +66,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           id={id}
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
-          className={`${controlBase} ${mono ? 'valor text-sm' : ''} ${className}`}
+          className={`${controlBase} ${mono ? 'codigo text-sm' : ''} ${className}`}
           {...rest}
         />
       )}

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search, CircleHelp, ArrowRight } from 'lucide-react';
 import { api, type Client, type DomainRecord, type Mailbox, type User } from '../lib/api';
-import { AvisoError, Dialogo, Midiendo } from '../ui/kit';
+import { AvisoError, Dialogo, Cargando } from '../ui/kit';
 
 /**
  * Búsqueda y ayuda del panel. La búsqueda usa los mismos recursos (y la misma
@@ -69,16 +69,18 @@ export function PanelTools({ user }: { user: User }) {
         <button
           type="button"
           onClick={() => setSearchOpen(true)}
-          className="flex min-h-10 w-full max-w-lg items-center gap-3 rounded-lg border border-regla bg-hoja px-3
-            text-left text-base text-tinta-3 hover:border-regla-fuerte"
+          className="flex min-h-10 w-full min-w-0 max-w-lg items-center gap-3 rounded-lg border border-regla-fuerte bg-hoja px-3
+            text-left text-base text-tinta-3 shadow-boton hover:border-[rgb(var(--tinta)/0.32)]"
         >
           <Search className="h-4 w-4 shrink-0" aria-hidden />
-          <span>Buscar {esAdmin ? 'clientes, ' : ''}dominios o buzones…</span>
+          <span className="min-w-0 truncate">
+            Buscar<span className="hidden sm:inline"> {esAdmin ? 'clientes, ' : ''}dominios o buzones</span>…
+          </span>
         </button>
         <button
           type="button"
           onClick={() => setHelpOpen(true)}
-          className="inline-flex min-h-10 shrink-0 items-center gap-2 text-base text-tinta-2 hover:text-laboratorio"
+          className="inline-flex min-h-10 shrink-0 items-center gap-2 text-base text-tinta-2 hover:text-petroleo"
         >
           <CircleHelp className="h-4 w-4" aria-hidden />
           Ayuda
@@ -101,7 +103,7 @@ export function PanelTools({ user }: { user: User }) {
         />
         <div className="mt-3" aria-live="polite">
           {loading && !error ? (
-            <Midiendo label="Cargando dominios y buzones…" />
+            <Cargando label="Cargando dominios y buzones…" />
           ) : error ? (
             <AvisoError onRetry={reintentar} retrying={reintentando}>
               No se han podido cargar todos los resultados.
@@ -115,7 +117,7 @@ export function PanelTools({ user }: { user: User }) {
                   <Link
                     to={r.to}
                     onClick={() => setSearchOpen(false)}
-                    className="flex items-center gap-3 border-b border-regla py-3 text-tinta hover:text-laboratorio"
+                    className="flex items-center gap-3 border-b border-regla py-3 text-tinta hover:text-petroleo"
                   >
                     {/* Un identificador largo parte de línea, no se recorta. */}
                     <span className="min-w-0 flex-1 break-words">
@@ -154,7 +156,7 @@ export function PanelTools({ user }: { user: User }) {
               <Link
                 to={item.to}
                 onClick={() => setHelpOpen(false)}
-                className="font-semibold text-laboratorio hover:underline"
+                className="font-semibold text-petroleo hover:underline"
               >
                 {item.title} →
               </Link>

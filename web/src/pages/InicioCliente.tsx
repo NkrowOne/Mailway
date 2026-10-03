@@ -14,7 +14,7 @@ import {
   Marca,
   MarcaFondo,
   Membrete,
-  Midiendo,
+  Cargando,
 } from '../ui/kit';
 
 interface Paso {
@@ -29,7 +29,7 @@ interface Paso {
 }
 
 /** Enlace dentro de la pista de un paso: por encima del enlace que ocupa la fila. */
-const enlacePista = 'relative z-10 text-laboratorio underline underline-offset-2 hover:text-tinta';
+const enlacePista = 'relative z-10 text-petroleo underline underline-offset-2 hover:text-tinta';
 
 
 /**
@@ -47,7 +47,7 @@ export default function InicioCliente() {
   // marca blanca del cliente), no la que muestre ahora el navegador.
   const panel = useDireccionPanel({ user });
 
-  if (isPending) return <Midiendo label="Cargando tu resumen…" />;
+  if (isPending) return <Cargando label="Cargando tu resumen…" />;
   // Si una relectura falla pero ya hubo datos, se siguen mostrando.
   if (!data) {
     return (
@@ -137,7 +137,6 @@ export default function InicioCliente() {
     <>
       <Membrete
         title={data.client.name}
-        illustration="/mail-server.png"
         meta={
           data.client.suspended ? (
             <MarcaFondo veredicto="fuera">
@@ -145,7 +144,7 @@ export default function InicioCliente() {
             </MarcaFondo>
           ) : (
             <span>
-              Plan <span className="font-medium text-white">{plan.name}</span> ·{' '}
+              Plan <span className="font-medium text-tinta">{plan.name}</span> ·{' '}
               {hechos === obligatorios.length
                 ? 'puesta en marcha completa'
                 : `${hechos} de ${obligatorios.length} pasos obligatorios completados`}
@@ -162,13 +161,13 @@ export default function InicioCliente() {
                   href={data.webmailUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className={estiloBoton(siguiente ? 'contorno' : 'campo')}
+                  className={estiloBoton(siguiente ? 'perfil' : 'principal')}
                 >
                   Abrir webmail <span aria-hidden>↗</span>
                 </a>
               )}
               {siguiente && (
-                <Link to={siguiente.to} className={estiloBoton('campo')}>
+                <Link to={siguiente.to} className={estiloBoton('principal')}>
                   {siguiente.label}
                 </Link>
               )}
@@ -199,7 +198,7 @@ export default function InicioCliente() {
                   <span
                     aria-hidden
                     className={`valor shrink-0 text-sm ${
-                      paso.done ? 'text-normal' : esSiguiente ? 'text-laboratorio' : 'text-tinta-3'
+                      paso.done ? 'text-normal' : esSiguiente ? 'text-petroleo' : 'text-tinta-3'
                     }`}
                   >
                     {i + 1}

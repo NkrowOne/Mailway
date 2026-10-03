@@ -94,18 +94,18 @@ export function GuiasDispositivo(props: GuiasDispositivoProps) {
               aria-controls={`${idBase}-panel-${d}`}
               tabIndex={seleccionada ? 0 : -1}
               onClick={() => setActiva(d)}
-              className={`flex min-h-11 flex-col items-center justify-center border px-2 py-1.5 text-center text-base
+              className={`flex min-h-11 flex-col items-center justify-center rounded-lg border px-2 py-1.5 text-center text-base
                 transition-colors duration-100 ${
                   seleccionada
-                    ? 'border-[rgb(var(--laboratorio)/0.35)] bg-laboratorio-claro font-semibold text-laboratorio'
-                    : 'border-regla text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
+                    ? 'border-[rgb(var(--petroleo)/0.35)] bg-petroleo-claro font-semibold text-petroleo'
+                    : 'border-regla-fuerte bg-hoja text-tinta-2 hover:bg-hoja-2 hover:text-tinta'
                 }`}
             >
               {NOMBRES[d]}
               {/* «Recomendado»: en Linux o Windows lo detectado es un programa
                   (Thunderbird, Outlook), no «este dispositivo». */}
               {d === detectado && d !== 'otros' && (
-                <span className="rotulo mt-0.5 text-micro leading-3">Recomendado</span>
+                <span className="mt-0.5 text-micro font-normal">Recomendado</span>
               )}
             </button>
           );
@@ -133,7 +133,7 @@ export function GuiasDispositivo(props: GuiasDispositivoProps) {
 
 function Subtitulo({ children }: { children: ReactNode }) {
   return (
-    <h3 className="font-estrecha text-md font-semibold uppercase tracking-[0.06em] text-tinta">{children}</h3>
+    <h3 className="text-md font-semibold text-tinta">{children}</h3>
   );
 }
 
@@ -152,7 +152,7 @@ function GuiaIphone(props: GuiasDispositivoProps & { enEsteDispositivo: boolean 
           </Nota>
         </div>
       )}
-      <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('tinta')} self-stretch sm:self-start`}>
+      <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('principal')} self-stretch sm:self-start`}>
         Instalar perfil
       </a>
       <p className="max-w-[70ch] border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta">
@@ -195,7 +195,7 @@ function GuiaMac(props: GuiasDispositivoProps) {
       <p className="max-w-[70ch] text-base text-tinta-2">
         Para la app Mail del Mac. Si utilizas Outlook o Thunderbird, consulta su pestaña.
       </p>
-      <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('tinta')} self-stretch sm:self-start`}>
+      <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('principal')} self-stretch sm:self-start`}>
         Descargar perfil
       </a>
       <Pasos>
@@ -406,7 +406,7 @@ function FilaDato({
     <div className="regla-fila flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2.5 last:border-b-0">
       <span className={`rotulo basis-full ${compacto ? '' : 'sm:w-44 sm:basis-auto sm:shrink-0'}`}>{rotulo}</span>
       <div className="min-w-0 flex-1">
-        {valor && <p className="valor break-all text-base text-tinta">{valor}</p>}
+        {valor && <p className="codigo break-all text-base text-tinta">{valor}</p>}
         {nota && <p className="text-sm text-tinta-2">{nota}</p>}
       </div>
       {copiar && <BotonCopiarTactil texto={copiar} />}
@@ -415,7 +415,7 @@ function FilaDato({
 }
 
 /** Botón para abrir el webmail en otra pestaña, sin enviar el enlace actual como referencia. */
-export function BotonWebmail({ url, variante = 'perfil' }: { url: string; variante?: 'tinta' | 'perfil' }) {
+export function BotonWebmail({ url, variante = 'perfil' }: { url: string; variante?: 'principal' | 'perfil' }) {
   if (!url) {
     return (
       <Button variant="perfil" disabled>

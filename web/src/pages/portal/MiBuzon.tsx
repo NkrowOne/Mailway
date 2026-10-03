@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Smartphone } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -17,7 +18,7 @@ import {
 } from '../../lib/portal';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
-import { Dialogo, Escala, Hoja, Marca, MarcaFondo, Midiendo, Muestra, Vacio } from '../../ui/kit';
+import { Cargando, Dialogo, Escala, Hoja, Logotipo, Marca, MarcaFondo, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
@@ -42,7 +43,7 @@ export default function MiBuzon() {
   if (me.isPending) {
     return (
       <PaginaEstado>
-        <Midiendo label="Cargando tu buzón…" />
+        <Cargando label="Cargando tu buzón…" />
       </PaginaEstado>
     );
   }
@@ -56,11 +57,11 @@ export default function MiBuzon() {
     return (
       <PaginaEstado>
         <div className="flex flex-col gap-3 px-5 py-6">
-          <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">
+          <h1 className="text-xl font-semibold text-tinta">
             No se ha podido cargar la página
           </h1>
           <AvisoError>{mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}</AvisoError>
-          <Button variant="tinta" className={TACTIL} onClick={() => void me.refetch()}>
+          <Button variant="principal" className={TACTIL} onClick={() => void me.refetch()}>
             Volver a intentarlo
           </Button>
         </div>
@@ -113,22 +114,14 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-mesa px-4 py-10">
       <div className="w-full max-w-[25rem] animate-aparecer">
-        <section className="border border-regla bg-hoja">
-          <header className="border-b-2 border-b-[rgb(var(--laboratorio))] px-5 py-4">
-            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-              <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio" aria-hidden>
-                <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-              <span className="min-w-0 break-words font-estrecha text-lg font-semibold uppercase tracking-[0.14em] text-tinta">
-                {marca}
-              </span>
-            </div>
-          </header>
-
-          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 py-5">
+        <div className="mb-6 flex items-center justify-center gap-3">
+          <Logotipo />
+          <span className="min-w-0 break-words text-lg font-semibold text-tinta">{marca}</span>
+        </div>
+        <section className="hoja-panel overflow-hidden rounded-2xl border border-regla bg-hoja">
+          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 py-6 sm:px-7 sm:py-7">
             <div>
-              <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">Mi buzón</h1>
+              <h1 className="text-2xl font-semibold text-tinta">Mi buzón</h1>
               <p className="mt-1 text-base text-tinta-2">
                 Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
                 contraseña.
@@ -161,12 +154,12 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
               className={TACTIL}
             />
             {error && <AvisoError>{error}</AvisoError>}
-            <Button type="submit" variant="tinta" busy={busy} className={`w-full ${TACTIL}`}>
+            <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
               Iniciar sesión
             </Button>
           </form>
         </section>
-        <p className="mt-3 text-center text-sm text-tinta-3">
+        <p className="mt-4 text-center text-sm text-tinta-3">
           Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.
         </p>
       </div>
@@ -198,21 +191,14 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       titulo="Mi buzón"
       meta={
         <>
-          <p className="valor break-all text-white/90">{me.email}</p>
+          <p className="break-all font-medium text-tinta">{me.email}</p>
           {me.displayName && <p className="mt-1">{me.displayName}</p>}
         </>
       }
       acciones={
-        // Sobre el campo oscuro: filete blanco, como el botón de menú del panel.
-        <button
-          type="button"
-          onClick={() => void salir()}
-          disabled={saliendo}
-          className={`inline-flex h-8 ${TACTIL} shrink-0 items-center border border-white/30 px-3 text-base text-white
-            transition-colors duration-100 hover:bg-white/10 disabled:opacity-40`}
-        >
+        <Button variant="plano" onClick={() => void salir()} disabled={saliendo} className={`shrink-0 ${TACTIL}`}>
           Cerrar sesión
-        </button>
+        </Button>
       }
     >
       <HojaEspacio me={me} />
@@ -257,11 +243,11 @@ function HojaEspacio({ me }: { me: PortalMe }) {
   return (
     <Hoja
       title="Espacio ocupado"
-      meta={me.usageCheckedAt ? `Medido: ${formatDate(me.usageCheckedAt)}` : undefined}
+      meta={me.usageCheckedAt ? `Actualizado: ${formatDate(me.usageCheckedAt)}` : undefined}
     >
       {usado === null ? (
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-base text-tinta-2">No se ha podido medir el espacio ocupado en este momento.</p>
+          <p className="text-base text-tinta-2">No se ha podido consultar el espacio ocupado en este momento.</p>
           <Marca veredicto="sin-dato" />
         </div>
       ) : (
@@ -342,7 +328,7 @@ function HojaContrasenasAplicacion() {
           <div className="revelar flex flex-col gap-3">
             <Muestra rotulo={`Contraseña para «${nueva.nombre}»`}>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="valor min-w-0 grow break-all text-lg text-tinta">{nueva.password}</span>
+                <span className="codigo min-w-0 grow break-all text-lg text-tinta">{nueva.password}</span>
                 <BotonCopiarTactil texto={nueva.password} />
               </div>
             </Muestra>
@@ -406,14 +392,14 @@ function HojaContrasenasAplicacion() {
       </div>
 
       {lista.isPending ? (
-        <Midiendo label="Cargando contraseñas…" />
+        <Cargando label="Cargando contraseñas…" />
       ) : lista.isError ? (
         <div className="px-4 pb-4">
           <AvisoError>{mensajeError(lista.error, 'No se han podido cargar las contraseñas de aplicación.')}</AvisoError>
         </div>
       ) : todas.length === 0 ? (
         <div className="border-t border-regla">
-          <Vacio title="Aún no hay contraseñas de aplicación">
+          <Vacio icono={Smartphone} title="Aún no hay contraseñas de aplicación">
             Crea la primera para el dispositivo que vayas a configurar.
           </Vacio>
         </div>
