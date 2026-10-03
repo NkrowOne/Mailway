@@ -53,6 +53,9 @@ jobs:
       - name: Emparejado y panel en Skyway del instalador (docker y Skyway simulados)
         run: bash deploy/prueba-emparejado.sh
 
+      - name: Migración desde la 0.x en el instalador (docker y motor simulados)
+        run: bash deploy/prueba-migracion.sh
+
       - name: Compose con un entorno ficticio (con y sin el perfil tls)
         run: |
           cat > "$RUNNER_TEMP/ficticio.env" <<'EOF'

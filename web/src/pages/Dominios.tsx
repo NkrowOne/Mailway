@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, type Client } from '../lib/api';
 import {
+  avisoAltaDominio,
   cuentasUtilizables,
   invalidarTrasAltaOBaja,
   lecturaDominio,
@@ -11,7 +12,7 @@ import {
   type CuentaCloudflare,
   type DominioCorreo,
   type EstadoAltaDominio,
-  type ResultadoAplicacion,
+  type RespuestaAltaDominio,
 } from '../lib/cloudflare';
 import { formatDate, plural } from '../lib/format';
 import { useClientes, useUsuario } from '../components/gestion/consultas';
@@ -29,46 +30,6 @@ import { useToast } from '../ui/toast';
 
 /** Fuera de rango primero; después, lo que vigilar, sin dato y, al final, lo activo. */
 const ordenVeredicto: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
-
-interface RespuestaAlta {
-  domain: DominioCorreo;
-  cloudflare: ResultadoAplicacion | null;
-  cloudflareReason?: string;
-}
-
-/**
- * Aviso tras el alta según lo que pasó con Cloudflare. Un motivo o unos
- * conflictos sin aplicar reclaman atención: no se anuncian como un éxito.
- */
-function avisoAlta(data: RespuestaAlta, pedido: boolean): { tono: 'ok' | 'error'; texto: string } {
-  if (!pedido) return { tono: 'ok', texto: 'Dominio dado de alta. Configura ahora su DNS.' };
-  const cf = data.cloudflare;
-  if (!cf || data.cloudflareReason) {
-    return {
-      tono: 'error',
-      texto:
-        'Dominio dado de alta, pero no se ha configurado el DNS en Cloudflare. Consulta el motivo en la ficha del dominio.',
-    };
-  }
-  if (cf.errors.length > 0) {
-    return {
-      tono: 'error',
-      texto:
-        cf.applied.length > 0
-          ? 'Dominio dado de alta. Parte de los registros no se ha podido aplicar en Cloudflare: consulta el detalle en la ficha del dominio.'
-          : 'Dominio dado de alta, pero no se ha podido aplicar el DNS en Cloudflare. Consulta el detalle en la ficha del dominio.',
-    };
-  }
-  if ((cf.skipped ?? []).length > 0) {
-    return {
-      tono: 'error',
-      texto:
-        'Dominio dado de alta. Hay registros en conflicto en Cloudflare que no se han modificado: revísalos en la ficha del dominio.',
-    };
-  }
-  if (cf.applied.length > 0) return { tono: 'ok', texto: 'Dominio dado de alta y DNS aplicado en Cloudflare.' };
-  return { tono: 'ok', texto: 'Dominio dado de alta. Los registros ya estaban configurados en Cloudflare.' };
-}
 
 export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
   const queryClient = useQueryClient();
@@ -115,7 +76,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<RespuestaAlta>('/api/domains', {
+      api.post<RespuestaAltaDominio>('/api/domains', {
         domain: domainName,
         clientId: isAdmin ? clientId : undefined,
         ...(hayCloudflare && autoDns ? { autoDns: true } : {}),
@@ -124,7 +85,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
       await invalidarTrasAltaOBaja(queryClient, data.domain.clientId);
       setOpen(false);
       const pedido = hayCloudflare && autoDns;
-      const aviso = avisoAlta(data, pedido);
+      const aviso = avisoAltaDominio(data, pedido);
       toast(aviso.tono, aviso.texto);
       const alta: EstadoAltaDominio = {
         autoDns: pedido,
@@ -355,8 +316,8 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
               <p className="mt-1 max-w-[70ch] text-sm text-tinta-2">
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
-                faltan y se completa el SPF existente; si hay registros en conflicto, no se
-                modifican y podrás revisarlos en la ficha del dominio.
+                faltan: lo que ya existe (también un SPF que habría que completar) no se
+                modifica y podrás revisarlo y aplicarlo en la ficha del dominio.
               </p>
             </div>
           )}

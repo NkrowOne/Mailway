@@ -111,7 +111,7 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
@@ -160,7 +160,7 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/domains?clientId=` | `{ domains: DomainRecord[] }`. |
-| `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. |
+| `POST /api/domains` | `{ domain, clientId?, autoDns? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. Dominio cuyo DNS escribió la administración con una cuenta de la instancia para otro cliente: `409 domain_reserved` (sección 4.3), salvo que lo dé de alta la administración sin `soloCliente`. |
 | `GET /api/domains/:id` | `{ domain }`. |
 | `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }], mxInternos }`, sin punto final, sin SRV de puertos que no se publican y sin registros de la web del dominio raíz ni de `www` (A, AAAA, CNAME, HTTPS y SVCB). `category` es `obligatorio`, `autoconfiguracion`, `verificacion` (el TXT de propiedad, con `required: false`) o `endurecimiento` (MTA-STS y TLS-RPT). `mxInternos` lista los destinos MX que propone el motor y son nombres internos (ver «MX interno»); si no está vacío, no publiques la tabla. |
 | `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar (`recomendados` por defecto). Incluye el TXT de verificación salvo en `obligatorios`. Nunca incluye registros de la web del dominio raíz ni de `www`: si el motor propusiera alguno, la cabecera del fichero lo dice. Con un MX interno: `409 mx_hostname_internal`. |
@@ -544,9 +544,51 @@ DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/cloudflare/accounts` | Cuentas visibles: `{ accounts: [{ id, clientId, label, tokenHint, createdAt, lastVerifiedAt, lastError, zones?, zonesTotal? }] }`. Administración: `?clientId=<id>` o `?clientId=instancia`. `?refresh=1` vuelve a leer las zonas. |
-| `POST /api/cloudflare/accounts` | `{ token, label?, clientId? }` (`clientId` null o ausente = instancia; solo administración) → `{ account }`. Mismo token en el mismo ámbito: `409 cloudflare_duplicate`. |
-| `DELETE /api/cloudflare/accounts/:id` | Desconecta la cuenta. |
+| `GET /api/cloudflare/accounts` | Cuentas visibles: `{ accounts: [{ id, clientId, label, tokenHint, createdAt, lastVerifiedAt, lastError, zones?, zonesTotal? }] }`. Administración: `?clientId=<id>` o `?clientId=instancia`. `?refresh=1` vuelve a leer las zonas. Con `?soloCliente=1`, solo las del `?clientId` indicado (sin él, ninguna). |
+| `POST /api/cloudflare/accounts` | `{ token, label?, clientId? }` (`clientId` null o ausente = instancia; solo administración) → `{ account }`. Mismo token en el mismo ámbito: `409 cloudflare_duplicate`. Con `?soloCliente=1` hay que indicar el cliente: sin él, `403 cloudflare_instance_admin_only`. |
+| `DELETE /api/cloudflare/accounts/:id` | Desconecta la cuenta. Con `?soloCliente=1`, una cuenta de la instancia responde `404`. |
+
+#### La cuenta de la instancia que deja el instalador
+
+Si das un token de Cloudflare al instalar (`deploy/instalar.sh`, variable
+`CLOUDFLARE_API_TOKEN` o la pregunta del instalador), además de crear los
+registros de la plataforma se guarda en el panel como **cuenta de la
+instancia** («Instalador de Mailway»), así que no tienes que volver a pegarlo
+en Conexiones. Desde entonces, los dominios que da de alta **la
+administración** (en el panel, en el alta de un cliente con su primer dominio
+o desde Skyway) configuran su DNS en Cloudflare solos, sin modificar los
+registros existentes (sección 4.4): lo que falta se crea y lo que choca se
+informa y no se toca. Las acciones de un cliente nunca la usan (sección 4.3).
+
+El instalador usa la herramienta de terminal del panel, con el token por la
+entrada estándar (nunca como argumento, que se vería en `ps`):
+
+```bash
+printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
+  node server/dist/tools/cloudflare.js conectar [--nombre <nombre>]
+```
+
+- Rechaza `--token` y cualquier argumento que parezca un token antes de leer
+  nada, no lee desde un terminal y no repite nunca lo recibido.
+- Imprime una línea JSON `{"ok":true,"id","label","zones","creada","sustituida"}`;
+  los avisos van a la salida de errores con «Aviso: » y un fallo termina con
+  código 1.
+- Es idempotente: con el mismo token ya conectado como cuenta de la instancia
+  devuelve esa cuenta (`creada: false`) sin cambiarla.
+- Con un token distinto, si ya hay una cuenta de la instancia conectada desde
+  la terminal (la del instalador), le **sustituye el token** tras verificarlo
+  (`sustituida: true`, `cloudflare.account_token_replaced` en la Actividad) en
+  vez de añadir otra: así se rota el token repitiendo el instalador con
+  `CLOUDFLARE_API_TOKEN`, y los dominios asociados a la cuenta lo siguen estando.
+  Las cuentas de la instancia conectadas desde el panel no se tocan. Esa
+  variable se exporta y se pasa con `sudo --preserve-env` (o desde una sesión
+  de root), nunca escrita en la orden: `sudo CLOUDFLARE_API_TOKEN=…` la deja a
+  la vista en `ps` mientras dura la instalación (docs/DESPLIEGUE-SKYWAY.md,
+  sección 2.5).
+- Queda en la Actividad como «Sistema» (`cloudflare.account_connected`, sin el
+  token). El token no se escribe en `deploy/.env`: `--actualizar` sin
+  `CLOUDFLARE_API_TOKEN` y `--emparejar` (que nunca lo usa, aunque exista esa
+  variable) no lo tienen y no tocan la cuenta que hubiera conectada.
 
 ### 4.2 Aplicar el DNS de un dominio
 
@@ -556,14 +598,20 @@ DNS → Editar*. Limítalo a las zonas que quieras, créalo y pégalo.
    rechaza el lote, se aplican uno a uno y se informa de cada error) y el panel
    mide la propagación.
 3. Al dar de alta un dominio, la casilla **Configurar el DNS automáticamente
-   en Cloudflare** (`autoDns: true`) hace todo en un paso, sin reemplazar nada
-   que ya exista.
+   en Cloudflare** (`autoDns: true`) crea en un paso los registros que faltan
+   y **no modifica nada que ya exista**: un SPF que habría que completar, un
+   registro con proxy o uno propio que haya cambiado quedan en `skipped` con su
+   motivo, igual que un conflicto, para revisarlos y aplicarlos desde la ficha
+   del dominio (pasos 1 y 2). Aparece en Dominios y, para la administración, en
+   el alta de un cliente con su primer dominio (con las cuentas de la
+   instancia). Sin `autoDns` en el cuerpo, `POST /api/domains` no toca
+   Cloudflare.
 
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required }], summary }`. `?includeRecommended=false` limita a los obligatorios. |
 | `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
-| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. |
+| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para quitarle el proxy. |
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
 Si la zona está pendiente de activación en Cloudflare, `zone.nameServers`
@@ -571,13 +619,16 @@ indica los servidores de nombres que debes poner en tu registrador.
 
 ### 4.3 Qué cuentas se usan
 
-- Primero, la cuenta ya asociada al dominio; después, las del **cliente**
-  dueño del dominio; y, solo si actúa la **administración** (y no pide
-  `soloCliente=1`), las de la instancia.
-- Un cliente **no** puede usar las cuentas de la instancia: si pudiera, le
-  bastaría con dar de alta un dominio que vive en la cuenta del administrador
-  para escribir en esa zona. Excepción: una cuenta de la instancia que quedó
-  asociada al dominio porque la administración ya aplicó su DNS con ella.
+- Primero, la cuenta ya asociada al dominio, si quien actúa puede usarla;
+  después, las del **cliente** dueño del dominio; y, solo si actúa la
+  **administración** (y no pide `soloCliente=1`), las de la instancia.
+- Un cliente **nunca** usa las cuentas de la instancia, ni directa ni
+  indirectamente: si pudiera, le bastaría con dar de alta un dominio que vive
+  en la cuenta del administrador (o un subdominio suyo) para escribir en esa
+  zona. Tampoco cuando la cuenta quedó asociada al dominio porque la
+  administración aplicó su DNS con ella: la asociación solo la aprovecha la
+  administración, y el cliente recibe un motivo que lo explica (conectar una
+  cuenta propia o pedir a la administración que vuelva a aplicarlo).
 - **`?soloCliente=1`** (o `true`) limita la búsqueda a las cuentas del cliente
   aunque la petición llegue con un token de administración. Se aplica en las
   cuatro rutas que planifican o escriben DNS con una cuenta de Cloudflare:
@@ -591,17 +642,42 @@ indica los servidores de nombres que debes poner en tu registrador.
   Sin una cuenta propia que contenga la zona, el plan responde
   `available: false` y la aplicación `400 cloudflare_unavailable`: nunca se
   escribe en una zona de la instancia. Skyway lo envía cuando quien actúa en
-  Skyway no es administrador, para que su token de administración no abra a los
-  proyectos las cuentas de la instancia.
+  Skyway no es administrador (propietario o miembro de un espacio de trabajo),
+  para que su token de administración no abra a los proyectos las cuentas de la
+  instancia.
+- Lo que la administración escribe con una cuenta de la instancia queda
+  **reservado**: los registros de un dominio (MX, TXT de verificación) siguen
+  en la zona del operador aunque el dominio se borre, y probarían la propiedad
+  a cualquiera. Ese dominio solo lo puede volver a dar de alta el cliente para
+  el que se escribió o la administración (sin `soloCliente`); para otro
+  cliente, `409 domain_reserved`. Si la administración lo da de alta para otro
+  cliente, la reserva pasa a ese cliente. Borrar el dominio no borra sus
+  registros en Cloudflare. Al actualizar desde la 1.0 se reservan los
+  dominios que siguen en la base con el DNS aplicado con una cuenta de la
+  instancia (o con una ya desconectada); los borrados antes de actualizar no
+  se pueden reconstruir (docs/SEGURIDAD.md).
+- Con `soloCliente=1`, además, las cuentas de la instancia no se listan ni se
+  borran, no se puede conectar una cuenta sin cliente y las rutas que solo
+  trabajan con ellas (`/api/cloudflare/instance-dns` y `POST /api/engine/acme`)
+  responden `403 cloudflare_instance_admin_only`.
 
 ### 4.4 Reglas que protegen el correo existente
 
+- El **alta automática** (`autoDns`) solo crea: nunca modifica ni borra un
+  registro existente. Lo que esta sección describe como «se corrige», «se
+  fusiona» o «se actualiza» solo lo hace **Aplicar en Cloudflare** desde la
+  ficha del dominio, después de revisar el plan.
 - Todos los registros van **sin proxy** (nube gris): el proxy de Cloudflare
   rompe SMTP e IMAP. Un registro con proxy se corrige.
 - **SPF**: si ya existe uno, se fusiona (se añade `mx` delante del primer
   `all`) en lugar de crear un segundo, que invalidaría ambos. Un `mx` escrito
   detrás de `all` no cuenta, igual que en la comprobación DNS. Con dos SPF no
   se toca y se avisa.
+- **Registros propios**: Mailway marca lo que crea con el comentario
+  `Mailway (instancia <huella>)`, propio de cada instalación. Solo un registro
+  con exactamente ese comentario se actualiza sin confirmación (una clave DKIM
+  nueva, un SRV que cambia de puerto); el de otra instalación de Mailway que
+  gestione la misma zona, o uno que solo mencione «Mailway», es un conflicto.
 - **DMARC**: si ya existe uno, se respeta. Con varios, es un conflicto que no
   se corrige solo: conserva tú una única política.
 - **Web del dominio**: nunca se crean A, AAAA, CNAME, HTTPS ni SVCB en el

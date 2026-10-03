@@ -318,6 +318,12 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         cloudflare: cloudflareAvailable(user),
         autoconfig: Boolean(config.traefik.panelBackend),
         portal: true,
+        // Compromiso para quien integra (Skyway solo pide el DNS automático
+        // del correo si lo ve): el alta con `autoDns` y el registro de marca
+        // blanca con `soloCrear` solo crean lo que falta, nunca modifican un
+        // registro existente, y la cuenta de Cloudflare de la instancia
+        // asociada a un dominio nunca se usa en nombre de un cliente.
+        cloudflareSoloCrear: true,
       },
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:

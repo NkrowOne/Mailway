@@ -389,6 +389,45 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_messages_form ON messages(form_id, created_at);
     `,
   },
+  {
+    id: '008-reservas-de-cloudflare',
+    sql: `
+      -- Dominios cuyo DNS de correo escribió el administrador con una cuenta
+      -- de Cloudflare de la instancia (sus zonas). Esos registros (MX, TXT de
+      -- verificación…) siguen en la zona aunque el dominio se borre, y bastan
+      -- para «probar» la propiedad: sin esta reserva, otro cliente podría dar
+      -- de alta el dominio y recibir y enviar su correo. Solo el cliente para
+      -- el que se escribió (o el administrador) puede volver a darlo de alta.
+      -- Sin claves foráneas a propósito: la reserva sobrevive al dominio y al
+      -- cliente.
+      CREATE TABLE cloudflare_reservas (
+        domain TEXT PRIMARY KEY,
+        client_id TEXT,
+        account_id TEXT,
+        zone_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      -- La 1.0 ya escribía en las zonas del operador (alta con «autoDns» o
+      -- «Aplicar» en la ficha con una cuenta de la instancia) sin reservar
+      -- nada: sin este relleno, al borrar uno de esos dominios tras actualizar,
+      -- su MX y su TXT de verificación seguirían sirviendo a otro cliente. Se
+      -- reservan para su cliente los que tienen el DNS aplicado con una
+      -- cuenta de la instancia y también los que se quedaron sin cuenta (al
+      -- desconectarla, cloudflare_account_id pasa a NULL): no se sabe si era
+      -- la del operador, y reservarlo a su propio cliente solo obliga a que
+      -- otro lo reciba de manos del administrador. Los dominios borrados antes
+      -- de actualizar ya no están en la base y no se pueden reconstruir.
+      INSERT OR IGNORE INTO cloudflare_reservas (domain, client_id, account_id, zone_id, created_at, updated_at)
+        SELECT d.domain, d.client_id, d.cloudflare_account_id, d.cloudflare_zone_id, d.dns_applied_at, d.dns_applied_at
+        FROM domains d
+        LEFT JOIN cloudflare_accounts a ON a.id = d.cloudflare_account_id
+        WHERE d.dns_applied_at IS NOT NULL
+          AND d.cloudflare_zone_id IS NOT NULL
+          AND (d.cloudflare_account_id IS NULL OR a.client_id IS NULL);
+    `,
+  },
 ];
 
 function runMigrations(): void {

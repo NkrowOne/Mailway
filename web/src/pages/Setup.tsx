@@ -14,6 +14,7 @@ import {
   type RecommendedResult,
 } from '../lib/motor';
 import { BandaError, FilaEstado, type Fila } from '../components/HojaServidorCorreo';
+import type { CuentaCloudflare } from '../lib/cloudflare';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import { Hoja, Marca, Membrete, Midiendo, Muestra } from '../ui/kit';
@@ -577,8 +578,22 @@ function sugerir(status: SetupStatus): { mailHostname: string; panelUrl: string;
 
 /* --------------------------- Comprobación final --------------------------- */
 
+const PASO_CLOUDFLARE = 'Conexiones → Cloudflare: conecta una cuenta para publicar el DNS de los dominios con un clic.';
+
+/**
+ * Con una cuenta de la instancia ya conectada (la que deja el instalador con
+ * su token), no se pide conectar otra: pegar el mismo token daría «ya está
+ * conectado». Se indica que se compruebe la que hay.
+ */
+function pasoCloudflare(cuentas: CuentaCloudflare[] | undefined): string {
+  const deInstancia = (cuentas ?? []).filter((c) => c.clientId === null);
+  if (deInstancia.length === 0) return PASO_CLOUDFLARE;
+  return `Conexiones → Cloudflare: comprueba la cuenta de la instancia (${deInstancia
+    .map((c) => `«${c.label}»`)
+    .join(', ')}). Los dominios que des de alta configurarán su DNS en Cloudflare automáticamente.`;
+}
+
 const PASOS_SIGUIENTES = [
-  'Conexiones → Cloudflare: conecta una cuenta para publicar el DNS de los dominios con un clic.',
   'Ajustes → Servidor de correo: emite el certificado de Let’s Encrypt si aún es autofirmado.',
   'Clientes → Nuevo cliente: crea el primer cliente, su dominio y sus buzones.',
   'Entregabilidad: revisa el PTR y las listas negras antes de enviar en volumen.',
@@ -601,6 +616,12 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
     queryKey: ['setup-platform-dns'],
     queryFn: () => api.get<PlatformDns>('/api/setup/platform-dns'),
   });
+  // Mientras se consulta (o si falla), el paso genérico: no bloquea nada.
+  const cuentasInstancia = useQuery({
+    queryKey: ['cloudflare-accounts', 'instancia'],
+    queryFn: () => api.get<{ accounts: CuentaCloudflare[] }>('/api/cloudflare/accounts?clientId=instancia'),
+  });
+  const pasos = [pasoCloudflare(cuentasInstancia.data?.accounts), ...PASOS_SIGUIENTES];
   const aplicar = useMutation({
     mutationFn: () => api.post<RecommendedResult>('/api/engine/recommended'),
     onSuccess: (res) => {
@@ -735,7 +756,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       <div>
         <h3 className="rotulo mb-1">Próximos pasos</h3>
         <ol>
-          {PASOS_SIGUIENTES.map((item, i) => (
+          {pasos.map((item, i) => (
             <li key={item} className="regla-fila flex items-baseline gap-x-3 py-2 last:border-b-0">
               <span className="valor w-5 shrink-0 text-right text-sm text-tinta-3">{i + 1}</span>
               <span className="min-w-0 flex-1 text-base text-tinta-2">{item}</span>

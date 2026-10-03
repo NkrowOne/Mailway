@@ -82,7 +82,13 @@ export function BloqueCloudflare({
     isAdmin,
   });
   const cuentaConZona = utilizables.find((c) => c.zones?.some((z) => zonaCubre(z, dominio.domain)));
-  const gestionado = Boolean(dominio.cloudflare);
+  // Para un usuario del cliente, el dominio solo cuenta como gestionado si la
+  // cuenta asociada es suya: si el administrador aplicó el DNS con la cuenta
+  // de la instancia, el servidor no se la deja usar, y ofrecer «Revisar
+  // cambios» prometería algo que después falla.
+  const asociada = dominio.cloudflare?.accountId ?? null;
+  const gestionado = Boolean(asociada) && (isAdmin || utilizables.some((c) => c.id === asociada));
+  const delAdministrador = !isAdmin && Boolean(asociada) && !gestionado;
   const posible = gestionado || utilizables.length > 0;
   const pendiente = dominio.status !== 'active';
   // Con el dominio pendiente y la zona localizada, el plan se lee al abrir la
@@ -188,6 +194,31 @@ export function BloqueCloudflare({
     return (
       <Hoja title={titulo}>
         <Midiendo label="Consultando las cuentas de Cloudflare…" />
+      </Hoja>
+    );
+  }
+
+  if (!posible && delAdministrador) {
+    return (
+      <Hoja title={titulo} meta="Gestionado por el administrador">
+        {cuentas.isError && (
+          <div className="mb-3">
+            <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
+              {mensajeError(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
+            </BandaError>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-[75ch] text-base text-tinta-2">
+            El DNS de este dominio lo configuró el administrador de la plataforma con su propia cuenta
+            de Cloudflare, que solo utiliza el administrador. Para revisarlo o cambiarlo desde aquí,
+            conecta una cuenta de Cloudflare propia que contenga la zona; si no, solicita los cambios
+            al administrador.
+          </p>
+          <Link to="/conexiones" className={claseEnlacePerfil}>
+            Conectar Cloudflare
+          </Link>
+        </div>
       </Hoja>
     );
   }

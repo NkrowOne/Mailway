@@ -132,11 +132,14 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 6. **DNS en Cloudflare** (si hay token): verifica el token (también los
    tokens de cuenta) y crea o corrige, sin proxy, los registros A de `mail.`,
    `webmail.` y `panel.` hacia la IP, y los CNAME `autoconfig.` y
-   `autodiscover.` del dominio base hacia `mail.`. Si un nombre ya apunta a
-   otro sitio, pregunta antes de cambiarlo. En `autoconfig.` y
-   `autodiscover.`, que pueden estar sirviendo a otro proveedor (por ejemplo,
-   Microsoft 365), la respuesta por defecto es no cambiarlos, también en la
-   ejecución desatendida.
+   `autodiscover.` del dominio base hacia `mail.`. Si un nombre ya existe
+   con otro valor o con el proxy de Cloudflare, pregunta antes de cambiarlo.
+   En `autoconfig.` y `autodiscover.`, que pueden estar sirviendo a otro
+   proveedor (por ejemplo, Microsoft 365), la respuesta por defecto es no
+   cambiarlos. Sin terminal (ejecución desatendida o `--actualizar`) no
+   modifica ningún registro existente: lo informa como conflicto y sigue;
+   con `MAILWAY_DNS_REEMPLAZAR=1` cambia los A de `mail.`, `webmail.` y
+   `panel.`, nunca los CNAME de autoconfiguración.
 7. **Propagación**: espera (hasta `MAILWAY_ESPERA_DNS` segundos, 300 por
    defecto) a que los tres nombres resuelvan a la IP. Así Traefik no pide
    certificados que Let's Encrypt rechazaría.
@@ -149,7 +152,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     del propio motor por DNS-01 (sección 5.1); sin Cloudflare, el certificado
     de Traefik, que lleva al motor el extractor del perfil `tls` (sección
     5.2). Espera a que el extractor confirme el certificado servido en 993 y
-    465.
+    465. En la instalación autónoma, con un token de Cloudflare y el panel
+    sano, se lo pasa como cuenta de la instancia (sección 2.7).
 11. **Panel en Skyway**: sin `SKYWAY_TOKEN`, si Skyway corre en este
     servidor (contenedor `skyway`), crea un token de API temporal con la
     herramienta de terminal de Skyway (caduca en 60 minutos y se revoca al
@@ -166,10 +170,12 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     ya tiene certificado, retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` de las
     variables del panel (sección 5.4).
 12. **Traefik**: con Skyway 0.34 o posterior no instala nada, porque el
-    puente ya viene incluido (sección 4.2); si encuentra el
-    `docker-compose.override.yml` que generó una versión anterior del
-    instalador, ofrece retirarlo (lo conserva como
-    `docker-compose.override.yml.mailway-retirado`) y recrear Traefik. Con
+    puente ya viene incluido (sección 4.2); si encuentra un
+    `docker-compose.override.yml` de Mailway (el que generó una versión
+    anterior del instalador o el copiado a mano de Ajustes → Marca blanca),
+    ofrece retirarlo (lo conserva como
+    `docker-compose.override.yml.mailway-retirado`) y recrear Traefik, y
+    solo da el paso por bueno si Traefik corre después con el puente. Con
     Skyway anterior a 0.34, si su Traefik no consulta todavía ningún
     proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
     (sección 4.3).
@@ -179,9 +185,13 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     hace en cada ejecución, así que repetir el instalador completa lo que
     hubiera quedado pendiente (por ejemplo, el motor si no respondía); solo
     se salta si Skyway está conectado con **otro** panel de Mailway. Si algo
-    falla, avisa y la instalación sigue: se repite con `--emparejar`.
+    falla, avisa y la instalación sigue: se repite con `--emparejar`. Con un
+    token de Cloudflare (paso 6), después del emparejado, y aunque este no se
+    haga o falle, se lo pasa al panel sano como cuenta de la instancia y, a
+    continuación, a Skyway (sección 2.7).
 14. **Resumen**: dirección del panel, estado del DNS, del PTR, del puerto 25,
-    del certificado y del emparejado, el comando de copia de seguridad del
+    del certificado, del emparejado y de las cuentas de Cloudflare que han
+    quedado conectadas en el panel y en Skyway, el comando de copia de seguridad del
     correo y los de diagnóstico (sección 13.1). Con el emparejado hecho,
     muestra la cuenta de administración del panel y, si se acaba de crear, su
     contraseña: **una sola vez**, porque no se guarda en ningún sitio. Sin
@@ -212,32 +222,52 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_IP` | IPv4 pública (se detecta si falta). |
 | `MAILWAY_MARCA` | Nombre del servicio en el webmail (por defecto `Webmail`). |
 | `LETSENCRYPT_EMAIL` | Correo de contacto para Let's Encrypt. |
-| `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. |
+| `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. Se guarda también en el panel (cuenta de la instancia) y en Skyway (sección 2.7); nunca en `deploy/.env`. |
 | `MAILWAY_ADMIN_EMAIL` | Correo de la cuenta de administración del panel que crea el emparejado (por defecto, el de Let's Encrypt). Se comprueba al principio con las mismas reglas que el panel (sin `%`, sin `..` ni un punto al principio o al final de la parte local). Se guarda en `deploy/.env`; la contraseña, no. |
 | `SKYWAY_TOKEN` | Token de API de Skyway (`sky_…`). Sin él, si Skyway corre en este servidor, se crea uno temporal; si no, no se despliega el panel. |
 | `SKYWAY_URL` | API de Skyway (por defecto `http://127.0.0.1:4000`; si ahí no responde, se prueba la IP del contenedor `skyway`). |
 | `SKYWAY_DIR` | Carpeta de Skyway (se detecta a partir de su Traefik). |
-| `MAILWAY_PROYECTO` | Proyecto de Skyway para el panel (por defecto `mailway`). |
+| `MAILWAY_PROYECTO` | Proyecto de Skyway para el panel nuevo (por defecto `mailway`). Si Skyway ya despliega un panel, se actualiza ese (sección 8.2). |
+| `MAILWAY_PANEL_SERVICIO` | Identificador del servicio de Skyway del panel existente: lo actualiza sin preguntar. `ninguno`: no adopta ningún panel. Hace falta sin terminal, o si Skyway despliega más de uno (sección 8.2). |
 | `MAILWAY_REPO`, `MAILWAY_RAMA` | Repositorio y rama del panel (por defecto `https://github.com/NkrowOne/Mailway`, `main`). |
 | `MAILWAY_TRAEFIK_PROVEEDOR` | `1` ajusta el Traefik de Skyway sin preguntar (paso 12); `0` no lo toca. |
 | `STALWART_ADMIN_PASSWORD` | Contraseña del motor existente, si `deploy/.env` se perdió. |
 | `MAILWAY_INTERNAL_SUBNET`, `MAILWAY_MAIL_INTERNAL_IP` | Red interna (por defecto `10.203.53.0/24` y `10.203.53.10`). |
 | `MAILWAY_ESPERA_DNS` | Segundos máximos de espera a la propagación del DNS (por defecto 300). |
+| `MAILWAY_DNS_REEMPLAZAR` | `1` permite cambiar, sin terminal, los registros A de `mail.`, `webmail.` y `panel.` que ya existan en Cloudflare con otra IP o con el proxy (paso 6). Sin ella, una ejecución desatendida no modifica ningún registro existente. |
 | `MAILWAY_ENV_FILE` | Ruta alternativa del fichero de configuración (por defecto `deploy/.env`). |
 | `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
 
-Ejemplo:
+Ejemplo, con el token leído sin mostrarlo y exportado (nunca escrito en la
+orden):
 
 ```bash
-sudo MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
-     MAILWAY_ADMIN_EMAIL=admin@miempresa.com CLOUDFLARE_API_TOKEN=... \
-     MAILWAY_TRAEFIK_PROVEEDOR=1 bash deploy/instalar.sh < /dev/null
+cd /ruta/a/Mailway
+read -rs -p 'Token de Cloudflare: ' CLOUDFLARE_API_TOKEN; echo
+export CLOUDFLARE_API_TOKEN
+sudo --preserve-env=CLOUDFLARE_API_TOKEN \
+     MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
+     MAILWAY_ADMIN_EMAIL=admin@miempresa.com MAILWAY_TRAEFIK_PROVEEDOR=1 \
+     bash deploy/instalar.sh < /dev/null
+unset CLOUDFLARE_API_TOKEN
 ```
 
-> Los tokens pasados como variables quedan en el historial de la terminal.
-> Bórralo después (`history -c`) o expórtalos desde un fichero protegido. Si
-> guardas la salida del instalador en un fichero, ten en cuenta que el
-> resumen incluye la contraseña del administrador del panel cuando la crea.
+En una sesión de root (`sudo -i`), la misma orden sin
+`sudo --preserve-env=CLOUDFLARE_API_TOKEN`. Desde un script de
+aprovisionamiento que ya corre como root, carga los secretos de un fichero
+solo legible por root (`set -a; . /root/mailway.secretos; set +a`) en vez de
+leerlos con `read`.
+
+> **Los secretos (`CLOUDFLARE_API_TOKEN`, `SKYWAY_TOKEN`,
+> `STALWART_ADMIN_PASSWORD`) nunca se escriben en la orden.** Escritos delante
+> de `sudo` (`sudo CLOUDFLARE_API_TOKEN=… bash …`) son argumentos del proceso
+> `sudo`, que sigue en marcha mientras dura la instalación: cualquier usuario
+> del servidor los ve con `ps`, no solo en el historial de la terminal.
+> Exportados y con `--preserve-env`, llegan al instalador por el entorno, que
+> los demás usuarios del servidor no pueden leer. Sin `CLOUDFLARE_API_TOKEN`,
+> el instalador interactivo pregunta el token sin mostrarlo. Si guardas la
+> salida del instalador en un fichero, ten en cuenta que el resumen incluye la
+> contraseña del administrador del panel cuando la crea.
 
 ### 2.6 Emparejado con Skyway
 
@@ -316,6 +346,72 @@ ningún proceso. Nunca pegues el token ni la contraseña dentro de la orden
 Requiere un panel y un Skyway con estas herramientas; con versiones
 anteriores, el instalador lo avisa y la conexión se hace a mano (sección 4.1).
 
+### 2.7 El token de Cloudflare en el panel y en Skyway
+
+El token de Cloudflare que das al instalador (`CLOUDFLARE_API_TOKEN` o la
+pregunta del paso 6) sirve también para que, desde entonces, los dominios que
+**tú, como administrador**, das de alta configuren su DNS en Cloudflare solos:
+los de correo en el panel (también el primer dominio del alta de un cliente)
+o desde Skyway, y los de los servicios en Skyway, también en proyectos de tus
+clientes. Se crea lo que falta sin modificar los registros existentes (ni
+siquiera para completar un SPF o quitar un proxy: eso se revisa y se aplica
+desde la ficha del dominio); un registro que choca se informa y no se toca.
+Para ello el instalador guarda el token:
+
+1. **En el panel**, como cuenta de Cloudflare **de la instancia**
+   («Instalador de Mailway» en Conexiones → Cloudflare), con su herramienta de
+   terminal y el panel ya sano: junto a Skyway, al final de la instalación,
+   después del emparejado y aunque este no se haga (Skyway conectado con otro
+   panel, sin su herramienta o con un fallo); en la instalación autónoma, en
+   cuanto `mailway-panel` está sano.
+
+   ```bash
+   printf '%s' "$CF_TOKEN" | docker exec -i -u node <contenedor del panel> \
+     node server/dist/tools/cloudflare.js conectar --nombre "Instalador de Mailway"
+   ```
+
+2. **En Skyway**, con su herramienta equivalente, si la versión de Skyway la
+   incluye (si no, lo avisa y sigue):
+
+   ```bash
+   printf '%s' "$CF_TOKEN" | docker exec -i skyway node server/dist/tools/cloudflare.js conectar
+   ```
+
+Reglas:
+
+- El token va siempre por la **entrada estándar** (`printf` es una orden
+  interna de bash): nunca como argumento, que quedaría a la vista en `ps`, ni
+  en `deploy/.env`, ni en los registros. Las herramientas rechazan un token en
+  sus argumentos y no lo repiten en sus mensajes; en el panel queda cifrado.
+  Al instalador le llega igual: por su pregunta, que no lo muestra, o
+  exportado en el entorno (sección 2.5), nunca escrito delante de `sudo`.
+- Es **solo para el administrador**: las acciones de un cliente (un usuario de
+  un cliente en el panel, o un propietario o miembro de un espacio de trabajo
+  en Skyway, que llega al panel con `?soloCliente=1`) nunca usan esa cuenta,
+  ni siquiera en un dominio cuyo DNS aplicó antes el administrador. Un cliente
+  que quiera el DNS automático conecta su propia cuenta (docs/INTEGRACIONES.md,
+  sección 4.3).
+- **Nada de esto interrumpe la instalación**: un panel o un Skyway sin la
+  herramienta, o un fallo de Cloudflare, quedan como aviso y en el resumen,
+  que en ese caso indica que la conectes a mano en **Conexiones → Cloudflare**
+  con el ámbito «Toda la instancia».
+- Es **idempotente**: repetir la instalación con el mismo token no duplica la
+  cuenta.
+- **Para cambiar el token**, ejecuta `--actualizar` con el nuevo en
+  `CLOUDFLARE_API_TOKEN`, exportado y con `sudo --preserve-env` como en el
+  ejemplo de la sección 2.5 (nunca `sudo CLOUDFLARE_API_TOKEN=…`, que lo deja
+  a la vista en `ps`): la herramienta del panel lo verifica y lo
+  **sustituye** en la cuenta «Instalador de Mailway» (no añade otra, y los
+  dominios asociados a ella lo siguen estando); Skyway también sustituye el
+  suyo. Si conectas el nuevo a mano en Conexiones → Cloudflare, se añade como
+  otra cuenta: elimina después la antigua.
+- `--actualizar` sin `CLOUDFLARE_API_TOKEN` y `--emparejar` (que nunca lo
+  usa, aunque exista esa variable: no pasa por el paso 6) **no tienen el
+  token** (no se guarda en `deploy/.env`) y no lo piden: no tocan la cuenta
+  que hubiera conectada, y como no saben si la hay, el resumen pide
+  comprobarlo en Conexiones → Cloudflare. Para conectarlo o cambiarlo sin
+  reinstalar, usa `--actualizar` con `CLOUDFLARE_API_TOKEN` (sección 2.5).
+
 ---
 
 ## 3. Puesta en marcha del panel
@@ -347,10 +443,11 @@ El asistente tiene cuatro pasos:
 
 Después, en el panel:
 
-- **Conexiones → Cloudflare**: conecta una cuenta con el ámbito «Toda la
-  instancia» si vas a usar Cloudflare para el certificado o para los dominios
-  de tus clientes. **DNS de la plataforma** crea los registros del propio
-  servidor si aún faltan.
+- **Conexiones → Cloudflare**: si diste un token al instalador, la cuenta de
+  la instancia («Instalador de Mailway») ya está conectada (sección 2.7); si
+  no, conecta una con el ámbito «Toda la instancia» si vas a usar Cloudflare
+  para el certificado o para los dominios de tus clientes. **DNS de la
+  plataforma** crea los registros del propio servidor si aún faltan.
 - **Ajustes → Servidor de correo**: comprueba el nombre del servidor, los
   ajustes recomendados y el certificado (sección 5).
 - **Avisos → Canales de aviso**: configura al menos un canal (sección 10).
@@ -410,8 +507,9 @@ Traefik** y **Ajustes → Autoconfiguración de dispositivos**.
 > `docker-compose.override.yml` para Mailway en la carpeta de Skyway,
 > **elimínalo** y ejecuta `docker compose up -d traefik` en esa carpeta: el
 > fichero sustituye los parámetros de Traefik de la 0.34 (Traefik solo admite
-> un proveedor HTTP) y dejaría sin efecto el puente. Si lo generó el
-> instalador, `deploy/instalar.sh --actualizar` lo retira por ti.
+> un proveedor HTTP) y dejaría sin efecto el puente. `deploy/instalar.sh
+> --actualizar` lo retira por ti, también si lo copiaste a mano de Ajustes →
+> Marca blanca (sección 8.2).
 
 ### 4.3 Skyway anterior a 0.34 o Traefik propio
 
@@ -491,7 +589,8 @@ recarga de certificados.
 > retira del volumen esas copias; la carpeta que dejaba el volcado para
 > `MAIL_HOSTNAME` pasa a ser una versión propia, con las mismas rutas.
 > `deploy/instalar.sh --actualizar` hace el cambio sin tocar la configuración
-> del motor.
+> del motor. Si el motor seguía con el `certificate.default` de la guía 0.x,
+> el instalador lo pasa a `certificate.mailway` (sección 8.2).
 
 Para recargar los certificados usa la contraseña **vigente** del
 administrador del motor (`STALWART_ADMIN_PASSWORD` de `deploy/.env`). Si el
@@ -761,6 +860,72 @@ antiguos en `deploy/.env`, retira los contenedores anteriores (conservando
 los volúmenes) y recrea la red `mailway-internal` con su subred. No copia
 datos: el correo sigue en el mismo volumen.
 
+Si el panel se creó a mano en Skyway con la guía anterior (con cualquier
+nombre de proyecto y de servicio), el instalador lo encuentra (por su
+contenedor o, si está parado, por el repositorio que despliega), te pregunta
+si es el de esta instalación y, si respondes que sí, **actualiza ese panel**
+sin crear otro:
+
+- No pregunta por el panel que ya nombra `deploy/.env` (su contenedor o su
+  dominio). Ignora los paneles de los proyectos de clientes: en un Skyway
+  con clientes, otro puede desplegar también un Mailway.
+- Conserva su clave maestra. En esas instalaciones vive en el volumen `/data`
+  del panel y no en sus variables: el instalador la lee de ahí para
+  `deploy/.env` y no la añade a sus variables. Con otra clave, el panel
+  perdería sus secretos cifrados, los tokens de gestión y las claves de API
+  dejarían de valer y cambiaría el TXT `_mailway` de los dominios ya
+  verificados. Si el panel está parado y no se puede leer, `deploy/.env` no
+  guarda ninguna.
+- Conserva también su token de Traefik, que esos paneles guardan en su base
+  de datos.
+- Propone el dominio, los nombres y la IP que ya usa el panel cuando
+  `deploy/.env` no los tiene. Usa la contraseña del motor del panel solo si
+  el motor ya tiene datos. Conserva las variables y el dominio que se
+  añadieron a mano.
+- Sin terminal (`--actualizar` o ejecución desatendida), no pregunta: se
+  detiene sin tocar nada y pide `MAILWAY_PANEL_SERVICIO=<id del servicio>`
+  para actualizarlo o `MAILWAY_PANEL_SERVICIO=ninguno` para no tocarlo. Lo
+  mismo si Skyway despliega varios paneles.
+
+El instalador también resuelve lo que dejaba configurado la guía anterior:
+
+- **Certificado de IMAP y SMTP.** La guía 0.x arrancaba `traefik-certs-dumper`
+  y apuntaba `certificate.default` a los ficheros que volcaba
+  (`/opt/stalwart/certs/<servidor de correo>/cert.pem` y `key.pem`). La
+  migración retira ese volcador, y sin él nadie renovaría el certificado. Por
+  eso el instalador lo pasa a `certificate.mailway`, con las mismas rutas, y
+  borra `certificate.default`. Después arranca el extractor (sección 5.2),
+  que lo renueva y retira del volumen las claves privadas de los demás
+  dominios que había copiado el volcador. Si el motor emite su propio
+  certificado por ACME (con Cloudflare o configurado antes), solo borra
+  `certificate.default` y limpia el volumen. Un certificado propio con otras
+  rutas no se toca.
+- **Webmail.** El webmail anterior entraba al motor por su nombre público
+  (`ssl://<servidor de correo>`); el de la 1.0 entra por la red interna
+  (`ssl://mailway-mail`). Roundcube identifica a cada usuario por su
+  dirección y por ese servidor (`users.mail_host`). Sin más, cada titular
+  vería el webmail vacío: sin contactos, identidades, firmas ni
+  preferencias, aunque siguen en la base. El instalador cambia ese servidor
+  en la base del webmail con el contenedor antiguo ya retirado y antes de
+  levantar el nuevo. El usuario que ya hubiera entrado con la 1.0 conserva
+  ese usuario y el instalador lo indica. Si los contenedores ya los trasladó
+  el instalador de la 1.0.x, que no hacía este cambio, repetir la instalación
+  lo hace con el webmail en marcha (es idempotente y sin cambios no dice
+  nada). Si el cambio falla, avisa y la instalación sigue: hazlo a mano
+  (abajo).
+- **Override de Traefik.** Con la guía 0.x, el bloque de Ajustes → Marca
+  blanca se copiaba a `docker-compose.override.yml` en la carpeta de Skyway.
+  Con Skyway 0.34 o posterior, ese fichero deja sin efecto el puente de
+  Skyway (sección 4.2). El instalador lo reconoce aunque se copiara a mano
+  (lleva `/api/traefik/config` o `X-Mailway-Token`), ofrece retirarlo (lo
+  conserva como `docker-compose.override.yml.mailway-retirado`) y recrea
+  Traefik. Solo confirma el resultado si Traefik corre después con el
+  proveedor de Skyway (`api/traefik/mailway`); si no, avisa. Si añadiste
+  otros ajustes a ese fichero, recupéralos de la copia. Con Skyway anterior
+  a la 0.34, si el panel guarda su propio token de Traefik, no genera el
+  fichero: copia el bloque de Ajustes → Rutas de Traefik del panel (sección
+  4.3).
+
 **A mano:**
 
 ```bash
@@ -773,7 +938,36 @@ docker volume ls | grep mailway                         # localiza los volúmene
 docker rm -f mailway-webmail mailway-certs-dumper mailway-mail   # los volúmenes se conservan
 #   (en la instalación autónoma, retira también mailway-panel y usa docker-compose.standalone.yml)
 docker network rm mailway-internal                               # se recrea con la subred fija
+
+# Usuarios del webmail: del servidor público al interno, con el webmail parado.
+# Sustituye mail.miempresa.com por el nombre de tu servidor de correo.
+docker run --rm -v deploy_mailway-webmail-db:/var/roundcube/db --entrypoint php \
+  roundcube/roundcubemail:1.7.x-apache -r '
+    $db = new PDO("sqlite:/var/roundcube/db/sqlite.db", null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $q = $db->prepare("UPDATE OR IGNORE users SET mail_host = ? WHERE lower(mail_host) = ?");
+    $q->execute(["mailway-mail", $argv[1]]);
+    echo $q->rowCount(), " usuarios trasladados\n";' mail.miempresa.com
+
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d
+```
+
+Si el motor usaba el certificado del volcador (`certificate.default` con las
+rutas de `/opt/stalwart/certs/`), sigue los pasos 2 a 4 de la sección 5.2 y,
+antes de recargar los certificados, borra `certificate.default`:
+
+```bash
+docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
+  -X POST http://mailway-mail:8080/api/settings -H 'Content-Type: application/json' \
+  -d '[{"type":"clear","prefix":"certificate.default."}]'
+```
+
+Con Skyway 0.34 o posterior, retira el override de Traefik de la guía 0.x:
+
+```bash
+cd /ruta/a/Skyway
+mv docker-compose.override.yml docker-compose.override.yml.mailway-retirado
+docker compose up -d traefik
+docker inspect -f '{{json .Config.Cmd}}' skyway-traefik | grep -o 'api/traefik/mailway'
 ```
 
 Después, en el panel, **Ajustes → Servidor de correo → Aplicar ajustes
@@ -1055,6 +1249,8 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Un dominio de marca blanca se queda en «Emitiendo certificado» | Traefik no consulta el panel, o el puerto 80 está cerrado | Revisa la sección 4. Let's Encrypt valida por el puerto 80: debe estar abierto. |
 | Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
 | El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | `sudo bash deploy/instalar.sh --emparejar` (sección 2.6) o sección 4.1. |
+| El instalador se detiene: «deploy/.env no menciona ese panel» | Se ejecutó sin terminal (`--actualizar` o desatendido) y encontró un panel que no conoce | Repite desde una terminal y confirma, o indica `MAILWAY_PANEL_SERVICIO=<id>` (actualizarlo) o `MAILWAY_PANEL_SERVICIO=ninguno` (no tocarlo). |
+| El instalador se detiene porque Skyway despliega varios paneles de Mailway | Hay más de un servicio con el panel (p. ej. una copia de prueba) | Repite con `MAILWAY_PANEL_SERVICIO=<id>` y el servicio que corresponde (el instalador los lista). |
 | El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
 | Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
@@ -1075,9 +1271,20 @@ menor):
    perfil `tls`. Además, `deploy/prueba-emparejado.sh` carga las funciones
    del instalador con `docker` y la API de Skyway simulados y comprueba el
    emparejado (correo de la cuenta, avisos de la puesta en marcha, que se
-   repite con Skyway ya conectado y no toca otro panel) y el paso «Panel en
-   Skyway» cuando su API no responde (token temporal revocado, IP del
-   contenedor, sin interrumpir la instalación). Solo necesita bash y `jq`.
+   repite con Skyway ya conectado y no toca otro panel), el paso del token de
+   Cloudflare (llega por la entrada estándar al panel y a Skyway y nunca
+   aparece en los argumentos de `docker` ni en `deploy/.env`; sin la
+   herramienta en Skyway, avisa y sigue; sin token, no llama a ninguna) y el
+   paso «Panel en Skyway» cuando su API no responde (token temporal revocado, IP del
+   contenedor, sin interrumpir la instalación) y con un panel que Skyway ya
+   despliega (se actualiza sin duplicarlo ni cambiar su clave maestra). Solo
+   necesita bash y `jq`. `deploy/prueba-migracion.sh`, igual, comprueba la
+   migración desde la 0.x (sección 8.2): el certificado del volcador pasa al
+   extractor, los usuarios del webmail cambian de servidor sobre una base
+   SQLite con el esquema de Roundcube (necesita php con `pdo_sqlite`) y el
+   override de Traefik copiado a mano se retira; y también que no cambia un
+   certificado propio, un webmail que ya usaba `mailway-mail` ni un override
+   ajeno.
 2. **Con contenedores reales** (`deploy/prueba-stack.py`): monta con
    `deploy/instalar.sh --actualizar` Stalwart v0.15.5, Roundcube y el
    extractor con la topología de producción (subred interna fija, un Skyway

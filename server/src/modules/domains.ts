@@ -12,7 +12,7 @@ import { audit } from './audit';
 import { refreshAutoconfigForDomain } from './autoconfig';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit } from './clients';
-import { aplicarDnsDominio, permiteInstancia } from './cloudflare';
+import { aplicarDnsDominio, moverReservaDominio, permiteInstancia, pideSoloCliente, reservaDeDominio } from './cloudflare';
 import { checkDomainDns, type DomainDnsReport } from './deliverability';
 import {
   categoriaDe,
@@ -367,6 +367,19 @@ export function registerDomainRoutes(app: FastifyInstance): void {
       assertWithinLimit(clientId, 'domains', 1, user.role === 'admin');
       const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
       if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
+      // Si el administrador escribió el DNS de este dominio con una cuenta de
+      // Cloudflare de la instancia, sus registros (MX, TXT de verificación)
+      // siguen en la zona del operador aunque el dominio se haya borrado, y
+      // probarían la propiedad al instante: solo ese cliente o el
+      // administrador (no en nombre de un cliente) pueden volver a darlo de alta.
+      const reserva = reservaDeDominio(domain);
+      const comoAdministrador = user.role === 'admin' && !pideSoloCliente(req.query);
+      if (reserva && reserva.client_id !== clientId && !comoAdministrador) {
+        throw conflict(
+          'Este dominio está reservado: su DNS lo configuró el administrador de la plataforma con su cuenta de Cloudflare. Solicita al administrador que lo dé de alta.',
+          'domain_reserved',
+        );
+      }
 
       const engine = getEngine();
       // El motor adopta un dominio que ya existiera allí (p. ej. huérfano de un
@@ -397,6 +410,8 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         await engine.deleteDomain(domain).catch(() => undefined);
         throw err;
       }
+      // El administrador decide a quién sirven esos registros: la reserva pasa al cliente nuevo.
+      if (reserva && reserva.client_id !== clientId) moverReservaDominio(domain, clientId);
       return nuevoId;
     });
     audit(req, 'domain.created', { id, domain, clientId }, clientId);
@@ -411,10 +426,14 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     let cloudflareReason: string | undefined;
     if (body.autoDns) {
       try {
-        const r = await aplicarDnsDominio(id, user, {
+        // Solo crear: el alta no modifica nada de lo que ya hay en la zona (ni
+        // el SPF, ni un proxy, ni un registro con el comentario de Mailway);
+        // eso queda para «Aplicar» en la ficha, tras revisar el plan.
+        const r = await aplicarDnsDominio(id, {
           replaceConflicts: false,
           includeRecommended: true,
           permitirInstancia: permiteInstancia(user, req.query),
+          soloCrear: true,
         });
         if ('unavailable' in r) {
           cloudflareReason = r.unavailable;
