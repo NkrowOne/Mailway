@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Building2, SearchX } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Client, type DomainRecord, type Plan } from '../../lib/api';
@@ -13,7 +14,7 @@ import { plural } from '../../lib/format';
 import { esCorreoValido, formatQuota, mensajeDe, vinculadoConSkyway } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio } from '../../ui/kit';
+import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera, Casilla } from '../../components/gestion/comun';
 import { useDireccionPanel } from '../../components/gestion/consultas';
@@ -50,9 +51,9 @@ export default function Clientes() {
           <>
             <p>Cada cliente tiene su propio panel, sus dominios y los límites de su plan.</p>
             {clients.isSuccess && list.length > 0 && (
-              <p className="rotulo mt-1.5 text-white/70">
+              <p className="mt-1 text-sm text-tinta-3">
                 {plural(list.length, 'cliente', 'clientes')} ·{' '}
-                <Link to="/planes" className="underline hover:text-white">
+                <Link to="/planes" className="underline hover:text-tinta">
                   Gestionar planes
                 </Link>
               </p>
@@ -60,7 +61,7 @@ export default function Clientes() {
           </>
         }
         actions={
-          <Button variant="campo" onClick={() => setOpen(true)}>
+          <Button variant="principal" onClick={() => setOpen(true)}>
             Alta de cliente
           </Button>
         }
@@ -68,7 +69,7 @@ export default function Clientes() {
 
       {clients.isPending ? (
         <Hoja flush>
-          <Midiendo label="Cargando los clientes…" />
+          <Cargando label="Cargando los clientes…" />
         </Hoja>
       ) : clients.isError ? (
         <BandaError onRetry={() => void clients.refetch()}>
@@ -76,7 +77,7 @@ export default function Clientes() {
         </BandaError>
       ) : list.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={Building2}
             title="Todavía no hay clientes"
             action={
               <Button variant="perfil" onClick={() => setOpen(true)}>
@@ -110,7 +111,7 @@ export default function Clientes() {
             <span className="rotulo w-28 shrink-0 text-right">Estado</span>
           </div>
 
-          {filtrados.length === 0 && <Vacio title="Ningún cliente coincide con la búsqueda" />}
+          {filtrados.length === 0 && <Vacio icono={SearchX} title="Ningún cliente coincide con la búsqueda" />}
           {filtrados.map((client) => (
             <div
               key={client.id}
@@ -121,7 +122,7 @@ export default function Clientes() {
               <div className="min-w-0 grow basis-full sm:basis-0">
                 <Link
                   to={`/clientes/${client.id}`}
-                  className="break-words text-md font-medium text-tinta hover:text-laboratorio hover:underline"
+                  className="break-words text-md font-medium text-tinta hover:text-petroleo hover:underline"
                 >
                   {client.name}
                 </Link>
@@ -340,7 +341,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 {resultado.dominio.alta.autoDns ? 'Revisar el DNS' : 'Configurar el DNS'}
               </Button>
             )}
-            <Button variant="tinta" onClick={irAFicha}>
+            <Button variant="principal" onClick={irAFicha}>
               {conContrasena ? 'Ya he guardado la contraseña' : 'Ir a la ficha del cliente'}
             </Button>
           </>
@@ -364,7 +365,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 <p className="valor break-all text-base text-tinta">{resultado.user.email}</p>
               </Muestra>
               <Muestra rotulo="Contraseña" copiar={resultado.password}>
-                <p className="valor break-all text-base text-tinta">{resultado.password}</p>
+                <p className="codigo break-all text-base text-tinta">{resultado.password}</p>
               </Muestra>
             </>
           )}
@@ -498,7 +499,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={alta.isPending} disabled={!plan}>
+          <Button type="submit" variant="principal" busy={alta.isPending} disabled={!plan}>
             {conDns ? 'Dar de alta y configurar' : 'Dar de alta'}
           </Button>
         </Botonera>

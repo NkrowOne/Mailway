@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { Globe, Inbox, SearchX } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alias, type DomainRecord, type Mailbox } from '../lib/api';
@@ -14,7 +15,7 @@ import {
 } from '../lib/gestion';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Dialogo, Hoja, MarcaFondo, Membrete, Midiendo, Vacio } from '../ui/kit';
+import { Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Vacio } from '../ui/kit';
 import { AltaMasiva } from '../components/gestion/AltaMasiva';
 import {
   BandaAviso,
@@ -146,7 +147,7 @@ export default function Buzones() {
           <>
             <p>Cuentas de correo con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.</p>
             {!cargando && all.length > 0 && (
-              <p className="rotulo mt-1.5 text-white/70">
+              <p className="mt-1 text-sm text-tinta-3">
                 {plural(all.length, 'buzón', 'buzones')}
                 {clientePropio && ` de ${clientePropio.plan.maxMailboxes} del plan`} ·{' '}
                 {plural(new Set(all.map((m) => m.domainId)).size, 'dominio', 'dominios')}
@@ -155,7 +156,7 @@ export default function Buzones() {
           </>
         }
         actions={
-          <Button variant="campo" onClick={() => setCreateOpen(true)} disabled={altaBloqueada}>
+          <Button variant="principal" onClick={() => setCreateOpen(true)} disabled={altaBloqueada}>
             Crear buzón
           </Button>
         }
@@ -190,7 +191,7 @@ export default function Buzones() {
 
       {cargando ? (
         <Hoja flush>
-          <Midiendo label="Cargando los buzones…" />
+          <Cargando label="Cargando los buzones…" />
         </Hoja>
       ) : mailboxes.isError || domains.isError ? (
         <BandaError
@@ -204,10 +205,10 @@ export default function Buzones() {
         </BandaError>
       ) : domainList.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={Globe}
             title="Primero se necesita un dominio"
             action={
-              <Link to="/dominios" className="text-sm text-laboratorio underline">
+              <Link to="/dominios" className="text-sm text-petroleo underline">
                 Ir a Dominios
               </Link>
             }
@@ -217,7 +218,7 @@ export default function Buzones() {
         </Hoja>
       ) : all.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={Inbox}
             title="Aún no hay buzones"
             action={
               <div className="flex flex-wrap justify-center gap-2">
@@ -276,7 +277,7 @@ export default function Buzones() {
           </div>
 
           {filtrados.length === 0 ? (
-            <Vacio
+            <Vacio icono={SearchX}
               title="Ningún buzón coincide con la búsqueda"
               action={
                 <Button variant="perfil" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
@@ -406,7 +407,7 @@ function FilaBuzon({
         <button
           type="button"
           onClick={() => onAbrir('resumen')}
-          className="valor break-all text-left text-base text-tinta hover:text-laboratorio hover:underline"
+          className="valor break-all text-left text-base text-tinta hover:text-petroleo hover:underline"
         >
           {mailbox.email}
         </button>
@@ -419,7 +420,7 @@ function FilaBuzon({
           {mailbox.clientId ? (
             <Link
               to={`/clientes/${mailbox.clientId}`}
-              className="min-w-0 break-words text-sm text-tinta-2 hover:text-laboratorio hover:underline"
+              className="min-w-0 break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
             >
               {mailbox.clientName}
             </Link>
@@ -614,7 +615,7 @@ function CrearBuzon({
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={create.isPending} disabled={!domainId}>
+          <Button type="submit" variant="principal" busy={create.isPending} disabled={!domainId}>
             Crear buzón
           </Button>
         </Botonera>

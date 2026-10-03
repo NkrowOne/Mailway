@@ -11,9 +11,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Con barra final (como expresión regular): «/api» a secas también
+    // capturaría la vista «/api-envio» del panel y la mandaría al servidor.
     proxy: {
-      '/api': 'http://localhost:4100',
-      '/v1': 'http://localhost:4100',
+      '^/api/': 'http://localhost:4100',
+      '^/v1/': 'http://localhost:4100',
     },
   },
   build: {

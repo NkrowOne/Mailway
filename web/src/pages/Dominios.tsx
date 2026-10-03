@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
+import { Globe } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, type Client } from '../lib/api';
@@ -19,7 +20,7 @@ import { useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Midiendo, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -126,9 +127,9 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
         meta={
           <>
             Un dominio no puede enviar ni recibir correo hasta que sus registros DNS coinciden con los
-            valores de referencia.
+            valores que se indican en su ficha.
             {!domains.isPending && (clientePropio || list.length > 0) && (
-              <span className="valor mt-1 block text-sm text-white/70">
+              <span className="valor mt-1 block text-sm text-tinta-3">
                 {clientePropio
                   ? `${clientePropio.usage.domains} de ${clientePropio.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
                   : `${activos} de ${list.length} activos`}
@@ -137,7 +138,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
           </>
         }
         actions={
-          <Button variant="campo" onClick={abrir} disabled={limitePropio || clientePropio?.suspended}>
+          <Button variant="principal" onClick={abrir} disabled={limitePropio || clientePropio?.suspended}>
             Añadir dominio
           </Button>
         }
@@ -163,7 +164,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
 
       {domains.isPending ? (
         <Hoja>
-          <Midiendo label="Cargando los dominios…" />
+          <Cargando label="Cargando los dominios…" />
         </Hoja>
       ) : domains.isError ? (
         <AvisoError onRetry={() => void domains.refetch()} retrying={domains.isFetching}>
@@ -171,7 +172,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
         </AvisoError>
       ) : list.length === 0 ? (
         <Hoja>
-          <Vacio
+          <Vacio icono={Globe}
             title="Todavía no hay dominios"
             action={
               <Button variant="perfil" onClick={abrir} disabled={limitePropio || clientePropio?.suspended}>
@@ -210,7 +211,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                   <span className="min-w-0 basis-full sm:basis-0 sm:grow">
                     <Link
                       to={`/dominios/${domain.id}`}
-                      className="valor break-all text-base text-tinta hover:text-laboratorio hover:underline"
+                      className="valor break-all text-base text-tinta hover:text-petroleo hover:underline"
                     >
                       {visible}
                     </Link>
@@ -228,7 +229,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                       <span className="rotulo mr-1.5 sm:hidden">Cliente</span>
                       <Link
                         to={`/clientes/${domain.clientId}`}
-                        className="break-words text-sm text-tinta-2 hover:text-laboratorio hover:underline"
+                        className="break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
                       >
                         {nombreCliente.get(domain.clientId) ?? '—'}
                       </Link>
@@ -327,7 +328,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
             <Button type="button" variant="plano" onClick={() => setOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" variant="tinta" busy={create.isPending} disabled={limiteElegido}>
+            <Button type="submit" variant="principal" busy={create.isPending} disabled={limiteElegido}>
               {hayCloudflare && autoDns ? 'Dar de alta y configurar' : 'Dar de alta'}
             </Button>
           </div>

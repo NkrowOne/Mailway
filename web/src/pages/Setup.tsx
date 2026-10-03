@@ -17,7 +17,7 @@ import { BandaError, FilaEstado, type Fila } from '../components/HojaServidorCor
 import type { CuentaCloudflare } from '../lib/cloudflare';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Hoja, Marca, Membrete, Midiendo, Muestra } from '../ui/kit';
+import { Cargando, Hoja, Logotipo, Marca, Membrete, Muestra } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -243,12 +243,8 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
       <div className="mx-auto w-full max-w-2xl">
         <Membrete
           title={
-            <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-              {/* Sobre el campo de laboratorio solo se lee el tono vivo. */}
-              <svg viewBox="0 0 22 16" className="h-4 w-[22px] shrink-0 text-laboratorio-vivo" aria-hidden>
-                <path d="M1 13h20" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M4 13V7M9 13V3M14 13V9M19 13V5" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Logotipo />
               Mailway
             </span>
           }
@@ -257,11 +253,6 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
         <div className="flex flex-col gap-4">
           <Hoja title="Apartados" meta={`${step + 1} de ${apartados.length}`} flush>
-            <div className="regla-cabecera flex items-baseline gap-x-3 px-4 pb-1.5 pt-2.5">
-              <span className="rotulo w-5 shrink-0 text-right">N.º</span>
-              <span className="rotulo min-w-0 flex-1">Apartado</span>
-              <span className="rotulo shrink-0">Estado</span>
-            </div>
             <ol>
               {apartados.map((apartado, i) => {
                 const hecho = i < step;
@@ -270,30 +261,30 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   <li
                     key={apartado.rotulo}
                     aria-current={actual ? 'step' : undefined}
-                    className={`regla-fila flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2
-                      last:border-b-0 ${actual ? 'bg-laboratorio-claro' : ''}`}
+                    className={`regla-fila flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 sm:px-5
+                      last:border-b-0 ${actual ? 'bg-hoja-2' : ''}`}
                   >
                     <span
-                      className={`valor w-5 shrink-0 text-right text-sm ${
-                        actual ? 'text-laboratorio' : 'text-tinta-3'
+                      className={`valor flex h-6 w-6 shrink-0 items-center justify-center self-center rounded-full text-sm font-semibold ${
+                        actual ? 'bg-petroleo text-white' : hecho ? 'bg-petroleo-claro text-petroleo' : 'bg-hoja-3 text-tinta-3'
                       }`}
                     >
                       {i + 1}
                     </span>
                     <span
                       className={`min-w-0 flex-1 basis-32 text-base ${
-                        actual ? 'font-semibold text-laboratorio' : hecho ? 'text-tinta' : 'text-tinta-3'
+                        actual ? 'font-semibold text-petroleo' : hecho ? 'text-tinta' : 'text-tinta-3'
                       }`}
                     >
                       {apartado.rotulo}
                     </span>
                     <span className="shrink-0">
                       {hecho ? (
-                        <Marca veredicto="normal">Cerrado</Marca>
+                        <Marca veredicto="normal">Hecho</Marca>
                       ) : actual ? (
-                        <span className="rotulo text-laboratorio">En curso</span>
+                        <span className="text-sm font-medium text-petroleo">En curso</span>
                       ) : (
-                        <span className="rotulo">Pendiente</span>
+                        <span className="text-sm text-tinta-3">Pendiente</span>
                       )}
                     </span>
                   </li>
@@ -349,7 +340,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   help="Mínimo 10 caracteres. Guárdala en un gestor de contraseñas."
                 />
                 {error && <BandaError texto={error} />}
-                <Button type="submit" variant="tinta" busy={busy} className="self-start">
+                <Button type="submit" variant="principal" busy={busy} className="self-start">
                   Crear y continuar
                 </Button>
               </form>
@@ -371,7 +362,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                         entorno del panel y no sale del servidor.
                       </p>
                     </Muestra>
-                    {conectarEntorno.isPending && <Midiendo label="Comprobando la conexión con el motor…" />}
+                    {conectarEntorno.isPending && <Cargando label="Comprobando la conexión con el motor…" />}
                     {conectarEntorno.isError && (
                       <BandaError
                         texto={
@@ -383,7 +374,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                     )}
                     {!conectarEntorno.isPending && (
                       <div className="flex flex-wrap gap-2">
-                        <Button variant="tinta" onClick={() => conectarEntorno.mutate()}>
+                        <Button variant="principal" onClick={() => conectarEntorno.mutate()}>
                           {conectarEntorno.isError
                             ? 'Reintentar con el motor del servidor'
                             : 'Usar el motor configurado en el servidor'}
@@ -465,7 +456,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                     {error && <BandaError texto={error} />}
                     <Button
                       type="submit"
-                      variant={motorDelEntorno ? 'perfil' : 'tinta'}
+                      variant={motorDelEntorno ? 'perfil' : 'principal'}
                       busy={busy}
                       className="self-start"
                     >
@@ -534,7 +525,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   help="El enlace al webmail que verán los clientes. Vacío si no hay webmail."
                 />
                 {error && <BandaError texto={error} />}
-                <Button type="submit" variant="tinta" busy={busy} className="self-start">
+                <Button type="submit" variant="principal" busy={busy} className="self-start">
                   Guardar y continuar
                 </Button>
               </form>
@@ -715,7 +706,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       </p>
 
       {cargando ? (
-        <Midiendo label="Midiendo la instalación…" />
+        <Cargando label="Cargando la instalación…" />
       ) : (
         <div className="-mx-4 border-y border-regla">
           <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 pb-1.5 pt-2.5 sm:flex">
@@ -766,7 +757,7 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       </div>
 
       {error && <BandaError texto={error} />}
-      <Button variant="tinta" busy={busy} onClick={onFinish} className="self-start">
+      <Button variant="principal" busy={busy} onClick={onFinish} className="self-start">
         Entrar al panel
       </Button>
     </div>

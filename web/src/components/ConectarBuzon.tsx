@@ -13,7 +13,7 @@ import {
 } from '../lib/portal';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Field';
-import { MarcaFondo, Midiendo, Muestra } from '../ui/kit';
+import { MarcaFondo, Cargando, Muestra } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { DatosManuales } from '../pages/portal/GuiasDispositivo';
 import { AvisoError, claseEnlaceBoton } from '../pages/portal/comun';
@@ -176,7 +176,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
             {crear.isError && (
               <AvisoError>{mensajeError(crear.error, 'No se ha podido crear el enlace de configuración.')}</AvisoError>
             )}
-            <Button type="submit" variant="tinta" busy={crear.isPending} className="self-start">
+            <Button type="submit" variant="principal" busy={crear.isPending} className="self-start">
               Crear enlace de configuración
             </Button>
           </form>
@@ -186,7 +186,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
       {/* 2. Para quien prefiere configurarlo en persona. */}
       <Seccion titulo="Datos de conexión">
         {conexion.isPending ? (
-          <Midiendo label="Cargando datos de conexión…" />
+          <Cargando label="Cargando datos de conexión…" />
         ) : conexion.isError ? (
           <AvisoError>{mensajeError(conexion.error, 'No se han podido cargar los datos de conexión.')}</AvisoError>
         ) : (
@@ -223,7 +223,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
       {/* 3. Historial: saber si el titular lo abrió y poder retirarlo. */}
       <Seccion titulo="Enlaces creados">
         {enlaces.isPending ? (
-          <Midiendo label="Cargando enlaces…" />
+          <Cargando label="Cargando enlaces…" />
         ) : enlaces.isError ? (
           <AvisoError>{mensajeError(enlaces.error, 'No se han podido cargar los enlaces.')}</AvisoError>
         ) : lista.length === 0 ? (
@@ -300,7 +300,7 @@ function estadoEnlace(enlace: EnlaceConfiguracion): 'activo' | 'caducado' | 'rev
 function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
-      <h3 className="regla-cabecera pb-1.5 font-estrecha text-md font-semibold uppercase tracking-[0.06em] text-tinta">
+      <h3 className="regla-cabecera pb-2 text-md font-semibold text-tinta">
         {titulo}
       </h3>
       {children}

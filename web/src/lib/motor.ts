@@ -103,7 +103,7 @@ export function veredictoTls(tls: EngineTlsStatus): Veredicto {
 
 /** Lectura en una línea del certificado, para la columna de valor. */
 export function resumenTls(tls: EngineTlsStatus): string {
-  if (tls.error) return 'Sin medir';
+  if (tls.error) return 'Sin comprobar';
   if (tls.selfSigned) return 'Autofirmado';
   if (tls.hostnameMatches === false) return 'Nombre incorrecto';
   if (tls.daysLeft !== null && tls.daysLeft < 0) return 'Caducado';

@@ -24,7 +24,7 @@ import {
   MarcaFondo,
   Medida,
   Membrete,
-  Midiendo,
+  Cargando,
   Muestra,
   type Veredicto,
 } from '../ui/kit';
@@ -47,7 +47,7 @@ const veredictoDe: Record<CheckStatus, Veredicto> = {
 };
 
 const etiquetaDe: Record<CheckStatus, string> = {
-  ok: 'En rango',
+  ok: 'Correcto',
   missing: 'Falta',
   mismatch: 'No coincide',
   unknown: 'Sin dato',
@@ -157,21 +157,21 @@ export default function DominioDetalle() {
           'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acabas de crearlo, espera unos minutos y vuelve a verificar.',
         );
       } else if (medicionIlegible(d)) {
-        toast('error', 'No se ha podido consultar el DNS del dominio. Vuelve a medir en unos minutos.');
+        toast('error', 'No se ha podido consultar el DNS del dominio. Vuelve a comprobarlo en unos minutos.');
       } else {
         toast(
           'ok',
-          `Medición completada: ${report.requiredOk ?? 0} de ${report.requiredTotal ?? 0} registros obligatorios en rango.`,
+          `Comprobación completada: ${report.requiredOk ?? 0} de ${report.requiredTotal ?? 0} registros obligatorios correctos.`,
         );
       }
     },
     onError: (err) =>
-      toast('error', err instanceof ApiError ? err.message : 'No se ha podido medir el DNS.'),
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido comprobar el DNS.'),
   });
 
   /**
    * El motor no generó la clave DKIM (la ficha la marca como pendiente): se
-   * pide de nuevo y se vuelve a medir, para ver ya el registro que publicar.
+   * pide de nuevo y se vuelve a comprobarlo, para ver ya el registro que publicar.
    */
   const generarDkim = useMutation({
     mutationFn: async () => {
@@ -186,7 +186,7 @@ export default function DominioDetalle() {
         sigue ? 'error' : 'ok',
         sigue
           ? 'El servidor de correo sigue sin devolver la clave DKIM. Revisa su registro de errores.'
-          : 'Clave DKIM generada. Publica su registro en el DNS y vuelve a medir.',
+          : 'Clave DKIM generada. Publica su registro en el DNS y vuelve a comprobarlo.',
       );
     },
     onError: (err) =>
@@ -245,7 +245,7 @@ export default function DominioDetalle() {
   if (domain.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Cargando la ficha del dominio…" />
+        <Cargando label="Cargando la ficha del dominio…" />
       </Hoja>
     );
   }
@@ -256,7 +256,7 @@ export default function DominioDetalle() {
         {noExiste ? (
           <p role="alert" className="text-base text-tinta-2">
             <span className="text-fuera">No se ha encontrado el dominio.</span>{' '}
-            <Link className="text-laboratorio underline" to="/dominios">
+            <Link className="text-petroleo underline" to="/dominios">
               Volver a dominios
             </Link>
           </p>
@@ -306,7 +306,7 @@ export default function DominioDetalle() {
     <>
       <Membrete
         title={
-          <span className="valor break-all text-xl font-semibold normal-case tracking-normal">
+          <span className="break-all">
             {visible}
           </span>
         }
@@ -314,19 +314,19 @@ export default function DominioDetalle() {
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <MarcaFondo veredicto={lectura.veredicto}>{lectura.etiqueta}</MarcaFondo>
             {conPropiedad && (
-              <span className="text-white/85">
+              <span className="text-tinta-2">
                 Propiedad: {pendientePropiedad ? 'pendiente' : 'comprobada'}
               </span>
             )}
-            <span className="text-white/70">Última medición: {formatDate(record.lastCheckedAt)}</span>
+            <span className="text-tinta-3">Última comprobación: {formatDate(record.lastCheckedAt)}</span>
             {visible !== record.domain && (
-              <span className="valor break-all text-white/75">{record.domain}</span>
+              <span className="valor break-all text-tinta-3">{record.domain}</span>
             )}
           </span>
         }
         actions={
-          <Button variant="campo" busy={verify.isPending} onClick={() => verify.mutate('dns')}>
-            Medir el DNS ahora
+          <Button variant="principal" busy={verify.isPending} onClick={() => verify.mutate('dns')}>
+            Comprobar el DNS ahora
           </Button>
         }
       />
@@ -335,7 +335,7 @@ export default function DominioDetalle() {
         {checks.length === 0 ? (
           <Hoja title="DNS sin comprobar">
             <p className="max-w-[75ch] text-base text-tinta-2">
-              Aún no hay lectura del DNS. Pulsa «Medir el DNS ahora» para obtener los registros
+              Aún no hay lectura del DNS. Pulsa «Comprobar el DNS ahora» para obtener los registros
               que debes crear.
             </p>
           </Hoja>
@@ -343,7 +343,7 @@ export default function DominioDetalle() {
           <Hoja title="Resumen de la comprobación" meta={formatDate(record.lastCheckedAt)}>
             <CabeceraMedidas />
             <Medida
-              concepto="Registros obligatorios en rango"
+              concepto="Registros obligatorios correctos"
               valor={ilegible ? '—' : `${requiredOk}/${requiredTotal}`}
               referencia={`${requiredTotal}/${requiredTotal}`}
               veredicto={veredictoObligatorios}
@@ -351,13 +351,13 @@ export default function DominioDetalle() {
                 veredictoObligatorios === 'normal'
                   ? undefined
                   : ilegible
-                    ? 'No se ha podido consultar el DNS. Vuelve a medir en unos minutos.'
+                    ? 'No se ha podido consultar el DNS. Vuelve a comprobarlo en unos minutos.'
                     : 'Mientras falte alguno, el dominio no puede enviar ni recibir correo.'
               }
             />
             {optional.length > 0 && (
               <Medida
-                concepto="Registros de autoconfiguración en rango"
+                concepto="Registros de autoconfiguración correctos"
                 valor={`${optionalOk}/${optional.length}`}
                 referencia={`${optional.length}/${optional.length}`}
                 veredicto={
@@ -381,7 +381,7 @@ export default function DominioDetalle() {
         )}
 
         {avisoServidor && (
-          <div role="alert" className="border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-4 py-3">
+          <div role="alert" className="rounded-lg border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-4 py-3">
             <p className="rotulo text-fuera">Revisa el nombre del servidor de correo</p>
             <p className="mt-1 max-w-[75ch] text-base text-tinta">{avisoServidor}</p>
           </div>
@@ -398,12 +398,12 @@ export default function DominioDetalle() {
         {checks.length > 0 && (
           <Hoja
             title="Registros obligatorios"
-            meta={ilegible ? 'Sin dato' : `${requiredOk} de ${requiredTotal} en rango`}
+            meta={ilegible ? 'Sin dato' : `${requiredOk} de ${requiredTotal} correctos`}
             flush
           >
             <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
-              Para crearlos manualmente, copia cada valor de referencia en el panel DNS de tu
-              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a medir
+              Para crearlos manualmente, copia cada valor en el panel DNS de tu
+              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a comprobarlo
               cuando estén creados.
             </p>
             <ul>
@@ -429,7 +429,7 @@ export default function DominioDetalle() {
             {optional.length > 0 && (
               <Hoja
                 title="Recomendados (autoconfiguración)"
-                meta={`${optionalOk} de ${optional.length} en rango`}
+                meta={`${optionalOk} de ${optional.length} correctos`}
                 flush
               >
                 <ul>
@@ -443,13 +443,13 @@ export default function DominioDetalle() {
             {endurecimiento.length > 0 && (
               <Hoja
                 title="Opcionales (endurecimiento)"
-                meta={`${endurecimientoOk} de ${endurecimiento.length} en rango`}
+                meta={`${endurecimientoOk} de ${endurecimiento.length} correctos`}
                 flush
               >
                 <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
                   MTA-STS exige que el correo entrante llegue cifrado y requiere publicar un
                   fichero de política en la web del dominio. Se recomienda activarlo cuando el
-                  resto de registros esté en rango.
+                  resto de registros sea correcto.
                 </p>
                 <ul>
                   {porVeredicto(endurecimiento).map((check) => (
@@ -549,11 +549,11 @@ function BloquePropiedad({
         <Muestra rotulo="Registro TXT de verificación" copiar={registro.content}>
           <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
             <dt className="rotulo sm:pt-px">Tipo</dt>
-            <dd className="valor min-w-0 text-sm text-tinta">{registro.type}</dd>
+            <dd className="codigo min-w-0 text-sm text-tinta">{registro.type}</dd>
             <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Nombre</dt>
-            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{registro.name}</dd>
+            <dd className={`codigo min-w-0 text-sm text-tinta ${partible}`}>{registro.name}</dd>
             <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
-            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{registro.content}</dd>
+            <dd className={`codigo min-w-0 text-sm text-tinta ${partible}`}>{registro.content}</dd>
           </dl>
         </Muestra>
         <p className="max-w-[75ch] text-sm text-tinta-3">
@@ -597,11 +597,11 @@ function RegistroMedido({
       {check.engineMissing ? (
         // Sin valor que copiar: el motor todavía no ha generado el registro.
         <p className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="rotulo shrink-0">Valor de referencia</span>
+          <span className="rotulo shrink-0">Valor que hay que crear</span>
           <span className="text-sm text-tinta-3">pendiente de generar en el servidor de correo</span>
         </p>
       ) : (
-        <Muestra rotulo="Valor de referencia" copiar={check.expected} className="mt-2.5">
+        <Muestra rotulo="Valor que hay que crear" copiar={check.expected} className="mt-2.5">
           <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
             <dt className="rotulo sm:pt-px">Nombre</dt>
             <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.name}</dd>
@@ -735,7 +735,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
         </p>
       )}
       {hayConflicto && conflicto.data?.aviso && (
-        <div className="mb-4 border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
+        <div className="mb-4 rounded-lg border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
           <p className="rotulo text-fuera">No lo importes todavía</p>
           <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.aviso}</p>
         </div>

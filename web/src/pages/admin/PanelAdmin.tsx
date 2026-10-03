@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Building2, Globe2, Inbox, KeyRound } from 'lucide-react';
+import { ArrowRight, Building2, Globe2, History, Inbox, KeyRound, Radar } from 'lucide-react';
 import { api, type AdminDashboard, type AuditEntry, type ServerHealth } from '../../lib/api';
 import {
   AvisoError,
@@ -11,7 +11,7 @@ import {
   MarcaFondo,
   Medida,
   Membrete,
-  Midiendo,
+  Cargando,
   Vacio,
   type Veredicto,
 } from '../../ui/kit';
@@ -70,7 +70,7 @@ export default function PanelAdmin() {
     queryFn: () => api.get<{ entries: AuditEntry[] }>('/api/audit'),
   });
 
-  if (dashboard.isPending) return <Midiendo label="Cargando el resumen…" />;
+  if (dashboard.isPending) return <Cargando label="Cargando el resumen…" />;
   // Solo se sustituye la página si nunca hubo lectura: un sondeo fallido con
   // datos previos se avisa con una banda y se conservan los valores medidos.
   if (!dashboard.data) {
@@ -139,7 +139,7 @@ export default function PanelAdmin() {
       veredicto:
         score === undefined ? 'sin-dato' : score >= 80 ? 'normal' : score >= 50 ? 'vigilar' : 'fuera',
       nota: health.isError
-        ? 'No se ha podido consultar el PTR, el registro A ni las listas negras. Repite la medición desde Entregabilidad.'
+        ? 'No se ha podido consultar el PTR, el registro A ni las listas negras. Repite la comprobación desde Entregabilidad.'
         : health.data && !completa
           ? TEXTO_MEDICION_INCOMPLETA
           : undefined,
@@ -165,33 +165,28 @@ export default function PanelAdmin() {
 
   return (
     <>
-      <header className="campo-lab relative mb-5 overflow-hidden rounded-xl px-5 pb-32 pt-6 shadow-panel sm:min-h-[224px] sm:px-7 sm:py-7 sm:pr-[36%]">
-        <div className="relative z-10 max-w-2xl">
-          <p className="mb-2 text-sm font-medium text-laboratorio-vivo">Vista general</p>
-          <h1 className="titular text-3xl text-white sm:text-4xl">Resumen del servicio</h1>
-          <p className="mt-3 flex flex-wrap gap-x-2 text-base text-white/70">
-            <span className="valor [overflow-wrap:anywhere]">{instance.mailHostname || 'Servidor sin nombre'}</span>
-            <span aria-hidden>·</span>
-            {/* La hora de la última lectura real, no la del reloj: si el
-                sondeo falla, la hora no debe seguir avanzando. */}
-            <span>Actualizado {formatDate(dashboard.dataUpdatedAt)}</span>
-          </p>
-          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <MarcaFondo veredicto={veredictoGlobal}>{estadoGlobal}</MarcaFondo>
-            <span className="text-sm text-white/70">
-              {veredictoGlobal === 'normal'
-                ? 'Tu correo funciona correctamente.'
-                : 'Consulta los detalles a continuación.'}
-            </span>
-          </div>
-        </div>
-        <img
-          src="/mail-server.png"
-          alt=""
-          aria-hidden
-          className="pointer-events-none absolute -bottom-10 right-0 h-[160px] w-[205px] object-contain object-bottom sm:-bottom-8 sm:h-[260px] sm:w-[350px] xl:right-6"
-        />
-      </header>
+      <Membrete
+        title="Resumen del servicio"
+        meta={
+          <>
+            <p className="flex flex-wrap gap-x-2">
+              <span className="[overflow-wrap:anywhere]">{instance.mailHostname || 'Servidor sin nombre'}</span>
+              <span aria-hidden>·</span>
+              {/* La hora de la última lectura real, no la del reloj: si el
+                  sondeo falla, la hora no debe seguir avanzando. */}
+              <span>Actualizado {formatDate(dashboard.dataUpdatedAt)}</span>
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <MarcaFondo veredicto={veredictoGlobal}>{estadoGlobal}</MarcaFondo>
+              <span className="text-sm text-tinta-2">
+                {veredictoGlobal === 'normal'
+                  ? 'Tu correo funciona correctamente.'
+                  : 'Consulta los detalles a continuación.'}
+              </span>
+            </div>
+          </>
+        }
+      />
 
       {dashboard.isRefetchError && (
         <AvisoError
@@ -215,13 +210,13 @@ export default function PanelAdmin() {
               value={score ?? '—'}
               suffix={score === undefined ? '' : '/100'}
               label="Reputación"
-              icon={<span className="text-lg font-semibold leading-none">↗</span>}
+              icon={<Radar />}
             />
           </div>
           <div className="border-t border-regla px-4 py-2.5">
             <Link
               to="/entregabilidad"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-laboratorio hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-petroleo hover:underline"
             >
               Ver el informe de entregabilidad <ArrowRight className="h-3.5 w-3.5" aria-hidden />
             </Link>
@@ -232,18 +227,18 @@ export default function PanelAdmin() {
           title="Recomendaciones"
           meta="Qué conviene revisar"
           actions={
-            <Link to="/entregabilidad" className="text-sm text-laboratorio hover:underline">
+            <Link to="/entregabilidad" className="text-sm text-petroleo hover:underline">
               Ver todas
             </Link>
           }
           flush
         >
           {health.isPending ? (
-            <Midiendo label="Consultando PTR, registro A y listas negras…" />
+            <Cargando label="Consultando PTR, registro A y listas negras…" />
           ) : health.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
-                No se ha podido comprobar la entregabilidad del servidor. Sin esta medición no hay
+                No se ha podido comprobar la entregabilidad del servidor. Sin esta comprobación no hay
                 veredicto sobre el PTR, el registro A ni las listas negras.
               </AvisoError>
             </div>
@@ -269,10 +264,10 @@ export default function PanelAdmin() {
                     to="/entregabilidad"
                     className="group flex items-start gap-3 px-4 py-3 transition-colors duration-100 hover:bg-hoja-2"
                   >
-                    {/* La gravedad, en el filete del margen: el texto ya dice qué pasa. */}
+                    {/* La gravedad, en un punto junto al título: el texto ya dice qué pasa. */}
                     <span
                       aria-hidden
-                      className={`mt-0.5 h-9 w-0.5 shrink-0 rounded-full ${
+                      className={`mt-2 h-2 w-2 shrink-0 rounded-full ${
                         rec.severity === 'critical'
                           ? 'bg-fuera'
                           : rec.severity === 'warning'
@@ -331,14 +326,14 @@ export default function PanelAdmin() {
         <Hoja
           title="Actividad reciente"
           actions={
-            <Link to="/actividad" className="text-sm text-laboratorio hover:underline">
+            <Link to="/actividad" className="text-sm text-petroleo hover:underline">
               Ver todo
             </Link>
           }
           flush
         >
           {audit.isPending ? (
-            <Midiendo label="Cargando la actividad…" />
+            <Cargando label="Cargando la actividad…" />
           ) : audit.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void audit.refetch()} retrying={audit.isFetching}>
@@ -346,7 +341,7 @@ export default function PanelAdmin() {
               </AvisoError>
             </div>
           ) : entradas.length === 0 ? (
-            <Vacio
+            <Vacio icono={History}
               title="Todavía no hay movimiento"
               action={
                 <Link to="/clientes" className={estiloBoton('perfil')}>
@@ -412,15 +407,17 @@ function ResumenNumero({
   icon: ReactNode;
 }) {
   return (
-    <Link to={to} className="group min-w-0 px-4 py-5 text-center transition-colors hover:bg-hoja-2">
-      <span className="mb-3 flex h-5 items-center justify-center text-laboratorio [&>svg]:h-5 [&>svg]:w-5" aria-hidden>
-        {icon}
+    <Link to={to} className="group min-w-0 px-4 py-4 transition-colors hover:bg-hoja-2 sm:px-5">
+      <span className="flex items-center gap-2 text-sm text-tinta-2 group-hover:text-petroleo">
+        <span className="text-tinta-3 group-hover:text-petroleo [&>svg]:h-4 [&>svg]:w-4" aria-hidden>
+          {icon}
+        </span>
+        {label}
       </span>
-      <span className="valor block text-2xl font-semibold leading-tight text-tinta sm:text-3xl">
+      <span className="valor mt-1.5 block text-2xl font-semibold leading-tight text-tinta">
         {value}
         <span className="text-base font-normal text-tinta-3">{suffix}</span>
       </span>
-      <span className="mt-1 block text-sm text-tinta-2 group-hover:text-laboratorio">{label}</span>
     </Link>
   );
 }
@@ -433,7 +430,7 @@ function FilaRegistro({ to, label, valor, icon }: { to: string; label: string; v
         className="flex items-center justify-between gap-3 px-4 py-3 transition-colors duration-100 hover:bg-hoja-3"
       >
         <span className="flex items-center gap-3 text-base text-tinta-2">
-          <span className="text-laboratorio [&>svg]:h-4 [&>svg]:w-4" aria-hidden>
+          <span className="text-petroleo [&>svg]:h-4 [&>svg]:w-4" aria-hidden>
             {icon}
           </span>
           {label}

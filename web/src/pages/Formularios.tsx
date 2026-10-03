@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { FormInput } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Client, type FormInfo, type Mailbox, type User } from '../lib/api';
 import { formatDate, plural } from '../lib/format';
 import { Button, estiloBoton } from '../ui/Button';
 import { Input, Select, Textarea } from '../ui/Field';
-import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio } from '../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { Botonera, Casilla } from '../components/gestion/comun';
 
@@ -218,7 +219,7 @@ export default function Formularios({ user }: { user: User }) {
         title="Formularios"
         meta="Formularios de contacto para webs estáticas: los mensajes llegan a tu buzón sin claves secretas en la web."
         actions={
-          <Button variant="campo" disabled={activos.length === 0} onClick={abrirNuevo}>
+          <Button variant="principal" disabled={activos.length === 0} onClick={abrirNuevo}>
             Nuevo formulario
           </Button>
         }
@@ -233,7 +234,7 @@ export default function Formularios({ user }: { user: User }) {
 
         {forms.isPending ? (
           <Hoja>
-            <Midiendo label="Cargando los formularios…" />
+            <Cargando label="Cargando los formularios…" />
           </Hoja>
         ) : forms.isError ? (
           <AvisoError onRetry={() => void forms.refetch()} retrying={forms.isFetching}>
@@ -241,7 +242,7 @@ export default function Formularios({ user }: { user: User }) {
           </AvisoError>
         ) : lista.length === 0 ? (
           <Hoja>
-            <Vacio
+            <Vacio icono={FormInput}
               title="Sin formularios"
               action={
                 activos.length === 0 ? (
@@ -283,7 +284,7 @@ export default function Formularios({ user }: { user: User }) {
                       {form.turnstile && <MarcaFondo veredicto="normal">Turnstile</MarcaFondo>}
                     </p>
                     <p className="mt-0.5 text-sm text-tinta-3 [overflow-wrap:anywhere]">
-                      <span className="valor text-tinta-2">{form.publicKey}</span>
+                      <span className="codigo text-tinta-2">{form.publicKey}</span>
                       {' · llega a '}
                       <span className="valor text-tinta-2">{form.recipientEmail}</span>
                       {isAdmin && nombreCliente.get(form.clientId) && <> · {nombreCliente.get(form.clientId)}</>}
@@ -485,7 +486,7 @@ export default function Formularios({ user }: { user: User }) {
             </Button>
             <Button
               type="submit"
-              variant="tinta"
+              variant="principal"
               busy={guardar.isPending}
               disabled={editando === 'nuevo' && !remitente}
             >
@@ -502,7 +503,7 @@ export default function Formularios({ user }: { user: User }) {
         title={codigo?.recienCreado ? 'Formulario creado' : `Código de «${codigo?.form.name ?? ''}»`}
         ancho="amplio"
         pie={
-          <Button variant="tinta" onClick={() => setCodigo(null)}>
+          <Button variant="principal" onClick={() => setCodigo(null)}>
             Cerrar
           </Button>
         }
@@ -511,8 +512,8 @@ export default function Formularios({ user }: { user: User }) {
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
               Pega este código en tu web donde quieras que aparezca el formulario. Puedes cambiar los textos, el diseño y
-              los campos: todos llegan en el mensaje, y el campo <code className="valor text-sm">email</code> se usa para
-              responder. La clave <span className="valor text-sm text-tinta">{codigo.form.publicKey}</span> es pública:
+              los campos: todos llegan en el mensaje, y el campo <code className="codigo text-sm">email</code> se usa para
+              responder. La clave <span className="codigo text-sm text-tinta">{codigo.form.publicKey}</span> es pública:
               no hace falta protegerla. Puedes volver a ver este código cuando quieras.
             </p>
             <Muestra rotulo="Código HTML" copiar={codigo.form.embedHtml}>

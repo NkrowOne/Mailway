@@ -62,28 +62,39 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-live="polite"
         className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(360px,calc(100vw-32px))] flex-col gap-2"
       >
-        {/* Nota al margen del parte: filete superior con el color del veredicto.
-            La región anuncia las confirmaciones sin interrumpir; un error se
-            anuncia de inmediato (alert). */}
+        {/* Aviso flotante con el glifo del estado. La región anuncia las
+            confirmaciones sin interrumpir; un error se anuncia de inmediato
+            (alert). */}
         {toasts.map((toast) => (
           <div
             key={toast.id}
             role={toast.tone === 'error' ? 'alert' : undefined}
-            className={`pointer-events-auto flex animate-aparecer items-start gap-2 border border-regla
-              border-t-2 bg-hoja py-2.5 pl-3.5 pr-1.5 text-base text-tinta shadow-flotante
-              ${toast.tone === 'ok' ? 'border-t-[rgb(var(--normal))]' : 'border-t-[rgb(var(--fuera))]'}`}
+            className="pointer-events-auto flex animate-aparecer items-start gap-3 rounded-xl border border-regla
+              bg-hoja py-3 pl-3.5 pr-2 text-base text-tinta shadow-flotante"
           >
+            <span
+              aria-hidden
+              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                toast.tone === 'ok' ? 'bg-normal-fondo text-normal' : 'bg-fuera-fondo text-fuera'
+              }`}
+            >
+              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5">
+                {toast.tone === 'ok' ? (
+                  <path d="M1.5 5.4L4 7.8 8.6 2.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                ) : (
+                  <path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                )}
+              </svg>
+            </span>
             <div className="min-w-0 flex-1">
-              <span className={`rotulo ${toast.tone === 'ok' ? 'text-normal' : 'text-fuera'}`}>
-                {toast.tone === 'ok' ? 'Hecho' : 'No se ha podido'}
-              </span>
-              <p className="mt-0.5 [overflow-wrap:anywhere]">{toast.text}</p>
+              <span className="sr-only">{toast.tone === 'ok' ? 'Hecho: ' : 'No se ha podido: '}</span>
+              <p className="[overflow-wrap:anywhere]">{toast.text}</p>
             </div>
             <button
               type="button"
               onClick={() => retirar(toast.id)}
               aria-label="Cerrar aviso"
-              className="flex h-6 w-6 shrink-0 items-center justify-center text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-tinta-3 hover:bg-hoja-3 hover:text-tinta"
             >
               <svg viewBox="0 0 14 14" className="h-3 w-3" aria-hidden>
                 <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" fill="none" />

@@ -10,7 +10,7 @@ import {
 } from '../../lib/portal';
 import { QR } from '../../components/QR';
 import { Button } from '../../ui/Button';
-import { Dialogo, Hoja, Midiendo, Muestra } from '../../ui/kit';
+import { Dialogo, Hoja, Cargando, Muestra } from '../../ui/kit';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import {
   AvisoError,
@@ -61,7 +61,7 @@ export default function ConectarPagina() {
   if (consulta.isPending) {
     return (
       <PaginaEstado>
-        <Midiendo label="Cargando la configuración…" />
+        <Cargando label="Cargando la configuración…" />
       </PaginaEstado>
     );
   }
@@ -75,7 +75,7 @@ export default function ConectarPagina() {
     return (
       <PaginaEstado>
         <div className="flex flex-col gap-3 px-5 py-6">
-          <h1 className="font-estrecha text-xl font-semibold uppercase tracking-[0.04em] text-tinta">
+          <h1 className="text-xl font-semibold text-tinta">
             {caducado ? 'Enlace no disponible' : suspendido ? 'Buzón suspendido' : 'No se ha podido cargar la página'}
           </h1>
           <p className="text-base text-tinta-2">
@@ -84,13 +84,13 @@ export default function ConectarPagina() {
               : mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}
           </p>
           {!definitivo && (
-            <Button variant="tinta" className={TACTIL} onClick={() => void consulta.refetch()}>
+            <Button variant="principal" className={TACTIL} onClick={() => void consulta.refetch()}>
               Volver a intentarlo
             </Button>
           )}
           <Nota>
             Si ya tienes la contraseña de tu buzón, también puedes acceder a{' '}
-            <a href="/mi-buzon" className="text-laboratorio underline hover:text-tinta">
+            <a href="/mi-buzon" className="text-petroleo underline hover:text-tinta">
               «Mi buzón»
             </a>{' '}
             para configurar tus dispositivos.
@@ -112,7 +112,7 @@ export default function ConectarPagina() {
       titulo="Configurar tu correo"
       meta={
         <>
-          <p className="valor break-all text-white/90">{datos.email}</p>
+          <p className="break-all font-medium text-tinta">{datos.email}</p>
           <p className="mt-1">
             Sigue los pasos para tu dispositivo. Este enlace es válido hasta el {fechaLarga(datos.expiresAt)}.
           </p>
@@ -246,7 +246,7 @@ function ContrasenaRevelable({ password }: { password: string }) {
   return (
     <Muestra rotulo="Contraseña">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="valor min-w-0 grow break-all text-lg text-tinta" aria-live="polite">
+        <span className="codigo min-w-0 grow break-all text-lg text-tinta" aria-live="polite">
           {visible ? password : '•'.repeat(Math.min(password.length, 16))}
         </span>
         <Button variant="perfil" className={TACTIL} onClick={() => setVisible((v) => !v)} aria-pressed={visible}>

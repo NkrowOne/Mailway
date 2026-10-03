@@ -46,7 +46,7 @@ export function BandaError({
 /** Banda de aviso (ámbar): algo que conviene leer antes de seguir. */
 export function BandaAviso({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
-    <div className="border border-[rgb(var(--vigilar)/0.4)] bg-vigilar-fondo px-3 py-2.5">
+    <div className="rounded-lg border border-[rgb(var(--vigilar)/0.4)] bg-vigilar-fondo px-3 py-2.5">
       <p className="rotulo text-vigilar">{titulo}</p>
       <div className="mt-1 max-w-[75ch] text-sm text-tinta">{children}</div>
     </div>

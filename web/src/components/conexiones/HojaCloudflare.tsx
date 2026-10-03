@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Cloud } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type Client } from '../../lib/api';
 import {
@@ -11,7 +12,7 @@ import {
 import { formatDate, plural } from '../../lib/format';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { Dialogo, Hoja, MarcaFondo, Midiendo, Vacio } from '../../ui/kit';
+import { Dialogo, Hoja, MarcaFondo, Cargando, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaError, ResultadoCloudflare, claseEnlacePerfil } from '../cloudflare/comun';
 import { RevisionCambios } from '../cloudflare/RevisionCambios';
@@ -107,7 +108,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         {cuentas.isPending ? (
-          <Midiendo label="Consultando las cuentas de Cloudflare…" />
+          <Cargando label="Consultando las cuentas de Cloudflare…" />
         ) : cuentas.isError ? (
           <div className="px-4 py-3">
             <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
@@ -115,7 +116,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
             </BandaError>
           </div>
         ) : lista.length === 0 ? (
-          <Vacio title="Todavía no hay ninguna cuenta conectada">
+          <Vacio icono={Cloud} title="Todavía no hay ninguna cuenta conectada">
             Sigue los tres pasos siguientes: crear el token en Cloudflare, pegarlo aquí y conectar.
           </Vacio>
         ) : (
@@ -355,7 +356,7 @@ function FormularioConexion({
             Cancelar
           </Button>
         )}
-        <Button type="submit" variant="tinta" busy={conectar.isPending} disabled={token.trim().length < 20}>
+        <Button type="submit" variant="principal" busy={conectar.isPending} disabled={token.trim().length < 20}>
           Conectar cuenta
         </Button>
       </div>

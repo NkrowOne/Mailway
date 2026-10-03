@@ -1,3 +1,4 @@
+import { CircleCheck, CircleDashed, Server } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ServerHealth } from '../../lib/api';
@@ -12,7 +13,7 @@ import {
   MarcaFondo,
   Medida,
   Membrete,
-  Midiendo,
+  Cargando,
   Vacio,
   type Veredicto,
 } from '../../ui/kit';
@@ -51,20 +52,20 @@ export default function Entregabilidad() {
       meta={
         health.data ? (
           <span>
-            Si algún valor está fuera de rango, los mensajes pueden acabar en spam o ser
-            rechazados. Medido {formatDate(health.data.checkedAt || health.dataUpdatedAt)}.
+            Si algún valor necesita atención, los mensajes pueden acabar en spam o ser
+            rechazados. Última comprobación: {formatDate(health.data.checkedAt || health.dataUpdatedAt)}.
           </span>
         ) : (
-          'Si algún valor está fuera de rango, los mensajes pueden acabar en spam o ser rechazados.'
+          'Si algún valor necesita atención, los mensajes pueden acabar en spam o ser rechazados.'
         )
       }
       actions={
         <Button
-          variant="campo"
+          variant="principal"
           busy={health.isFetching}
           onClick={() => void health.refetch()}
         >
-          Volver a medir
+          Comprobar de nuevo
         </Button>
       }
     />
@@ -74,7 +75,7 @@ export default function Entregabilidad() {
     return (
       <>
         {membrete}
-        <Midiendo label="Consultando PTR y listas negras…" />
+        <Cargando label="Consultando PTR y listas negras…" />
       </>
     );
   }
@@ -120,17 +121,18 @@ export default function Entregabilidad() {
           onRetry={() => void health.refetch()}
           retrying={health.isFetching}
         >
-          No se ha podido completar la nueva medición. Se muestran los resultados de las{' '}
+          No se ha podido completar la nueva comprobación. Se muestran los resultados de las{' '}
           {formatDate(data.checkedAt || health.dataUpdatedAt)}.
         </AvisoError>
       )}
 
-      {/* Resultado global: un valor con su rango, no una tarjeta de métrica. */}
+      {/* Resultado global: la puntuación con su objetivo y qué significa. */}
       <Hoja className="mb-4">
-        <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
-          <div className="flex min-w-0 items-end gap-4">
-            <span
-              className={`valor text-3xl font-semibold leading-none ${
+        <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+          <div className="min-w-0 flex-1 basis-64">
+            <p className="rotulo">Puntuación de entregabilidad · se espera 80 o más</p>
+            <p
+              className={`valor mt-1 text-3xl font-semibold leading-tight ${
                 veredictoGlobal === 'normal'
                   ? 'text-normal'
                   : veredictoGlobal === 'vigilar'
@@ -141,19 +143,17 @@ export default function Entregabilidad() {
               }`}
             >
               {completa ? data.score : '—'}
-            </span>
-            <div className="min-w-0 pb-0.5">
-              <p className="rotulo">Puntuación · referencia ≥ 80</p>
-              <p className="text-base text-tinta-2">
-                {!completa
-                  ? TEXTO_MEDICION_INCOMPLETA
-                  : data.score >= 80
-                    ? 'Buena posición para entregar en Gmail y Outlook.'
-                    : 'Corrige lo que está fuera de rango antes de enviar en volumen.'}
-              </p>
-            </div>
+              {completa && <span className="text-lg font-normal text-tinta-3">/100</span>}
+            </p>
+            <p className="mt-1 max-w-2xl text-base text-tinta-2">
+              {!completa
+                ? TEXTO_MEDICION_INCOMPLETA
+                : data.score >= 80
+                  ? 'Buena posición para entregar en Gmail y Outlook.'
+                  : 'Corrige lo que necesita atención antes de enviar en volumen.'}
+            </p>
           </div>
-          <Marca veredicto={veredictoGlobal} />
+          <MarcaFondo veredicto={veredictoGlobal} />
         </div>
       </Hoja>
 
@@ -170,7 +170,7 @@ export default function Entregabilidad() {
                 data.mailHostname ? undefined : (
                   <>
                     Indica el nombre del servidor de correo en{' '}
-                    <Link to="/ajustes" className="text-laboratorio underline underline-offset-2">
+                    <Link to="/ajustes" className="text-petroleo underline underline-offset-2">
                       Ajustes
                     </Link>
                     .
@@ -247,7 +247,7 @@ export default function Entregabilidad() {
 
           <Hoja title="Listas negras" meta="DNSBL · listadas primero" flush>
             {listas.length === 0 ? (
-              <Vacio
+              <Vacio icono={Server}
                 title="Sin IP que comprobar"
                 action={
                   <Link to="/ajustes" className={estiloBoton('perfil')}>
@@ -298,12 +298,12 @@ export default function Entregabilidad() {
 
         <Hoja title="Plan de acción" meta="En orden de urgencia" flush>
           {acciones.length === 0 && !completa ? (
-            <Vacio title="Comprobación incompleta">
+            <Vacio icono={CircleDashed} title="Comprobación incompleta">
               No se ha podido consultar todo lo necesario para proponer un plan de acción. Vuelve a
               medir en unos minutos.
             </Vacio>
           ) : acciones.length === 0 ? (
-            <Vacio title="Sin acciones pendientes">
+            <Vacio icono={CircleCheck} title="Sin acciones pendientes">
               No hay nada que corregir en la identidad del servidor.
             </Vacio>
           ) : (

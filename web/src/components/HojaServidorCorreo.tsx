@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { Server } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type User } from '../lib/api';
@@ -16,7 +17,7 @@ import {
 } from '../lib/motor';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { AvisoError, Hoja, Marca, Midiendo, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -71,7 +72,7 @@ export function HojaServidorCorreo() {
   if (estado.isPending) {
     return (
       <Hoja title="Servidor de correo" className="min-w-0">
-        <Midiendo label="Midiendo el servidor de correo…" />
+        <Cargando label="Cargando el servidor de correo…" />
       </Hoja>
     );
   }
@@ -97,7 +98,7 @@ export function HojaServidorCorreo() {
   if (data.engine.kind !== 'stalwart') {
     return (
       <Hoja title="Servidor de correo" className="min-w-0">
-        <Vacio title={data.engine.kind === 'demo' ? 'Modo demostración' : 'Motor sin conectar'}>
+        <Vacio icono={Server} title={data.engine.kind === 'demo' ? 'Modo demostración' : 'Motor sin conectar'}>
           {data.engine.kind === 'demo'
             ? 'No hay un servidor de correo real. El nombre del servidor y el certificado se configuran al conectar Stalwart en «Motor de correo».'
             : 'Conecta el motor en «Motor de correo» para configurar el nombre del servidor y el certificado.'}
@@ -250,7 +251,7 @@ function construirFilas(data: EngineStatus): Fila[] {
           : '';
     const via =
       tls.via === 'interno'
-        ? ` Medido por la red interna: el nombre público no respondió desde el panel (${tls.publicError ?? 'sin detalle'}); comprueba que el puerto ${tls.port} está abierto en el cortafuegos.`
+        ? ` Comprobado desde la red interna: el nombre público no respondió desde el panel (${tls.publicError ?? 'sin detalle'}); comprueba que el puerto ${tls.port} está abierto en el cortafuegos.`
         : '';
     notaTls = `${[problema, caducidad].filter(Boolean).join(' ')}${via}`.trim() || undefined;
   }
@@ -390,7 +391,7 @@ function EmisionCertificado({
       </p>
 
       {cuentas.isPending ? (
-        <Midiendo label="Leyendo las cuentas de Cloudflare…" />
+        <Cargando label="Leyendo las cuentas de Cloudflare…" />
       ) : cuentas.isError ? (
         <BandaError
           texto={
@@ -402,7 +403,7 @@ function EmisionCertificado({
       ) : instancia.length === 0 ? (
         <p className="text-sm text-tinta-2">
           No hay ninguna cuenta de Cloudflare de la instancia.{' '}
-          <Link to="/conexiones" className="font-semibold text-laboratorio underline underline-offset-2">
+          <Link to="/conexiones" className="font-semibold text-petroleo underline underline-offset-2">
             Conectar una cuenta en Conexiones
           </Link>{' '}
           con permisos de Zona: Lectura y DNS: Edición sobre la zona de {estado.hostname.expected}.
@@ -435,7 +436,7 @@ function EmisionCertificado({
             />
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="tinta" busy={emitir.isPending} disabled={!cuentaElegida || !contacto}>
+            <Button type="submit" variant="principal" busy={emitir.isPending} disabled={!cuentaElegida || !contacto}>
               Emitir certificado
             </Button>
             {(estado.acme.configured || tlsOk) && (

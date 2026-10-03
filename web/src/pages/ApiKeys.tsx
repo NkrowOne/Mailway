@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { KeyRound, Send } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -20,7 +21,7 @@ import {
   Hoja,
   MarcaFondo,
   Membrete,
-  Midiendo,
+  Cargando,
   Muestra,
   Vacio,
 } from '../ui/kit';
@@ -291,7 +292,7 @@ export default function ApiKeys({ user }: { user: User }) {
         title="API de envío"
         meta="Envíos automatizados desde tus aplicaciones: códigos de acceso, avisos, facturas."
         actions={
-          <Button variant="campo" disabled={activos.length === 0} onClick={abrir}>
+          <Button variant="principal" disabled={activos.length === 0} onClick={abrir}>
             Nueva clave
           </Button>
         }
@@ -306,7 +307,7 @@ export default function ApiKeys({ user }: { user: User }) {
 
         {keys.isPending ? (
           <Hoja>
-            <Midiendo label="Cargando las claves de API…" />
+            <Cargando label="Cargando las claves de API…" />
           </Hoja>
         ) : keys.isError ? (
           <AvisoError onRetry={() => void keys.refetch()} retrying={keys.isFetching}>
@@ -314,7 +315,7 @@ export default function ApiKeys({ user }: { user: User }) {
           </AvisoError>
         ) : keyList.length === 0 ? (
           <Hoja>
-            <Vacio
+            <Vacio icono={KeyRound}
               title="Sin claves de API"
               action={
                 activos.length === 0 ? (
@@ -355,7 +356,7 @@ export default function ApiKeys({ user }: { user: User }) {
                     </p>
                     {/* Prefijo y remitente identifican la clave: nunca se recortan. */}
                     <p className="mt-0.5 text-sm text-tinta-3 [overflow-wrap:anywhere]">
-                      <span className="valor text-tinta-2">mw_{key.prefix}_••••</span>
+                      <span className="codigo text-tinta-2">mw_{key.prefix}_••••</span>
                       {' · remite '}
                       <span className="valor text-tinta-2">{key.senderEmail}</span>
                       {isAdmin && nombreCliente.get(key.clientId) && (
@@ -404,7 +405,7 @@ export default function ApiKeys({ user }: { user: User }) {
                 href={DOCS_API}
                 target="_blank"
                 rel="noreferrer"
-                className="text-sm text-laboratorio underline underline-offset-2 hover:text-tinta"
+                className="text-sm text-petroleo underline underline-offset-2 hover:text-tinta"
               >
                 Documentación completa
               </a>
@@ -494,7 +495,7 @@ export default function ApiKeys({ user }: { user: User }) {
           flush
         >
           {messages.isPending ? (
-            <Midiendo label="Cargando los últimos envíos…" />
+            <Cargando label="Cargando los últimos envíos…" />
           ) : messages.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void messages.refetch()} retrying={messages.isFetching}>
@@ -502,7 +503,7 @@ export default function ApiKeys({ user }: { user: User }) {
               </AvisoError>
             </div>
           ) : messageList.length === 0 ? (
-            <Vacio title="Todavía no hay envíos">
+            <Vacio icono={Send} title="Todavía no hay envíos">
               Cuando tu aplicación llame a la API, cada mensaje aparecerá aquí con su estado.
             </Vacio>
           ) : (
@@ -645,7 +646,7 @@ export default function ApiKeys({ user }: { user: User }) {
             </Button>
             <Button
               type="submit"
-              variant="tinta"
+              variant="principal"
               busy={create.isPending}
               disabled={!remitente || limiteInvalido}
             >
@@ -663,7 +664,7 @@ export default function ApiKeys({ user }: { user: User }) {
         ancho={revealed && revealed.snippets.length > 0 ? 'amplio' : 'normal'}
         confirmarCierre={{ pregunta: '¿Has guardado la clave?', detalle: 'No se podrá volver a ver.' }}
         pie={
-          <Button variant="tinta" onClick={() => setRevealed(null)}>
+          <Button variant="principal" onClick={() => setRevealed(null)}>
             Ya la he guardado
           </Button>
         }

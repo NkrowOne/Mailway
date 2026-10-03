@@ -16,7 +16,7 @@ import {
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
-import { AvisoError, Hoja, Marca, MarcaFondo, Membrete, Midiendo, Muestra } from '../../ui/kit';
+import { AvisoError, Hoja, Marca, MarcaFondo, Membrete, Cargando, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 
 interface SettingsResponse {
@@ -49,7 +49,7 @@ export default function Ajustes() {
       <>
         <Membrete title="Ajustes" meta={META} />
         <Hoja>
-          <Midiendo label="Cargando los ajustes…" />
+          <Cargando label="Cargando los ajustes…" />
         </Hoja>
       </>
     );
@@ -235,7 +235,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
         />
         {error && <AvisoError>{error}</AvisoError>}
         {/* Única acción principal de la vista: el resto de hojas usan filete. */}
-        <Button type="submit" variant="tinta" busy={save.isPending} className="self-start">
+        <Button type="submit" variant="principal" busy={save.isPending} className="self-start">
           Guardar cambios
         </Button>
       </form>
@@ -486,7 +486,7 @@ function HojaAutoconfiguracion() {
   if (status.isPending) {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
-        <Midiendo label="Consultando el estado de los nombres…" />
+        <Cargando label="Consultando el estado de los nombres…" />
       </Hoja>
     );
   }
@@ -551,7 +551,7 @@ function HojaAutoconfiguracion() {
                     <dt className="rotulo self-baseline">Nombre</dt>
                     <dd className="valor min-w-0 break-all text-tinta">{r.name}</dd>
                     <dt className="rotulo self-baseline">Valor</dt>
-                    <dd className="valor min-w-0 break-all text-tinta">{r.value}</dd>
+                    <dd className="codigo min-w-0 break-all text-tinta">{r.value}</dd>
                   </dl>
                 </Muestra>
               ))}
@@ -652,7 +652,7 @@ function HojaTraefik() {
   if (setup.isPending) {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
-        <Midiendo label="Cargando la configuración de Traefik…" />
+        <Cargando label="Cargando la configuración de Traefik…" />
       </Hoja>
     );
   }

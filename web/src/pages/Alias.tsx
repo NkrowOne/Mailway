@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { Forward, Globe, SearchX } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alias as AliasType, type DomainRecord, type Mailbox } from '../lib/api';
@@ -6,7 +7,7 @@ import { plural } from '../lib/format';
 import { errorNombreBuzon, esCorreoValido, mensajeDe } from '../lib/gestion';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Dialogo, Hoja, Membrete, Midiendo, Vacio } from '../ui/kit';
+import { Dialogo, Hoja, Membrete, Cargando, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import {
   BandaAviso,
@@ -103,7 +104,7 @@ export default function Alias() {
               Los alias solo reciben: para enviar se utiliza un buzón.
             </p>
             {!cargando && (clientePropio || all.length > 0) && (
-              <p className="rotulo mt-1.5 text-white/70">
+              <p className="mt-1 text-sm text-tinta-3">
                 {clientePropio
                   ? `${clientePropio.usage.aliases} de ${clientePropio.plan.maxAliases} alias del plan`
                   : plural(all.length, 'alias', 'alias')}
@@ -113,7 +114,7 @@ export default function Alias() {
         }
         actions={
           <Button
-            variant="campo"
+            variant="principal"
             disabled={domainList.length === 0 || limiteAlcanzado || clientePropio?.suspended}
             onClick={() => setEditor({ modo: 'crear' })}
           >
@@ -133,7 +134,7 @@ export default function Alias() {
 
       {cargando ? (
         <Hoja flush>
-          <Midiendo label="Cargando los alias…" />
+          <Cargando label="Cargando los alias…" />
         </Hoja>
       ) : error ? (
         <BandaError
@@ -146,10 +147,10 @@ export default function Alias() {
         </BandaError>
       ) : domainList.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={Globe}
             title="Primero se necesita un dominio"
             action={
-              <Link to="/dominios" className="text-sm text-laboratorio underline">
+              <Link to="/dominios" className="text-sm text-petroleo underline">
                 Ir a Dominios
               </Link>
             }
@@ -159,7 +160,7 @@ export default function Alias() {
         </Hoja>
       ) : all.length === 0 ? (
         <Hoja flush>
-          <Vacio
+          <Vacio icono={Forward}
             title="Todavía no hay alias"
             action={
               !limiteAlcanzado && (
@@ -198,7 +199,7 @@ export default function Alias() {
           </div>
 
           {filtrados.length === 0 ? (
-            <Vacio
+            <Vacio icono={SearchX}
               title="Ningún alias coincide con la búsqueda"
               action={
                 <Button variant="perfil" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
@@ -234,7 +235,7 @@ export default function Alias() {
                         {alias.clientId ? (
                           <Link
                             to={`/clientes/${alias.clientId}`}
-                            className="min-w-0 break-words text-sm text-tinta-2 hover:text-laboratorio hover:underline"
+                            className="min-w-0 break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
                           >
                             {alias.clientName}
                           </Link>
@@ -561,7 +562,7 @@ function FormularioAlias({
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={save.isPending} disabled={!editando && !domainId}>
+          <Button type="submit" variant="principal" busy={save.isPending} disabled={!editando && !domainId}>
             {editando ? 'Guardar cambios' : 'Crear alias'}
           </Button>
         </Botonera>

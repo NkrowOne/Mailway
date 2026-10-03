@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Globe, Inbox, UserRound } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -25,7 +26,7 @@ import { lecturaDominio } from '../../lib/cloudflare';
 import { pesoVeredicto } from '../../lib/dominios';
 import { Button, estiloBoton } from '../../ui/Button';
 import { Input, Select, Textarea } from '../../ui/Field';
-import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Midiendo, Muestra, Vacio, type ConfirmarCierre } from '../../ui/kit';
+import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio, type ConfirmarCierre } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from '../../components/gestion/comun';
 import { useDireccionPanel } from '../../components/gestion/consultas';
@@ -71,7 +72,7 @@ export default function ClienteDetalle() {
   });
 
   const volver = (
-    <Link to="/clientes" className="text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta">
+    <Link to="/clientes" className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta">
       Volver a Clientes
     </Link>
   );
@@ -79,7 +80,7 @@ export default function ClienteDetalle() {
   if (client.isPending) {
     return (
       <Hoja>
-        <Midiendo label="Cargando el cliente…" />
+        <Cargando label="Cargando el cliente…" />
       </Hoja>
     );
   }
@@ -112,28 +113,28 @@ export default function ClienteDetalle() {
         title={data.name}
         meta={
           <div className="flex flex-col gap-2">
-            <Link to="/clientes" className="self-start text-sm text-white/75 underline decoration-1 underline-offset-2 hover:text-white">
+            <Link to="/clientes" className="self-start text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta">
               Volver a Clientes
             </Link>
             <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <MarcaFondo veredicto={data.suspended ? 'fuera' : 'normal'}>
                 {data.suspended ? 'Suspendido' : 'Activo'}
               </MarcaFondo>
-              {plan && <span className="text-sm text-white/75">Plan «{plan.name}»</span>}
+              {plan && <span className="text-sm text-tinta-3">Plan «{plan.name}»</span>}
               {data.contactEmail && (
-                <span className="valor min-w-0 break-all text-sm text-white/75">{data.contactEmail}</span>
+                <span className="valor min-w-0 break-all text-sm text-tinta-3">{data.contactEmail}</span>
               )}
-              {vinculadoConSkyway(data.externalRef) && <span className="rotulo text-white/75">Vinculado con Skyway</span>}
+              {vinculadoConSkyway(data.externalRef) && <span className="text-sm text-tinta-3">Vinculado con Skyway</span>}
             </span>
           </div>
         }
         actions={
           <>
             {/* Su webmail principal se elige en Marca blanca, con el cliente ya filtrado. */}
-            <Link to={`/marca-blanca?cliente=${encodeURIComponent(id)}`} className={estiloBoton('contorno')}>
+            <Link to={`/marca-blanca?cliente=${encodeURIComponent(id)}`} className={estiloBoton('perfil')}>
               Configurar webmail
             </Link>
-            <Button variant="campo" onClick={() => setDialogo('editar')}>
+            <Button variant="principal" onClick={() => setDialogo('editar')}>
               Editar datos
             </Button>
           </>
@@ -238,7 +239,7 @@ export default function ClienteDetalle() {
         flush
       >
         {users.length === 0 ? (
-          <Vacio title="Sin usuarios de acceso">
+          <Vacio icono={UserRound} title="Sin usuarios de acceso">
             Este cliente aún no puede entrar en su panel. Añade su primer usuario con «Añadir usuario».
           </Vacio>
         ) : (
@@ -255,20 +256,20 @@ export default function ClienteDetalle() {
           title="Dominios"
           meta={domains.isPending ? 'cargando…' : plural(domainList.length, 'dominio', 'dominios')}
           actions={
-            <Link to="/dominios" className="text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta">
+            <Link to="/dominios" className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta">
               Ir a Dominios
             </Link>
           }
           flush
         >
           {domains.isPending ? (
-            <Midiendo label="Cargando los dominios del cliente…" />
+            <Cargando label="Cargando los dominios del cliente…" />
           ) : domains.isError ? (
             <div className="p-4">
               <BandaError onRetry={() => void domains.refetch()}>No se han podido cargar los dominios.</BandaError>
             </div>
           ) : domainList.length === 0 ? (
-            <Vacio title="Sin dominios">El cliente puede añadirlos desde su panel, o tú desde «Dominios».</Vacio>
+            <Vacio icono={Globe} title="Sin dominios">El cliente puede añadirlos desde su panel, o tú desde «Dominios».</Vacio>
           ) : (
             <ul>
               {domainList.map((domain) => (
@@ -296,7 +297,7 @@ export default function ClienteDetalle() {
           actions={
             <Link
               to={`/buzones?cliente=${encodeURIComponent(id)}`}
-              className="text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta"
+              className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
             >
               Gestionar en Buzones
             </Link>
@@ -304,13 +305,13 @@ export default function ClienteDetalle() {
           flush
         >
           {mailboxes.isPending ? (
-            <Midiendo label="Cargando los buzones del cliente…" />
+            <Cargando label="Cargando los buzones del cliente…" />
           ) : mailboxes.isError ? (
             <div className="p-4">
               <BandaError onRetry={() => void mailboxes.refetch()}>No se han podido cargar los buzones.</BandaError>
             </div>
           ) : mailboxList.length === 0 ? (
-            <Vacio title="Sin buzones">
+            <Vacio icono={Inbox} title="Sin buzones">
               {domainList.length > 0
                 ? 'Todavía no hay buzones. Créalos desde «Buzones».'
                 : 'Los buzones se crean en «Buzones», una vez añadido un dominio.'}
@@ -328,7 +329,7 @@ export default function ClienteDetalle() {
                   >
                     <Link
                       to={`/buzones?cliente=${encodeURIComponent(id)}&q=${encodeURIComponent(m.email)}`}
-                      className="valor min-w-0 basis-full break-all text-sm text-tinta hover:text-laboratorio hover:underline sm:basis-0 sm:grow"
+                      className="valor min-w-0 basis-full break-all text-sm text-tinta hover:text-petroleo hover:underline sm:basis-0 sm:grow"
                     >
                       {m.email}
                     </Link>
@@ -343,7 +344,7 @@ export default function ClienteDetalle() {
                 <li className="px-4 py-2.5">
                   <Link
                     to={`/buzones?cliente=${encodeURIComponent(id)}`}
-                    className="text-sm text-laboratorio underline decoration-1 underline-offset-2 hover:text-tinta"
+                    className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
                   >
                     Ver los {mailboxList.length} buzones
                   </Link>
@@ -493,7 +494,7 @@ function EditarDatos({ client, onClose }: { client: Client; onClose: () => void 
           <Button type="button" variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" variant="tinta" busy={save.isPending}>
+          <Button type="submit" variant="principal" busy={save.isPending}>
             Guardar cambios
           </Button>
         </Botonera>
@@ -607,7 +608,7 @@ function CambiarPlan({
           <Button variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="tinta" disabled={excede} busy={change.isPending} onClick={() => change.mutate()}>
+          <Button variant="principal" disabled={excede} busy={change.isPending} onClick={() => change.mutate()}>
             Cambiar a «{nuevo.name}»
           </Button>
         </Botonera>
@@ -633,7 +634,7 @@ function CredencialUsuario({ clientId, email, password }: { clientId: string; em
         <p className="valor break-all text-base text-tinta">{email}</p>
       </Muestra>
       <Muestra rotulo="Contraseña" copiar={password}>
-        <p className="valor break-all text-base text-tinta">{password}</p>
+        <p className="codigo break-all text-base text-tinta">{password}</p>
       </Muestra>
     </>
   );
@@ -701,7 +702,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
       confirmarCierre={creado ? CONFIRMAR_CONTRASENA : null}
       pie={
         creado ? (
-          <Button variant="tinta" onClick={onClose}>
+          <Button variant="principal" onClick={onClose}>
             Ya he guardado la contraseña
           </Button>
         ) : undefined
@@ -755,7 +756,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
             <Button type="button" variant="plano" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" variant="tinta" busy={create.isPending}>
+            <Button type="submit" variant="principal" busy={create.isPending}>
               Crear usuario
             </Button>
           </Botonera>
@@ -849,7 +850,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
         confirmarCierre={nueva ? CONFIRMAR_CONTRASENA : null}
         pie={
           nueva ? (
-            <Button variant="tinta" onClick={cerrar}>
+            <Button variant="principal" onClick={cerrar}>
               Ya he guardado la contraseña
             </Button>
           ) : undefined
@@ -870,7 +871,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
               <Button variant="plano" onClick={cerrar}>
                 Cancelar
               </Button>
-              <Button variant="tinta" busy={reset.isPending} onClick={() => reset.mutate()}>
+              <Button variant="principal" busy={reset.isPending} onClick={() => reset.mutate()}>
                 Generar contraseña
               </Button>
             </Botonera>
@@ -966,7 +967,7 @@ function Suspender({
           <Button variant="plano" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant={suspender ? 'peligro' : 'tinta'} busy={change.isPending} onClick={() => change.mutate()}>
+          <Button variant={suspender ? 'peligro' : 'principal'} busy={change.isPending} onClick={() => change.mutate()}>
             {suspender ? 'Suspender cliente' : 'Reactivar cliente'}
           </Button>
         </Botonera>

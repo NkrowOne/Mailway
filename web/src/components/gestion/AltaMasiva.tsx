@@ -131,7 +131,7 @@ export function AltaMasiva({
   // confirmación va fija al pie para que en el móvil no quede tras la lista.
   const pie = resultado ? (
     <Button
-      variant="tinta"
+      variant="principal"
       onClick={() => {
         onResultado(null);
         onClose();
@@ -194,7 +194,7 @@ export function AltaMasiva({
               Volver a la lista
             </Button>
             <Button
-              variant="tinta"
+              variant="principal"
               busy={crear.isPending}
               disabled={revision.valid === 0 || revision.exceedsPlan}
               onClick={() => crear.mutate()}
@@ -282,7 +282,7 @@ export function AltaMasiva({
             <Button type="button" variant="plano" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" variant="tinta" busy={revisar.isPending} disabled={!domainId}>
+            <Button type="submit" variant="principal" busy={revisar.isPending} disabled={!domainId}>
               Revisar lista
             </Button>
           </Botonera>
@@ -339,7 +339,7 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
                 <p className="valor min-w-0 grow basis-full break-all text-sm text-tinta sm:basis-0">{r.email}</p>
                 <div className="flex items-center gap-2 sm:w-60 sm:shrink-0">
                   <span className="rotulo sm:hidden">Contraseña</span>
-                  <span className="valor break-all text-sm text-tinta">{r.password}</span>
+                  <span className="codigo break-all text-sm text-tinta">{r.password}</span>
                   <BotonCopiar text={r.password!} />
                 </div>
               </div>

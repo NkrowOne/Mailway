@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.1.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.2.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -357,14 +357,16 @@ Reglas de integridad que protegen al usuario:
 
 ## 5. Frontend
 
-Mundo visual de «parte de laboratorio» (contrato completo en
-[DESIGN.md](../DESIGN.md)): mesa clara, hojas regladas, un único color de
-identidad (petróleo) como región y no como filete, y cada dato expresado como
-una medición con rango de referencia y veredicto (`Medida`). Interfaz en
-español profesional y neutro, que trata al lector de tú, operable con teclado,
-con estados de carga, vacío y error en todas las vistas y sin desplazamiento
-horizontal en móvil. El portal del titular (`/conectar/<token>`, `/mi-buzon`)
-usa el mismo mundo con controles táctiles de 44 px y un paso a la vez.
+Interfaz clara y sobria (contrato completo en [DESIGN.md](../DESIGN.md)):
+fondo gris verdoso claro, tarjetas blancas con esquinas suaves, un único color
+de identidad (verde petróleo) para la acción principal y la navegación, y
+colores de estado solo para calificar datos. Cada comprobación se presenta con
+su valor, lo esperado y su estado (`Medida`), y cada estado vacío con el icono
+de la vista y el siguiente paso (`Vacio`). Interfaz en español profesional y
+neutro, que trata al lector de tú, operable con teclado, con estados de carga,
+vacío y error en todas las vistas y sin desplazamiento horizontal en móvil. El
+portal del titular (`/conectar/<token>`, `/mi-buzon`) usa el mismo sistema con
+controles táctiles de 44 px y un paso a la vez.
 
 ## 6. Estado y hoja de ruta
 

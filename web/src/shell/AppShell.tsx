@@ -23,39 +23,25 @@ import {
 } from 'lucide-react';
 import { api, ApiError, type Alert, type User } from '../lib/api';
 import { plural } from '../lib/format';
-import { useBloqueoDesplazamiento } from '../ui/kit';
+import { Logotipo, useBloqueoDesplazamiento } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { PanelTools } from './PanelTools';
 
-/** Color del campo de laboratorio (--laboratorio) para la barra del navegador. */
-const COLOR_CAMPO = '#0a3e45';
+/** Color de la barra del navegador móvil: el mismo blanco que la barra superior. */
+const COLOR_BARRA = '#ffffff';
 
 /**
- * El membrete del índice: logotipo y nombre de la instancia sobre el campo
- * oscuro que ocupa todo el índice. En el cajón móvil lleva además el botón
- * de cerrar (`accion`).
+ * Cabecera del índice: logotipo y nombre de la instancia. En el cajón móvil
+ * lleva además el botón de cerrar (`accion`).
  */
 function Marca({ brand, accion }: { brand: string; accion?: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-5">
-      <span
-        aria-hidden
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-laboratorio shadow-sm"
-      >
-        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-          <path
-            d="M4 7.5 12 13l8-5.5M5 6h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
+    <div className="flex items-center gap-3 px-4 pb-4 pt-5">
+      <Logotipo />
       {/* El nombre parte en lugar de recortarse: es lo que identifica la instancia. */}
       <div className="min-w-0 flex-1">
-        <span className="block break-words text-lg font-semibold tracking-[-0.02em] text-white">{brand}</span>
-        <span className="block text-sm text-white/60">Gestión de correo</span>
+        <span className="block break-words text-md font-semibold leading-tight text-tinta">{brand}</span>
+        <span className="block text-sm text-tinta-3">Gestión de correo</span>
       </div>
       {accion}
     </div>
@@ -202,13 +188,13 @@ export function AppShell({
 
   useBloqueoDesplazamiento(open);
 
-  // Dentro del panel, la barra del navegador móvil continúa la banda oscura
-  // de identidad; al salir (portada de acceso) vuelve al color de la mesa.
+  // Dentro del panel, la barra del navegador móvil continúa la barra
+  // superior blanca; al salir (portada de acceso) vuelve al color del fondo.
   useEffect(() => {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (!meta) return;
     const previo = meta.content;
-    meta.content = COLOR_CAMPO;
+    meta.content = COLOR_BARRA;
     return () => {
       meta.content = previo;
     };
@@ -318,7 +304,7 @@ export function AppShell({
 
   function indice(enCajon: boolean) {
     return (
-      <div className="sidebar-lab flex h-full flex-col text-white">
+      <div className="flex h-full flex-col border-r border-regla bg-hoja">
         <Marca
           brand={brand}
           accion={
@@ -330,20 +316,18 @@ export function AppShell({
                   setOpen(false);
                 }}
                 aria-label="Cerrar menú"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 text-white hover:bg-white/10"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-tinta-2 hover:bg-hoja-3 hover:text-tinta"
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>
             ) : undefined
           }
         />
-        <nav aria-label="Navegación principal" className="flex-1 overflow-y-auto px-3 pb-5 pt-2">
+        <nav aria-label="Navegación principal" className="flex-1 overflow-y-auto px-3 pb-5 pt-1">
           {nav.map((group) => (
-            <div key={group.section} className="mt-4 first:mt-0">
-              <p className="px-3 pb-2 font-estrecha text-micro font-semibold uppercase tracking-[0.12em] text-white/60">
-                {group.section}
-              </p>
-              <ul className="flex flex-col gap-1">
+            <div key={group.section} className="mt-5 first:mt-0">
+              <p className="px-3 pb-1.5 text-sm font-medium text-tinta-3">{group.section}</p>
+              <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <li key={item.to}>
                     <NavLink
@@ -351,16 +335,16 @@ export function AppShell({
                       end={item.end}
                       onClick={() => setOpen(false)}
                       className={({ isActive }) =>
-                        `flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-base transition duration-150 ${
+                        `flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5 text-base transition-colors duration-150 ${
                           isActive
-                            ? 'bg-white font-semibold text-laboratorio shadow-sm'
-                            : 'text-white/75 hover:bg-white/10 hover:text-white'
+                            ? 'bg-petroleo-claro font-semibold text-petroleo'
+                            : 'text-tinta-2 hover:bg-hoja-3 hover:text-tinta'
                         }`
                       }
                     >
                       {({ isActive }) => (
                         <>
-                          <span aria-hidden className={isActive ? 'text-laboratorio' : 'text-white/50'}>
+                          <span aria-hidden className={isActive ? 'text-petroleo' : 'text-tinta-3'}>
                             {item.icon}
                           </span>
                           {item.label}
@@ -368,7 +352,7 @@ export function AppShell({
                             <>
                               <span
                                 aria-hidden
-                                className="valor ml-auto rounded-full bg-fuera px-2 py-0.5 text-sm font-semibold text-white"
+                                className="valor ml-auto rounded-full bg-fuera px-2 text-sm font-semibold text-white"
                               >
                                 {avisosAbiertos}
                               </span>
@@ -387,19 +371,19 @@ export function AppShell({
           ))}
         </nav>
 
-        <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3.5">
+        <div className="flex items-center gap-2.5 border-t border-regla px-4 py-3.5">
           <span
             aria-hidden
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15
-              text-sm font-semibold uppercase tracking-wider text-white"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hoja-3
+              text-sm font-semibold uppercase text-tinta-2"
           >
             {iniciales(user.name || user.email)}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-white" title={user.email}>
+            <p className="truncate text-sm font-medium text-tinta" title={user.email}>
               {user.name || user.email}
             </p>
-            <p className="text-sm text-white/60">{esAdmin ? 'Administrador' : 'Cliente'}</p>
+            <p className="text-sm text-tinta-3">{esAdmin ? 'Administrador' : 'Cliente'}</p>
           </div>
           <button
             type="button"
@@ -407,7 +391,7 @@ export function AppShell({
             disabled={saliendo}
             aria-label="Cerrar sesión"
             title="Cerrar sesión"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-35"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-tinta-3 hover:bg-hoja-3 hover:text-tinta disabled:opacity-40"
           >
             <LogOut className="h-4 w-4" aria-hidden />
           </button>
@@ -425,12 +409,12 @@ export function AppShell({
           mainRef.current?.focus();
         }}
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:bg-hoja
-          focus:px-3 focus:py-2 focus:text-base focus:text-laboratorio focus:shadow-flotante"
+          focus:px-3 focus:py-2 focus:text-base focus:text-petroleo focus:shadow-flotante"
       >
         Ir al contenido
       </a>
 
-      {/* Índice del informe: fijo en escritorio. */}
+      {/* Índice de navegación: fijo en escritorio. */}
       <aside className="hidden w-64 shrink-0 lg:block">
         <div className="sticky top-0 h-screen">{indice(false)}</div>
       </aside>
@@ -459,7 +443,7 @@ export function AppShell({
       )}
 
       <div ref={contenidoRef} className="flex min-w-0 flex-1 flex-col">
-        <header className="sidebar-lab flex items-center gap-3 px-4 py-3 lg:hidden">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-regla bg-hoja px-4 py-2.5 lg:hidden">
           <button
             ref={menuRef}
             type="button"
@@ -467,18 +451,19 @@ export function AppShell({
             aria-label="Abrir menú"
             aria-expanded={open}
             aria-haspopup="dialog"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 text-white
-              hover:bg-white/10"
+            className="-ml-1.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-tinta-2
+              hover:bg-hoja-3 hover:text-tinta"
           >
-            <Menu className="h-4 w-4" aria-hidden />
+            <Menu className="h-5 w-5" aria-hidden />
           </button>
-          <span className="min-w-0 truncate text-md font-semibold text-white">
+          <Logotipo />
+          <span className="min-w-0 truncate text-md font-semibold text-tinta">
             {brand}
           </span>
         </header>
 
-        <div className="min-w-0 flex-1 px-4 py-5 sm:px-7 sm:py-8 xl:px-10">
-          <div className="mx-auto max-w-7xl">
+        <div className="min-w-0 flex-1 px-4 py-5 sm:px-8 sm:py-8 xl:px-12">
+          <div className="mx-auto max-w-6xl">
             {/* Búsqueda y ayuda fuera de <main>: no se repiten al cambiar de
                 vista, y el foco y «Ir al contenido» van directos a la página. */}
             <PanelTools user={user} />

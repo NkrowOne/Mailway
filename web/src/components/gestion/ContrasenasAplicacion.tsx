@@ -5,7 +5,7 @@ import { formatDate, plural } from '../../lib/format';
 import { mensajeDe, type AppPasswordInfo } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
-import { MarcaFondo, Midiendo, Muestra } from '../../ui/kit';
+import { MarcaFondo, Cargando, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { VariablesIntegracion } from '../VariablesIntegracion';
 import { BandaError } from './comun';
@@ -107,7 +107,7 @@ export function ContrasenasAplicacion({
             <p className="valor break-all text-base text-tinta">{email}</p>
           </Muestra>
           <Muestra rotulo="Contraseña de aplicación" copiar={nueva.password}>
-            <p className="valor break-all text-base text-tinta">{nueva.password}</p>
+            <p className="codigo break-all text-base text-tinta">{nueva.password}</p>
           </Muestra>
           {nueva.snippets.length > 0 && (
             <div className="flex flex-col gap-3">
@@ -151,7 +151,7 @@ export function ContrasenasAplicacion({
             placeholder="Móvil de Ana"
           />
         </div>
-        <Button type="submit" variant="tinta" busy={create.isPending}>
+        <Button type="submit" variant="principal" busy={create.isPending}>
           Crear contraseña
         </Button>
       </form>
@@ -163,7 +163,7 @@ export function ContrasenasAplicacion({
           {list.isSuccess && <span className="rotulo">{plural(activas, 'activa', 'activas')}</span>}
         </div>
         {list.isPending ? (
-          <Midiendo label="Consultando las contraseñas de aplicación…" />
+          <Cargando label="Consultando las contraseñas de aplicación…" />
         ) : list.isError ? (
           <div className="p-3">
             <BandaError onRetry={() => void list.refetch()}>
