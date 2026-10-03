@@ -937,6 +937,13 @@ retirar_contenedores_anteriores() {
     done
     ok "Contenedores de la instalación anterior retirados; los volúmenes se conservan."
     migrar_usuarios_webmail "$servidor_webmail" "$imagen_webmail"
+  elif docker inspect --type container mailway-webmail >/dev/null 2>&1; then
+    # Contenedores ya en el proyecto «mailway» pero quizá trasladados por un
+    # instalador sin este paso (la 1.0): la base puede conservar usuarios con
+    # el nombre público. Se trasladan con el webmail en marcha (la escritura
+    # espera a su bloqueo); sin filas que cambiar, no dice nada.
+    migrar_usuarios_webmail "$MAIL_HOSTNAME" \
+      "$(docker inspect --type container -f '{{.Image}}' mailway-webmail 2>/dev/null || true)"
   fi
 
   if docker network inspect mailway-internal >/dev/null 2>&1; then
@@ -997,8 +1004,9 @@ echo $cambio->rowCount(), " ", $quedan->fetchColumn(), "\n";'
 # (users.mail_host): sin trasladarlos, cada titular entraría en un usuario
 # nuevo y vacío, sin sus contactos, identidades, firmas ni preferencias,
 # aunque sigan en la base. Se hace con el webmail antiguo ya retirado y antes
-# de levantar el nuevo, en un contenedor efímero sin red. Si falla, avisa y
-# la instalación sigue.
+# de levantar el nuevo (o, al repetir la instalación, con el actual en
+# marcha), en un contenedor efímero sin red. Si falla, avisa y la
+# instalación sigue.
 #   migrar_usuarios_webmail <servidor del webmail anterior> <su imagen>
 migrar_usuarios_webmail() {
   local anterior=$1 imagen=$2 volumen=${MAILWAY_WEBMAIL_DB_VOLUME:-mailway-webmail-db}

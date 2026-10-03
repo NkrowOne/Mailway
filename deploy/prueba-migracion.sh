@@ -402,6 +402,30 @@ if php -m 2>/dev/null | grep -qix pdo_sqlite; then
   comprobar "termina bien" igual "$CODIGO" 0
   comprobar "no crea una base vacía" no_existe "$TMP/rcdb/sqlite.db"
   comprobar "sin avisos" no_contiene "$SALIDA" "[aviso]"
+
+  echo "# Repetición tras un traslado de la 1.0.x (sin este paso): traslada a sus usuarios"
+  crear_base_webmail
+  FAKE_WEBMAIL_ENV=$'ROUNDCUBEMAIL_DEFAULT_HOST=ssl://mailway-mail\nROUNDCUBEMAIL_DEFAULT_PORT=993\nROUNDCUBEMAIL_DES_KEY=clave-des-secreta-0123'
+  MIGRAR_CONTENEDORES=0
+  probar_retirada
+  comprobar "termina bien" igual "$CODIGO" 0
+  comprobar "y la retirada sigue hasta el final" contiene "$SALIDA" "RETIRADA_TERMINADA"
+  comprobar "no retira ningún contenedor" no_contiene "$REGISTRO" "docker rm"
+  comprobar "no lee el entorno del webmail (con secretos)" no_contiene "$REGISTRO" "Config.Env"
+  comprobar "con la imagen del webmail actual" contiene "$REGISTRO" "--entrypoint php sha256:0123456789abcdef"
+  comprobar "desde el nombre público del servidor de correo" contiene "$REGISTRO" "MAILWAY_RC_ANTERIOR=mail.ejemplo.test"
+  usuarios_webmail >"$TMP/usuarios"
+  comprobar "ana conserva su usuario con el servidor nuevo" contiene "$TMP/usuarios" "1 ana@ejemplo.test mailway-mail"
+  comprobar "luis conserva el usuario con el que ya entró" contiene "$TMP/usuarios" "3 luis@ejemplo.test mailway-mail"
+  comprobar "no toca otros servidores" contiene "$TMP/usuarios" "5 raro@ejemplo.test imap.otro.test"
+  comprobar "dice cuántos se trasladan" contiene "$SALIDA" "Usuarios del webmail trasladados de mail.ejemplo.test a mailway-mail: 2."
+
+  echo "# Y repetirla otra vez no cambia nada"
+  probar_retirada
+  comprobar "termina bien" igual "$CODIGO" 0
+  comprobar "la base queda igual" igual "$(usuarios_webmail)" "$(cat "$TMP/usuarios")"
+  comprobar "no dice que traslade a nadie" no_contiene "$SALIDA" "trasladados"
+  MIGRAR_CONTENEDORES=1
 else
   echo "# Omitidos los casos con la base del webmail: falta php con pdo_sqlite."
 fi
@@ -429,12 +453,24 @@ probar_retirada
 comprobar "no ejecuta nada sobre la base" no_contiene "$REGISTRO" "docker run"
 comprobar "lo explica" contiene "$SALIDA" "entraba al motor por imap.otro.test"
 
-echo "# Sin migración de contenedores: no se lee ni se toca el webmail"
-FAKE_WEBMAIL_ENV=$ENV_WEBMAIL_0X
+echo "# Sin migración de contenedores ni webmail: no se ejecuta nada sobre la base"
+FAKE_WEBMAIL_ENV=""
 MIGRAR_CONTENEDORES=0
 probar_retirada
-comprobar "no lee su entorno" no_contiene "$REGISTRO" "mailway-webmail"
+comprobar "termina bien" igual "$CODIGO" 0
 comprobar "no ejecuta nada sobre la base" no_contiene "$REGISTRO" "docker run"
+comprobar "ni retira contenedores" no_contiene "$REGISTRO" "docker rm"
+
+echo "# Sin migración de contenedores, con el webmail: no lee su entorno y, si falla, sigue"
+FAKE_WEBMAIL_ENV=$ENV_WEBMAIL_0X
+FAKE_PHP_FALLA=1
+probar_retirada
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "y la retirada sigue hasta el final" contiene "$SALIDA" "RETIRADA_TERMINADA"
+comprobar "no lee su entorno (con secretos)" no_contiene "$REGISTRO" "Config.Env"
+comprobar "ni retira contenedores" no_contiene "$REGISTRO" "docker rm"
+comprobar "lo explica" contiene "$SALIDA" "No se pudo trasladar a los usuarios del webmail"
+FAKE_PHP_FALLA=0
 MIGRAR_CONTENEDORES=1
 
 # ------------------------------------------------ override de Traefik --

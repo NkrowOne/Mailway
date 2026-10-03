@@ -908,8 +908,11 @@ El instalador también resuelve lo que dejaba configurado la guía anterior:
   preferencias, aunque siguen en la base. El instalador cambia ese servidor
   en la base del webmail con el contenedor antiguo ya retirado y antes de
   levantar el nuevo. El usuario que ya hubiera entrado con la 1.0 conserva
-  ese usuario y el instalador lo indica. Si el cambio falla, avisa y la
-  instalación sigue: hazlo a mano (abajo).
+  ese usuario y el instalador lo indica. Si los contenedores ya los trasladó
+  el instalador de la 1.0.x, que no hacía este cambio, repetir la instalación
+  lo hace con el webmail en marcha (es idempotente y sin cambios no dice
+  nada). Si el cambio falla, avisa y la instalación sigue: hazlo a mano
+  (abajo).
 - **Override de Traefik.** Con la guía 0.x, el bloque de Ajustes → Marca
   blanca se copiaba a `docker-compose.override.yml` en la carpeta de Skyway.
   Con Skyway 0.34 o posterior, ese fichero deja sin efecto el puente de
