@@ -307,7 +307,7 @@ edita una ya publicada.
 | `005-idempotencia-de-envios` | `send_idempotency`: respuesta de cada envío con `Idempotency-Key`, 24 h por clave de API. |
 | `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
 | `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
-| `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). |
+| `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)

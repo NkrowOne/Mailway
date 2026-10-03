@@ -238,18 +238,36 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_ENV_FILE` | Ruta alternativa del fichero de configuración (por defecto `deploy/.env`). |
 | `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
 
-Ejemplo:
+Ejemplo, con el token leído sin mostrarlo y exportado (nunca escrito en la
+orden):
 
 ```bash
-sudo MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
-     MAILWAY_ADMIN_EMAIL=admin@miempresa.com CLOUDFLARE_API_TOKEN=... \
-     MAILWAY_TRAEFIK_PROVEEDOR=1 bash deploy/instalar.sh < /dev/null
+cd /ruta/a/Mailway
+read -rs -p 'Token de Cloudflare: ' CLOUDFLARE_API_TOKEN; echo
+export CLOUDFLARE_API_TOKEN
+sudo --preserve-env=CLOUDFLARE_API_TOKEN \
+     MAILWAY_DOMINIO=miempresa.com LETSENCRYPT_EMAIL=sistemas@miempresa.com \
+     MAILWAY_ADMIN_EMAIL=admin@miempresa.com MAILWAY_TRAEFIK_PROVEEDOR=1 \
+     bash deploy/instalar.sh < /dev/null
+unset CLOUDFLARE_API_TOKEN
 ```
 
-> Los tokens pasados como variables quedan en el historial de la terminal.
-> Bórralo después (`history -c`) o expórtalos desde un fichero protegido. Si
-> guardas la salida del instalador en un fichero, ten en cuenta que el
-> resumen incluye la contraseña del administrador del panel cuando la crea.
+En una sesión de root (`sudo -i`), la misma orden sin
+`sudo --preserve-env=CLOUDFLARE_API_TOKEN`. Desde un script de
+aprovisionamiento que ya corre como root, carga los secretos de un fichero
+solo legible por root (`set -a; . /root/mailway.secretos; set +a`) en vez de
+leerlos con `read`.
+
+> **Los secretos (`CLOUDFLARE_API_TOKEN`, `SKYWAY_TOKEN`,
+> `STALWART_ADMIN_PASSWORD`) nunca se escriben en la orden.** Escritos delante
+> de `sudo` (`sudo CLOUDFLARE_API_TOKEN=… bash …`) son argumentos del proceso
+> `sudo`, que sigue en marcha mientras dura la instalación: cualquier usuario
+> del servidor los ve con `ps`, no solo en el historial de la terminal.
+> Exportados y con `--preserve-env`, llegan al instalador por el entorno, que
+> los demás usuarios del servidor no pueden leer. Sin `CLOUDFLARE_API_TOKEN`,
+> el instalador interactivo pregunta el token sin mostrarlo. Si guardas la
+> salida del instalador en un fichero, ten en cuenta que el resumen incluye la
+> contraseña del administrador del panel cuando la crea.
 
 ### 2.6 Emparejado con Skyway
 
@@ -365,6 +383,8 @@ Reglas:
   interna de bash): nunca como argumento, que quedaría a la vista en `ps`, ni
   en `deploy/.env`, ni en los registros. Las herramientas rechazan un token en
   sus argumentos y no lo repiten en sus mensajes; en el panel queda cifrado.
+  Al instalador le llega igual: por su pregunta, que no lo muestra, o
+  exportado en el entorno (sección 2.5), nunca escrito delante de `sudo`.
 - Es **solo para el administrador**: las acciones de un cliente (un usuario de
   un cliente en el panel, o un propietario o miembro de un espacio de trabajo
   en Skyway, que llega al panel con `?soloCliente=1`) nunca usan esa cuenta,
@@ -378,7 +398,9 @@ Reglas:
 - Es **idempotente**: repetir la instalación con el mismo token no duplica la
   cuenta.
 - **Para cambiar el token**, ejecuta `--actualizar` con el nuevo en
-  `CLOUDFLARE_API_TOKEN`: la herramienta del panel lo verifica y lo
+  `CLOUDFLARE_API_TOKEN`, exportado y con `sudo --preserve-env` como en el
+  ejemplo de la sección 2.5 (nunca `sudo CLOUDFLARE_API_TOKEN=…`, que lo deja
+  a la vista en `ps`): la herramienta del panel lo verifica y lo
   **sustituye** en la cuenta «Instalador de Mailway» (no añade otra, y los
   dominios asociados a ella lo siguen estando); Skyway también sustituye el
   suyo. Si conectas el nuevo a mano en Conexiones → Cloudflare, se añade como
@@ -388,7 +410,7 @@ Reglas:
   token** (no se guarda en `deploy/.env`) y no lo piden: no tocan la cuenta
   que hubiera conectada, y como no saben si la hay, el resumen pide
   comprobarlo en Conexiones → Cloudflare. Para conectarlo o cambiarlo sin
-  reinstalar, usa `--actualizar` con `CLOUDFLARE_API_TOKEN`.
+  reinstalar, usa `--actualizar` con `CLOUDFLARE_API_TOKEN` (sección 2.5).
 
 ---
 

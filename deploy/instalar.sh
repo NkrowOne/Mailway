@@ -165,6 +165,12 @@ acciones de los clientes nunca usan esa cuenta. El token no se guarda en deploy/
 no lo tienen y no tocan la cuenta que hubiera conectada; con un token nuevo en
 CLOUDFLARE_API_TOKEN, --actualizar lo sustituye en esa cuenta.
 
+Los secretos (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN, STALWART_ADMIN_PASSWORD) nunca se escriben en
+la orden: delante de sudo («sudo CLOUDFLARE_API_TOKEN=… bash …») quedan a la vista en «ps»
+mientras dura la instalación. Léelos sin mostrarlos y pásalos por el entorno:
+  read -rs CLOUDFLARE_API_TOKEN; export CLOUDFLARE_API_TOKEN
+  sudo --preserve-env=CLOUDFLARE_API_TOKEN bash deploy/instalar.sh --actualizar
+
 Variables de entorno (ejecución desatendida):
   MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
   MAILWAY_MAIL_HOST         Nombre del servidor de correo (por defecto mail.<dominio>).

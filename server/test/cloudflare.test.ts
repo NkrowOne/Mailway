@@ -1908,6 +1908,126 @@ test('un dominio con DNS escrito en una zona del operador queda reservado a su c
   });
 });
 
+test('al actualizar una base de la 1.0 se reservan los dominios cuyo DNS escribió la cuenta de la instancia', async () => {
+  const clienteA = await createClient(ctx, { withUser: true });
+  const clienteB = await createClient(ctx, { withUser: true });
+  const clienteC = await createClient(ctx, { withUser: true });
+  const clienteD = await createClient(ctx);
+  const zOperador = cf.zona('operador-migracion.es');
+  const zRetirada = cf.zona('retirada-migracion.es');
+  const zPropia = cf.zona('propia-migracion.es');
+  const TOKEN_OPERADOR = 'cfut_migracionoperador0123456789abcdefghij';
+  const TOKEN_RETIRADO = 'cfut_migracionretirado0123456789abcdefghij';
+  cf.token(TOKEN_OPERADOR, { zoneIds: [zOperador.id] });
+  cf.token(TOKEN_RETIRADO, { zoneIds: [zRetirada.id] });
+  cf.token(TOKEN_USUARIO, { zoneIds: [zPropia.id] });
+  const idCuenta = (r: { json: () => unknown }) => (r.json() as { account: { id: string } }).account.id;
+  const cuentaOperador = await conectar(ctx.adminCookie, TOKEN_OPERADOR);
+  assert.equal(cuentaOperador.statusCode, 200, cuentaOperador.body);
+  const cuentaRetirada = await conectar(ctx.adminCookie, TOKEN_RETIRADO);
+  assert.equal(cuentaRetirada.statusCode, 200, cuentaRetirada.body);
+  const cuentaPropia = await conectar(clienteB.userCookie!, TOKEN_USUARIO);
+  assert.equal(cuentaPropia.statusCode, 200, cuentaPropia.body);
+
+  const alta = (cookie: string, domain: string, cuerpo: Record<string, unknown> = {}, consulta = '') =>
+    ctx.app.inject({ method: 'POST', url: `/api/domains${consulta}`, headers: { cookie }, payload: { domain, ...cuerpo } });
+  const idDominio = (r: { json: () => unknown }) => (r.json() as { domain: { id: string } }).domain.id;
+
+  // Lo que dejaba la 1.0: el administrador aplica el DNS de dos dominios en
+  // zonas suyas (una cuenta la desconecta después) y el cliente B el de uno
+  // propio con su cuenta. Un cuarto queda asociado a la cuenta de la
+  // instancia sin que se llegara a escribir nada.
+  const DOM_OPERADOR = 'clientea.operador-migracion.es';
+  const DOM_RETIRADA = 'retirada-migracion.es';
+  const DOM_PROPIO = 'propia-migracion.es';
+  const DOM_SIN_APLICAR = 'sinaplicar.operador-migracion.es';
+  let res = await alta(ctx.adminCookie, DOM_OPERADOR, { clientId: clienteA.clientId, autoDns: true });
+  assert.equal(res.statusCode, 200, res.body);
+  const idOperador = idDominio(res);
+  res = await alta(ctx.adminCookie, DOM_RETIRADA, { clientId: clienteC.clientId, autoDns: true });
+  assert.equal(res.statusCode, 200, res.body);
+  const idRetirada = idDominio(res);
+  res = await alta(clienteB.userCookie!, DOM_PROPIO, { autoDns: true });
+  assert.equal(res.statusCode, 200, res.body);
+  const idPropio = idDominio(res);
+  const sinAplicar = await createDomain(ctx, clienteD.clientId, DOM_SIN_APLICAR);
+  db.prepare('UPDATE domains SET cloudflare_account_id = ?, cloudflare_zone_id = ? WHERE id = ?').run(
+    idCuenta(cuentaOperador),
+    zOperador.id,
+    sinAplicar.domainId,
+  );
+  res = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${idCuenta(cuentaRetirada)}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+
+  // La base queda como la de la 1.0: sin la tabla de reservas ni la migración 008.
+  db.exec(`DROP TABLE cloudflare_reservas; DELETE FROM _migrations WHERE id = '008-reservas-de-cloudflare'`);
+  const fila = (id: string) =>
+    db.prepare('SELECT cloudflare_account_id AS cuenta, dns_applied_at AS aplicado FROM domains WHERE id = ?').get(id) as {
+      cuenta: string | null;
+      aplicado: number | null;
+    };
+  assert.equal(fila(idOperador).cuenta, idCuenta(cuentaOperador));
+  assert.ok(fila(idOperador).aplicado);
+  assert.equal(fila(idRetirada).cuenta, null);
+  assert.ok(fila(idRetirada).aplicado);
+  assert.equal(fila(idPropio).cuenta, idCuenta(cuentaPropia));
+  assert.equal(fila(sinAplicar.domainId).aplicado, null);
+
+  // Arranque de la versión nueva sobre esa base: otro proceso, como el panel
+  // al actualizarse, aplica las migraciones pendientes.
+  const arranque = spawnSync(process.execPath, ['--import', 'tsx', '-e', "require('./src/core/db.ts')"], {
+    cwd: path.resolve(__dirname, '..'),
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: process.env,
+  });
+  assert.equal(arranque.status, 0, arranque.stderr);
+  // Solo los dominios de esta prueba: la base es común a todo el fichero.
+  const reservas = db
+    .prepare('SELECT domain, client_id FROM cloudflare_reservas WHERE domain IN (?, ?, ?, ?) ORDER BY domain')
+    .all(DOM_OPERADOR, DOM_RETIRADA, DOM_PROPIO, DOM_SIN_APLICAR);
+  assert.deepEqual(reservas, [
+    { domain: DOM_OPERADOR, client_id: clienteA.clientId },
+    { domain: DOM_RETIRADA, client_id: clienteC.clientId },
+  ]);
+
+  // Se borran los dominios; sus registros siguen en las zonas.
+  for (const id of [idOperador, idRetirada, idPropio, sinAplicar.domainId]) {
+    res = await ctx.app.inject({ method: 'DELETE', url: `/api/domains/${id}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(res.statusCode, 200, res.body);
+  }
+  assert.ok(cf.enZona(zOperador.id).some((r) => r.type === 'MX' && r.name === DOM_OPERADOR));
+  assert.ok(cf.enZona(zRetirada.id).some((r) => r.type === 'MX' && r.name === DOM_RETIRADA));
+
+  // Otro cliente no se queda con los del operador: ni con su usuario ni desde Skyway (soloCliente).
+  for (const dominio of [DOM_OPERADOR, DOM_RETIRADA]) {
+    res = await alta(clienteB.userCookie!, dominio);
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal((res.json() as { code: string }).code, 'domain_reserved');
+    res = await alta(ctx.adminCookie, dominio, { clientId: clienteB.clientId }, '?soloCliente=1');
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal((res.json() as { code: string }).code, 'domain_reserved');
+  }
+  // El de la cuenta propia de B y el que no llegó a escribirse no se reservan.
+  res = await alta(clienteC.userCookie!, DOM_PROPIO);
+  assert.equal(res.statusCode, 200, res.body);
+  res = await alta(clienteB.userCookie!, DOM_SIN_APLICAR);
+  assert.equal(res.statusCode, 200, res.body);
+  // Su propio cliente sí puede volver a darlo de alta.
+  res = await alta(clienteA.userCookie!, DOM_OPERADOR);
+  assert.equal(res.statusCode, 200, res.body);
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${idCuenta(cuentaOperador)}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});
+
 /* ---------------- Rotación del token del instalador ---------------- */
 
 test('herramienta: con otro token sustituye el de la cuenta del instalador, no añade otra', async () => {
@@ -1916,6 +2036,8 @@ test('herramienta: con otro token sustituye el de la cuenta del instalador, no a
   const NUEVO = 'cfut_tokennuevo0123456789abcdefghijklmnopq';
   const DEL_PANEL = 'cfut_delpanel0123456789abcdefghijklmnopqrs';
   for (const t of [VIEJO, NUEVO, DEL_PANEL]) cf.token(t, { zoneIds: [z.id] });
+  // La base es común a todo el fichero: se cuenta lo que añade esta prueba.
+  const instanciaAntes = cuentasDeInstanciaEnBase().length;
 
   // Una cuenta de la instancia conectada desde el panel (no se toca) y la del instalador.
   const panel = await conectar(ctx.adminCookie, DEL_PANEL, { label: 'Del panel' });
@@ -1943,7 +2065,7 @@ test('herramienta: con otro token sustituye el de la cuenta del instalador, no a
     { id: salida.id, creada: salida.creada, sustituida: salida.sustituida },
     { id, creada: false, sustituida: true },
   );
-  assert.equal(cuentasDeInstanciaEnBase().length, 2, 'la del panel y la del instalador, sin una tercera');
+  assert.equal(cuentasDeInstanciaEnBase().length, instanciaAntes + 2, 'la del panel y la del instalador, sin una tercera');
   assert.equal(decryptSecret(fila().token_enc), NUEVO);
   assert.equal(fila().token_hint, NUEVO.slice(-4));
   const delPanel = db.prepare('SELECT token_enc FROM cloudflare_accounts WHERE id = ?').get(

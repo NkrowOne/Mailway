@@ -580,7 +580,11 @@ printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
   (`sustituida: true`, `cloudflare.account_token_replaced` en la Actividad) en
   vez de añadir otra: así se rota el token repitiendo el instalador con
   `CLOUDFLARE_API_TOKEN`, y los dominios asociados a la cuenta lo siguen estando.
-  Las cuentas de la instancia conectadas desde el panel no se tocan.
+  Las cuentas de la instancia conectadas desde el panel no se tocan. Esa
+  variable se exporta y se pasa con `sudo --preserve-env` (o desde una sesión
+  de root), nunca escrita en la orden: `sudo CLOUDFLARE_API_TOKEN=…` la deja a
+  la vista en `ps` mientras dura la instalación (docs/DESPLIEGUE-SKYWAY.md,
+  sección 2.5).
 - Queda en la Actividad como «Sistema» (`cloudflare.account_connected`, sin el
   token). El token no se escribe en `deploy/.env`: `--actualizar` sin
   `CLOUDFLARE_API_TOKEN` y `--emparejar` (que nunca lo usa, aunque exista esa
@@ -648,7 +652,10 @@ indica los servidores de nombres que debes poner en tu registrador.
   el que se escribió o la administración (sin `soloCliente`); para otro
   cliente, `409 domain_reserved`. Si la administración lo da de alta para otro
   cliente, la reserva pasa a ese cliente. Borrar el dominio no borra sus
-  registros en Cloudflare.
+  registros en Cloudflare. Al actualizar desde la 1.0 se reservan los
+  dominios que siguen en la base con el DNS aplicado con una cuenta de la
+  instancia (o con una ya desconectada); los borrados antes de actualizar no
+  se pueden reconstruir (docs/SEGURIDAD.md).
 - Con `soloCliente=1`, además, las cuentas de la instancia no se listan ni se
   borran, no se puede conectar una cuenta sin cliente y las rutas que solo
   trabajan con ellas (`/api/cloudflare/instance-dns` y `POST /api/engine/acme`)
