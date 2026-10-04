@@ -21,6 +21,7 @@ import {
 import { ensureDefaultPlans } from './clients';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
+import { alCambiarIpGuardada } from './ipservidor';
 import {
   type InstanceSettings,
   getEngineSettings,
@@ -568,10 +569,14 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     requireAdmin(req);
     const body = instanceSchema.parse(req.body);
     exigirNombreDelServidor(body);
+    const ipAnterior = getInstanceSettings().publicIp.trim();
     const instance = setInstanceSettings(body);
     // Un cambio de nombre o de IP cambia qué hosts de autoconfiguración se
     // pueden publicar: se recalcula ya, sin esperar a la vuelta del vigilante.
     void refreshAutoconfigHosts().catch(() => undefined);
+    // El aviso de IP cambiada pide justo esto: no puede seguir abierto hasta
+    // la comprobación del día siguiente.
+    if (instance.publicIp.trim() !== ipAnterior) alCambiarIpGuardada();
     audit(req, 'settings.instance_updated', {});
     return { instance };
   });

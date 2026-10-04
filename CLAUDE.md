@@ -36,6 +36,7 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     (marca blanca y `/api/traefik/config`), `transactional` (claves y
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `nombreservidor` (lo que arrastra cambiar el nombre del servidor),
+    `ipservidor` (IP de salida frente a la de Ajustes: aviso y «Usar esta IP»),
     `demo` (propiedad simulada solo con `MAILWAY_DEMO=1`), `alerts`,
     `watchdog`, `dashboard`.
   - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.

@@ -248,10 +248,9 @@ export default function Buzones() {
               </Link>
             }
           >
-            Antes de crear buzones es necesario comprobar la propiedad del dominio
-            {pendientesPropiedad.length === 1 ? '' : ` (${pendientesPropiedad.length} pendientes)`}: basta con que
-            su registro MX apunte a este servidor o con publicar el registro TXT de verificación que indica su
-            ficha.
+            {pendientesPropiedad.length === 1
+              ? 'Antes de crear buzones es necesario comprobar la propiedad del dominio: basta con que su registro MX apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.'
+              : `Antes de crear buzones es necesario comprobar la propiedad de los dominios (${pendientesPropiedad.length} pendientes): basta con que el registro MX de cada uno apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.`}
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (

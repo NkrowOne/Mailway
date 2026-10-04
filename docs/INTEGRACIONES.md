@@ -403,12 +403,16 @@ simulada vuelve a quedar pendiente. `GET /api/setup/status` incluye
 `GET /api/settings/mail-hostname/impact?nombre=` (administración) devuelve lo
 que arrastra cambiarlo, y el panel lo muestra antes de guardarlo en Ajustes y
 antes de «Aplicar ajustes recomendados» cuando el motor se anuncia con otro
-nombre: `actual` (el nombre con el que se anuncia el motor), `nuevo`,
+nombre: `actual` (el nombre con el que se anuncia el motor; si es interno,
+como el identificador del contenedor antes de aplicarle uno, el de Ajustes), `nuevo`,
 `dominios: { total, conMxAlActual }`, `registroA: { ips, ip, apuntaAqui }`,
 `ptr: { ip, nombres, coincide }`, `certificado: { cubre, detalle }` (el
 certificado que presenta el motor para ese nombre) y `comando` (la orden del
 instalador, con `MAILWAY_DOMINIO` si cambia el dominio base:
-`cambiaDominioBase`). Guardar el nombre cambia al momento los datos de
+`cambiaDominioBase`). El dominio base es el del nombre del que lo deduce el
+instalador (`MAILWAY_MAIL_HOSTNAME` del entorno del panel, que es el
+`MAIL_HOSTNAME` de `deploy/.env`) o, sin él, el de `actual`; con un nombre
+interno no se conoce y `cambiaDominioBase` es `false`. Guardar el nombre cambia al momento los datos de
 conexión de los titulares; aplicarlo en el motor hace que todos los dominios
 exijan el MX hacia el nombre nuevo. El aviso `engine_hostname` dice cuántos
 dominios pasarán a pendientes.
@@ -449,16 +453,28 @@ HTTP 2xx o 3xx; un 404, un 403 o un 5xx abren el aviso `webmail_down`.
 (conexión TCP a los servidores de entrada de Gmail y Outlook; basta con que
 uno acepte) en lugar de recomendarlo siempre: si está bloqueado, la
 recomendación es crítica y resta 30 puntos; si no se pudo medir (sin DNS), es
-informativa; si está abierto, no aparece. El vigilante lo mide a diario (cada
-hora mientras está bloqueado) y abre `smtp_port_blocked`. El aviso de la cola
-(`queue_backed_up`) se abre con 50 mensajes pendientes o con el más antiguo
-retenido más de una hora, y dice si el puerto 25 está bloqueado.
+informativa; si está abierto, no aparece. Solo se mide con Stalwart: con el
+motor de demostración no hay recomendación del puerto 25. Una resolución DNS
+que no termina dentro del tiempo límite cuenta como «no se pudo medir», no
+como puerto bloqueado. El vigilante lo mide a diario (cada hora mientras está
+bloqueado) y abre `smtp_port_blocked`. La cola tiene dos avisos con claves
+distintas, para que uno abierto no oculte el otro: `queue_backed_up` con 50
+mensajes pendientes o más (dice si el puerto 25 está bloqueado) y
+`queue_stale` con un mensaje retenido más de una hora, que solo se abre si el
+puerto 25 no está comprobado como abierto (con el puerto abierto, un mensaje
+diferido es un destino que aplaza los envíos) ni hay ya aviso por volumen, y
+se cierra al vaciarse la cola o al responder el puerto.
 
 **IP pública.** El vigilante compara a diario la IP con la que el servidor
 sale a Internet con la de Ajustes. Si difieren y el nombre del servidor de
 correo ya no resuelve a la guardada (una mudanza), abre
-`public_ip_mismatch`; con varias IP y el nombre aún en la guardada, no avisa.
-Ajustes → Identidad del servidor propone la IP detectada con «Usar esta IP».
+`public_ip_mismatch`; con varias IP y el nombre aún en la guardada, no avisa,
+y si el nombre vuelve a la guardada, lo cierra. `GET /api/settings/public-ip`
+(administración) aplica la misma regla sin tocar los avisos y devuelve
+`{ detectada, guardada, mailHostname, registroA, proponer }`: Ajustes →
+Identidad del servidor solo muestra «Usar esta IP» con `proponer`. Guardar
+una IP distinta en `PUT /api/settings/instance` cierra el aviso al momento y
+vuelve a medir en segundo plano.
 
 **Motor de correo.** Conectarlo, cambiarlo o probarlo (`POST /api/setup/engine`,
 `PUT /api/settings/engine`, `POST /api/settings/engine/test`) exige la **sesión

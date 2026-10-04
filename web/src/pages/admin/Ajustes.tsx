@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type InstanceSettings } from '../../lib/api';
+import { api, ApiError, type EstadoIpPublica, type InstanceSettings } from '../../lib/api';
 import { formatDate, plural } from '../../lib/format';
 import {
   etiquetaHost,
@@ -152,16 +152,22 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
     },
   });
 
-  // IP con la que el servidor sale ahora a Internet: si no es la guardada
-  // (mudanza, IP nueva del proveedor), se propone usarla. Una vez por visita.
-  const ipDetectada = useQuery({
-    queryKey: ['ip-detectada'],
-    queryFn: () => api.get<{ ip: string }>('/api/setup/detect-ip'),
+  // IP con la que el servidor sale ahora a Internet: si la guardada se ha
+  // quedado atrás (mudanza, IP nueva del proveedor), se propone usarla. La
+  // decide el servidor con la misma regla que el aviso del vigilante: solo si
+  // el nombre del servidor de correo ya no apunta a la IP guardada, para no
+  // insistir en cada visita a un servidor con varias IP o detrás de NAT.
+  const ipPublica = useQuery({
+    queryKey: ['ip-publica', initial.publicIp, initial.mailHostname],
+    queryFn: () => api.get<EstadoIpPublica>('/api/settings/public-ip'),
     staleTime: 60 * 60_000,
     retry: false,
   });
-  const ipNueva = ipDetectada.data?.ip || '';
-  const proponerIp = Boolean(ipNueva && initial.publicIp && ipNueva !== initial.publicIp && form.publicIp !== ipNueva);
+  const estadoIp = ipPublica.data;
+  const ipNueva = estadoIp?.detectada || '';
+  const proponerIp = Boolean(
+    estadoIp?.proponer && estadoIp.guardada === initial.publicIp.trim() && form.publicIp.trim() !== ipNueva,
+  );
 
   const detectar = useMutation({
     mutationFn: () => api.get<{ ip: string }>('/api/setup/detect-ip'),
@@ -261,10 +267,18 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
         {proponerIp && (
           <Aviso>
             <p>
-              El servidor sale ahora a Internet con la IP <span className="valor">{ipNueva}</span>, pero aquí
-              figura <span className="valor">{initial.publicIp}</span>. Si ha cambiado de IP, actualízala: con la
-              anterior, Entregabilidad comprueba el PTR y las listas negras de otra máquina. Si el servidor tiene
-              varias IP y sale por otra a propósito, no es necesario cambiar nada.
+              El servidor sale ahora a Internet con la IP <span className="valor">{ipNueva}</span>
+              {estadoIp?.mailHostname && estadoIp.registroA && estadoIp.registroA.length > 0 ? (
+                <>
+                  {' '}y <span className="valor">{estadoIp.mailHostname}</span> apunta a{' '}
+                  <span className="valor">{estadoIp.registroA.join(', ')}</span>
+                </>
+              ) : null}
+              , pero aquí figura <span className="valor">{initial.publicIp}</span>. Si ha cambiado de IP,
+              actualízala: con la anterior, Entregabilidad comprueba el PTR y las listas negras de otra máquina.
+              {estadoIp?.mailHostname
+                ? ''
+                : ' Si el servidor tiene varias IP y sale por otra a propósito, no es necesario cambiar nada.'}
             </p>
             <Button
               type="button"

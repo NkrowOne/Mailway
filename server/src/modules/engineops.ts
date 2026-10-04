@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../core/db';
 import { decryptSecret } from '../core/crypto';
 import { badRequest, HttpError, notFound, upstream } from '../core/errors';
-import { normalizeHostname } from '../core/hostnames';
+import { isInternalHost, normalizeHostname } from '../core/hostnames';
 import { engineConfigured, getEngine } from '../engine';
 import type { EngineReloadResult, EngineSettings, MailEngine } from '../engine/types';
 import { fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
@@ -434,7 +434,10 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
       `El motor genera los registros DNS de los dominios (MX, SRV y autoconfiguración) con el nombre ${actual}, pero en Ajustes figura ${esperado}. ` +
       `La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.${consecuencia}`,
     remedy:
-      `Si el nombre correcto es ${esperado}, en Ajustes → Servidor de correo pulsa «Aplicar ajustes recomendados» (antes muestra lo que cambia). Si el correcto es ${actual}, corrígelo en Ajustes → Identidad del servidor. ` +
+      `Si el nombre correcto es ${esperado}, en Ajustes → Servidor de correo pulsa «Aplicar ajustes recomendados» (antes muestra lo que cambia).${
+        // El identificador del contenedor nunca es el nombre correcto.
+        isInternalHost(actual) ? '' : ` Si el correcto es ${actual}, corrígelo en Ajustes → Identidad del servidor.`
+      } ` +
       'Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
       'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',

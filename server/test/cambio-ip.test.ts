@@ -1,9 +1,9 @@
-import { test, beforeEach } from 'node:test';
+import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
 import { listAlerts } from '../src/modules/alerts';
-import { setInstanceSettings } from '../src/modules/settings';
-import { evaluarIpPublica } from '../src/modules/watchdog';
+import { evaluarIpPublica, ipGuardadaDesfasada } from '../src/modules/ipservidor';
+import { getInstanceSettings, setInstanceSettings } from '../src/modules/settings';
 import {
   buildTraefikConfig,
   comprobarDnsMarcaBlanca,
@@ -11,6 +11,7 @@ import {
   refreshClientDomain,
 } from '../src/modules/whitelabel';
 import { instalarDnsFalso } from './dns-falso';
+import { adminContext, createClient, type TestContext } from './helpers';
 
 /*
  * Cambio de IP del servidor (mudanza): Ajustes conserva la IP anterior hasta
@@ -130,10 +131,108 @@ test('no avisa a un servidor con varias IP cuyo nombre sigue en la IP guardada',
   assert.equal(avisosIp().length, 0);
 });
 
-test('el aviso se cierra al corregir la IP en Ajustes', () => {
+test('el aviso se cierra en la comprobación siguiente a corregir la IP', () => {
   evaluarIpPublica(IP_NUEVA, [IP_NUEVA]);
   assert.equal(avisosIp().length, 1);
   setInstanceSettings({ publicIp: IP_NUEVA });
   evaluarIpPublica(IP_NUEVA, [IP_NUEVA]);
   assert.equal(avisosIp().length, 0);
+});
+
+test('el aviso se cierra si el nombre vuelve a apuntar a la IP guardada', () => {
+  // Antes, la salida para los servidores con varias IP iba antes de cualquier
+  // cierre: un aviso abierto ya no se cerraba nunca.
+  evaluarIpPublica(IP_NUEVA, [IP_NUEVA]);
+  assert.equal(avisosIp().length, 1);
+  evaluarIpPublica(IP_NUEVA, [IP_ANTERIOR]);
+  assert.equal(avisosIp().length, 0);
+});
+
+test('la regla del aviso: solo con el nombre fuera de la IP guardada', () => {
+  assert.equal(ipGuardadaDesfasada(IP_NUEVA, IP_ANTERIOR, SERVIDOR, [IP_NUEVA]), true);
+  assert.equal(ipGuardadaDesfasada(IP_NUEVA, IP_ANTERIOR, SERVIDOR, [IP_ANTERIOR, IP_NUEVA]), false);
+  assert.equal(ipGuardadaDesfasada(IP_NUEVA, IP_NUEVA, SERVIDOR, [IP_ANTERIOR]), false);
+  assert.equal(ipGuardadaDesfasada(IP_NUEVA, IP_ANTERIOR, SERVIDOR, null), null, 'sin DNS no se decide');
+  assert.equal(ipGuardadaDesfasada('', IP_ANTERIOR, SERVIDOR, [IP_NUEVA]), null, 'sin IP detectada no se decide');
+  assert.equal(ipGuardadaDesfasada(IP_NUEVA, IP_ANTERIOR, '', null), true, 'sin nombre, basta la diferencia');
+});
+
+/* ---------------------- Ajustes: «Usar esta IP» --------------------------- */
+
+let ctx: TestContext;
+
+before(async () => {
+  ctx = await adminContext();
+});
+
+/** La detección de la IP de salida pregunta a ipify: se simula su respuesta. */
+function ipDeSalida(t: import('node:test').TestContext, ip: string): void {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ ip }), { status: 200 }));
+}
+
+test('guardar la IP en Ajustes cierra el aviso sin esperar al día siguiente', async () => {
+  evaluarIpPublica(IP_NUEVA, [IP_NUEVA]);
+  assert.equal(avisosIp().length, 1);
+  const res = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/instance',
+    headers: { cookie: ctx.adminCookie },
+    payload: { ...getInstanceSettings(), publicIp: IP_NUEVA },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(avisosIp().length, 0);
+});
+
+test('guardar otros ajustes no toca el aviso de la IP', async () => {
+  evaluarIpPublica(IP_NUEVA, [IP_NUEVA]);
+  const res = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/instance',
+    headers: { cookie: ctx.adminCookie },
+    payload: { ...getInstanceSettings(), brandName: 'Otro nombre' },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(avisosIp().length, 1);
+});
+
+test('Ajustes propone la IP nueva con la misma regla que el aviso', async (t) => {
+  instalarDnsFalso(t, { a: { [SERVIDOR]: [IP_NUEVA] } });
+  ipDeSalida(t, IP_NUEVA);
+  const mudanza = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/settings/public-ip',
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(mudanza.statusCode, 200, mudanza.body);
+  assert.deepEqual(mudanza.json(), {
+    detectada: IP_NUEVA,
+    guardada: IP_ANTERIOR,
+    mailHostname: SERVIDOR,
+    registroA: [IP_NUEVA],
+    proponer: true,
+  });
+  assert.equal(avisosIp().length, 0, 'consultar no abre el aviso');
+});
+
+test('Ajustes no insiste a un servidor con varias IP', async (t) => {
+  // Sale por otra IP, pero el servidor de correo sigue publicado en la guardada.
+  instalarDnsFalso(t, { a: { [SERVIDOR]: [IP_ANTERIOR] } });
+  ipDeSalida(t, IP_NUEVA);
+  const res = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/settings/public-ip',
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal((res.json() as { proponer: boolean }).proponer, false);
+});
+
+test('la comprobación de la IP es solo para la administración', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const res = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/settings/public-ip',
+    headers: { cookie: cliente.userCookie! },
+  });
+  assert.equal(res.statusCode, 403);
 });

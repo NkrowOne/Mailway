@@ -1,7 +1,9 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { config } from '../src/config';
 import { db } from '../src/core/db';
 import { listAlerts } from '../src/modules/alerts';
+import { getEngine } from '../src/engine';
 import { evaluateHostnameAlert } from '../src/modules/engineops';
 import { comandoInstalador } from '../src/modules/nombreservidor';
 import { setInstanceSettings } from '../src/modules/settings';
@@ -96,6 +98,62 @@ test('con otro dominio base, la orden también cambia MAILWAY_DOMINIO', () => {
   const r = comandoInstalador(ACTUAL, 'mail.otra-marca.test');
   assert.equal(r.cambiaDominioBase, true);
   assert.equal(r.comando, 'sudo MAILWAY_DOMINIO=otra-marca.test MAILWAY_MAIL_HOST=mail.otra-marca.test bash deploy/instalar.sh --actualizar');
+});
+
+test('con el motor anunciándose con el identificador del contenedor no se anuncia un traslado', () => {
+  // Antes de aplicarle un nombre, Stalwart se anuncia con el identificador
+  // del contenedor: su «dominio base» salía vacío y el diálogo decía que el
+  // instalador trasladaría el webmail y el panel.
+  const r = comandoInstalador('3f2a1b9c8d7e', 'mail.x.test');
+  assert.equal(r.cambiaDominioBase, false);
+  assert.equal(r.comando, 'sudo MAILWAY_MAIL_HOST=mail.x.test bash deploy/instalar.sh --actualizar');
+  assert.equal(comandoInstalador(null, 'mail.x.test').cambiaDominioBase, false);
+});
+
+test('el dominio base lo decide el nombre del instalador, no el del motor', async (t) => {
+  // El instalador deduce el dominio base de su MAIL_HOSTNAME (en el panel,
+  // MAILWAY_MAIL_HOSTNAME), aunque el motor se anuncie con otro nombre.
+  instalarDnsFalso(t, { a: {}, ptr: {} });
+  const previo = config.mailHostnameDefault;
+  config.mailHostnameDefault = 'mail.otra-marca.test';
+  t.after(() => {
+    config.mailHostnameDefault = previo;
+  });
+  const res = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/settings/mail-hostname/impact?nombre=${NUEVO}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const body = res.json() as { actual: string; comando: string; cambiaDominioBase: boolean };
+  assert.equal(body.actual, ACTUAL, 'el MX se sigue contando contra el nombre del motor');
+  assert.equal(body.cambiaDominioBase, true);
+  assert.equal(body.comando, `sudo MAILWAY_DOMINIO=proveedor.test MAILWAY_MAIL_HOST=${NUEVO} bash deploy/instalar.sh --actualizar`);
+});
+
+test('con el identificador del contenedor en el motor, el MX se cuenta contra el nombre de Ajustes', async (t) => {
+  instalarDnsFalso(t, { a: {}, ptr: {} });
+  await getEngine().applyServerSettings({ 'server.hostname': '3f2a1b9c8d7e' });
+  t.after(() => getEngine().applyServerSettings({ 'server.hostname': ACTUAL }));
+  const res = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/settings/mail-hostname/impact?nombre=mail.x.test`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const body = res.json() as { actual: string; dominios: { conMxAlActual: number }; cambiaDominioBase: boolean };
+  assert.equal(body.actual, ACTUAL);
+  assert.equal(body.dominios.conMxAlActual, 1);
+  // El dominio base sale del nombre de Ajustes (proveedor.test), no del identificador.
+  assert.equal(body.cambiaDominioBase, true);
+});
+
+test('el aviso del nombre del motor no propone dejar el identificador del contenedor', () => {
+  evaluateHostnameAlert(NUEVO, '3f2a1b9c8d7e');
+  const aviso = listAlerts({}).find((a) => a.type === 'engine_hostname' && a.title.includes('3f2a1b9c8d7e'));
+  assert.ok(aviso);
+  assert.doesNotMatch(aviso.remedy, /Si el correcto es 3f2a1b9c8d7e/);
+  assert.match(aviso.remedy, /Aplicar ajustes recomendados/);
 });
 
 test('el aviso del nombre del motor dice cuántos dominios pasarán a pendientes', () => {

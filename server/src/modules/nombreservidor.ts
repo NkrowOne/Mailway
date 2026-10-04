@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config';
 import { lookupA, lookupPtr } from '../core/dns';
-import { isValidHostname, normalizeHostname } from '../core/hostnames';
+import { isInternalHost, isValidHostname, normalizeHostname } from '../core/hostnames';
 import { engineConfigured, getEngine } from '../engine';
 import { requireAdmin } from './auth';
 import { listDomains } from './domains';
@@ -30,7 +31,10 @@ export interface ImpactoCambioNombre {
   certificado: { cubre: boolean | null; detalle: string };
   /** Orden del instalador que mueve el motor, el certificado y Traefik al nombre nuevo. */
   comando: string;
-  /** El nombre nuevo cuelga de otro dominio base: el instalador también traslada webmail. y panel. */
+  /**
+   * El nombre nuevo cuelga de otro dominio base que el del instalador: este
+   * también traslada webmail. y panel. Con el dominio base desconocido, false.
+   */
   cambiaDominioBase: boolean;
 }
 
@@ -56,8 +60,22 @@ function mxApuntaA(found: string | null, nombre: string): boolean {
     .some((parte) => normalizeHostname(parte) === nombre);
 }
 
-export function comandoInstalador(actual: string, nuevo: string): { comando: string; cambiaDominioBase: boolean } {
-  const cambiaDominioBase = Boolean(actual) && dominioBase(actual) !== dominioBase(nuevo);
+/**
+ * Orden del instalador para pasar al nombre nuevo. `referencia` es el nombre
+ * del que el instalador deduce hoy el dominio base (el MAIL_HOSTNAME de
+ * deploy/.env): si el nuevo cuelga de otro, hay que pasarle MAILWAY_DOMINIO,
+ * porque ignora un MAILWAY_MAIL_HOST que no esté directamente bajo el suyo, y
+ * con él traslada también los nombres del webmail y del panel. Un nombre
+ * interno (el identificador del contenedor con el que se anuncia Stalwart
+ * antes de aplicarle uno) no dice nada del dominio base: se trata como
+ * desconocido y no se anuncia ningún traslado.
+ */
+export function comandoInstalador(
+  referencia: string | null,
+  nuevo: string,
+): { comando: string; cambiaDominioBase: boolean } {
+  const base = referencia && !isInternalHost(referencia) ? dominioBase(normalizeHostname(referencia)) : '';
+  const cambiaDominioBase = Boolean(base) && base !== dominioBase(nuevo);
   const variables = cambiaDominioBase
     ? `MAILWAY_DOMINIO=${dominioBase(nuevo)} MAILWAY_MAIL_HOST=${nuevo}`
     : `MAILWAY_MAIL_HOST=${nuevo}`;
@@ -74,8 +92,14 @@ export async function impactoCambioNombre(nuevoEntrada: string): Promise<Impacto
       .catch(() => null);
   }
   // El MX de los dominios apunta al nombre con el que se anuncia el motor (es
-  // el que pide la comprobación), que puede no ser aún el de Ajustes.
-  const actual = normalizeHostname(enMotor || instance.mailHostname);
+  // el que pide la comprobación), que puede no ser aún el de Ajustes. Uno
+  // interno (el identificador del contenedor, antes de aplicarle un nombre)
+  // no es el de ningún MX: entonces se cuenta con el de Ajustes.
+  const actual = normalizeHostname(enMotor && !isInternalHost(enMotor) ? enMotor : instance.mailHostname);
+  // El dominio base lo decide el instalador con su MAIL_HOSTNAME, que el
+  // panel recibe como MAILWAY_MAIL_HOSTNAME; sin él (panel montado a mano),
+  // el nombre actual.
+  const referencia = normalizeHostname(config.mailHostnameDefault) || actual;
   const ip = instance.publicIp.trim();
 
   const dominios = listDomains();
@@ -104,7 +128,7 @@ export async function impactoCambioNombre(nuevoEntrada: string): Promise<Impacto
         }
       : null,
     certificado,
-    ...comandoInstalador(actual, nuevo),
+    ...comandoInstalador(referencia, nuevo),
   };
 }
 

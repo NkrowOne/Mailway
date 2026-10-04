@@ -1,7 +1,6 @@
 import { config } from '../config';
 import { db, now } from '../core/db';
-import { checkDnsbl, lookupA } from '../core/dns';
-import { detectarIpPublica } from '../core/ippublica';
+import { checkDnsbl } from '../core/dns';
 import { comprobarPuerto25, type ResultadoPuerto25 } from '../core/puerto25';
 import { engineConfigured, getEngine } from '../engine';
 import type { QueueSummary } from '../engine/types';
@@ -9,6 +8,7 @@ import { alertaAbierta, fireAlert, resolveAlert, resolveAlertsOfType } from './a
 import { refreshAutoconfigHosts } from './autoconfig';
 import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
+import { revisarIpPublica } from './ipservidor';
 import { getEngineSettings, getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
 import { tokensConCaducidadCercana } from './tokens';
@@ -84,43 +84,88 @@ const QUEUE_ALERT_THRESHOLD = 50;
  */
 export const QUEUE_AGE_THRESHOLD_S = 3600;
 
+/** Aviso por volumen: 50 mensajes o más en la cola. */
+const ALERTA_COLA = 'queue_backed_up';
+/**
+ * Aviso por antigüedad, con su propio tipo y su propia clave: si compartiera
+ * la del volumen, un solo mensaje diferido lo dejaba abierto y, como un aviso
+ * abierto no se vuelve a emitir, una acumulación posterior de cientos de
+ * mensajes ya no avisaba a nadie.
+ */
+const ALERTA_COLA_ANTIGUA = 'queue_stale';
+
 /** Solo Stalwart sale a Internet: en demostración no hay nada que medir. */
 function motorReal(): boolean {
   return engineConfigured() && getEngineSettings()?.kind === 'stalwart';
 }
 
 /**
- * Abre o cierra el aviso de la cola según su estado. Con el aviso abierto se
- * dice si el puerto 25 está bloqueado, que es la causa más habitual y la
- * única que se arregla en el proveedor del servidor.
+ * Abre o cierra los avisos de la cola según su estado. El del volumen dice si
+ * el puerto 25 está bloqueado, que es la causa más habitual y la única que se
+ * arregla en el proveedor del servidor.
+ *
+ * El de la antigüedad solo se abre si el puerto 25 no está comprobado como
+ * abierto. Con el puerto abierto, un mensaje que lleva horas reintentándose
+ * es un destino caído o que aplaza los envíos (buzón lleno, lista gris): en
+ * un servidor con tráfico casi siempre hay alguno, el motor lo reintenta
+ * durante días y avisa al remitente, y el aviso se quedaría abierto para
+ * siempre sin que la administración pueda hacer nada.
  */
 export function evaluarCola(summary: QueueSummary, puerto25: ResultadoPuerto25 | null): void {
   const porVolumen = summary.pending >= QUEUE_ALERT_THRESHOLD;
-  const porAntiguedad = summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S;
-  if (!porVolumen && !porAntiguedad) {
-    resolveAlert('queue_backed_up', { notify: true, what: 'cola de salida retenida' });
+  const bloqueado = puerto25?.estado === 'bloqueado';
+
+  if (!porVolumen) {
+    resolveAlert(ALERTA_COLA, { notify: true, what: 'cola de salida retenida' });
+  } else {
+    fireAlert({
+      severity: 'warning',
+      type: ALERTA_COLA,
+      dedupeKey: ALERTA_COLA,
+      title: `Hay ${summary.pending} mensajes retenidos en la cola de salida`,
+      message: bloqueado
+        ? 'El puerto 25 de salida está bloqueado: el servidor no puede entregar correo a otros servidores y los mensajes se acumulan en la cola.'
+        : `Los mensajes se están acumulando sin poder entregarse. ${
+            puerto25?.estado === 'abierto'
+              ? 'El puerto 25 de salida está abierto, así que lo más probable es que un destino esté rechazando o aplazando los envíos.'
+              : 'Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.'
+          }`,
+      remedy: bloqueado
+        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
+        : 'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
+    });
+  }
+
+  const antigua = summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S;
+  if (!antigua || puerto25?.estado === 'abierto') {
+    resolveAlertsOfType(ALERTA_COLA_ANTIGUA, { notify: true, what: 'correo retenido en la cola de salida' });
     return;
   }
-  const retenidos =
-    summary.pending === 1 ? 'Hay 1 mensaje retenido' : `Hay ${summary.pending} mensajes retenidos`;
-  const bloqueado = puerto25?.estado === 'bloqueado';
+  // Con 50 mensajes o más ya avisa el del volumen: no se abre un segundo
+  // aviso por lo mismo (uno abierto de antes se conserva hasta que se vacíe).
+  if (porVolumen) return;
+  const causa = puerto25?.estado ?? 'sin-medir';
+  // La clave lleva la causa: si cambia (el DNS vuelve y el puerto resulta
+  // bloqueado), el texto del aviso abierto ya no la describe.
+  const clave = `${ALERTA_COLA_ANTIGUA}:${causa}`;
+  resolveAlertsOfType(ALERTA_COLA_ANTIGUA, { except: clave });
   fireAlert({
     severity: 'warning',
-    type: 'queue_backed_up',
-    dedupeKey: 'queue_backed_up',
-    title: porVolumen
-      ? `${retenidos} en la cola de salida`
-      : `${retenidos} en la cola de salida desde hace más de una hora`,
-    message: bloqueado
-      ? 'El puerto 25 de salida está bloqueado: el servidor no puede entregar correo a otros servidores y los mensajes se acumulan en la cola.'
-      : `Los mensajes no se están pudiendo entregar. ${
-          puerto25?.estado === 'abierto'
-            ? 'El puerto 25 de salida está abierto, así que lo más probable es que un destino esté rechazando o aplazando los envíos.'
-            : 'Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.'
-        } El motor sigue reintentándolo y, si no lo consigue, devuelve el mensaje al remitente.`,
-    remedy: bloqueado
-      ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
-      : 'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
+    type: ALERTA_COLA_ANTIGUA,
+    dedupeKey: clave,
+    title: 'Hay correo retenido en la cola de salida desde hace más de una hora',
+    message:
+      causa === 'bloqueado'
+        ? 'El puerto 25 de salida está bloqueado: el servidor no puede entregar correo a otros servidores y los mensajes se quedan en la cola hasta que caducan.'
+        : causa === 'desconocido'
+          ? `${puerto25!.detalle} Sin resolver nombres, el servidor tampoco puede encontrar los servidores de destino y los mensajes se quedan en la cola.`
+          : 'Algún mensaje lleva más de una hora sin poder entregarse. Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos. El motor sigue reintentándolo y, si no lo consigue, devuelve el mensaje al remitente.',
+    remedy:
+      causa === 'bloqueado'
+        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
+        : causa === 'desconocido'
+          ? 'Comprueba en el servidor que el DNS responde (por ejemplo, con getent hosts gmail-smtp-in.l.google.com) y revisa la configuración de resolutores del sistema y de Docker.'
+          : 'Revisa la salud del servidor en Entregabilidad: el puerto 25 de salida, el PTR y las listas negras.',
   });
 }
 
@@ -133,12 +178,13 @@ async function checkQueue(): Promise<void> {
     // Si el motor no responde ya lo cubre checkEngine; aquí no se insiste.
     return;
   }
-  const retenida =
-    summary.pending >= QUEUE_ALERT_THRESHOLD ||
-    (summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S);
-  // El puerto solo se mide si hay algo retenido (y la medición se reutiliza
-  // durante unos minutos): no hay que salir a Internet en cada vuelta.
-  const puerto25 = retenida && motorReal() && !alertaAbierta('queue_backed_up') ? await comprobarPuerto25() : null;
+  const porVolumen = summary.pending >= QUEUE_ALERT_THRESHOLD;
+  const antigua = summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S;
+  // El puerto solo se mide si hay algo retenido, y la medición se reutiliza
+  // durante una hora: no hay que salir a Internet en cada vuelta. Con correo
+  // antiguo se mide siempre, porque de ella depende abrir o cerrar su aviso.
+  const medir = motorReal() && (antigua || (porVolumen && !alertaAbierta(ALERTA_COLA)));
+  const puerto25 = medir ? await comprobarPuerto25({ vigenciaMs: HOUR }) : null;
   evaluarCola(summary, puerto25);
 }
 
@@ -175,48 +221,12 @@ async function checkPuerto25(): Promise<void> {
 
 /* ------------------------- IP pública (diario) ---------------------------- */
 
-const ALERTA_IP = 'public_ip_mismatch';
-
-/**
- * Compara la IP de salida con la de Ajustes. Solo avisa si el nombre del
- * servidor de correo ya no resuelve a la IP guardada: así no molesta a un
- * servidor con varias IP que sale por una distinta de la que publica, y sí
- * detecta una mudanza (el DNS ya apunta a la IP nueva y Ajustes sigue con la
- * anterior). `registroA` es el A del nombre del servidor (null: sin dato).
- */
-export function evaluarIpPublica(detectada: string, registroA: string[] | null): void {
-  const { publicIp, mailHostname } = getInstanceSettings();
-  const guardada = publicIp.trim();
-  if (!detectada || !guardada) return;
-  if (detectada === guardada) {
-    resolveAlertsOfType(ALERTA_IP, { notify: true, what: 'IP pública del servidor' });
-    return;
-  }
-  if (mailHostname && (registroA === null || registroA.includes(guardada))) return;
-  const clave = `${ALERTA_IP}:${detectada}`;
-  resolveAlertsOfType(ALERTA_IP, { except: clave });
-  fireAlert({
-    severity: 'warning',
-    type: ALERTA_IP,
-    dedupeKey: clave,
-    title: 'La IP pública del servidor ha cambiado',
-    message: `El servidor sale a Internet con la IP ${detectada}${
-      mailHostname && registroA && registroA.length > 0 ? ` y ${mailHostname} apunta a ${registroA.join(', ')}` : ''
-    }, pero en Ajustes figura ${guardada}. Mientras no se corrija, Entregabilidad comprueba el registro inverso (PTR) y las listas negras de ${guardada}, y «DNS de la plataforma» propone registros A hacia ella.`,
-    remedy:
-      'Abre Ajustes → Identidad del servidor, pulsa «Usar esta IP» y guarda los cambios. Los dominios de webmail de marca blanca apuntados con CNAME al servidor de correo siguen funcionando mientras tanto.',
-  });
-}
-
+/** La regla (y el aviso) viven en ipservidor.ts: Ajustes usa la misma. */
 async function checkIpPublica(): Promise<void> {
   if (!due('public_ip', DAY)) return;
-  const { publicIp, mailHostname } = getInstanceSettings();
-  if (!publicIp.trim()) return;
+  if (!getInstanceSettings().publicIp.trim()) return;
   markRun('public_ip');
-  const detectada = await detectarIpPublica();
-  if (!detectada) return;
-  const registroA = mailHostname ? await lookupA(mailHostname) : [];
-  evaluarIpPublica(detectada, registroA);
+  await revisarIpPublica();
 }
 
 /* ------------------ Caducidad de los tokens de gestión -------------------- */

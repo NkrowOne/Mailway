@@ -1007,7 +1007,8 @@ En el panel (`https://panel.miempresa.com`):
 ## 10. Avisos
 
 El vigilante del panel comprueba cada minuto el motor, el webmail y la cola de
-salida (50 mensajes pendientes o uno retenido más de una hora); el DNS de los
+salida (50 mensajes pendientes, o uno retenido más de una hora sin el puerto
+25 comprobado como abierto); el DNS de los
 dominios cada 10 minutos mientras se espera un cambio (48 horas tras aplicar
 el DNS o 7 días tras el alta) y cada hora después; la marca blanca cada 10
 minutos; la autoconfiguración y la caducidad de los tokens de gestión cada
@@ -1204,12 +1205,14 @@ entorno). Mientras tanto:
   la comprobación acepta las IP que tiene en ese momento el nombre del
   servidor de correo, no solo la de Ajustes.
 - El vigilante compara a diario la IP de salida con la de Ajustes y, si el
-  nombre del servidor de correo ya apunta a la nueva, abre el aviso «La IP
-  pública del servidor ha cambiado».
-- En **Ajustes → Identidad del servidor**, «Usar esta IP» propone la IP
-  detectada; guarda los cambios para aplicarla. Hasta entonces, Entregabilidad
-  comprueba el PTR y las listas negras de la IP anterior y «DNS de la
-  plataforma» propone registros A hacia ella.
+  nombre del servidor de correo ya no apunta a la guardada, abre el aviso «La
+  IP pública del servidor ha cambiado». Un servidor con varias IP cuyo nombre
+  sigue en la guardada no recibe el aviso.
+- En **Ajustes → Identidad del servidor**, con la misma regla, «Usar esta IP»
+  propone la IP detectada; guarda los cambios para aplicarla (el aviso se
+  cierra al guardar). Hasta entonces, Entregabilidad comprueba el PTR y las
+  listas negras de la IP anterior y «DNS de la plataforma» propone registros A
+  hacia ella.
 
 Recuerda también el PTR de la IP nueva (panel del proveedor) y el SPF de los
 dominios que incluyan la IP de forma explícita.
@@ -1231,8 +1234,9 @@ antes lo que arrastra:
 - las rutas de Traefik, el certificado del extractor y `MAIL_HOSTNAME` de
   `deploy/.env` solo los actualiza el instalador:
   `sudo MAILWAY_MAIL_HOST=<nombre> bash deploy/instalar.sh --actualizar`
-  (con `MAILWAY_DOMINIO=<dominio>` delante si cambia el dominio base, que
-  traslada también el webmail y el panel).
+  (con `MAILWAY_DOMINIO=<dominio>` delante si el nombre nuevo cuelga de otro
+  dominio base que el `MAIL_HOSTNAME` actual, lo que traslada también el
+  webmail y el panel).
 
 ---
 

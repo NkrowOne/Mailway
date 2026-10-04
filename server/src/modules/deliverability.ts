@@ -15,7 +15,7 @@ import { comprobarPuerto25 } from '../core/puerto25';
 import { diagnosticoSpf, esDmarc, esSpf, politicaDmarc, spfCubre } from '../core/mailauth';
 import type { EngineDnsRecord } from '../engine/types';
 import { requireAdmin } from './auth';
-import { getInstanceSettings } from './settings';
+import { getEngineSettings, getInstanceSettings } from './settings';
 import { avisoMxInterno, destinoMx, esObligatorio, seleccionarRegistros } from './zonefile';
 
 /* ----------------------- Comprobación DNS de dominio ---------------------- */
@@ -534,8 +534,12 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   const instance = getInstanceSettings();
   const { mailHostname, publicIp } = instance;
   const recommendations: Recommendation[] = [];
-  // En paralelo con el DNS: si el puerto está bloqueado, la prueba agota su espera.
-  const puerto25Medido = comprobarPuerto25();
+  // En paralelo con el DNS: si el puerto está bloqueado, la prueba agota su
+  // espera. Solo con Stalwart: el motor de demostración no entrega nada, y en
+  // un equipo con el 25 bloqueado por el proveedor de Internet restaría 30
+  // puntos sin motivo.
+  const puerto25Medido =
+    getEngineSettings()?.kind === 'stalwart' ? comprobarPuerto25() : Promise.resolve(null);
 
   let hostnameIps: string[] = [];
   let hostnameResolves: boolean | null = null;
@@ -633,13 +637,13 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   }
   // Se mide, no se recomienda a ciegas: un aviso fijo se aprende a ignorar.
   const puerto25 = await puerto25Medido;
-  if (puerto25.estado === 'bloqueado') {
+  if (puerto25?.estado === 'bloqueado') {
     recommendations.push({
       severity: 'critical',
       title: 'El puerto 25 de salida está bloqueado',
       detail: `${puerto25.detalle} Sin él no es posible entregar correo a otros servidores: los mensajes se quedan en la cola. Muchos proveedores (OVH, Hetzner, AWS…) lo bloquean por defecto; solicita su apertura al proveedor del servidor.`,
     });
-  } else if (puerto25.estado === 'desconocido') {
+  } else if (puerto25?.estado === 'desconocido') {
     recommendations.push({
       severity: 'info',
       title: 'No se ha podido comprobar el puerto 25 de salida',
@@ -657,7 +661,7 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   if (hostnameResolves === false) score -= 20;
   if (ptrOk === false) score -= 25;
   if (dnsbl.some((d) => d.status === 'listed')) score -= 30;
-  if (puerto25.estado === 'bloqueado') score -= 30;
+  if (puerto25?.estado === 'bloqueado') score -= 30;
   score = Math.max(0, Math.min(100, score));
 
   return {

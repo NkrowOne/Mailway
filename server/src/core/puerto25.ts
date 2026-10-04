@@ -39,6 +39,12 @@ type Intento = 'conecta' | 'no-conecta' | 'sin-dns';
 function intentar(destino: DestinoSmtp, tiempoLimiteMs: number): Promise<Intento> {
   return new Promise((resolve) => {
     let hecho = false;
+    // El reloj cubre la resolución y la conexión juntas. Si vence antes de
+    // tener la IP del destino, el que no responde es el resolutor (glibc
+    // tarda 5 s por intento en rendirse), no el puerto: darlo por bloqueado
+    // abriría un aviso crítico por una avería que no existe. Con una IP como
+    // destino no hay resolución (ni evento «lookup»).
+    let resuelto = net.isIP(destino.host) !== 0;
     // Solo IPv4: un contenedor sin IPv6 fallaría al instante por la v6 y se
     // tomaría por un puerto bloqueado.
     const socket = net.connect({ host: destino.host, port: destino.port, family: 4 });
@@ -49,7 +55,10 @@ function intentar(destino: DestinoSmtp, tiempoLimiteMs: number): Promise<Intento
       socket.destroy();
       resolve(resultado);
     };
-    const reloj = setTimeout(() => terminar('no-conecta'), tiempoLimiteMs);
+    const reloj = setTimeout(() => terminar(resuelto ? 'no-conecta' : 'sin-dns'), tiempoLimiteMs);
+    socket.once('lookup', (err: Error | null) => {
+      if (!err) resuelto = true;
+    });
     socket.once('connect', () => terminar('conecta'));
     socket.once('error', (err: NodeJS.ErrnoException) =>
       terminar(err.code && ERRORES_DNS.has(err.code) ? 'sin-dns' : 'no-conecta'),
@@ -64,15 +73,18 @@ const VIGENCIA_MS = 10 * 60_000;
 /**
  * Mide el puerto 25 de salida. `destinos` solo lo indican las pruebas (un
  * servidor local); sin él, en modo sin red no se sale a Internet.
+ * `vigenciaMs` alarga la reutilización de la última medición: el vigilante
+ * de la cola la consulta en cada vuelta mientras haya correo retenido.
  */
 export async function comprobarPuerto25(
-  opciones: { destinos?: DestinoSmtp[]; tiempoLimiteMs?: number; sinCache?: boolean } = {},
+  opciones: { destinos?: DestinoSmtp[]; tiempoLimiteMs?: number; sinCache?: boolean; vigenciaMs?: number } = {},
 ): Promise<ResultadoPuerto25> {
   const propios = opciones.destinos !== undefined;
   if (!propios && dnsOffline()) {
     return { estado: 'desconocido', detalle: 'Comprobación desactivada (modo sin red).', comprobadoEn: Date.now() };
   }
-  if (!propios && !opciones.sinCache && cache && Date.now() - cache.comprobadoEn < VIGENCIA_MS) return cache;
+  const vigencia = opciones.vigenciaMs ?? VIGENCIA_MS;
+  if (!propios && !opciones.sinCache && cache && Date.now() - cache.comprobadoEn < vigencia) return cache;
 
   const destinos = opciones.destinos ?? DESTINOS;
   const intentos = await Promise.all(
@@ -94,7 +106,7 @@ export async function comprobarPuerto25(
   } else {
     resultado = {
       estado: 'desconocido',
-      detalle: 'No se han podido resolver los servidores de prueba: el DNS del servidor no responde.',
+      detalle: 'No se han podido resolver los servidores de prueba a tiempo: el DNS del servidor no responde.',
       comprobadoEn: Date.now(),
     };
   }

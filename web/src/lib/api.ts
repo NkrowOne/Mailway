@@ -315,6 +315,18 @@ export interface InstanceSettings {
   panelUrl: string;
 }
 
+/** GET /api/settings/public-ip: IP de salida frente a la de Ajustes. */
+export interface EstadoIpPublica {
+  /** '' si no se ha podido detectar. */
+  detectada: string;
+  guardada: string;
+  mailHostname: string;
+  /** Registro A del nombre del servidor de correo (null: sin dato). */
+  registroA: string[] | null;
+  /** La misma regla que el aviso del vigilante: el nombre ya no apunta a la IP guardada. */
+  proponer: boolean;
+}
+
 export interface AdminDashboard {
   totals: {
     clients: number;
