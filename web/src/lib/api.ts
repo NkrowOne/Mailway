@@ -116,6 +116,11 @@ export interface DnsCheck {
   help: string;
   /** El motor no ha generado este registro obligatorio: no hay valor que copiar. */
   engineMissing?: boolean;
+  /**
+   * Valor con el que sustituir el registro que ya existe (el SPF actual con
+   * lo que le falta): pegar `expected` en su lugar borraría sus include.
+   */
+  suggested?: string;
 }
 
 export interface DomainRecord {

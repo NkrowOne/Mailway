@@ -55,6 +55,10 @@ function faltaMiembro(miembros: unknown): string | null {
   return null;
 }
 
+/** Ajustes del motor (POST /api/settings) y errores que devolverá la recarga. */
+const ajustes = new Map<string, string>();
+let erroresDeRecarga: Record<string, unknown> = {};
+
 const fetchOriginal = globalThis.fetch;
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -77,6 +81,33 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
         { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx ra=postmaster -all' },
       ],
     });
+  }
+
+  // Ajustes, con la semántica de settings.rs de la v0.15.5: «keys» devuelve
+  // las claves exactas y todo lo que cuelga de cada «prefixes»; «clear»
+  // borra un prefijo y «insert» con assert_empty falla si la primera clave existe.
+  if (url.pathname === '/api/settings/keys' && method === 'GET') {
+    const out: Record<string, string> = {};
+    for (const k of (url.searchParams.get('keys') || '').split(',').filter(Boolean)) {
+      if (ajustes.has(k)) out[k] = ajustes.get(k)!;
+    }
+    for (const p of (url.searchParams.get('prefixes') || '').split(',').filter(Boolean)) {
+      for (const [k, v] of ajustes) if (k.startsWith(`${p}.`)) out[k] = v;
+    }
+    return respuesta(200, { data: out });
+  }
+  if (url.pathname === '/api/settings' && method === 'POST') {
+    for (const op of body as { type: string; prefix?: string | null; values?: [string, string][]; assert_empty?: boolean; keys?: string[] }[]) {
+      if (op.type === 'clear') for (const k of [...ajustes.keys()]) if (k.startsWith(op.prefix!)) ajustes.delete(k);
+      if (op.type === 'insert') {
+        if (op.assert_empty && ajustes.has(op.values![0]![0])) return respuesta(200, { error: 'assertFailed' });
+        for (const [k, v] of op.values!) ajustes.set(k, v);
+      }
+    }
+    return respuesta(200, { data: null });
+  }
+  if (url.pathname === '/api/reload' && method === 'GET') {
+    return respuesta(200, { data: { errors: erroresDeRecarga, warnings: {} } });
   }
 
   const nombre = decodeURIComponent(url.pathname.replace(/^\/api\/principal\/?/, ''));
@@ -121,6 +152,8 @@ after(() => {
 });
 
 beforeEach(() => {
+  ajustes.clear();
+  erroresDeRecarga = {};
   principales.clear();
   llamadas.length = 0;
   rutaDesconocida = false;
@@ -255,4 +288,58 @@ test('getRunningHostname propaga los errores de gestión (HTTP 200 con { error }
   await assert.rejects(motor.getRunningHostname(), (err: HttpError) => err.code === 'engine_error');
   rutaDesconocida = true;
   await assert.rejects(motor.getRunningHostname(), (err: HttpError) => /no reconoce la ruta/.test(err.message));
+});
+
+/* ------------------------ Recepción en otro proveedor ---------------------- */
+
+test('syncRemoteDomains escribe las reglas de Mailway, recarga y no repite si no cambian', async () => {
+  const r = await motor.syncRemoteDomains(['traslado.es', 'Otro.es.']);
+  assert.deepEqual(r, { changed: true, customized: false, errors: [], warnings: [] });
+  assert.equal(
+    ajustes.get('session.rcpt.directory.0000.if'),
+    "!is_empty(authenticated_as) && (rcpt_domain == 'otro.es' || rcpt_domain == 'traslado.es')",
+  );
+  assert.equal(ajustes.get('session.rcpt.directory.0000.then'), 'false');
+  assert.equal(ajustes.get('queue.strategy.route.0000.then'), "'mx'");
+  assert.equal(ajustes.get('queue.strategy.route.0002.else'), "'mx'", 'el resto, como el valor por defecto del motor');
+  assert.ok(llamadas.some((l) => l.path === '/api/reload'));
+
+  llamadas.length = 0;
+  const otra = await motor.syncRemoteDomains(['otro.es', 'traslado.es']);
+  assert.equal(otra.changed, false);
+  assert.ok(!llamadas.some((l) => l.method === 'POST'), 'sin cambios no se escribe ni se recarga');
+
+  // Lista vacía: el motor vuelve a sus valores por defecto.
+  const vacia = await motor.syncRemoteDomains([]);
+  assert.equal(vacia.changed, true);
+  assert.equal([...ajustes.keys()].length, 0);
+});
+
+test('syncRemoteDomains no toca una configuración personalizada del motor', async () => {
+  // Un valor directo tiene prioridad sobre el bloque: escribir el bloque no serviría.
+  ajustes.set('queue.strategy.route', "'mx'");
+  const r = await motor.syncRemoteDomains(['traslado.es']);
+  assert.equal(r.customized, true);
+  assert.equal(ajustes.get('queue.strategy.route'), "'mx'");
+  assert.equal(ajustes.size, 1, 'no se escribe nada');
+
+  ajustes.clear();
+  ajustes.set('queue.strategy.route.0000.if', "rcpt_domain == 'interno.es'");
+  ajustes.set('queue.strategy.route.0000.then', "'relay'");
+  ajustes.set('queue.strategy.route.0001.else', "'mx'");
+  assert.equal((await motor.syncRemoteDomains(['traslado.es'])).customized, true);
+  assert.equal(ajustes.get('queue.strategy.route.0000.then'), "'relay'");
+});
+
+test('syncRemoteDomains informa de una recarga con errores y la repite si se pide', async () => {
+  erroresDeRecarga = { 'spam-filter.pyzor.host': { type: 'build', error: 'Invalid address' } };
+  const r = await motor.syncRemoteDomains(['traslado.es']);
+  assert.equal(r.changed, true);
+  assert.equal(r.errors.length, 1);
+  erroresDeRecarga = {};
+  llamadas.length = 0;
+  const repetida = await motor.syncRemoteDomains(['traslado.es'], { reload: true });
+  assert.equal(repetida.changed, false);
+  assert.deepEqual(repetida.errors, []);
+  assert.ok(llamadas.some((l) => l.path === '/api/reload'), 'sin cambios, pero con la recarga pendiente');
 });

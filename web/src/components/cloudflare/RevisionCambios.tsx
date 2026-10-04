@@ -2,7 +2,7 @@ import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../ui/Button';
 import { Cargando } from '../../ui/kit';
-import type { PlanCloudflare, PlanInstancia, ZonaCloudflare } from '../../lib/cloudflare';
+import { claveCambio, type PlanCloudflare, type PlanInstancia, type ZonaCloudflare } from '../../lib/cloudflare';
 import { BandaAviso, BandaError, TablaCambios, claseEnlacePerfil } from './comun';
 
 /*
@@ -17,8 +17,15 @@ interface Props {
   error: string | null;
   /** Dominio de correo, para acortar los nombres de las filas. */
   apex?: string;
-  reemplazar: boolean;
-  onReemplazar: (valor: boolean) => void;
+  /** Una sola casilla para todos los conflictos (sin `seleccion`). */
+  reemplazar?: boolean;
+  onReemplazar?: (valor: boolean) => void;
+  /**
+   * Elección registro a registro (la ficha del dominio): qué conflictos se
+   * reemplazan. Sin ella, una sola casilla para todos (DNS de la plataforma).
+   */
+  seleccion?: string[];
+  onSeleccion?: (claves: string[]) => void;
   aplicando: boolean;
   errorAplicar: string | null;
   onAplicar: () => void;
@@ -53,6 +60,8 @@ export function RevisionCambios({
   apex,
   reemplazar,
   onReemplazar,
+  seleccion,
+  onSeleccion,
   aplicando,
   errorAplicar,
   onAplicar,
@@ -91,7 +100,17 @@ export function RevisionCambios({
 
   const { summary } = plan;
   const pendientes = summary.create + summary.update;
-  const puedeAplicar = pendientes > 0 || (summary.conflict > 0 && reemplazar);
+  const porRegistro = Boolean(seleccion && onSeleccion);
+  const elegidos = seleccion ?? [];
+  const puedeAplicar = pendientes > 0 || (porRegistro ? elegidos.length > 0 : summary.conflict > 0 && reemplazar);
+  // «Hacer el cambio»: el MX y lo que se crea con él (SPF y DMARC de un
+  // dominio que no los tenía). El resto de conflictos (autodiscover, un
+  // mail.<dominio> del hosting) se conserva hasta que se decida.
+  const conflictosDelCambio = plan.changes.filter((c) => c.action === 'conflict' && c.alCambiar && c.reemplazable);
+  // Sin el MX no hay cambio: el SPF y el DMARC solos serían justo lo que se aplaza.
+  const delCambio = conflictosDelCambio.some((c) => c.type === 'MX') ? conflictosDelCambio.map(claveCambio) : [];
+  const alternar = (clave: string) =>
+    onSeleccion?.(elegidos.includes(clave) ? elegidos.filter((k) => k !== clave) : [...elegidos, clave]);
   const zonas = esPlanInstancia(plan) ? plan.zones : plan.zone ? [plan.zone] : [];
   const sinZona = esPlanInstancia(plan) ? plan.missing : [];
 
@@ -128,16 +147,42 @@ export function RevisionCambios({
         <span className={summary.conflict > 0 ? 'text-fuera' : ''}>{summary.conflict} en conflicto</span>
       </p>
 
-      <TablaCambios cambios={plan.changes} apex={apex} />
+      <TablaCambios
+        cambios={plan.changes}
+        apex={apex}
+        {...(porRegistro ? { seleccion: elegidos, onAlternar: alternar } : {})}
+      />
 
-      {summary.conflict > 0 && (
+      {porRegistro && summary.conflict > 0 && (
+        <div className="rounded-lg border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
+          <p className="max-w-[75ch] text-sm text-tinta">
+            Marca en cada conflicto si se reemplaza. Lo que se reemplace se eliminará o sustituirá en
+            Cloudflare y Mailway guardará una copia para poder deshacerlo. Si el dominio recibe hoy
+            correo en otro proveedor, dejará de recibirlo allí en cuanto se cambie el MX: hazlo solo
+            al trasladar el correo a este servidor. Los SPF duplicados y los registros bloqueados por
+            Email Routing nunca se modifican automáticamente.
+          </p>
+          {delCambio.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button variant="perfil" onClick={() => onSeleccion?.(delCambio)}>
+                Hacer el cambio de proveedor
+              </Button>
+              <span className="text-sm text-tinta-2">
+                Marca solo el MX y lo que debe crearse con él; el resto se conserva.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!porRegistro && summary.conflict > 0 && (
         <div className="rounded-lg border border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo px-3 py-2.5">
           <label htmlFor={idCasilla} className="flex cursor-pointer items-baseline gap-2.5">
             <input
               id={idCasilla}
               type="checkbox"
-              checked={reemplazar}
-              onChange={(e) => onReemplazar(e.target.checked)}
+              checked={Boolean(reemplazar)}
+              onChange={(e) => onReemplazar?.(e.target.checked)}
               className="mt-0.5 shrink-0"
             />
             <span className="text-base font-medium text-tinta">Reemplazar los registros en conflicto</span>

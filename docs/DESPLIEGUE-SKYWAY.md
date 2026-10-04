@@ -550,8 +550,19 @@ caducar y sirve para IMAP y SMTP.
   de administrador.
 
 La emisión tarda unos minutos. **Ajustes → Servidor de correo** muestra el
-emisor y los días de validez; el botón de recarga (`POST
+emisor, los días de validez y la cuenta de Cloudflare cuyo token usa el motor
+para renovar (también si la configuró el instalador, que copia el token en el
+motor: se reconoce por el token). El botón de recarga (`POST
 /api/engine/reload-certificate`) hace que el motor use el certificado nuevo.
+
+**No revoques el token que usa el motor.** Al eliminar una cuenta de
+Cloudflare de la instancia, el diálogo comprueba
+(`GET /api/engine/acme/accounts/:id` → `{ inUse }`, solo administración) si el
+motor renueva con su token y, en ese caso, avisa de que no se revoque en
+Cloudflare: la siguiente renovación fallaría y, al caducar el certificado, los
+programas de correo dejarían de conectar. Para dejar de usarlo, emite antes
+el certificado con otra cuenta. El aviso del vigilante sobre un certificado que
+caduca recuerda comprobar ese token.
 
 ### 5.2 Alternativa: el certificado de Traefik, con el extractor
 

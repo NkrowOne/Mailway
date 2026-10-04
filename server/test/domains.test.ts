@@ -12,11 +12,14 @@ import {
   normalizeDomain,
   ownershipRecord,
   refreshDomainDns,
+  retirarDelMotorDominiosSinPropiedad,
+  sinWwwSugerido,
   type DomainRecord,
 } from '../src/modules/domains';
 import { intervaloDeMedicion } from '../src/modules/watchdog';
 import type { EngineDnsRecord } from '../src/engine/types';
 import { adminContext, createClient, createDomain, createMailbox, type TestContext } from './helpers';
+import { instalarDnsFalso } from './dns-falso';
 
 let ctx: TestContext;
 
@@ -56,6 +59,25 @@ test('se aceptan TLD internacionalizados y se limpian URL y punto final', () => 
   assert.equal(normalizeDomain('пример.рф'), 'xn--e1afmkfd.xn--p1ai');
   assert.equal(normalizeDomain('https://Ejemplo.COM/contacto'), 'ejemplo.com');
   assert.equal(normalizeDomain('ejemplo.com.'), 'ejemplo.com');
+});
+
+test('un dominio que empieza por «www.» se pregunta antes de darlo de alta', async () => {
+  const { clientId } = await createClient(ctx);
+  const alta = (payload: Record<string, unknown>) =>
+    ctx.app.inject({ method: 'POST', url: '/api/domains', headers: { cookie: ctx.adminCookie }, payload: { clientId, ...payload } });
+  const res = await alta({ domain: 'https://www.Panadería-Sol.com.es/contacto' });
+  assert.equal(res.statusCode, 409, res.body);
+  const cuerpo = res.json() as { error: string; code: string };
+  assert.equal(cuerpo.code, 'domain_www');
+  assert.match(cuerpo.error, /¿Querías decir panadería-sol\.com\.es\?/);
+  assert.equal(db.prepare("SELECT 1 FROM domains WHERE domain LIKE 'www.%'").get(), undefined, 'no se crea nada');
+
+  // Confirmado, el subdominio es legítimo.
+  const confirmado = await alta({ domain: 'www.correo-en-www.es', confirmWww: true });
+  assert.equal(confirmado.statusCode, 200, confirmado.body);
+  assert.equal((confirmado.json() as { domain: DomainRecord }).domain.domain, 'www.correo-en-www.es');
+  // «www.es» no tiene otra lectura: no se pregunta.
+  assert.equal(sinWwwSugerido('www.es'), null);
 });
 
 test('un dominio no válido se rechaza con un mensaje claro', async () => {
@@ -249,6 +271,25 @@ test('un dominio nuevo tiene la propiedad pendiente y expone su TXT de verificac
   assert.equal(medido.ownershipVerifiedAt, null);
 });
 
+test('«Verificar» distingue un TXT que no está de un DNS que no se pudo consultar', async (t) => {
+  const { clientId } = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, clientId, 'verificar-txt.es', { ownershipVerified: false });
+  const verificar = async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/verify`,
+      headers: { cookie: ctx.adminCookie },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    return (res.json() as { ownershipCheck: boolean | null }).ownershipCheck;
+  };
+  // Sin red: no se sabe, y la ficha no debe decir que el TXT no está.
+  assert.equal(await verificar(), null);
+  // Con DNS que responde y sin el TXT: ahora sí, no se encuentra.
+  instalarDnsFalso(t, { mx: { 'verificar-txt.es': [{ priority: 10, exchange: 'mx.otro.test' }] } });
+  assert.equal(await verificar(), false);
+});
+
 test('la propiedad probada se conserva aunque el DNS deje de verse', async () => {
   const { clientId } = await createClient(ctx);
   const { domainId } = await dominioPropio(clientId, 'propiedad-fija.es');
@@ -329,19 +370,20 @@ test('si el INSERT choca con otra alta del mismo dominio: 409 y el dominio del m
   const a = await createClient(ctx);
   const b = await createClient(ctx);
   const engine = getEngine();
-  const crear = engine.createDomain.bind(engine);
+  const dkim = engine.ensureDkim.bind(engine);
   const borrar = engine.deleteDomain.bind(engine);
   const borrados: string[] = [];
-  // Simula la otra alta: mientras esta espera al motor, otra fila con el
-  // mismo dominio llega a la base (lo que el cerrojo evita en un proceso).
-  engine.createDomain = async (domain: string) => {
+  // Simula la otra alta: mientras esta espera al motor (las claves DKIM),
+  // otra fila con el mismo dominio llega a la base (lo que el cerrojo evita
+  // en un proceso).
+  engine.ensureDkim = async (domain: string, selector: string) => {
     db.prepare('INSERT INTO domains (id, client_id, domain, created_at) VALUES (?, ?, ?, ?)').run(
       'dom_carrera',
       b.clientId,
       domain,
       Date.now(),
     );
-    return crear(domain);
+    return dkim(domain, selector);
   };
   engine.deleteDomain = async (domain: string) => {
     borrados.push(domain);
@@ -360,7 +402,101 @@ test('si el INSERT choca con otra alta del mismo dominio: 409 y el dominio del m
     const fila = db.prepare('SELECT client_id FROM domains WHERE domain = ?').get('carrera.es') as { client_id: string };
     assert.equal(fila.client_id, b.clientId);
   } finally {
+    engine.ensureDkim = dkim;
+    engine.deleteDomain = borrar;
+  }
+});
+
+/* ------------------- El motor y los dominios sin propiedad ---------------- */
+
+/**
+ * Para Stalwart, un dominio que existe es local para todo el servidor: dar de
+ * alta gmail.com dejaría a todos los clientes sin poder escribirle. El
+ * dominio solo llega al motor con su primer buzón o alias, que exigen la
+ * propiedad comprobada.
+ */
+test('el alta no crea el dominio en el motor: llega con el primer buzón o alias, tras probar la propiedad', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const engine = getEngine();
+  const crear = engine.createDomain.bind(engine);
+  const creados: string[] = [];
+  engine.createDomain = async (domain: string) => {
+    creados.push(domain);
+    return crear(domain);
+  };
+  try {
+    const alta = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/domains',
+      headers: { cookie: cliente.userCookie! },
+      payload: { domain: 'gmail.com' },
+    });
+    assert.equal(alta.statusCode, 200, alta.body);
+    const { domain } = alta.json() as { domain: DomainRecord };
+    assert.equal(domain.ownershipVerifiedAt, null);
+    assert.deepEqual(creados, [], 'un dominio sin propiedad comprobada no existe para el motor');
+
+    // Sin propiedad, ni buzones ni alias: el motor sigue sin recibir nada.
+    const buzon = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/mailboxes',
+      headers: { cookie: cliente.userCookie! },
+      payload: { domainId: domain.id, localPart: 'ana' },
+    });
+    assert.equal(buzon.statusCode, 409);
+    assert.deepEqual(creados, []);
+
+    // Con la propiedad comprobada, el primer buzón crea el dominio en el motor.
+    db.prepare('UPDATE domains SET owner_verified_at = ? WHERE id = ?').run(Date.now(), domain.id);
+    const ana = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/mailboxes',
+      headers: { cookie: cliente.userCookie! },
+      payload: { domainId: domain.id, localPart: 'ana' },
+    });
+    assert.equal(ana.statusCode, 200, ana.body);
+    assert.deepEqual(creados, ['gmail.com']);
+
+    // Un alias también lo asegura (es idempotente en el motor).
+    const alias = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/aliases',
+      headers: { cookie: cliente.userCookie! },
+      payload: { domainId: domain.id, localPart: 'info', destinations: ['ana@gmail.com'] },
+    });
+    assert.equal(alias.statusCode, 200, alias.body);
+    assert.deepEqual(creados, ['gmail.com', 'gmail.com']);
+  } finally {
     engine.createDomain = crear;
+  }
+});
+
+test('al actualizar, los dominios sin propiedad que versiones anteriores crearon en el motor se retiran una sola vez', async () => {
+  const { clientId, planId } = await createClient(ctx);
+  db.prepare('UPDATE plans SET max_domains = 10 WHERE id = ?').run(planId);
+  const ajeno = await createDomain(ctx, clientId, 'ajeno-antiguo.es', { ownershipVerified: false });
+  await dominioPropio(clientId, 'propio-antiguo.es');
+  const engine = getEngine();
+  const borrar = engine.deleteDomain.bind(engine);
+  const borrados: string[] = [];
+  let falla = true;
+  engine.deleteDomain = async (domain: string) => {
+    if (falla) throw upstream('El motor no responde.', 'engine_unreachable');
+    borrados.push(domain);
+    return borrar(domain);
+  };
+  try {
+    // Con el motor caído no se da por hecha: la repite el vigilante.
+    const primera = await retirarDelMotorDominiosSinPropiedad();
+    assert.ok(primera && primera.fallidos.includes('ajeno-antiguo.es'));
+    falla = false;
+    const segunda = await retirarDelMotorDominiosSinPropiedad();
+    assert.ok(segunda);
+    assert.ok(segunda.retirados.includes('ajeno-antiguo.es'));
+    assert.ok(!borrados.includes('propio-antiguo.es'), 'con la propiedad comprobada, el dominio se queda');
+    assert.equal(await retirarDelMotorDominiosSinPropiedad(), null, 'completada, no se repite');
+    assert.ok(getDomain(ajeno.domainId), 'en el panel, el dominio sigue dado de alta');
+  } finally {
     engine.deleteDomain = borrar;
   }
 });

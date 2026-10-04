@@ -124,12 +124,25 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   enumerar identificadores.
 - **Propiedad de los dominios**: nadie crea buzones ni alias en un dominio sin
   probar que es suyo (MX hacia el servidor o TXT `_mailway.<dominio>` =
-  `mailway-verificacion=<token>`; si no, `409 domain_ownership_pending`). Sin
-  esta regla, un cliente podría dar de alta un dominio ajeno y el motor le
-  entregaría en local el correo que otros clientes envían a ese dominio. Se
+  `mailway-verificacion=<token>`; si no, `409 domain_ownership_pending`). Se
   aplica también a la administración y a los tokens. Una zona de Cloudflare solo
   prueba la propiedad si está activa: cualquiera puede añadir un dominio ajeno
   a su cuenta de Cloudflare, pero no activarlo.
+- **El dominio solo existe en el motor cuando es del cliente**: para Stalwart,
+  un dominio que existe es local para todo el servidor (rechaza con «550
+  Mailbox does not exist» cualquier dirección que no tenga y entrega en local
+  las demás). Por eso el alta de un dominio no lo crea en el motor: se crea con
+  su primer buzón o alias, que exigen la propiedad comprobada. Sin esta regla,
+  bastaría con dar de alta gmail.com (o el dominio de otro cliente) para que
+  ningún cliente del servidor pudiera escribirle. Al actualizar desde una
+  versión anterior, una tarea única retira del motor los dominios sin
+  propiedad comprobada y sin buzones ni alias; si el motor no responde al
+  arrancar, la repite el vigilante.
+- **Dominios con el correo en otro proveedor**: aunque el dominio tenga buzones
+  aquí, mientras su MX público apunte a otro servidor, lo que se envía desde
+  este servidor a sus direcciones sale por ese MX y no se entrega en local
+  (véase «Recepción en otro proveedor» en `INTEGRACIONES.md`). Así, preparar
+  un traslado o tener solo el envío en Mailway no desvía el correo de nadie.
 - **Destinos de alias**: solo buzones del mismo cliente o direcciones
   externas; una dirección de un dominio de la instancia que no existe se
   rechaza en lugar de salir a Internet.

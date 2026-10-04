@@ -428,6 +428,31 @@ const migrations: { id: string; sql: string }[] = [
           AND (d.cloudflare_account_id IS NULL OR a.client_id IS NULL);
     `,
   },
+  {
+    id: '009-recepcion-externa-y-copias-dns',
+    sql: `
+      -- 1 = la última medición definitiva del MX público dice que el correo
+      -- del dominio llega a otro servidor (traslado en preparación, o solo el
+      -- envío en Mailway). Mientras sea así, el motor entrega por ese MX lo
+      -- que se envía desde aquí a sus direcciones en vez de en local: si no,
+      -- los mensajes de otros clientes, de la web o de la API rebotarían o se
+      -- quedarían en buzones nuevos que nadie lee todavía.
+      ALTER TABLE domains ADD COLUMN recepcion_externa INTEGER NOT NULL DEFAULT 0;
+
+      -- Copia de los registros que Mailway borró en Cloudflare al reemplazar
+      -- conflictos (el cambio de MX), para poder deshacer el último cambio:
+      -- tras el corte, nadie recuerda qué MX tenía el proveedor anterior.
+      -- Una por dominio: la del último reemplazo.
+      CREATE TABLE cloudflare_copias (
+        domain_id TEXT PRIMARY KEY REFERENCES domains(id) ON DELETE CASCADE,
+        account_id TEXT,
+        zone_id TEXT NOT NULL,
+        borrados_json TEXT NOT NULL,
+        creados_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 function runMigrations(): void {

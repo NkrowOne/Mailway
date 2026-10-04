@@ -5,6 +5,7 @@ import { api, ApiError } from '../../lib/api';
 import {
   cuentasUtilizables,
   zonaCubre,
+  type CopiaCambio,
   type CuentaCloudflare,
   type DominioCorreo,
   type EstadoAltaDominio,
@@ -22,7 +23,9 @@ import { RevisionCambios } from './RevisionCambios';
   ficha. Tres momentos:
   1. Disponibilidad: ¿alguna cuenta conectada contiene la zona?
   2. Revisión: el plan completo (crear, actualizar, conservar, conflicto) en
-     un diálogo, con el reemplazo de conflictos como decisión explícita.
+     un diálogo, con el reemplazo de cada conflicto como decisión explícita
+     («Hacer el cambio de proveedor» marca solo el MX y lo que va con él) y
+     la posibilidad de deshacer el último cambio.
   3. Verificación: tras aplicar, se mide el DNS público cada 15 segundos
      durante 5 minutos, a la vista, hasta que el dominio queda activo.
 */
@@ -60,7 +63,9 @@ export function BloqueCloudflare({
   const queryClient = useQueryClient();
   const toast = useToast();
   const [dialogo, setDialogo] = useState(false);
-  const [reemplazar, setReemplazar] = useState(false);
+  // Conflictos que se reemplazan, uno a uno (claveCambio).
+  const [seleccion, setSeleccion] = useState<string[]>([]);
+  const [confirmarDeshacer, setConfirmarDeshacer] = useState(false);
   const [resultado, setResultado] = useState<ResultadoAplicacion | null>(alta?.cloudflare ?? null);
   const [sondeo, setSondeo] = useState<Sondeo | null>(() =>
     alta?.cloudflare && alta.cloudflare.applied.length > 0 && dominio.status !== 'active'
@@ -105,17 +110,19 @@ export function BloqueCloudflare({
   const aplicar = useMutation({
     mutationFn: () =>
       api.post<ResultadoAplicacion & { domain: DominioCorreo }>(`/api/domains/${id}/cloudflare/apply`, {
-        replaceConflicts: reemplazar,
+        replace: seleccion,
         includeRecommended: true,
       }),
     onSuccess: async (data) => {
       queryClient.setQueryData(['domain', id], { domain: data.domain });
       setResultado({ applied: data.applied, errors: data.errors, skipped: data.skipped });
       setDialogo(false);
-      setReemplazar(false);
+      setSeleccion([]);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['domains'] }),
         queryClient.invalidateQueries({ queryKey: ['domain-cloudflare', id] }),
+        queryClient.invalidateQueries({ queryKey: ['domain-cloudflare-copia', id] }),
+        queryClient.invalidateQueries({ queryKey: ['domain-conflicto', id] }),
       ]);
       const omitidos = data.skipped?.length ?? 0;
       if (data.applied.length > 0 && !data.domain.dnsStatus.allRequiredOk) {
@@ -141,6 +148,30 @@ export function BloqueCloudflare({
       } else {
         toast('ok', 'No había cambios pendientes en Cloudflare.');
       }
+    },
+  });
+
+  // Lo que borró el último cambio: se puede deshacer (sin consultar Cloudflare).
+  const copia = useQuery({
+    queryKey: ['domain-cloudflare-copia', id],
+    queryFn: () => api.get<{ copia: CopiaCambio | null }>(`/api/domains/${id}/cloudflare/undo`),
+    enabled: posible,
+  });
+
+  const deshacer = useMutation({
+    mutationFn: () =>
+      api.post<{ restaurados: unknown[]; retirados: unknown[]; domain: DominioCorreo }>(`/api/domains/${id}/cloudflare/undo`),
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], { domain: data.domain });
+      setConfirmarDeshacer(false);
+      setResultado(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['domains'] }),
+        queryClient.invalidateQueries({ queryKey: ['domain-cloudflare', id] }),
+        queryClient.invalidateQueries({ queryKey: ['domain-cloudflare-copia', id] }),
+        queryClient.invalidateQueries({ queryKey: ['domain-conflicto', id] }),
+      ]);
+      toast('ok', 'Cambio deshecho: los registros anteriores vuelven a estar en Cloudflare.');
     },
   });
 
@@ -182,7 +213,7 @@ export function BloqueCloudflare({
 
   function abrirRevision() {
     aplicar.reset();
-    setReemplazar(false);
+    setSeleccion([]);
     setAbiertoEn(Date.now());
     setDialogo(true);
     void plan.refetch();
@@ -313,6 +344,30 @@ export function BloqueCloudflare({
             </p>
           )}
 
+          {copia.data?.copia && (
+            <BandaAviso titulo="Último cambio en Cloudflare">
+              <p>
+                Se reemplazaron{' '}
+                {copia.data.copia.borrados.map((b, i) => (
+                  <span key={`${b.type}-${b.name}-${i}`} className="valor break-all">
+                    {i > 0 ? ', ' : ''}
+                    {b.type} {b.priority !== undefined ? `${b.priority} ` : ''}
+                    {b.content}
+                  </span>
+                ))}
+                . Mailway guarda una copia por si hay que volver atrás.
+              </p>
+              <div className="mt-2">
+                <Button variant="perfil" disabled={Boolean(bloqueo)} onClick={() => {
+                  deshacer.reset();
+                  setConfirmarDeshacer(true);
+                }}>
+                  Deshacer el cambio
+                </Button>
+              </div>
+            </BandaAviso>
+          )}
+
           {sondeo && (
             <ProgresoSondeo
               sondeo={sondeo}
@@ -329,13 +384,33 @@ export function BloqueCloudflare({
           cargando={(!plan.data && !plan.isError) || (plan.isFetching && plan.dataUpdatedAt < abiertoEn)}
           error={plan.isError ? mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.') : null}
           apex={dominio.domain}
-          reemplazar={reemplazar}
-          onReemplazar={setReemplazar}
+          seleccion={seleccion}
+          onSeleccion={setSeleccion}
           aplicando={aplicar.isPending}
           errorAplicar={aplicar.isError ? mensajeError(aplicar.error, 'No se ha podido aplicar en Cloudflare.') : null}
           onAplicar={() => aplicar.mutate()}
           onCancelar={() => setDialogo(false)}
         />
+      </Dialogo>
+
+      <Dialogo open={confirmarDeshacer} onClose={() => setConfirmarDeshacer(false)} title="Deshacer el cambio">
+        <div className="flex flex-col gap-4">
+          <p className="text-base text-tinta-2">
+            Se volverán a crear en Cloudflare los registros que reemplazó el último cambio (con su
+            proxy, su TTL y su comentario) y se retirarán los que Mailway creó en su lugar, en una sola
+            operación. Si el MX vuelve al proveedor anterior, el correo dejará de llegar a este
+            servidor en cuanto se propague el DNS.
+          </p>
+          {deshacer.isError && <BandaError>{mensajeError(deshacer.error, 'No se ha podido deshacer el cambio.')}</BandaError>}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="plano" onClick={() => setConfirmarDeshacer(false)}>
+              Cancelar
+            </Button>
+            <Button variant="peligro" busy={deshacer.isPending} onClick={() => deshacer.mutate()}>
+              Deshacer el cambio
+            </Button>
+          </div>
+        </div>
       </Dialogo>
     </>
   );

@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { config } from './config';
+import { retirarDelMotorDominiosSinPropiedad } from './modules/domains';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -18,6 +19,17 @@ async function main(): Promise<void> {
   app.log.info(
     `Mailway escuchando en http://${config.host}:${config.port} (datos en ${config.dataDir})`,
   );
+
+  // En segundo plano: si el motor aún no responde, lo reintenta el vigilante.
+  void retirarDelMotorDominiosSinPropiedad()
+    .then((r) => {
+      if (r && r.retirados.length > 0) {
+        app.log.warn(
+          `Retirados del motor ${r.retirados.length} dominio(s) sin propiedad comprobada que versiones anteriores crearon al darlos de alta: ${r.retirados.join(', ')}`,
+        );
+      }
+    })
+    .catch((err) => app.log.warn(`No se han podido revisar los dominios sin propiedad del motor: ${(err as Error).message}`));
 
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
 }

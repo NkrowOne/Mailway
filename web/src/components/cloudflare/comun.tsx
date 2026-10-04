@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { estiloBoton } from '../../ui/Button';
 import { AvisoError, MarcaFondo } from '../../ui/kit';
 import {
+  claveCambio,
   nombreCorto,
   ordenarCambios,
   textoAccion,
@@ -57,12 +58,25 @@ export function BandaAviso({ titulo, children }: { titulo: string; children: Rea
  * Tabla reglada de los cambios de un plan. Se lee en orden de atención:
  * conflictos, actualizaciones, altas y, al final, lo que ya está bien.
  */
-export function TablaCambios({ cambios, apex }: { cambios: CambioPlan[]; apex?: string }) {
+export function TablaCambios({
+  cambios,
+  apex,
+  seleccion,
+  onAlternar,
+}: {
+  cambios: CambioPlan[];
+  apex?: string;
+  /** Conflictos elegidos para reemplazar (claveCambio). Sin él, la tabla solo se lee. */
+  seleccion?: string[];
+  onAlternar?: (clave: string) => void;
+}) {
   return (
     <ul className="border-t border-regla">
       {ordenarCambios(cambios).map((c, i) => {
         const veredicto = veredictoAccion[c.action];
         const tinte = veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
+        const clave = claveCambio(c);
+        const elegible = Boolean(seleccion && onAlternar && c.action === 'conflict' && c.reemplazable);
         return (
           <li key={`${c.type}-${c.name}-${i}`} className={`regla-fila px-3 py-2.5 ${tinte}`}>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -91,6 +105,17 @@ export function TablaCambios({ cambios, apex }: { cambios: CambioPlan[]; apex?: 
               </p>
             )}
             <p className="mt-1 max-w-[75ch] text-sm text-tinta-2">{c.reason}</p>
+            {elegible && (
+              <label className="mt-1.5 flex cursor-pointer items-baseline gap-2 text-sm text-tinta">
+                <input
+                  type="checkbox"
+                  checked={seleccion!.includes(clave)}
+                  onChange={() => onAlternar!(clave)}
+                  className="mt-0.5 shrink-0"
+                />
+                {c.alCambiar && c.type !== 'MX' ? 'Crear al aplicar' : 'Reemplazar al aplicar'}
+              </label>
+            )}
           </li>
         );
       })}

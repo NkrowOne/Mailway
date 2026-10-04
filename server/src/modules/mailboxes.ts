@@ -8,7 +8,7 @@ import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertClientActive, assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
-import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
+import { asegurarDominioEnMotor, assertDomainOwnership, getDomain, type DomainRecord } from './domains';
 import { alCambiarContrasenaBuzon } from './portal';
 
 export interface Mailbox {
@@ -296,6 +296,9 @@ async function createMailboxRecord(input: {
   const password = input.password || generateMailboxPassword();
 
   const engine = getEngine();
+  // El dominio solo existe en el motor desde su primer buzón o alias (con
+  // la propiedad ya comprobada): véase el alta de dominios.
+  await asegurarDominioEnMotor(domain.domain);
   await engine.createMailbox({
     email,
     password,
@@ -786,6 +789,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     if (aliasExists(domain.id, localPart)) throw aliasExistsError(email);
 
     const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
+    await asegurarDominioEnMotor(domain.domain);
     await getEngine().upsertAlias(email, internal, external);
 
     const id = randomId('als');

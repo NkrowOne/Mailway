@@ -29,6 +29,12 @@ export type DominioCorreo = DomainRecord & {
    */
   ownershipVerifiedAt?: number | null;
   ownershipRecord?: RegistroPropiedad;
+  /**
+   * El MX público apunta a otro servidor: el correo del dominio se recibe en
+   * otro proveedor, y lo que se envía desde este servidor a sus direcciones
+   * también se entrega allí. Ausente en servidores anteriores.
+   */
+  recepcionExterna?: boolean;
 };
 
 /** true si la propiedad del dominio está pendiente de comprobar. */
@@ -118,6 +124,21 @@ export interface CambioPlan {
   required: boolean;
   /** Solo en el DNS de la plataforma: zona a la que pertenece. */
   zone?: string;
+  /** Conflicto: ¿se puede reemplazar desde aquí? (dos SPF o Email Routing, no). */
+  reemplazable?: boolean;
+  /** Parte del cambio de proveedor: el MX y lo que se crea junto a él (SPF, DMARC). */
+  alCambiar?: boolean;
+}
+
+/** Clave de un cambio para elegir qué conflictos se reemplazan («MX:ejemplo.es»). */
+export function claveCambio(c: { type: string; name: string }): string {
+  return `${c.type.toUpperCase()}:${c.name}`;
+}
+
+/** Lo que borró el último cambio en Cloudflare y «Deshacer el cambio» recrearía. */
+export interface CopiaCambio {
+  createdAt: number;
+  borrados: { type: string; name: string; content: string; priority?: number }[];
 }
 
 export interface ZonaCloudflare {
@@ -134,6 +155,7 @@ export interface PlanCloudflare {
   zone?: ZonaCloudflare;
   changes: CambioPlan[];
   summary: Record<AccionPlan, number>;
+  copia?: CopiaCambio | null;
 }
 
 export interface PlanInstancia extends Omit<PlanCloudflare, 'zone'> {
