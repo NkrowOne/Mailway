@@ -2,9 +2,11 @@ import { test, before, beforeEach, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { HttpError } from '../src/core/errors';
 import { sha512Crypt } from '../src/core/sha512crypt';
+import { getEngine } from '../src/engine';
 import { DemoEngine } from '../src/engine/demo';
 import { StalwartEngine } from '../src/engine/stalwart';
 import { fusionarDirecciones } from '../src/engine/types';
+import { adminContext, createClient, createDomain, createMailbox } from './helpers';
 import { fakeStalwart } from './stalwart-falso';
 
 /*
@@ -199,10 +201,15 @@ describe('driver de Stalwart', () => {
     await motor.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'ana@nuevo.test' });
     assert.equal(motorFalso.principal('ana@nuevo.test')?.name, 'ana@nuevo.test');
 
-    // El destino existe pero es otro principal (sin esa dirección).
+    // El destino existe pero es otro principal (sin esa dirección). El mensaje
+    // puede llegar al cliente (error del cambio de dominio): sin jerga del motor.
     await assert.rejects(
       motor.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'otra@nuevo.test' }),
-      codigo('engine_exists'),
+      (err: HttpError) => {
+        assert.equal(err.code, 'engine_exists');
+        assert.equal(err.message, 'El servidor de correo ya tiene otro buzón o alias con el nombre «ana@nuevo.test».');
+        return true;
+      },
     );
     // Los dos existen: el motor se niega (nombre ocupado) y no cambia nada.
     await assert.rejects(
@@ -265,18 +272,29 @@ describe('driver de Stalwart', () => {
       assert.ok(restantes.includes(`signature.${id}.domain`), `se conserva ${id}`);
     }
 
-    // Repetirlo no borra nada ni recarga.
+    // Repetirlo no borra nada, pero recarga (ver la prueba siguiente).
     motorFalso.received.length = 0;
     assert.deepEqual(await motor.removeDkim('viejo.test'), []);
     assert.deepEqual(escrituras(), []);
-    assert.ok(!motorFalso.received.some((r) => r.path === '/api/reload'));
+    assert.ok(motorFalso.received.some((r) => r.path === '/api/reload'));
   });
 
-  test('removeDkim propaga una recarga con errores', async () => {
+  test('removeDkim propaga una recarga con errores y el reintento la completa aunque ya no queden claves', async () => {
     motorFalso.crearPrincipal({ type: 'domain', name: 'viejo.test' });
     await motor.ensureDkim('viejo.test', '');
     motorFalso.reloadErrors = { 'auth.dkim.sign': 'firma desconocida' };
     await assert.rejects(motor.removeDkim('viejo.test'), codigo('engine_error'));
+    // Las claves ya se borraron, pero el motor no aplicó la recarga: sigue firmando con ellas.
+    assert.ok(![...motorFalso.settings.keys()].some((k) => k.startsWith('signature.rsa-viejo.test.')));
+
+    // Mientras la recarga siga con errores, el reintento tampoco se da por bueno.
+    await assert.rejects(motor.removeDkim('viejo.test'), codigo('engine_error'));
+
+    // Resuelto lo que la impedía, el reintento recarga y termina.
+    motorFalso.reloadErrors = {};
+    motorFalso.received.length = 0;
+    assert.deepEqual(await motor.removeDkim('viejo.test'), []);
+    assert.ok(motorFalso.received.some((r) => r.method === 'GET' && r.path === '/api/reload'));
   });
 
   test('createMailbox no adopta un principal con otras direcciones, ni una lista; sí el huérfano limpio', async () => {
@@ -437,7 +455,11 @@ describe('motor de demostración', () => {
     await demo.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'ana@nuevo.test' });
     await assert.rejects(
       demo.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'otra@nuevo.test' }),
-      codigo('engine_exists'),
+      (err: HttpError) => {
+        assert.equal(err.code, 'engine_exists');
+        assert.equal(err.message, 'El servidor de correo ya tiene otro buzón o alias con el nombre «ana@nuevo.test».');
+        return true;
+      },
     );
     await assert.rejects(
       demo.renamePrincipal('luis@viejo.test', 'luis@nuevo.test', { expectEmail: 'luis@nuevo.test' }),
@@ -485,9 +507,41 @@ describe('motor de demostración', () => {
     await demo.updateMailbox('ana@viejo.test', { suspended: false });
     assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), true);
 
-    // Las operaciones de buzón sobre un usuario que no existe fallan como en el motor.
-    await assert.rejects(demo.setMailboxPassword('nadie@viejo.test', 'x'), codigo('engine_not_found'));
+    // Pasar una dirección en vez del usuario del motor falla como en el motor real.
+    await assert.rejects(demo.setMailboxPassword('ana@nuevo.test', 'x'), codigo('engine_not_found'));
+    await assert.rejects(demo.addAppPassword('ana@nuevo.test', 'x', 'x'), codigo('engine_not_found'));
+    await assert.rejects(demo.updateMailbox('ana@nuevo.test', { suspended: true }), codigo('engine_not_found'));
+    await assert.rejects(demo.upsertAlias('info@viejo.test', ['ana@nuevo.test']), codigo('engine_not_found'));
+    assert.equal(await demo.getPrincipal('ana@nuevo.test'), null, 'no se crea un principal con la dirección de otro');
     await demo.deleteMailbox('nadie@viejo.test');
+  });
+
+  test('tras reiniciar el panel, los buzones que olvidó se recrean al tocarlos; el cambio de dominio no', async () => {
+    await sembrarDemo();
+    await demo.createMailbox({ email: 'luis@viejo.test', password: CLAVE });
+    // Un panel nuevo con la misma base: el motor de demostración empieza vacío.
+    demo.simularReinicio();
+    assert.equal(await demo.getPrincipal('ana@viejo.test'), null);
+    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), false, 'su contraseña se perdió con el reinicio');
+
+    await demo.setMailboxPassword('ana@viejo.test', 'Clave-Tras-Reinicio-1');
+    assert.equal(await demo.verifyCredentials('ana@viejo.test', 'Clave-Tras-Reinicio-1'), true);
+    await demo.addAppPassword('ana@viejo.test', CLAVE_APP, 'movil');
+    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE_APP), true);
+    await demo.updateMailbox('luis@viejo.test', { displayName: 'Luis' });
+    await demo.upsertAlias('info@viejo.test', ['ana@viejo.test', 'pepa@viejo.test']);
+    assert.deepEqual((await demo.getPrincipal('pepa@viejo.test'))?.emails, ['pepa@viejo.test']);
+    assert.equal((await demo.getPrincipal('info@viejo.test'))?.type, 'list');
+    assert.equal(demo.cambiosSinRecargar, false, 'recrear no cuenta como cambio de direcciones');
+
+    // El contrato del cambio de dominio no se relaja: «no existe» significa algo.
+    assert.equal(await demo.getPrincipal('marta@viejo.test'), null);
+    await assert.rejects(demo.setAddresses('marta@viejo.test', { add: ['marta@nuevo.test'] }), codigo('engine_not_found'));
+    await assert.rejects(
+      demo.renamePrincipal('marta@viejo.test', 'marta@nuevo.test', { expectEmail: 'marta@nuevo.test' }),
+      codigo('engine_not_found'),
+    );
+    assert.equal(await demo.getPrincipal('marta@viejo.test'), null);
   });
 
   test('removeDkim borra solo el dominio exacto, recarga y lo anota; borrar el dominio deja de recibir', async () => {
@@ -503,6 +557,8 @@ describe('motor de demostración', () => {
     assert.deepEqual(demo.dkimBorrados, ['viejo.test']);
     assert.equal(demo.recargas, recargas + 1);
     assert.deepEqual(await demo.removeDkim('viejo.test'), [], 'idempotente');
+    assert.equal(demo.recargas, recargas + 2, 'el reintento también recarga');
+    assert.deepEqual(demo.dkimBorrados, ['viejo.test', 'viejo.test']);
     assert.deepEqual(await demo.removeDkim('viejo.test.ejemplo'), ['ed25519-viejo.test.ejemplo', 'rsa-viejo.test.ejemplo']);
   });
 
@@ -531,5 +587,55 @@ describe('motor de demostración', () => {
     demo.fallarProxima('ping');
     assert.equal((await demo.ping()).ok, false);
     assert.equal((await demo.ping()).ok, true);
+  });
+});
+
+describe('modo demostración tras reiniciar el panel (rutas reales)', () => {
+  test('cambiar la contraseña, los alias y las contraseñas de aplicación de buzones anteriores al reinicio', async () => {
+    const ctx = await adminContext();
+    const { clientId } = await createClient(ctx);
+    const { domainId, domain } = await createDomain(ctx, clientId, 'demo-reinicio.test');
+    const ana = await createMailbox(ctx, domainId, 'ana');
+    await createMailbox(ctx, domainId, 'luis');
+
+    // El proceso nuevo comparte la base pero no la memoria del motor de demostración.
+    const motorDemo = getEngine() as DemoEngine;
+    assert.equal(motorDemo.kind, 'demo');
+    motorDemo.simularReinicio();
+
+    const clave = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/mailboxes/${ana.mailboxId}/password`,
+      headers: { cookie: ctx.adminCookie },
+      payload: { password: 'Clave-Tras-Reinicio-1' },
+    });
+    assert.equal(clave.statusCode, 200, clave.body);
+    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, 'Clave-Tras-Reinicio-1'), true);
+
+    const alias = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/aliases',
+      headers: { cookie: ctx.adminCookie },
+      payload: { domainId, localPart: 'info', destinations: [`luis@${domain}`] },
+    });
+    assert.equal(alias.statusCode, 200, alias.body);
+
+    const app = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/mailboxes/${ana.mailboxId}/app-passwords`,
+      headers: { cookie: ctx.adminCookie },
+      payload: { name: 'Tienda' },
+    });
+    assert.equal(app.statusCode, 200, app.body);
+    const creada = app.json() as { appPassword: { id: string }; password: string };
+    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, creada.password), true);
+
+    const revocar = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/mailboxes/${ana.mailboxId}/app-passwords/${creada.appPassword.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+    assert.equal(revocar.statusCode, 200, revocar.body);
+    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, creada.password), false);
   });
 });

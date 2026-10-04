@@ -144,6 +144,7 @@ export interface MailEngine {
    * GET /api/settings/keys?prefixes=signature, toma como ids los X con signature.X.domain === domain,
    * asigna cada clave al id más largo que la prefija (así signature.rsa-d.es.mx.* no es de rsa-d.es),
    * borra con POST /api/settings [{type:'delete', keys}] y recarga. Devuelve los ids borrados.
+   * Recarga siempre, también sin claves que borrar: el reintento tras una recarga fallida la completa.
    */
   removeDkim(domain: string): Promise<string[]>;
 }

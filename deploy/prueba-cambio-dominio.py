@@ -10,14 +10,17 @@ nuevo.test sin perder nada:
   1. preparación: viejo.test y viejo.test.ejemplo (la trampa del prefijo de
      las claves DKIM), ana@viejo.test con contraseña y contraseña de
      aplicación, la lista info@viejo.test con ana, y correo en su buzón;
-  2. pre-recepción: nuevo.test con DKIM y las direcciones nuevas añadidas;
+  2. pre-recepción: nuevo.test con DKIM y las direcciones nuevas añadidas; la
+     caché del directorio recuerda que ana@nuevo.test no existía hasta que se
+     recarga (por eso el driver recarga tras cambiar direcciones);
   3. el correo a las dos direcciones entra en los mismos buzones;
   4. pasar: la dirección nueva es la principal y la lista se renombra;
   5. con el usuario viejo se envía ya como la dirección nueva (no como otra);
   6. renombrar el buzón conserva su número, el correo y las contraseñas;
   7. con el usuario nuevo, cambiar la contraseña conserva la de aplicación;
-  8. baja: se quitan las direcciones viejas, se borra el dominio y solo sus
-     claves DKIM, la recarga no da errores y viejo.test deja de recibir.
+  8. baja: se quitan las direcciones viejas (la caché sigue aceptando
+     ana@viejo.test hasta recargar), se borra el dominio y solo sus claves
+     DKIM, la recarga no da errores y viejo.test deja de recibir.
 
 Credenciales desechables y dominios .test. Se niega a ejecutarse sin
 MAILWAY_PRUEBA_DESECHABLE=1 (lo define .github/workflows/stack.yml) o si el
@@ -45,6 +48,7 @@ import ssl
 import subprocess
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
 
@@ -260,6 +264,23 @@ class Motor:
 
 # -- correo
 
+_ultima_conexion_smtp = 0.0
+
+
+def conectar_smtp(puerto: int, segundos: float) -> smtplib.SMTP:
+    """Conexión SMTP al motor (25 o 587), espaciada de la anterior.
+
+    El limitador de entrada por IP del motor admite 5 conexiones por segundo
+    (queue.limiter.inbound.ip.rate = 5/1s) y cierra las demás sin saludo:
+    varias consultas seguidas tropezarían con él.
+    """
+    global _ultima_conexion_smtp
+    espera = _ultima_conexion_smtp + 0.35 - time.monotonic()
+    if espera > 0:
+        time.sleep(espera)
+    _ultima_conexion_smtp = time.monotonic()
+    return smtplib.SMTP('127.0.0.1', puerto, timeout=segundos)
+
 
 def imap_total(usuario: str, clave: str) -> int:
     """Inicia sesión y cuenta los mensajes de todas las carpetas (el filtro puede llevar alguno a «Junk Mail»)."""
@@ -297,8 +318,13 @@ def imap_anadir(usuario: str, clave: str, asunto: str) -> None:
 
 
 def destinatario(rcpt: str) -> tuple:
-    """Código de RCPT TO en el puerto 25, sin enviar nada."""
-    with smtplib.SMTP('127.0.0.1', PUERTO_SMTP, timeout=20) as smtp:
+    """Código de RCPT TO en el puerto 25, sin enviar nada.
+
+    Cada consulta llena la caché del directorio del motor: recuerda 24 h que
+    una dirección de buzón existe y 1 h que no (las listas no se guardan).
+    Solo GET /api/reload la vacía.
+    """
+    with conectar_smtp(PUERTO_SMTP, 20) as smtp:
         smtp.ehlo('mx.remoto.example')
         smtp.mail(REMITENTE)
         codigo, texto = smtp.rcpt(rcpt)
@@ -310,7 +336,7 @@ def entregar(rcpt: str, asunto: str) -> None:
     """Entrega un mensaje por el puerto 25 (como un servidor de fuera); falla si se rechaza."""
     mensaje = (f'From: {REMITENTE}\r\nTo: {rcpt}\r\nSubject: {asunto}\r\n'
                f'Message-ID: <{secrets.token_hex(8)}@remoto.example>\r\n\r\nHola.\r\n')
-    with smtplib.SMTP('127.0.0.1', PUERTO_SMTP, timeout=30) as smtp:
+    with conectar_smtp(PUERTO_SMTP, 30) as smtp:
         smtp.ehlo('mx.remoto.example')
         rechazados = smtp.sendmail(REMITENTE, [rcpt], mensaje)
         assert not rechazados, f'entrega a {rcpt} rechazada: {rechazados}'
@@ -318,7 +344,7 @@ def entregar(rcpt: str, asunto: str) -> None:
 
 def remitente_aceptado(usuario: str, clave: str, remitente: str) -> int:
     """Código de MAIL FROM en el 587 (STARTTLS) tras autenticarse; no envía nada."""
-    with smtplib.SMTP('127.0.0.1', PUERTO_ENVIO, timeout=20) as smtp:
+    with conectar_smtp(PUERTO_ENVIO, 20) as smtp:
         smtp.ehlo('cliente.remoto.example')
         smtp.starttls(context=SIN_VERIFICAR)
         smtp.ehlo('cliente.remoto.example')
@@ -405,6 +431,9 @@ class Prueba:
         m.crear('domain', NUEVO, description=NUEVO)
         m.ensure_dkim(NUEVO)
         m.recargar()
+        # Alguien escribe a la dirección nueva antes de tiempo: el motor guarda que no existe.
+        codigo, texto = destinatario(ANA_N)
+        assert 500 <= codigo < 600, f'RCPT TO:<{ANA_N}> antes de añadirla debería rechazarse: {codigo} {texto}'
         # Los errores en los que se apoya el driver: dominio sin dar de alta y dirección de otro.
         r = m.patch(ANA_V, [{'action': 'set', 'field': 'emails', 'value': [ANA_V, 'ana@otro.test']}])
         assert r.get('error') == 'notFound' and r.get('item') == 'otro.test', r
@@ -413,11 +442,17 @@ class Prueba:
         assert m.direcciones(m.principal(ANA_V)) == [ANA_V], 'un PATCH rechazado no cambia nada'
         assert m.set_addresses(ANA_V, add=[ANA_N]) == [ANA_V, ANA_N]
         assert m.set_addresses(INFO_V, add=[INFO_N]) == [INFO_V, INFO_N]
+        # Sin recargar, la caché sigue diciendo que no existe: por eso reloadDirectory.
+        codigo, texto = destinatario(ANA_N)
+        assert 500 <= codigo < 600, f'sin recargar, la caché debería seguir rechazando {ANA_N}: {codigo} {texto}'
         m.recargar()
+        codigo, texto = destinatario(ANA_N)
+        assert codigo == 250, f'tras recargar, RCPT TO:<{ANA_N}> debería aceptarse: {codigo} {texto}'
         assert m.direcciones(m.principal(ANA_V)) == [ANA_V, ANA_N]
         self.ok('nuevo.test con DKIM; ana e info tienen las dos direcciones (la principal sigue siendo la vieja) '
-                'y la recarga no da errores. Un dominio sin dar de alta da notFound con item y una dirección '
-                'de otro, fieldAlreadyExists.')
+                f'y la recarga no da errores. {ANA_N}, consultada antes de añadirla, se rechaza hasta recargar y '
+                'después se acepta. Un dominio sin dar de alta da notFound con item y una dirección de otro, '
+                'fieldAlreadyExists.')
 
     # -- 3
 
@@ -500,9 +535,18 @@ class Prueba:
     def baja(self) -> None:
         self.paso('8. Baja de viejo.test')
         m = self.motor
+        # La recarga del paso 4 vació la caché: esta consulta guarda que ana@viejo.test existe.
+        codigo, texto = destinatario(ANA_V)
+        assert codigo == 250, f'RCPT TO:<{ANA_V}> antes de la baja: {codigo} {texto}'
         assert m.set_addresses(ANA_N, remove=[ANA_V]) == [ANA_N]
         assert m.set_addresses(INFO_N, remove=[INFO_V]) == [INFO_N]
+        codigo, texto = destinatario(ANA_V)
+        assert codigo == 250, f'sin recargar, la caché debería seguir aceptando {ANA_V}: {codigo} {texto}'
         m.recargar()
+        # Con el dominio aún dado de alta: el rechazo es por la dirección quitada, no por el dominio.
+        codigo, texto = destinatario(ANA_V)
+        assert 500 <= codigo < 600 and 'does not exist' in texto, \
+            f'tras quitarla y recargar, RCPT TO:<{ANA_V}> debería rechazarse por no existir: {codigo} {texto}'
         r = m.api('DELETE', f'/api/principal/{VIEJO}')
         assert 'error' not in r, r
         ids = m.remove_dkim(VIEJO)
@@ -519,8 +563,9 @@ class Prueba:
         assert 500 <= codigo < 600, f'RCPT TO:<{ANA_V}> debería rechazarse: {codigo} {texto}'
         entregar(INFO_N, 'A la lista tras la baja')
         self.mensajes = self.esperar_mensajes(ANA_N, self.clave_nueva, self.mensajes + 1, 'info@nuevo tras la baja')
-        self.ok(f'sin direcciones viejas, dominio borrado y solo sus claves DKIM ({", ".join(ids)}); las de '
-                f'{TRAMPA} y {NUEVO} siguen y la recarga no da errores. RCPT TO:<{ANA_V}> → {codigo}; '
+        self.ok(f'{ANA_V} se sigue aceptando hasta recargar y después se rechaza por no existir; sin '
+                f'direcciones viejas, dominio borrado y solo sus claves DKIM ({", ".join(ids)}); las de '
+                f'{TRAMPA} y {NUEVO} siguen y la recarga no da errores. RCPT TO:<{ANA_V}> → {codigo} {texto}; '
                 f'ana@nuevo.test entra y la lista le sigue entregando.')
 
     # -- diagnóstico y limpieza
@@ -528,6 +573,9 @@ class Prueba:
     def diagnostico(self) -> None:
         r = docker('logs', '--tail', '60', CONTENEDOR, comprobar=False)
         registrar(f'--- docker logs {CONTENEDOR}\n{r.stdout}{r.stderr}')
+        # El motor escribe sus eventos (rechazos, límites, bloqueos) en su propio fichero.
+        r = docker('exec', CONTENEDOR, 'sh', '-c', 'tail -n 60 /opt/stalwart/logs/*', comprobar=False)
+        registrar(f'--- registro del motor\n{r.stdout}{r.stderr}')
 
     def limpiar(self) -> None:
         docker('rm', '-f', CONTENEDOR, comprobar=False)
@@ -551,7 +599,9 @@ def main() -> int:
         registrar('OK: cambio de dominio comprobado con Stalwart v0.15.5 real.')
         return 0
     except BaseException as error:
-        registrar(f'FALLO: {type(error).__name__}: {error}')
+        lineas = [f.lineno for f in traceback.extract_tb(error.__traceback__) if f.filename == __file__]
+        donde = f' (línea {lineas[-1]})' if lineas else ''
+        registrar(f'FALLO: {type(error).__name__}: {error}{donde}')
         prueba.diagnostico()
         return 1
     finally:

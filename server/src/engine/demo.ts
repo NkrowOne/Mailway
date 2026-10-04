@@ -66,7 +66,9 @@ function yaExiste(valor: string): HttpError {
  * Guarda en memoria un modelo de principales con la semántica del driver
  * (nombres y direcciones únicos, renombrado que conserva el id y las
  * contraseñas, direcciones que exigen su dominio), para que el cambio de
- * dominio se pueda probar de punta a punta sin motor real.
+ * dominio se pueda probar de punta a punta sin motor real. Como vive en
+ * memoria, tras reiniciar el panel recrea al tocarlos los buzones que olvidó
+ * (ver `buzon`).
  */
 export class DemoEngine implements MailEngine {
   readonly kind = 'demo' as const;
@@ -122,6 +124,25 @@ export class DemoEngine implements MailEngine {
     this.fallos.push({ metodo, nombre });
   }
 
+  /**
+   * Olvida todo lo que guarda en memoria, como un reinicio del panel (la base
+   * SQLite, en cambio, se conserva). Los números internos siguen avanzando
+   * para que uno de antes no coincida por casualidad con uno nuevo.
+   */
+  simularReinicio(): void {
+    this.principales.clear();
+    this.porNombre.clear();
+    this.porDireccion.clear();
+    this.settings.clear();
+    this.dkim.clear();
+    this.fallos.length = 0;
+    this.dominios.clear();
+    this.cambiosSinRecargar = false;
+    this.recargas = 0;
+    this.dkimBorrados = [];
+    this.remoteDomains = [];
+  }
+
   private fallo(metodo: string, nombre?: string): void {
     const i = this.fallos.findIndex(
       (f) =>
@@ -144,10 +165,35 @@ export class DemoEngine implements MailEngine {
     return id === undefined ? undefined : this.principales.get(id);
   }
 
+  /**
+   * Buzón por su usuario del motor. Este modelo vive en memoria y la base del
+   * panel no: tras reiniciar el panel (`npm run dev` reinicia con cada cambio
+   * de código) no conoce los buzones que ya existían. Como hacía antes de
+   * modelar principales, el que falta se vuelve a crear al tocarlo (sin
+   * contraseña: vale la que se fije después). No se crea si ese nombre es
+   * una dirección de otro principal: eso es haber pasado la dirección en vez
+   * del usuario del motor, y el driver real daría engine_not_found.
+   *
+   * Solo lo usan las operaciones de siempre. getPrincipal, setAddresses y
+   * renamePrincipal mantienen el contrato del motor real («no existe» es una
+   * respuesta con significado para el cambio de dominio y su conciliador).
+   */
   private buzon(login: string): PrincipalDemo {
     const p = this.buscar(login);
-    if (!p) throw noEncontrado(login);
-    return p;
+    if (p) return p;
+    const nombre = normal(login);
+    if (this.porDireccion.has(nombre)) throw noEncontrado(login);
+    return this.crear({
+      type: 'individual',
+      name: nombre,
+      description: '',
+      quota: 0,
+      emails: [nombre],
+      secrets: [],
+      roles: ['user'],
+      members: [],
+      externalMembers: [],
+    });
   }
 
   /**
@@ -286,12 +332,12 @@ export class DemoEngine implements MailEngine {
   async upsertAlias(alias: string, destinations: string[], externalDestinations: string[] = []): Promise<void> {
     this.fallo('upsertAlias', alias);
     const nombre = normal(alias);
-    // Los miembros son NOMBRES del motor y deben existir (se validan antes de escribir).
-    const miembros = destinations.map((d) => {
-      const p = this.buscar(d);
-      if (!p) throw noEncontrado(d);
-      return p.id;
-    });
+    // Los miembros son NOMBRES del motor de buzones. Se validan todos antes de
+    // escribir: una dirección de otro principal (en vez de su usuario) falla
+    // sin tocar nada; un buzón que este modelo olvidó al reiniciar se recrea.
+    const nombres = destinations.map(normal);
+    for (const n of nombres) if (!this.buscar(n) && this.porDireccion.has(n)) throw noEncontrado(n);
+    const miembros = nombres.map((n) => this.buzon(n).id);
     const existente = this.buscar(nombre);
     if (existente) {
       if (existente.type !== 'list') {
@@ -423,7 +469,7 @@ export class DemoEngine implements MailEngine {
       const destino = this.buscar(nuevo);
       if (!destino) throw noEncontrado(from);
       if (destino.emails.includes(normal(opts.expectEmail))) return;
-      throw new HttpError(502, `El motor de correo ya tiene otro principal llamado «${to}».`, 'engine_exists');
+      throw new HttpError(502, `El servidor de correo ya tiene otro buzón o alias con el nombre «${to}».`, 'engine_exists');
     }
     const ocupado = this.porNombre.get(nuevo);
     if (ocupado !== undefined && ocupado !== p.id) throw yaExiste(nuevo);
@@ -449,7 +495,9 @@ export class DemoEngine implements MailEngine {
     this.dkimBorrados.push(d);
     const ids = [...this.dkim].filter(([, dominio]) => dominio === d).map(([id]) => id).sort();
     for (const id of ids) this.dkim.delete(id);
-    if (ids.length > 0) await this.reloadDirectory();
+    // Recarga siempre, como el driver: completa el reintento de una llamada
+    // anterior que borró las claves pero no pudo recargar.
+    await this.reloadDirectory();
     return ids;
   }
 }

@@ -58,9 +58,13 @@ jobs:
           python3 -m py_compile deploy/prueba-cambio-dominio.py
           php -l deploy/roundcube/diagnostico/comprobar.php
           php -l deploy/roundcube/mailway.php
-          php -l deploy/roundcube/mailway_cuentas/mailway_cuentas.php
-          php -l deploy/roundcube/mailway_cuentas/datos.php
-          php -l deploy/roundcube/pruebas/mailway_cuentas.php
+          # El complemento mailway_cuentas llega en su propia pieza del cambio
+          # de dominio: hasta entonces, un aviso en vez de un fallo.
+          for f in deploy/roundcube/mailway_cuentas/mailway_cuentas.php \
+                   deploy/roundcube/mailway_cuentas/datos.php \
+                   deploy/roundcube/pruebas/mailway_cuentas.php; do
+            if [ -f "$f" ]; then php -l "$f"; else echo "::warning::No existe $f: no se comprueba su sintaxis."; fi
+          done
           for f in deploy/*.sh; do bash -n "$f"; done
           shellcheck -x -S style deploy/*.sh
 
@@ -118,5 +122,6 @@ jobs:
       # trasladarFila y actualizarIdentidades del complemento con la biblioteca
       # y el esquema SQLite de la imagen real de Roundcube.
       - name: Complemento mailway_cuentas con Roundcube real
-        if: ${{ !cancelled() }}
+        # Sin la prueba del complemento (aún sin integrar), el paso se omite.
+        if: ${{ !cancelled() && hashFiles('deploy/roundcube/pruebas/mailway_cuentas.php') != '' }}
         run: docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" roundcube/roundcubemail:1.7.x-apache php /opt/mailway-rc/pruebas/mailway_cuentas.php

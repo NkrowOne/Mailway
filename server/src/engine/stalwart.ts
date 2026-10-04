@@ -536,7 +536,7 @@ export class StalwartEngine implements MailEngine {
       if (destino.emails.includes(opts.expectEmail.trim().toLowerCase())) return;
       throw new HttpError(
         502,
-        `El motor de correo ya tiene otro principal llamado «${to}».`,
+        `El servidor de correo ya tiene otro buzón o alias con el nombre «${to}».`,
         'engine_exists',
       );
     }
@@ -563,10 +563,14 @@ export class StalwartEngine implements MailEngine {
       '/api/settings/keys?prefixes=signature',
     );
     const { ids, claves } = clavesDkimDe(ajustes || {}, domain);
-    if (claves.length === 0) return [];
     // Claves exactas, nunca un prefijo: «clear signature.rsa-d.es.» se
     // llevaría también las de rsa-d.es.mx.
-    await this.request('POST', '/api/settings', [{ type: 'delete', keys: claves }]);
+    if (claves.length > 0) await this.request('POST', '/api/settings', [{ type: 'delete', keys: claves }]);
+    // Recarga también sin nada que borrar. Si un intento anterior borró las
+    // claves y su recarga trajo errores, el motor no aplicó nada y sigue
+    // firmando con ellas; el reintento ya no las encuentra, y sin recargar
+    // daría por terminado el borrado y el error saldría en la recarga de
+    // otra operación sin relación.
     await this.reloadDirectory();
     return ids;
   }
