@@ -1,5 +1,8 @@
 /** Cliente HTTP del panel: errores en español listos para mostrar. */
 
+// Solo el tipo: los del cambio de dominio viven en su módulo (lib/cambioDominio.ts).
+import type { MigracionDominio } from './cambioDominio';
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -154,6 +157,12 @@ export interface DomainRecord {
   ownershipRecord?: { type: 'TXT'; name: string; content: string };
   /** El MX público apunta a otro servidor: el correo del dominio se recibe en otro proveedor. */
   recepcionExterna?: boolean;
+  /**
+   * Cambio de dominio abierto en el que participa (como dominio anterior o
+   * como el que lo sustituye). null = ninguno. Sin el campo (servidor
+   * anterior), se trata como null.
+   */
+  migracion?: MigracionDominio | null;
   createdAt: number;
 }
 
@@ -170,6 +179,13 @@ export interface Mailbox {
   /** Bytes ocupados según el motor; null = sin dato. */
   usedBytes: number | null;
   usageCheckedAt?: number | null;
+  /**
+   * Usuario con el que entran los dispositivos. Coincide con `email` salvo
+   * tras un cambio de dominio, hasta que se actualiza («Actualizar ahora»).
+   */
+  login: string;
+  /** El usuario sigue siendo el de la dirección anterior: «Pendiente de actualizar dispositivos». */
+  loginPending: boolean;
   clientId?: string;
   clientName?: string;
 }

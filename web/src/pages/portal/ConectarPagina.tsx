@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import {
   esDispositivoMovil,
+  esUsadoPorApp,
   fechaLarga,
   mensajeError,
+  TEXTO_USADO_POR_APP,
+  type RespuestaActualizarUsuario,
   type SetupPublico,
 } from '../../lib/portal';
 import { QR } from '../../components/QR';
@@ -51,6 +54,22 @@ export default function ConectarPagina() {
       queryClient.setQueryData<SetupPublico>(clave, (prev) =>
         prev ? { ...prev, password: undefined, hasPassword: false } : prev,
       );
+    },
+  });
+
+  // Tras un cambio de dominio: «Actualizar y continuar» cambia el usuario a la
+  // dirección nueva y lleva a las guías, que ya lo muestran.
+  const [actualizado, setActualizado] = useState<string | null>(null);
+  const guiasRef = useRef<HTMLDivElement>(null);
+  const actualizar = useMutation({
+    mutationFn: () =>
+      api.post<RespuestaActualizarUsuario>(`/api/public/setup/${encodeURIComponent(token)}/login-update`, {}),
+    onSuccess: async (data) => {
+      // Se relee el enlace: el perfil de Apple, el QR y los datos manuales
+      // llevan ya el usuario nuevo.
+      await queryClient.invalidateQueries({ queryKey: clave });
+      setActualizado(data.login);
+      guiasRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
   });
 
@@ -102,6 +121,12 @@ export default function ConectarPagina() {
 
   const datos = consulta.data;
   const movil = esDispositivoMovil();
+  // El usuario que funciona ahora: el anterior mientras no se actualice.
+  const usuario = datos.connection.username || datos.login || datos.email;
+  // Con una aplicación que envía con el buzón, el titular no puede actualizar
+  // (lo hace Skyway): no se ofrece el botón. El enlace no siempre lo dice de
+  // antemano; si no, se sabe al pulsar.
+  const usadoPorApp = Boolean(datos.usadoPorApp) || (actualizar.isError && esUsadoPorApp(actualizar.error));
   const notaContrasena = datos.password
     ? 'La indicada en el apartado «Contraseña del buzón».'
     : 'La contraseña del buzón que te ha facilitado la persona que administra tu correo.';
@@ -119,6 +144,49 @@ export default function ConectarPagina() {
         </>
       }
     >
+      {datos.loginPending && !actualizado && usadoPorApp && (
+        <Hoja
+          title={
+            <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">
+              Tu dirección ahora es {datos.email}
+            </h2>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <p className="max-w-[70ch] text-base text-tinta-2">Ya recibes el correo en las dos direcciones.</p>
+            <Nota>{TEXTO_USADO_POR_APP}</Nota>
+          </div>
+        </Hoja>
+      )}
+      {datos.loginPending && !actualizado && !usadoPorApp && (
+        <Hoja
+          title={
+            <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">
+              Antes de configurar, actualiza tu usuario a {datos.email}
+            </h2>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <p className="max-w-[70ch] text-base text-tinta-2 [overflow-wrap:anywhere]">
+              Los dispositivos que sigan configurados con {datos.login || usuario} dejarán de conectar hasta que los
+              actualices.
+            </p>
+            {actualizar.isError && (
+              <AvisoError>{mensajeError(actualizar.error, 'No se ha podido actualizar el usuario.')}</AvisoError>
+            )}
+            <Button
+              variant="principal"
+              className={`${TACTIL} self-stretch sm:self-start`}
+              busy={actualizar.isPending}
+              onClick={() => actualizar.mutate()}
+            >
+              Actualizar y continuar
+            </Button>
+          </div>
+        </Hoja>
+      )}
+      {actualizado && <AvisoHecho>Listo. Ahora entras con {actualizado}.</AvisoHecho>}
+
       {datos.password ? (
         <Hoja title="Contraseña del buzón">
           <div className="flex flex-col gap-3">
@@ -146,17 +214,19 @@ export default function ConectarPagina() {
         </Hoja>
       )}
 
-      <Hoja title="Elige tu dispositivo">
-        <GuiasDispositivo
-          email={datos.email}
-          conexion={datos.connection}
-          appleProfileUrl={datos.appleProfileUrl}
-          perfilPublico
-          perfilIncluyeContrasena={Boolean(datos.password)}
-          thunderbirdAndroidQr={datos.thunderbirdAndroidQr}
-          notaContrasena={notaContrasena}
-        />
-      </Hoja>
+      <div ref={guiasRef} className="scroll-mt-4">
+        <Hoja title="Elige tu dispositivo">
+          <GuiasDispositivo
+            email={usuario}
+            conexion={datos.connection}
+            appleProfileUrl={datos.appleProfileUrl}
+            perfilPublico
+            perfilIncluyeContrasena={Boolean(datos.password)}
+            thunderbirdAndroidQr={datos.thunderbirdAndroidQr}
+            notaContrasena={notaContrasena}
+          />
+        </Hoja>
+      </div>
 
       {!movil && (
         <Hoja title="Abrir en el móvil">

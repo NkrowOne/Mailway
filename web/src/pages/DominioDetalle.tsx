@@ -14,6 +14,8 @@ import {
 } from '../lib/cloudflare';
 import type { ConflictoDominio } from '../lib/dominios';
 import { BloqueCloudflare } from '../components/cloudflare/BloqueCloudflare';
+import { ANCLA_CAMBIO, HojaCambioDominio } from '../components/cambio-dominio/HojaCambioDominio';
+import { etiquetaMigracion, type CambioDominioVista } from '../lib/cambioDominio';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
@@ -98,8 +100,17 @@ function useConflicto(domainId: string) {
   });
 }
 
+/**
+ * Cada dominio monta su ficha desde cero (`key`): al pasar de la ficha de un
+ * dominio a la de otro (al terminar un cambio de dominio, por ejemplo) no se
+ * arrastran diálogos abiertos ni el estado que llega al navegar.
+ */
 export default function DominioDetalle() {
   const { id = '' } = useParams();
+  return <FichaDominio key={id} id={id} />;
+}
+
+function FichaDominio({ id }: { id: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -110,6 +121,11 @@ export default function DominioDetalle() {
   // Resultado del alta con DNS automático (llega desde Dominios al navegar).
   const [alta] = useState<EstadoAltaDominio | null>(
     () => (location.state as { alta?: EstadoAltaDominio } | null)?.alta ?? null,
+  );
+  // Cambio de dominio recién dado de baja desde la ficha del dominio
+  // anterior, que ya no existe: aquí se muestra su paso «Terminado».
+  const [cambioTerminado] = useState<CambioDominioVista | null>(
+    () => (location.state as { cambioTerminado?: CambioDominioVista } | null)?.cambioTerminado ?? null,
   );
   // Se consume una sola vez: al recargar la página no debe repetirse el
   // resultado del alta ni volver a empezar la comprobación.
@@ -310,6 +326,7 @@ export default function DominioDetalle() {
   const visible = nombreVisible(record);
   const conPropiedad = record.ownershipVerifiedAt !== undefined;
   const pendientePropiedad = propiedadPendiente(record);
+  const migracion = record.migracion ?? null;
   // MX interno que anuncia el motor: ni el fichero de zona ni Cloudflare.
   const avisoServidor = conflicto.data?.avisoServidor ?? null;
   const accionDe = (check: DnsCheck): ReactNode =>
@@ -346,6 +363,21 @@ export default function DominioDetalle() {
             <span className="text-tinta-3">Última comprobación: {formatDate(record.lastCheckedAt)}</span>
             {visible !== record.domain && (
               <span className="valor break-all text-tinta-3">{record.domain}</span>
+            )}
+            {migracion && (
+              // El asistente está al final de la ficha: desde aquí se llega sin desplazarse a ciegas.
+              <span className="basis-full text-tinta-2 [overflow-wrap:anywhere]">
+                {etiquetaMigracion(migracion, isAdmin)} ·{' '}
+                <button
+                  type="button"
+                  className="text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
+                  onClick={() =>
+                    document.getElementById(ANCLA_CAMBIO)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                >
+                  Ver el cambio de dominio
+                </button>
+              </span>
             )}
           </span>
         }
@@ -502,15 +534,19 @@ export default function DominioDetalle() {
           </>
         )}
 
+        <HojaCambioDominio dominio={record} isAdmin={isAdmin} terminado={cambioTerminado} />
+
         {/* La acción destructiva, lejos de la principal y sobre papel: en el
             membrete, el carmín sobre petróleo apenas se leía. */}
         <Hoja title="Eliminar el dominio" flush>
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
             <p className="min-w-0 max-w-[75ch] flex-1 basis-60 text-sm text-tinta-3">
-              Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca
-              blanca que cuelgan de él. Los registros DNS no se modifican.
+              {migracion
+                ? // El servidor lo rechaza (domain_migrating): se dice antes de pulsar.
+                  `${visible} está en un cambio de dominio. Gestiónalo desde el asistente.`
+                : 'Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca blanca que cuelgan de él. Los registros DNS no se modifican.'}
             </p>
-            <Button variant="peligro" onClick={abrirEliminar}>
+            <Button variant="peligro" onClick={abrirEliminar} disabled={Boolean(migracion)}>
               Eliminar el dominio
             </Button>
           </div>
