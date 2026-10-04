@@ -139,9 +139,14 @@ class mailway_cuentas extends rcube_plugin
         $estado = $respuesta->getStatusCode();
         if ($estado !== 200) {
             // 404: lo tecleado no es ningún buzón de Mailway (no es un error).
+            // 409: el usuario del buzón se está cambiando y no se sabe cuál es
+            // el vigente; se entra con lo tecleado.
             if ($estado !== 404) {
-                self::registrarError("El panel ha respondido {$estado} a la consulta de la cuenta"
-                    . ($estado === 401 ? ': revisa MAILWAY_WEBMAIL_TOKEN.' : '.'));
+                self::registrarError("El panel ha respondido {$estado} a la consulta de la cuenta" . match ($estado) {
+                    401 => ': revisa MAILWAY_WEBMAIL_TOKEN.',
+                    409 => ': se está actualizando el usuario del buzón y se entra con lo tecleado.',
+                    default => '.',
+                });
             }
 
             return null;
