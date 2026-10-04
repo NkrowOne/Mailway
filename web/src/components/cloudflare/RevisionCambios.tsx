@@ -109,8 +109,13 @@ export function RevisionCambios({
   const conflictosDelCambio = plan.changes.filter((c) => c.action === 'conflict' && c.alCambiar && c.reemplazable);
   // Sin el MX no hay cambio: el SPF y el DMARC solos serían justo lo que se aplaza.
   const delCambio = conflictosDelCambio.some((c) => c.type === 'MX') ? conflictosDelCambio.map(claveCambio) : [];
-  const alternar = (clave: string) =>
-    onSeleccion?.(elegidos.includes(clave) ? elegidos.filter((k) => k !== clave) : [...elegidos, clave]);
+  // Al desmarcar el MX del cambio se desmarca también lo que solo se crea con él.
+  const dependenDelMx = plan.changes.filter((c) => c.alCambiar && c.type !== 'MX').map(claveCambio);
+  const alternar = (clave: string) => {
+    if (!elegidos.includes(clave)) return onSeleccion?.([...elegidos, clave]);
+    const esMxDelCambio = plan.changes.some((c) => c.alCambiar && c.type === 'MX' && claveCambio(c) === clave);
+    onSeleccion?.(elegidos.filter((k) => k !== clave && !(esMxDelCambio && dependenDelMx.includes(k))));
+  };
   const zonas = esPlanInstancia(plan) ? plan.zones : plan.zone ? [plan.zone] : [];
   const sinZona = esPlanInstancia(plan) ? plan.missing : [];
 

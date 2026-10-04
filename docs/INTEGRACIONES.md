@@ -244,7 +244,11 @@ buzones de aquí, que nadie lee todavía, o se rechazaría con «550 Mailbox doe
 not exist» si la dirección solo existe en el proveedor actual. Por eso cada
 medición del DNS anota si el MX público apunta a otro servidor
 (`recepcionExterna`; una consulta fallida no cambia nada) y Mailway mantiene en
-el motor tres reglas con la lista de esos dominios:
+el motor tres reglas con la lista de esos dominios. Un MX es de este servidor
+si su nombre es el de Ajustes o el destino MX que propone el motor, o si
+resuelve a la IP pública de Ajustes: así cuentan como propios un
+`mx.<dominio>` que apunta aquí o el nombre anterior del servidor tras
+cambiarlo. Las reglas:
 
 - `session.rcpt.directory`: en las sesiones **autenticadas**, los destinatarios
   de esos dominios no se validan contra el directorio y pasan por
@@ -270,6 +274,18 @@ Verificado contra una 0.15.5 real: con la regla, un buzón autenticado puede
 escribir a `nadie@<dominio>` (sale por MX) y el correo de Internet a una
 dirección que existe aquí se entrega en local.
 
+**Límite: alias de otro dominio que reenvían a este.** Stalwart expande el
+alias al recibir el mensaje y cada destino hereda el origen de la sesión, y
+las expresiones de la cola no saben si un destinatario viene de un alias. Así,
+el correo que llega **de Internet** a `info@b.es` (un alias de un dominio que
+ya recibe aquí) y reenvía a `luis@a.es` (un buzón de un dominio con la
+recepción en otro proveedor) se entrega en el buzón de aquí, no en el
+proveedor actual; lo que se envía a ese alias desde este servidor sí sale por
+el MX de `a.es`. El formulario de alias lo avisa al elegir un buzón de un
+dominio así, y la ficha del dominio lo recuerda. Mientras dure el traslado,
+conviene no reenviar a buzones de ese dominio desde alias de otros dominios,
+o contar con que esa parte del correo llegue al buzón de aquí.
+
 **Trasladar el correo desde otro proveedor**, en orden:
 
 1. Da de alta el dominio y prueba la propiedad con el TXT `_mailway.<dominio>`
@@ -287,7 +303,8 @@ dirección que existe aquí se entrega en local.
    importación del correo y la reconfiguración de los dispositivos.
 5. Tras el cambio, la siguiente medición saca el dominio de la lista de
    recepción en otro proveedor y el correo se entrega aquí. En Cloudflare,
-   **Deshacer el cambio** devuelve la zona a como estaba si algo falla.
+   **Deshacer el cambio** devuelve la zona a como estaba si algo falla
+   (durante 30 días desde el cambio).
 
 **MX interno.** Si el motor propone como destino MX un nombre interno (sin
 punto, como el identificador del contenedor de Stalwart sin `server.hostname`;
@@ -335,7 +352,9 @@ verificados o tenían buzones o alias quedaron comprobados al actualizar.
 - `apiKeysRevoked`: número de claves de API activas cuyo remitente era un
   buzón del dominio; dejan de funcionar y se eliminan con él.
 - `aliasesUpdated`: direcciones de alias de **otros** dominios que reenviaban a
-  buzones del dominio borrado y a los que se les ha quitado ese destino.
+  buzones del dominio borrado y a los que se les ha quitado ese destino. Los
+  reenvíos a direcciones del dominio que no eran buzones de aquí (destinos
+  externos) se conservan.
 - `aliasesDeleted`: direcciones de alias de otros dominios que se han eliminado
   por quedarse sin destinos.
 
@@ -371,6 +390,9 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 Los destinos de un alias pueden ser buzones del **mismo cliente** o direcciones
 externas (reenvío a otro proveedor). Una dirección de un dominio de esta
 instancia que no es un buzón existente se rechaza en lugar de salir a Internet.
+Un dominio con la propiedad pendiente no cuenta como de esta instancia (tampoco
+existe en el motor): sus direcciones son destinos externos, también para el
+cliente que lo dio de alta.
 
 Errores frecuentes de altas:
 
@@ -384,7 +406,7 @@ Errores frecuentes de altas:
 | `409 mailbox_exists` · `409 alias_exists` | Ya existe un buzón o un alias con esa dirección |
 | `400 alias_loop` | El alias se reenvía a sí mismo |
 | `400 destination_other_client` | El destino es un buzón de otro cliente |
-| `400 destination_not_found` | El destino es de un dominio de esta instancia pero no existe |
+| `400 destination_not_found` | El destino es de un dominio de esta instancia (con la propiedad comprobada) pero no existe |
 
 Las altas de un mismo cliente (dominios, buzones, alias) se ejecutan en fila:
 varias peticiones simultáneas nunca superan el plan.
@@ -710,9 +732,9 @@ printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required, reemplazable?, alCambiar? }], summary, copia }`. En un conflicto, `reemplazable` dice si se puede reemplazar desde aquí (dos SPF o Email Routing, no). `alCambiar` marca el cambio de proveedor: el MX que hoy lleva el correo a otro sitio y el SPF y el DMARC que se crean con él (sección 4.4). `copia` es lo que borró el último cambio (`{ createdAt, borrados: [{ type, name, content, priority? }] }` o `null`). `?includeRecommended=false` limita a los obligatorios. |
-| `POST /api/domains/:id/cloudflare/apply` | `{ replace?: ["MX:ejemplo.es", …], replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. `replace` elige uno a uno los conflictos que se reemplazan (`TIPO:nombre`); `replaceConflicts: true` los reemplaza todos (se mantiene por compatibilidad). Antes de borrar nada se guarda una copia de lo reemplazado (tipo, nombre, contenido, prioridad, proxy, TTL y comentario) para poder deshacerlo. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
-| `GET /api/domains/:id/cloudflare/undo` · `POST` | `GET` devuelve `{ copia }` sin consultar Cloudflare. `POST` deshace el cambio: vuelve a crear lo que borraron los reemplazos (con su proxy, su TTL y su comentario) y retira los registros que Mailway creó en su lugar, en un único lote → `{ restaurados, retirados, domain }`. Sin copia: `409 cloudflare_nothing_to_undo`; si la zona del dominio ya no es la del cambio: `409 cloudflare_zone_changed`. Admite `?soloCliente=1`. |
+| `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required, reemplazable?, alCambiar? }], summary, copia }`. En un conflicto, `reemplazable` dice si se puede reemplazar desde aquí (dos SPF o Email Routing, no). `alCambiar` marca el cambio de proveedor: el MX que hoy lleva el correo a otro sitio y el SPF y el DMARC que se crean con él (sección 4.4). `copia` es lo que borraron los reemplazos que aún se pueden deshacer (`{ createdAt, expiresAt, borrados: [{ type, name, content, priority?, at }] }` o `null`; véase `cloudflare/undo`). `?includeRecommended=false` limita a los obligatorios. |
+| `POST /api/domains/:id/cloudflare/apply` | `{ replace?: ["MX:ejemplo.es", …], replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. `replace` elige uno a uno los conflictos que se reemplazan (`TIPO:nombre`); `replaceConflicts: true` los reemplaza todos (se mantiene por compatibilidad). El SPF y el DMARC con `alCambiar` solo se crean si el MX del cambio también se reemplaza en la misma petición (y, si se aplica cambio a cambio, solo si el MX se ha aplicado); si no, vuelven en `skipped`. Antes de borrar nada se guarda una copia de lo reemplazado (tipo, nombre, contenido, prioridad, proxy, TTL y comentario) para poder deshacerlo. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
+| `GET /api/domains/:id/cloudflare/undo` · `POST` | `GET` devuelve `{ copia }` sin consultar Cloudflare. Los reemplazos de la misma zona se acumulan (reemplazar después el autodiscover no hace olvidar el MX anterior) y cada uno se puede deshacer durante 30 días desde que se hizo (`at`); `expiresAt` es cuándo caduca el más antiguo. Pasado ese plazo, el proveedor anterior puede haber dado de baja la cuenta y volver a su MX perdería el correo. `POST` deshace el cambio: vuelve a crear lo que borraron los reemplazos vigentes (con su proxy, su TTL y su comentario) y retira los registros que Mailway creó en su lugar, en un único lote → `{ restaurados, retirados, domain }`. Sin copia: `409 cloudflare_nothing_to_undo`; si la zona del dominio ya no es la del cambio: `409 cloudflare_zone_changed`. Admite `?soloCliente=1`. |
 | `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para quitarle el proxy. |
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
@@ -803,7 +825,8 @@ indica los servidores de nombres que debes poner en tu registrador.
   (SPF y DMARC); el resto de conflictos (autodiscover, un `mail.<dominio>` del
   hosting) se conserva hasta que lo decidas. Si el dominio publica una política
   MTA-STS, el motivo del conflicto explica qué hacer con ella antes del cambio.
-  **Deshacer el cambio** vuelve a dejar la zona como estaba.
+  **Deshacer el cambio** vuelve a dejar la zona como estaba (durante 30 días
+  desde cada reemplazo).
 - Un **CNAME** no convive con otros registros del mismo nombre: se marca como
   conflicto.
 - No se crean registros CAA (restringirían las autoridades de certificación de

@@ -185,9 +185,10 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     consultas DNS); DMARC existente respetado; MX ajenos solo con
     confirmación, que se elige conflicto a conflicto («Hacer el cambio de
     proveedor» marca solo el MX y lo que va con él) y que se puede deshacer:
-    antes de borrar nada se guarda una copia (`cloudflare_copias`). Mientras el
-    correo llegue a otro proveedor, el SPF y el DMARC de un dominio que no los
-    tenía no se crean hasta el cambio: romperían el envío que hoy funciona.
+    antes de borrar nada se guarda una copia (`cloudflare_copias`, 30 días por
+    reemplazo). Mientras el correo llegue a otro proveedor, el SPF y el DMARC
+    de un dominio que no los tenía no se crean hasta el cambio, y solo junto
+    con el MX: romperían el envío que hoy funciona.
 
     **Lo que se propone no es siempre lo del motor.** SPF `v=spf1
     a:<servidor> ~all` (autoriza a este servidor antes y después del cambio de
@@ -342,7 +343,7 @@ edita una ya publicada.
 | `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
 | `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
 | `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
-| `009-recepcion-externa-y-copias-dns` | `domains.recepcion_externa` (el MX público apunta a otro servidor: lo enviado desde aquí sale por ese MX) y `cloudflare_copias`: lo que borraron los reemplazos en Cloudflare (una fila por dominio, acumulada hasta deshacer el cambio). |
+| `009-recepcion-externa-y-copias-dns` | `domains.recepcion_externa` (el MX público apunta a otro servidor: lo enviado desde aquí sale por ese MX) y `cloudflare_copias`: lo que borraron los reemplazos en Cloudflare (una fila por dominio que acumula los reemplazos; cada entrada lleva su fecha y se puede deshacer durante 30 días). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -354,7 +355,7 @@ management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, re
 domains            dominio → cliente, selector DKIM, último informe DNS (JSON), estado,
                    cuenta y zona de Cloudflare, dns_applied_at, owner_verified_at,
                    recepcion_externa
-cloudflare_copias  copia de lo que reemplazó el último cambio en Cloudflare (para deshacerlo)
+cloudflare_copias  copia de lo reemplazado en Cloudflare (para deshacerlo, 30 días por reemplazo)
 mailboxes          buzón → dominio (local_part único por dominio), cuota, estado, ocupación
 aliases            alias → destinos (JSON: buzones del cliente o externos)
 app_passwords      contraseñas de aplicación: secreto tal como está en el motor, revocación

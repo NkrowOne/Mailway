@@ -1005,6 +1005,14 @@ export async function ejecutarPlan(
 ): Promise<ResultadoAplicacion> {
   const skipped: ResultadoAplicacion['skipped'] = [];
   const aplicar: { cambio: CambioInterno; accion: string; ops: Operaciones }[] = [];
+  // El SPF y el DMARC aplazados (aplazarHastaElCambio) solo se crean junto con
+  // el MX del cambio: elegidos solos, con el MX aún en el otro proveedor,
+  // serían justo lo que se aplaza.
+  const mxDelCambio = cambios.find((c) => c.alCambiar && c.type === 'MX');
+  const conElMx = (c: CambioInterno) => c.alCambiar === true && c.type !== 'MX';
+  const mxSeReemplaza = Boolean(
+    mxDelCambio && mxDelCambio.action === 'conflict' && mxDelCambio.reemplazo && !opts.soloCrear && seReemplaza(mxDelCambio, opts),
+  );
   for (const cambio of cambios) {
     if (opts.soloCrear && cambio.action === 'update') {
       // Alta automática: solo se crea lo que falta. Fusionar el SPF, quitar
@@ -1020,7 +1028,7 @@ export async function ejecutarPlan(
     if ((cambio.action === 'create' || cambio.action === 'update') && cambio.operaciones) {
       aplicar.push({ cambio, accion: cambio.action, ops: cambio.operaciones });
     } else if (cambio.action === 'conflict') {
-      if (seReemplaza(cambio, opts) && !opts.soloCrear && cambio.reemplazo) {
+      if (seReemplaza(cambio, opts) && !opts.soloCrear && cambio.reemplazo && (!conElMx(cambio) || mxSeReemplaza)) {
         aplicar.push({ cambio, accion: 'replace', ops: cambio.reemplazo });
       } else {
         skipped.push({
@@ -1048,11 +1056,19 @@ export async function ejecutarPlan(
   // Un lote por cambio. Los borrados compartidos (un CNAME que estorba a dos
   // cambios) solo van en el primer lote que lo consigue: repetirlos en el
   // siguiente haría fallar ese lote entero por «el registro ya no existe».
+  //
+  // El MX del cambio va primero: si falla, el SPF y el DMARC que dependen de
+  // él no se crean (quedarían publicados con el MX en el otro proveedor).
   const fallidos = new Map<CambioInterno, string>();
   const borrados = new Set<string>();
   let alguno = false;
-  for (let i = 0; i < aplicar.length; i++) {
-    const a = aplicar[i]!;
+  const enOrden = [...aplicar].sort((a, b) => Number(b.cambio === mxDelCambio) - Number(a.cambio === mxDelCambio));
+  for (let i = 0; i < enOrden.length; i++) {
+    const a = enOrden[i]!;
+    if (conElMx(a.cambio) && mxDelCambio && fallidos.has(mxDelCambio)) {
+      fallidos.set(a.cambio, 'No se ha creado porque no se ha podido reemplazar el MX: se crea junto con él.');
+      continue;
+    }
     const ops: Operaciones = { ...a.ops, deletes: a.ops.deletes.filter((id) => !borrados.has(id)) };
     try {
       await aplicarCambio(cliente, zoneId, ops);
@@ -1064,7 +1080,7 @@ export async function ejecutarPlan(
         // aplicado, se informa de lo hecho y lo pendiente queda como error:
         // cada lote es atómico, así que la zona no ha quedado a medias.
         if (!alguno) throw err;
-        for (const pendiente of aplicar.slice(i)) fallidos.set(pendiente.cambio, err.message);
+        for (const pendiente of enOrden.slice(i)) fallidos.set(pendiente.cambio, err.message);
         break;
       }
       fallidos.set(a.cambio, mensajeDe(err));
@@ -1305,12 +1321,6 @@ export function moverReservaDominio(domain: string, clientId: string): void {
   db.prepare('UPDATE cloudflare_reservas SET client_id = ?, updated_at = ? WHERE domain = ?').run(clientId, now(), domain);
 }
 
-/**
- * Aplica el DNS de correo de un dominio en Cloudflare. Devuelve null si
- * ninguna cuenta accesible contiene la zona (el alta con «autoDns» lo usa así).
- * `soloCrear` (el alta automática) crea lo que falta y no modifica nada de lo
- * que existe: ni fusiona el SPF, ni quita un proxy, ni actualiza un registro.
- */
 /* ------------------- Copia de lo reemplazado y deshacer -------------------- */
 
 /** Registro borrado al reemplazar un conflicto, con todo lo necesario para recrearlo. */
@@ -1323,6 +1333,8 @@ interface RegistroCopiado {
   ttl: number;
   proxied: boolean;
   comment: string | null;
+  /** Cuándo se reemplazó: cada reemplazo caduca por separado (VIGENCIA_COPIA_MS). */
+  at?: number;
 }
 
 /** Registro que Mailway creó en ese reemplazo (lo que deshacer retira). */
@@ -1332,7 +1344,17 @@ interface RegistroCreado {
   content: string;
   priority?: number;
   data?: CfDatosRegistro;
+  /** El mismo instante que lo que sustituyó: caducan juntos. */
+  at?: number;
 }
+
+/**
+ * Cuánto se puede deshacer un reemplazo: lo que dura un traslado (importar el
+ * correo y reconfigurar los dispositivos). Después, el proveedor anterior
+ * puede haber dado de baja la cuenta, y volver a su MX perdería el correo.
+ */
+export const VIGENCIA_COPIA_DIAS = 30;
+const VIGENCIA_COPIA_MS = VIGENCIA_COPIA_DIAS * 24 * 60 * 60 * 1000;
 
 interface CopiaRow {
   domain_id: string;
@@ -1344,50 +1366,102 @@ interface CopiaRow {
 }
 
 export interface CopiaPublica {
+  /** El reemplazo más reciente que se puede deshacer. */
   createdAt: number;
-  /** Lo que había antes del cambio y deshacer volvería a crear. */
-  borrados: { type: string; name: string; content: string; priority?: number }[];
+  /** Cuándo caduca el primero de ellos (deja de poder deshacerse). */
+  expiresAt: number;
+  /** Lo que había antes de los reemplazos y deshacer volvería a crear. */
+  borrados: { type: string; name: string; content: string; priority?: number; at: number }[];
 }
 
+/**
+ * La copia de un dominio, solo con los reemplazos que aún se pueden deshacer.
+ * Cada entrada caduca por separado, y lo borrado y lo creado en un mismo
+ * reemplazo caducan juntos: deshacer nunca retira el MX de este servidor sin
+ * devolver el anterior. Si ya no queda nada, la fila se borra.
+ */
 function leerCopia(domainId: string): { row: CopiaRow; borrados: RegistroCopiado[]; creados: RegistroCreado[] } | null {
   const row = db.prepare('SELECT * FROM cloudflare_copias WHERE domain_id = ?').get(domainId) as CopiaRow | undefined;
   if (!row) return null;
+  let borrados: RegistroCopiado[];
+  let creados: RegistroCreado[];
   try {
-    return {
-      row,
-      borrados: JSON.parse(row.borrados_json) as RegistroCopiado[],
-      creados: JSON.parse(row.creados_json) as RegistroCreado[],
-    };
+    borrados = JSON.parse(row.borrados_json) as RegistroCopiado[];
+    creados = JSON.parse(row.creados_json) as RegistroCreado[];
   } catch {
     return null;
   }
+  const limite = now() - VIGENCIA_COPIA_MS;
+  const vigente = (x: { at?: number }) => (x.at ?? row.created_at) >= limite;
+  borrados = borrados.filter(vigente);
+  creados = creados.filter(vigente);
+  if (borrados.length === 0) {
+    db.prepare('DELETE FROM cloudflare_copias WHERE domain_id = ?').run(domainId);
+    return null;
+  }
+  return { row, borrados, creados };
 }
 
 export function copiaPublica(domainId: string): CopiaPublica | null {
   const copia = leerCopia(domainId);
-  if (!copia || copia.borrados.length === 0) return null;
+  if (!copia) return null;
+  const instantes = copia.borrados.map((b) => b.at ?? copia.row.created_at);
   return {
-    createdAt: copia.row.created_at,
+    createdAt: Math.max(...instantes),
+    expiresAt: Math.min(...instantes) + VIGENCIA_COPIA_MS,
     borrados: copia.borrados.map((b) => ({
       type: b.type,
       name: b.name,
       content: b.type === 'TXT' ? normalizarTxt(b.content) : b.content,
       ...(b.priority !== undefined ? { priority: b.priority } : {}),
+      at: b.at ?? copia.row.created_at,
     })),
   };
 }
 
-function claveRegistro(r: { type: string; name: string; content: string; priority?: number }): string {
-  const contenido = r.type === 'TXT' ? normalizarTxt(r.content) : sinPunto(r.content);
-  return `${r.type}|${sinPunto(r.name)}|${contenido.toLowerCase()}|${r.priority ?? ''}`;
+/**
+ * Clave con la que se reconoce un mismo registro en la copia y en la zona.
+ * Un SRV llega de tres formas: el que crea Mailway (solo «data», sin
+ * «content»), el que devuelve Cloudflare («peso puerto destino» con la
+ * prioridad aparte) y el del motor («prioridad peso puerto destino»); todos
+ * se reducen a la última. La prioridad solo cuenta en MX y SRV: en el resto
+ * Cloudflare la devuelve o no según el tipo y no distingue nada.
+ */
+function claveRegistro(r: {
+  type: string;
+  name: string;
+  content: string;
+  priority?: number;
+  data?: CfDatosRegistro;
+}): string {
+  let contenido: string;
+  let prioridad = '';
+  if (r.type === 'SRV') {
+    let d = r.data;
+    if (!d) {
+      const partes = r.content.trim().split(/\s+/);
+      d =
+        partes.length >= 4
+          ? { priority: Number(partes[0]), weight: Number(partes[1]), port: Number(partes[2]), target: partes[3] }
+          : { priority: r.priority, weight: Number(partes[0]), port: Number(partes[1]), target: partes[2] };
+    }
+    contenido = `${Number(d.priority ?? 0)} ${Number(d.weight ?? 0)} ${Number(d.port ?? 0)} ${sinPunto(d.target ?? '')}`;
+  } else {
+    contenido = r.type === 'TXT' ? normalizarTxt(r.content) : sinPunto(r.content);
+    if (r.type === 'MX') prioridad = String(r.priority ?? '');
+  }
+  return `${r.type}|${sinPunto(r.name)}|${contenido.toLowerCase()}|${prioridad}`;
 }
 
 /**
  * Guarda lo que borró un reemplazo antes de que se olvide: tras el corte,
  * nadie recuerda qué MX tenía el proveedor anterior. Se acumula con lo de
- * reemplazos anteriores de la misma zona hasta que se deshace.
+ * reemplazos anteriores de la misma zona (así, reemplazar después el
+ * autodiscover no hace olvidar el MX) hasta que se deshace o caduca; cada
+ * entrada lleva su fecha y caduca a los VIGENCIA_COPIA_DIAS.
  */
 function guardarCopia(domainId: string, r: Resolucion, cambios: CambioInterno[], resultado: ResultadoAplicacion): void {
+  const ahora = now();
   const reemplazados = resultado.applied
     .filter((a) => a.action === 'replace')
     .map((a) => cambios.find((c) => c.type === a.type && c.name === a.name && c.reemplazo))
@@ -1405,6 +1479,7 @@ function guardarCopia(domainId: string, r: Resolucion, cambios: CambioInterno[],
         ttl: x.ttl,
         proxied: x.proxied,
         comment: x.comment,
+        at: ahora,
       })),
   );
   const creados: RegistroCreado[] = reemplazados.flatMap((c) =>
@@ -1414,18 +1489,17 @@ function guardarCopia(domainId: string, r: Resolucion, cambios: CambioInterno[],
       content: p.content ?? '',
       ...(p.priority !== undefined ? { priority: p.priority } : {}),
       ...(p.data ? { data: p.data } : {}),
+      at: ahora,
     })),
   );
   const previa = leerCopia(domainId);
   const misma = previa && previa.row.zone_id === r.zona.id;
-  const unir = <T extends { type: string; name: string; content: string; priority?: number }>(a: T[], b: T[]): T[] => {
-    const vistos = new Set<string>();
-    return [...a, ...b].filter((x) => {
-      const k = claveRegistro(x);
-      if (vistos.has(k)) return false;
-      vistos.add(k);
-      return true;
-    });
+  // Lo anterior conserva su fecha (sin ella, la de la fila); si un registro
+  // se repite, cuenta la del reemplazo más reciente.
+  const unir = <T extends { type: string; name: string; content: string; priority?: number; at?: number }>(a: T[], b: T[]): T[] => {
+    const porClave = new Map<string, T>();
+    for (const x of [...a.map((y) => ({ ...y, at: y.at ?? previa!.row.created_at })), ...b]) porClave.set(claveRegistro(x), x);
+    return [...porClave.values()];
   };
   db.prepare(
     `INSERT INTO cloudflare_copias (domain_id, account_id, zone_id, borrados_json, creados_json, created_at)
@@ -1438,7 +1512,7 @@ function guardarCopia(domainId: string, r: Resolucion, cambios: CambioInterno[],
     r.zona.id,
     JSON.stringify(misma ? unir(previa.borrados, borrados) : borrados),
     JSON.stringify(misma ? unir(previa.creados, creados) : creados),
-    now(),
+    ahora,
   );
 }
 
@@ -1449,16 +1523,20 @@ export interface ResultadoDeshacer {
 }
 
 /**
- * Deshace el cambio: vuelve a crear lo que borraron los reemplazos (con su
- * proxy, su TTL y su comentario) y retira los registros que Mailway creó en
- * su lugar, todo en un único lote. Solo se retira un registro de esta
- * instancia con el mismo contenido: lo que haya cambiado después no se toca.
+ * Deshace el cambio: vuelve a crear lo que borraron los reemplazos aún
+ * vigentes (con su proxy, su TTL y su comentario) y retira los registros que
+ * Mailway creó en su lugar, todo en un único lote. Solo se retira un registro
+ * de esta instancia con el mismo contenido: lo que haya cambiado después no
+ * se toca.
  */
 export async function deshacerCambioDns(domainId: string, permitirInstancia: boolean): Promise<ResultadoDeshacer> {
   const domain = getDomain(domainId);
   const copia = leerCopia(domainId);
-  if (!copia || copia.borrados.length === 0) {
-    throw conflict('No hay ningún cambio en Cloudflare que deshacer para este dominio.', 'cloudflare_nothing_to_undo');
+  if (!copia) {
+    throw conflict(
+      `No hay ningún cambio en Cloudflare que deshacer para este dominio (la copia de cada reemplazo se guarda ${VIGENCIA_COPIA_DIAS} días).`,
+      'cloudflare_nothing_to_undo',
+    );
   }
   const { resolucion, motivo } = await resolverZona(domain.domain, {
     clientId: domain.clientId,
@@ -1476,11 +1554,7 @@ export async function deshacerCambioDns(domainId: string, permitirInstancia: boo
   const nombres = [...new Set([...copia.borrados, ...copia.creados].map((r) => r.name))];
   const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, nombres);
   const deCreados = new Set(copia.creados.map((c) => claveRegistro(c)));
-  const aRetirar = existentes.filter(
-    (e) =>
-      esPropio(e, comentario) &&
-      deCreados.has(claveRegistro({ type: e.type, name: e.name, content: e.content, ...(e.type === 'MX' ? { priority: e.priority } : {}) })),
-  );
+  const aRetirar = existentes.filter((e) => esPropio(e, comentario) && deCreados.has(claveRegistro(e)));
   const presentes = new Set(existentes.map((e) => claveRegistro(e)));
   const aRestaurar = copia.borrados.filter((b) => !presentes.has(claveRegistro(b)));
   const lote: CfLote = {
@@ -1507,6 +1581,13 @@ export async function deshacerCambioDns(domainId: string, permitirInstancia: boo
   };
 }
 
+/**
+ * Aplica el DNS de correo de un dominio en Cloudflare. Devuelve
+ * `{ unavailable }` si ninguna cuenta accesible contiene la zona (el alta con
+ * «autoDns» lo usa así). `soloCrear` (el alta automática) crea lo que falta y
+ * no modifica nada de lo que existe: ni fusiona el SPF, ni quita un proxy, ni
+ * actualiza un registro.
+ */
 export async function aplicarDnsDominio(
   domainId: string,
   opts: {
@@ -1902,7 +1983,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       ...(plan.zone ? { zone: plan.zone } : {}),
       changes,
       summary: resumenDe(changes),
-      // Lo que borró el último cambio y «Deshacer el cambio» recrearía.
+      // Lo que borraron los reemplazos aún vigentes y «Deshacer el cambio» recrearía.
       copia: copiaPublica(id),
     };
   });
@@ -1936,7 +2017,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     return { applied: resultado.applied, errors: resultado.errors, skipped: resultado.skipped, domain: resultado.domain };
   });
 
-  /** Lo que borró el último cambio (sin consultar Cloudflare): para ofrecer deshacerlo. */
+  /** Lo que borraron los reemplazos aún vigentes (sin consultar Cloudflare): para ofrecer deshacerlos. */
   app.get('/api/domains/:id/cloudflare/undo', async (req) => {
     const { id } = req.params as { id: string };
     const domain = getDomain(id);
@@ -1945,7 +2026,7 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Deshace el último cambio: recrea lo que borraron los reemplazos y retira
+   * Deshace el cambio: recrea lo que borraron los reemplazos vigentes y retira
    * lo que Mailway creó en su lugar (admite `?soloCliente=1`, como aplicar).
    */
   app.post('/api/domains/:id/cloudflare/undo', async (req) => {

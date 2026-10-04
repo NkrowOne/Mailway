@@ -142,10 +142,19 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   aquí, mientras su MX público apunte a otro servidor, lo que se envía desde
   este servidor a sus direcciones sale por ese MX y no se entrega en local
   (véase «Recepción en otro proveedor» en `INTEGRACIONES.md`). Así, preparar
-  un traslado o tener solo el envío en Mailway no desvía el correo de nadie.
+  un traslado o tener solo el envío en Mailway no desvía el correo que se
+  envía desde aquí. Límite conocido: el correo de Internet que llega a un
+  alias de otro dominio de este servidor y reenvía a un buzón de ese dominio
+  se entrega en el buzón de aquí (Stalwart no distingue en la cola un
+  destinatario que viene de un alias); el formulario de alias lo avisa.
 - **Destinos de alias**: solo buzones del mismo cliente o direcciones
   externas; una dirección de un dominio de la instancia que no existe se
-  rechaza en lugar de salir a Internet.
+  rechaza en lugar de salir a Internet. Solo cuenta como dominio de la
+  instancia uno con la propiedad comprobada: si alguien da de alta gmail.com
+  (o el dominio de otro) sin probarla, sus direcciones siguen siendo destinos
+  externos para todos los clientes, y borrarlo después no quita esos
+  reenvíos de ningún alias (solo se retiran los destinos que eran buzones
+  del dominio borrado).
 - **Remitente de las claves**: siempre un buzón del mismo cliente; el `From`
   no se puede cambiar.
 - **Formularios de contacto**: el buzón destinatario es del mismo cliente y de

@@ -381,6 +381,12 @@ function isInstanceMailbox(email: string): boolean {
  * - externos: direcciones de dominios que esta instancia no gestiona.
  * Una dirección de un dominio gestionado aquí que no es un buzón (otro alias,
  * una errata) se rechaza en lugar de salir a Internet como «externa».
+ *
+ * Solo cuenta como gestionado aquí un dominio con la propiedad comprobada:
+ * cualquiera puede dar de alta gmail.com (o el dominio de otro) sin probar
+ * nada, y eso no puede impedir a los demás clientes reenviar a esas
+ * direcciones. Mientras tanto el dominio tampoco existe en el motor, así que
+ * el correo sale a Internet, como cualquier destino externo.
  */
 function classifyDestinations(
   clientId: string,
@@ -393,9 +399,9 @@ function classifyDestinations(
   for (const dest of all) {
     if (dest === aliasEmail) throw badRequest('Un alias no puede reenviarse a sí mismo.', 'alias_loop');
     const { local, domain } = splitEmail(dest);
-    const domainRow = db.prepare('SELECT id, client_id FROM domains WHERE domain = ?').get(domain) as
-      | { id: string; client_id: string }
-      | undefined;
+    const domainRow = db
+      .prepare('SELECT id, client_id FROM domains WHERE domain = ? AND owner_verified_at IS NOT NULL')
+      .get(domain) as { id: string; client_id: string } | undefined;
     if (!domainRow) {
       external.push(dest);
       continue;

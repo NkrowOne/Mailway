@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { formatDay } from '../../lib/format';
 import {
   cuentasUtilizables,
   zonaCubre,
@@ -345,9 +346,9 @@ export function BloqueCloudflare({
           )}
 
           {copia.data?.copia && (
-            <BandaAviso titulo="Último cambio en Cloudflare">
+            <BandaAviso titulo="Registros reemplazados en Cloudflare">
               <p>
-                Se reemplazaron{' '}
+                {copia.data.copia.borrados.length === 1 ? 'Se reemplazó ' : 'Se reemplazaron '}
                 {copia.data.copia.borrados.map((b, i) => (
                   <span key={`${b.type}-${b.name}-${i}`} className="valor break-all">
                     {i > 0 ? ', ' : ''}
@@ -355,7 +356,8 @@ export function BloqueCloudflare({
                     {b.content}
                   </span>
                 ))}
-                . Mailway guarda una copia por si hay que volver atrás.
+                . Mailway guarda una copia de cada reemplazo durante 30 días por si hay que volver atrás
+                {copia.data.copia.expiresAt ? ` (el primero caduca el ${formatDay(copia.data.copia.expiresAt)})` : ''}.
               </p>
               <div className="mt-2">
                 <Button variant="perfil" disabled={Boolean(bloqueo)} onClick={() => {
@@ -396,10 +398,10 @@ export function BloqueCloudflare({
       <Dialogo open={confirmarDeshacer} onClose={() => setConfirmarDeshacer(false)} title="Deshacer el cambio">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            Se volverán a crear en Cloudflare los registros que reemplazó el último cambio (con su
-            proxy, su TTL y su comentario) y se retirarán los que Mailway creó en su lugar, en una sola
-            operación. Si el MX vuelve al proveedor anterior, el correo dejará de llegar a este
-            servidor en cuanto se propague el DNS.
+            Se volverán a crear en Cloudflare todos los registros reemplazados que aparecen en la
+            ficha (con su proxy, su TTL y su comentario) y se retirarán los que Mailway creó en su
+            lugar, en una sola operación. Si el MX vuelve al proveedor anterior, el correo dejará de
+            llegar a este servidor en cuanto se propague el DNS.
           </p>
           {deshacer.isError && <BandaError>{mensajeError(deshacer.error, 'No se ha podido deshacer el cambio.')}</BandaError>}
           <div className="flex flex-wrap justify-end gap-2">

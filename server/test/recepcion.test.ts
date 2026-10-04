@@ -128,3 +128,30 @@ test('borrar un dominio con el correo en otro proveedor lo saca de la lista del 
   await sincronizarRecepcionExterna();
   assert.ok(!motor.remoteDomains.includes('baja-t2.es'));
 });
+
+test('un MX con nombre propio que apunta a la IP de este servidor no es otro proveedor', async (t) => {
+  const { clientId } = await createClient(ctx);
+  const { domainId } = await createDomain(ctx, clientId, 'mx-propio-t2.es');
+  setInstanceSettings({ publicIp: '203.0.113.10' });
+  t.after(() => setInstanceSettings({ publicIp: '' }));
+  const zona = {
+    mx: { 'mx-propio-t2.es': [{ priority: 10, exchange: 'mx.mx-propio-t2.es' }] },
+    a: { 'mx.mx-propio-t2.es': ['203.0.113.10'], 'mx.otro.test': ['198.51.100.7'] },
+  };
+  instalarDnsFalso(t, zona);
+  const medir = async () => {
+    const res = await ctx.app.inject({ method: 'POST', url: `/api/domains/${domainId}/verify`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(res.statusCode, 200, res.body);
+    return (res.json() as { domain: DomainRecord }).domain.recepcionExterna;
+  };
+  assert.equal(await medir(), false, 'mx.<dominio> resuelve a este servidor');
+
+  // El nombre anterior del servidor (tras cambiarlo en Ajustes) también es de aquí.
+  zona.mx['mx-propio-t2.es'] = [{ priority: 10, exchange: 'mail.anterior.test' }];
+  (zona.a as Record<string, string[]>)['mail.anterior.test'] = ['203.0.113.10'];
+  assert.equal(await medir(), false);
+
+  // Otro servidor de verdad: recepción externa.
+  zona.mx['mx-propio-t2.es'] = [{ priority: 10, exchange: 'mx.otro.test' }];
+  assert.equal(await medir(), true);
+});

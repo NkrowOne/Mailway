@@ -70,7 +70,16 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
     enabled: deInstancia,
     staleTime: 0,
   });
-  const usadaPorElMotor = deInstancia ? (usoMotor.isError ? null : (usoMotor.data?.inUse ?? undefined)) : false;
+  // true/false: respuesta del servidor; null: no se pudo saber (error de la
+  // petición o motor sin responder, que el servidor devuelve como inUse: null);
+  // undefined: todavía comprobándolo.
+  const usadaPorElMotor = !deInstancia
+    ? false
+    : usoMotor.isError
+      ? null
+      : usoMotor.data
+        ? usoMotor.data.inUse
+        : undefined;
 
   const borrar = useMutation({
     mutationFn: (id: string) => api.delete(`/api/cloudflare/accounts/${id}`),

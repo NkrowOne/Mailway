@@ -70,6 +70,10 @@ export function TablaCambios({
   seleccion?: string[];
   onAlternar?: (clave: string) => void;
 }) {
+  // El SPF y el DMARC aplazados solo se crean con el MX del cambio: sin él
+  // marcado, su casilla no se puede marcar (el servidor tampoco los crearía).
+  const mxDelCambio = cambios.find((c) => c.alCambiar && c.type === 'MX');
+  const mxMarcado = Boolean(mxDelCambio && seleccion?.includes(claveCambio(mxDelCambio)));
   return (
     <ul className="border-t border-regla">
       {ordenarCambios(cambios).map((c, i) => {
@@ -77,6 +81,7 @@ export function TablaCambios({
         const tinte = veredicto === 'fuera' ? 'fila-fuera' : veredicto === 'vigilar' ? 'fila-vigilar' : '';
         const clave = claveCambio(c);
         const elegible = Boolean(seleccion && onAlternar && c.action === 'conflict' && c.reemplazable);
+        const esperaAlMx = Boolean(c.alCambiar && c.type !== 'MX' && !mxMarcado);
         return (
           <li key={`${c.type}-${c.name}-${i}`} className={`regla-fila px-3 py-2.5 ${tinte}`}>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -106,14 +111,21 @@ export function TablaCambios({
             )}
             <p className="mt-1 max-w-[75ch] text-sm text-tinta-2">{c.reason}</p>
             {elegible && (
-              <label className="mt-1.5 flex cursor-pointer items-baseline gap-2 text-sm text-tinta">
+              <label
+                className={`mt-1.5 flex items-baseline gap-2 text-sm ${esperaAlMx ? 'cursor-not-allowed text-tinta-3' : 'cursor-pointer text-tinta'}`}
+              >
                 <input
                   type="checkbox"
-                  checked={seleccion!.includes(clave)}
+                  checked={!esperaAlMx && seleccion!.includes(clave)}
+                  disabled={esperaAlMx}
                   onChange={() => onAlternar!(clave)}
                   className="mt-0.5 shrink-0"
                 />
-                {c.alCambiar && c.type !== 'MX' ? 'Crear al aplicar' : 'Reemplazar al aplicar'}
+                {c.alCambiar && c.type !== 'MX'
+                  ? esperaAlMx
+                    ? 'Crear al aplicar (marca antes el MX: se crea junto con él)'
+                    : 'Crear al aplicar'
+                  : 'Reemplazar al aplicar'}
               </label>
             )}
           </li>

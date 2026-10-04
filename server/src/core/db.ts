@@ -440,9 +440,10 @@ const migrations: { id: string; sql: string }[] = [
       ALTER TABLE domains ADD COLUMN recepcion_externa INTEGER NOT NULL DEFAULT 0;
 
       -- Copia de los registros que Mailway borró en Cloudflare al reemplazar
-      -- conflictos (el cambio de MX), para poder deshacer el último cambio:
-      -- tras el corte, nadie recuerda qué MX tenía el proveedor anterior.
-      -- Una por dominio: la del último reemplazo.
+      -- conflictos (el cambio de MX), para poder deshacer el cambio: tras el
+      -- corte, nadie recuerda qué MX tenía el proveedor anterior. Una fila por
+      -- dominio que acumula los reemplazos; cada entrada lleva su fecha y
+      -- caduca por separado.
       CREATE TABLE cloudflare_copias (
         domain_id TEXT PRIMARY KEY REFERENCES domains(id) ON DELETE CASCADE,
         account_id TEXT,

@@ -605,6 +605,11 @@ function BloqueRecepcionExterna({ dominio, mx }: { dominio: string; mx: string[]
           Internet, y los buzones y alias creados aquí no lo reciben. Las respuestas a los mensajes
           que se envíen desde aquí también llegan al proveedor actual.
         </p>
+        <p className="max-w-[75ch] text-sm text-tinta-2">
+          Hay una excepción: el correo que llega de Internet a un alias de otro dominio de este
+          servidor que reenvía a un buzón de este dominio se entrega en el buzón de aquí, no en el
+          proveedor actual. Hasta hacer el cambio, revisa esos reenvíos.
+        </p>
         <p className="max-w-[75ch] text-sm text-tinta-3">
           Cuando el MX apunte a este servidor, Mailway lo detecta en la siguiente comprobación y el
           correo empieza a entregarse en los buzones de aquí. Para adelantarlo, pulsa «Comprobar el

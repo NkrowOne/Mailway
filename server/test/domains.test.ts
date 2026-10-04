@@ -471,6 +471,66 @@ test('el alta no crea el dominio en el motor: llega con el primer buzón o alias
   }
 });
 
+test('un dominio ajeno dado de alta sin probar la propiedad no impide a otros clientes reenviar a él', async () => {
+  const intruso = await createClient(ctx, { withUser: true });
+  const otro = await createClient(ctx, { withUser: true });
+  db.prepare('UPDATE plans SET max_domains = 10, max_aliases = 10 WHERE id = ?').run(intruso.planId);
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: intruso.userCookie! },
+    payload: { domain: 'correo-ajeno.es' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const ajeno = (alta.json() as { domain: DomainRecord }).domain;
+  assert.equal(ajeno.ownershipVerifiedAt, null);
+
+  const propio = await dominioPropio(otro.clientId, 'empresa-reenvio.es');
+  const engine = getEngine();
+  const upsert = engine.upsertAlias.bind(engine);
+  const llamadas: { internos: string[]; externos: string[] }[] = [];
+  engine.upsertAlias = async (a: string, internos: string[], externos: string[] = []) => {
+    llamadas.push({ internos, externos });
+    return upsert(a, internos, externos);
+  };
+  try {
+    const alias = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/aliases',
+      headers: { cookie: otro.userCookie! },
+      payload: { domainId: propio.domainId, localPart: 'info', destinations: ['dueno@correo-ajeno.es'] },
+    });
+    assert.equal(alias.statusCode, 200, alias.body);
+    assert.deepEqual(llamadas, [{ internos: [], externos: ['dueno@correo-ajeno.es'] }], 'sale a Internet como externo');
+    // Tampoco el propio intruso queda atado: para él también es externo.
+    const suyo = await dominioPropio(intruso.clientId, 'intruso-propio.es');
+    const delIntruso = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/aliases',
+      headers: { cookie: intruso.userCookie! },
+      payload: { domainId: suyo.domainId, localPart: 'info', destinations: ['dueno@correo-ajeno.es'] },
+    });
+    assert.equal(delIntruso.statusCode, 200, delIntruso.body);
+
+    // Borrarlo después no se lleva los reenvíos de los demás: no eran buzones de aquí.
+    const baja = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/domains/${ajeno.id}`,
+      headers: { cookie: intruso.userCookie! },
+    });
+    assert.equal(baja.statusCode, 200, baja.body);
+    const cuerpo = baja.json() as { aliasesUpdated: string[]; aliasesDeleted: string[] };
+    assert.deepEqual(cuerpo.aliasesUpdated, []);
+    assert.deepEqual(cuerpo.aliasesDeleted, []);
+    const destinos = db
+      .prepare('SELECT destinations_json FROM aliases WHERE id = ?')
+      .get((alias.json() as { id: string }).id) as { destinations_json: string };
+    assert.deepEqual(JSON.parse(destinos.destinations_json), ['dueno@correo-ajeno.es']);
+  } finally {
+    engine.upsertAlias = upsert;
+  }
+});
+
 test('al actualizar, los dominios sin propiedad que versiones anteriores crearon en el motor se retiran una sola vez', async () => {
   const { clientId, planId } = await createClient(ctx);
   db.prepare('UPDATE plans SET max_domains = 10 WHERE id = ?').run(planId);

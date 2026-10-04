@@ -135,10 +135,16 @@ export function claveCambio(c: { type: string; name: string }): string {
   return `${c.type.toUpperCase()}:${c.name}`;
 }
 
-/** Lo que borró el último cambio en Cloudflare y «Deshacer el cambio» recrearía. */
+/**
+ * Lo que borraron los reemplazos en Cloudflare que aún se pueden deshacer
+ * (30 días desde cada uno) y «Deshacer el cambio» recrearía.
+ */
 export interface CopiaCambio {
+  /** El reemplazo más reciente. */
   createdAt: number;
-  borrados: { type: string; name: string; content: string; priority?: number }[];
+  /** Cuándo deja de poder deshacerse el más antiguo. Ausente en servidores anteriores. */
+  expiresAt?: number;
+  borrados: { type: string; name: string; content: string; priority?: number; at?: number }[];
 }
 
 export interface ZonaCloudflare {

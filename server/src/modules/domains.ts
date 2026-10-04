@@ -28,7 +28,8 @@ import {
   tokenPropiedad,
   type NivelZona,
 } from './zonefile';
-import { lookupMx, lookupTxt, type MxRecord } from '../core/dns';
+import { lookupA, lookupAaaa, lookupMx, lookupTxt, type MxRecord } from '../core/dns';
+import { canonicalIpv6 } from '../core/hostnames';
 import { sincronizarRecepcionExterna } from './recepcion';
 import { dominiosPropiosDe, eliminarDominioPropio } from './whitelabel';
 import { getInstanceSettings, getSetting, setSetting } from './settings';
@@ -373,6 +374,36 @@ export function evaluarRecepcionExterna(mx: MxRecord[] | null, propios: string[]
   return !mx.some((r) => nuestros.has(sinPuntoFinal(r.exchange)));
 }
 
+/**
+ * Confirma por IP lo que los nombres dan como recepción externa: un MX con
+ * nombre propio (mx.cliente.es) cuyo A apunta a este servidor, o el nombre
+ * anterior del servidor tras cambiarlo en Ajustes, también llevan el correo
+ * aquí. Tratarlos como otro proveedor sacaría por MX el correo local (que
+ * volvería a entrar desde Internet) y dejaría de validar los destinatarios
+ * del dominio en las sesiones autenticadas.
+ *
+ * false si algún MX resuelve a la IP pública; true si todos se han podido
+ * consultar y ninguno lo hace; null si alguno no se pudo consultar (como en
+ * el resto de la medición, un corte de red no cambia nada). Sin IP pública
+ * configurada, no hay con qué comparar y vale lo que dicen los nombres.
+ */
+export async function confirmarRecepcionExterna(mx: MxRecord[], publicIp: string): Promise<boolean | null> {
+  const ip = publicIp.trim();
+  if (!ip) return true;
+  const v6 = ip.includes(':') ? canonicalIpv6(ip) : null;
+  const destinos = [...new Set(mx.map((r) => sinPuntoFinal(r.exchange)).filter(Boolean))].slice(0, 10);
+  let dudoso = false;
+  for (const destino of destinos) {
+    const direcciones = v6 ? await lookupAaaa(destino) : await lookupA(destino);
+    if (direcciones === null) {
+      dudoso = true;
+      continue;
+    }
+    if (direcciones.some((d) => (v6 ? canonicalIpv6(d) === v6 : d.trim() === ip))) return false;
+  }
+  return dudoso ? null : true;
+}
+
 export interface MedicionDominio {
   domain: DomainRecord;
   /**
@@ -400,10 +431,9 @@ export async function medirDominio(domainId: string): Promise<MedicionDominio> {
     propiedad = await comprobarPropiedad(domain, records, mx).catch(() => null);
     if (propiedad === true) marcarPropiedadComprobada(domainId);
   }
-  const externa = evaluarRecepcionExterna(mx, [
-    getInstanceSettings().mailHostname,
-    ...destinosMx(domain.domain, records),
-  ]);
+  const ajustes = getInstanceSettings();
+  let externa = evaluarRecepcionExterna(mx, [ajustes.mailHostname, ...destinosMx(domain.domain, records)]);
+  if (externa === true && mx) externa = await confirmarRecepcionExterna(mx, ajustes.publicIp).catch(() => null);
 
   // Un check 'unknown' significa "no se pudo consultar el DNS" (fallo de red),
   // que es distinto de "el registro no existe" ('missing'/'mismatch'). Solo se
@@ -941,10 +971,16 @@ function esBuzonDeLaInstancia(email: string): boolean {
 /**
  * Quita de los alias de OTROS dominios (de cualquier cliente: versiones
  * anteriores admitían destinos de otros clientes) los destinos que son
- * direcciones del dominio que se borra. Un alias que se queda sin destinos
+ * buzones del dominio que se borra. Un alias que se queda sin destinos
  * no entrega a nadie y se elimina. Mismo criterio que el borrado de un
  * buzón suelto; cada alias se guarda en la base justo después de cambiarlo
  * en el motor para que ambos coincidan aunque algo falle a mitad.
+ *
+ * Solo los buzones, no cualquier dirección del dominio: una dirección que no
+ * es un buzón de aquí es un reenvío externo y sigue siendo válida sin el
+ * dominio. Si no, quien diera de alta gmail.com (sin poder probar la
+ * propiedad) y lo borrara después dejaría sin esos destinos los alias de
+ * todos los demás clientes.
  */
 async function retirarReenviosAlDominio(
   domainId: string,
@@ -960,12 +996,18 @@ async function retirarReenviosAlDominio(
        WHERE a.domain_id != ? AND lower(a.destinations_json) LIKE ?`,
     )
     .all(domainId, `%${sufijo}"%`) as AliasAjeno[];
+  const buzones = new Set(
+    (db.prepare('SELECT local_part FROM mailboxes WHERE domain_id = ?').all(domainId) as { local_part: string }[]).map(
+      (m) => `${m.local_part.toLowerCase()}${sufijo}`,
+    ),
+  );
   const actualizados: string[] = [];
   const eliminados: string[] = [];
   const fallidos: string[] = [];
+  if (buzones.size === 0) return { actualizados, eliminados, fallidos };
   for (const alias of candidatos) {
     const destinos = destinosDe(alias.destinations_json);
-    const restantes = destinos.filter((d) => !d.toLowerCase().endsWith(sufijo));
+    const restantes = destinos.filter((d) => !buzones.has(d.toLowerCase()));
     if (restantes.length === destinos.length) continue;
     const email = `${alias.local_part}@${alias.domain}`;
     try {

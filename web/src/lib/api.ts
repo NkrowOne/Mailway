@@ -152,6 +152,8 @@ export interface DomainRecord {
   ownershipVerifiedAt?: number | null;
   /** Registro TXT que demuestra la propiedad del dominio. */
   ownershipRecord?: { type: 'TXT'; name: string; content: string };
+  /** El MX público apunta a otro servidor: el correo del dominio se recibe en otro proveedor. */
+  recepcionExterna?: boolean;
   createdAt: number;
 }
 
