@@ -406,7 +406,17 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
 - **La baja exige que el MX viejo ya no apunte aquí** (medido en ese momento;
   sin DNS, `503`): el correo ajeno que siguiera llegando se rechazaría, y los
   rechazos alimentan el bloqueo automático de IPs del motor. Por la misma razón
-  no se cancela un cambio cuyo dominio nuevo ya recibe aquí.
+  no se cancela un cambio cuyo dominio nuevo ya recibe aquí, tanto si lo creó
+  el cambio como si ya existía. Tras pasar, el vigilante tampoco avisa de que
+  el DNS del dominio anterior «ha dejado de ser correcto»: seguir ese aviso
+  devolvería el MX a este servidor y bloquearía la baja.
+- **Ningún reenvío sale a Internet por la dirección vieja.** Al pasar, los
+  alias de toda la instancia que reenvían a un buzón que se muda se vuelven a
+  escribir en el motor con el buzón como miembro (por id). Un reenvío que el
+  motor guardaba por dirección (creado cuando dominio.es aún no tenía la
+  propiedad comprobada, p. ej. desde otro cliente) seguiría apuntando a
+  `ana@dominio.es` y, tras la baja, entregaría en el MX de dominio.es, es
+  decir, a quien tenga ese dominio después.
 - **«Actualizar mis dispositivos» desde el enlace de configuración no pide la
   contraseña.** La acción solo cambia el usuario del propio buzón a su
   dirección vigente, algo que la baja hará de todos modos: no da acceso ni
@@ -420,8 +430,13 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
   titular ni la sesión del panel pueden dejarla sin enviar
   (`409 mailbox_used_by_app`), y la baja no sigue con alguno pendiente.
 - **Cambios de Skyway.** Un cambio creado por Skyway (`origen: "skyway"`) solo
-  se pasa, se vuelve, se cancela o se da de baja con un token de gestión; con
-  la sesión del panel, `409 migration_managed_externally`.
+  se crea, se pasa, se vuelve, se cancela o se da de baja con el token de
+  gestión de la administración, que es el que usa Skyway. Con la sesión del
+  panel, o con un token que se crea un usuario del cliente (`POST /api/tokens`
+  solo pide su sesión), crearlo da `403 token_required` y las acciones,
+  `409 migration_managed_externally`. Así nadie
+  desacompasa por error el correo de la web y los despliegues que lleva
+  Skyway.
 - **El complemento del webmail traslada la fila de Roundcube antes de
   comprobar la contraseña.** Al entrar, `mailway_cuentas` pregunta al panel
   (con el token del webmail, nunca con la contraseña) cuál es el usuario

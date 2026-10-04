@@ -1058,7 +1058,7 @@ function destinosDe(json: string): string[] {
 }
 
 /** true si la dirección es un buzón de esta instancia (destino interno de un alias). */
-function esBuzonDeLaInstancia(email: string): boolean {
+export function esBuzonDeLaInstancia(email: string): boolean {
   const at = email.lastIndexOf('@');
   if (at < 1) return false;
   return Boolean(

@@ -2,15 +2,18 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
 import { createAppPassword } from '../src/modules/apppasswords';
+import { randomId } from '../src/core/crypto';
 import {
   marcarCambiosInterrumpidos,
   vigilarCambiosDeDominio,
   type CambioDominioVista,
   type PlanCambioDominio,
 } from '../src/modules/domainmigrations';
-import { ownershipRecord } from '../src/modules/domains';
+import { getDomain, ownershipRecord } from '../src/modules/domains';
 import { getMailbox } from '../src/modules/mailboxes';
-import { setInstanceSettings } from '../src/modules/settings';
+import { getInstanceSettings, setInstanceSettings } from '../src/modules/settings';
+import { reviewDomainDns } from '../src/modules/watchdog';
+import { MAX_WHITELABEL_PER_CLIENT } from '../src/modules/whitelabel';
 import { instalarDnsFalso, type ZonaDns } from './dns-falso';
 import {
   adminContext,
@@ -136,6 +139,26 @@ async function accion(
   headers: Record<string, string> = sesion(),
 ) {
   return post(`/api/domain-migrations/${id}/${nombre}`, payload, headers);
+}
+
+/** Miembros de una lista en el motor de demostración: por id (buzones) y externos (por dirección). */
+function listaEnMotor(nombre: string): { members: number[]; externalMembers: string[] } | undefined {
+  type ConBuscar = { buscar(n: string): { members: number[]; externalMembers: string[] } | undefined };
+  return (motorDemo() as unknown as ConBuscar).buscar(nombre);
+}
+
+/** El MX de estos dominios apunta a otro proveedor (para cancelar y dar de baja). */
+function mxFuera(t: Parameters<typeof instalarDnsFalso>[0], ...dominios: string[]): ZonaDns {
+  const zona: ZonaDns = {
+    mx: Object.fromEntries(dominios.map((d) => [d, [{ priority: 10, exchange: 'mx.otro-proveedor.test' }]])),
+    a: { 'mx.otro-proveedor.test': ['198.51.100.7'] },
+  };
+  instalarDnsFalso(t, zona);
+  return zona;
+}
+
+function alertaAbierta(clave: string): boolean {
+  return Boolean(db.prepare('SELECT 1 FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL').get(clave));
 }
 
 /* ---------------------------------- Plan ---------------------------------- */
@@ -362,14 +385,17 @@ test('pasar: compuertas, filas, usuario anterior, alias, destinos de otro client
 
   marcarDnsActivo(creado.vista.hacia.domainId!);
   assert.equal(((await accion(id, 'check')).json() as CambioDominioVista).estado, 'listo');
+  assert.equal(alertaAbierta(`cambio_dominio:${id}:listo`), true);
   // «Pasar» vuelve a evaluar las compuertas: si el DNS deja de estar
-  // completo, 409 con el motivo y el cambio vuelve a «preparando».
+  // completo, 409 con el motivo y el cambio vuelve a «preparando» (y deja de
+  // decir que está listo).
   db.prepare("UPDATE domains SET status = 'pending_dns' WHERE id = ?").run(creado.vista.hacia.domainId);
   const sinDns = await accion(id, 'switch');
   assert.equal(sinDns.statusCode, 409, sinDns.body);
   assert.equal(sinDns.json().code, 'migration_not_ready');
   assert.match(sinDns.json().error, /el DNS de pasa-nuevo\.test no está completo/);
   assert.equal(((await get(`/api/domain-migrations/${id}`)).json() as CambioDominioVista).estado, 'preparando');
+  assert.equal(alertaAbierta(`cambio_dominio:${id}:listo`), false);
   marcarDnsActivo(creado.vista.hacia.domainId!);
   const listo = (await accion(id, 'check')).json() as CambioDominioVista;
   assert.equal(listo.estado, 'listo');
@@ -468,6 +494,15 @@ test('origen Skyway: con la sesión no se pasa (409); con el token, sí', async 
   });
   assert.equal(conSesion.statusCode, 403, conSesion.body);
   assert.equal(conSesion.json().code, 'token_required');
+  // Un token que se crea un usuario del cliente no es el de Skyway (el de la administración).
+  const tokenCliente = await tokenDe(e.userCookie, 'Mío');
+  const conTokenCliente = await post(
+    '/api/domain-migrations',
+    { fromDomainId: e.viejo.domainId, toDomain: 'sky-nuevo.test', autoDns: false, origen: 'skyway' },
+    bearer(tokenCliente),
+  );
+  assert.equal(conTokenCliente.statusCode, 403, conTokenCliente.body);
+  assert.equal(conTokenCliente.json().code, 'token_required');
 
   const vista = await cambioListo(e, 'sky-nuevo.test', {
     headers: bearer(adminToken),
@@ -479,6 +514,10 @@ test('origen Skyway: con la sesión no se pasa (409); con el token, sí', async 
   const panel = await accion(vista.id, 'switch');
   assert.equal(panel.statusCode, 409, panel.body);
   assert.equal(panel.json().code, 'migration_managed_externally');
+  for (const accionSkyway of ['switch', 'cancel']) {
+    const delCliente = await accion(vista.id, accionSkyway, {}, bearer(tokenCliente));
+    assert.equal(delCliente.json().code, 'migration_managed_externally', accionSkyway);
+  }
   const integracion = await accion(vista.id, 'switch', {}, bearer(adminToken));
   assert.equal(integracion.statusCode, 200, integracion.body);
 
@@ -634,6 +673,7 @@ test('dar de baja: confirmación, apps, DNS y MX; después el dominio queda rese
 
   const pasado = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
   assert.deepEqual(pasado.bloqueosBaja.map((b) => b.code), ['mailbox_used_by_app']);
+  assert.match(pasado.bloqueosBaja[0]!.mensaje, /^ana@baja-nuevo\.test lo usa una aplicación para enviar \(tienda\)\. Actualízalo desde Skyway/);
   assert.equal(pasado.puedeDarDeBaja, false);
   const conApps = await accion(vista.id, 'retire', { confirm: 'baja-viejo.test' });
   assert.equal(conApps.statusCode, 409, conApps.body);
@@ -753,4 +793,478 @@ test('al arrancar, una acción en curso sin error queda marcada para «Reintenta
   assert.equal(vista.error, 'Interrumpido por un reinicio del panel. Pulsa «Reintentar».');
   // Las que ya tenían su error no se tocan.
   assert.equal(marcarCambiosInterrumpidos(), 0);
+});
+
+/* ------------------------- Revisión: fallos a medias ------------------------- */
+
+test('reenvíos: el motor deja de guardarlos por la dirección vieja y «Volver» solo deshace lo que escribió «Pasar»', async () => {
+  // Otro cliente reenvía a direcciones de dominios que todavía no están en la
+  // instancia: el motor las guarda como miembros externos, por dirección.
+  const b = await createClient(ctx);
+  const dominioB = await createDomain(ctx, b.clientId, 'reenvia-b.test');
+  const aViejo = await post('/api/aliases', {
+    domainId: dominioB.domainId,
+    localPart: 'aviejo',
+    destinations: ['ana@reenvia-viejo.test'],
+  });
+  assert.equal(aViejo.statusCode, 200, aViejo.body);
+  const aNuevo = await post('/api/aliases', {
+    domainId: dominioB.domainId,
+    localPart: 'anuevo',
+    destinations: ['ana@reenvia-nuevo.test'],
+  });
+  assert.equal(aNuevo.statusCode, 200, aNuevo.body);
+  const idViejo = (aViejo.json() as { id: string }).id;
+  const idNuevo = (aNuevo.json() as { id: string }).id;
+  assert.deepEqual(listaEnMotor('aviejo@reenvia-b.test')?.externalMembers, ['ana@reenvia-viejo.test']);
+
+  const e = await escenario('reenvia-viejo.test', { buzones: ['ana'] });
+  const vista = await cambioListo(e, 'reenvia-nuevo.test');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  const ana = await motorDemo().getPrincipal('ana@reenvia-viejo.test');
+
+  // El panel enseña la dirección nueva y el motor entrega por el buzón (por
+  // id): tras la baja de reenvia-viejo.test, ese correo ya no sale a Internet.
+  assert.deepEqual(destinos(idViejo), ['ana@reenvia-nuevo.test']);
+  assert.deepEqual(listaEnMotor('aviejo@reenvia-b.test')?.members, [ana!.id]);
+  assert.deepEqual(listaEnMotor('aviejo@reenvia-b.test')?.externalMembers, []);
+  // Lo que ya apuntaba al dominio nuevo no lo ha escrito el cambio.
+  assert.deepEqual(destinos(idNuevo), ['ana@reenvia-nuevo.test']);
+  assert.deepEqual(listaEnMotor('anuevo@reenvia-b.test')?.externalMembers, ['ana@reenvia-nuevo.test']);
+
+  // Un alias del propio cliente que se crea después de pasar, en otro de sus dominios.
+  const otro = await createDomain(ctx, e.clientId, 'reenvia-otro.test');
+  const propio = await post('/api/aliases', {
+    domainId: otro.domainId,
+    localPart: 'equipo',
+    destinations: ['ana@reenvia-nuevo.test'],
+  });
+  assert.equal(propio.statusCode, 200, propio.body);
+
+  assert.equal((await accion(vista.id, 'rollback')).statusCode, 200);
+  assert.deepEqual(destinos(idViejo), ['ana@reenvia-viejo.test']);
+  assert.deepEqual(destinos(idNuevo), ['ana@reenvia-nuevo.test'], 'volver no toca lo que no escribió pasar');
+  assert.deepEqual(destinos((propio.json() as { id: string }).id), ['ana@reenvia-viejo.test']);
+  assert.deepEqual(listaEnMotor('aviejo@reenvia-b.test')?.members, [ana!.id]);
+});
+
+test('volver desde «pasando» con error deshace lo que «Pasar» hizo a medias', async () => {
+  const e = await escenario('mvuelve-viejo.test', {
+    buzones: ['ana'],
+    alias: { info: ['ana@mvuelve-viejo.test'], ventas: ['ana@mvuelve-viejo.test'] },
+  });
+  const vista = await cambioListo(e, 'mvuelve-nuevo.test');
+  const motor = motorDemo();
+  // «info» se renombra; «ventas» falla.
+  motor.fallarProxima('renamePrincipal', 'ventas@mvuelve-viejo.test');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 502);
+  const aMedias = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+  assert.equal(aMedias.estado, 'pasando');
+  assert.equal(aMedias.puedeVolver, true);
+  assert.equal(aMedias.puedeCancelar, true);
+  assert.ok(await motor.getPrincipal('info@mvuelve-nuevo.test'));
+
+  const volver = await accion(vista.id, 'rollback');
+  assert.equal(volver.statusCode, 200, volver.body);
+  const listo = volver.json() as CambioDominioVista;
+  assert.equal(listo.estado, 'listo');
+  assert.equal(listo.error, null);
+  assert.deepEqual((await motor.getPrincipal('ana@mvuelve-viejo.test'))?.emails, ['ana@mvuelve-viejo.test', 'ana@mvuelve-nuevo.test']);
+  assert.equal(await motor.getPrincipal('info@mvuelve-nuevo.test'), null);
+  for (const local of ['info', 'ventas']) {
+    assert.deepEqual((await motor.getPrincipal(`${local}@mvuelve-viejo.test`))?.emails, [
+      `${local}@mvuelve-viejo.test`,
+      `${local}@mvuelve-nuevo.test`,
+    ]);
+  }
+  assert.equal(fila(e.buzones.ana!.mailboxId).domain_id, e.viejo.domainId);
+  assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, null);
+  assert.deepEqual(destinos(e.alias.info!), ['ana@mvuelve-viejo.test']);
+});
+
+test('Skyway: si «Pasar» falla, «Cancelar» vuelve a dominio.es y cancela (sin callejón sin salida)', async (t) => {
+  const e = await escenario('scancela-viejo.test', { buzones: ['ana'] });
+  const skyway = bearer(adminToken);
+  const vista = await cambioListo(e, 'scancela-nuevo.test', { headers: skyway, payload: { origen: 'skyway' } });
+  const motor = motorDemo();
+  motor.fallarProxima('setAddresses', 'ana@scancela-viejo.test');
+  assert.equal((await accion(vista.id, 'switch', {}, skyway)).statusCode, 502);
+  const aMedias = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+  assert.equal(aMedias.estado, 'pasando');
+  assert.equal(aMedias.puedeCancelar, true);
+
+  mxFuera(t, 'scancela-nuevo.test');
+  const res = await accion(vista.id, 'cancel', {}, skyway);
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal((res.json() as CambioDominioVista).estado, 'cancelada');
+  assert.deepEqual((await motor.getPrincipal('ana@scancela-viejo.test'))?.emails, ['ana@scancela-viejo.test']);
+  assert.equal(motor.dominios.has('scancela-nuevo.test'), false);
+  const auditado = db
+    .prepare("SELECT detail FROM audit_log WHERE action = 'domain.migration_cancelled' AND detail LIKE ?")
+    .get(`%${vista.id}%`) as { detail: string };
+  assert.equal(JSON.parse(auditado.detail).volvio, true);
+});
+
+test('cancelar que falla a mitad deja el error, no da la recepción por hecha y se puede repetir', async (t) => {
+  const e = await escenario('cfalla-viejo.test', { buzones: ['ana', 'luis'] });
+  const vista = await cambioListo(e, 'cfalla-nuevo.test');
+  mxFuera(t, 'cfalla-nuevo.test');
+  const motor = motorDemo();
+  motor.fallarProxima('setAddresses', 'luis@cfalla-viejo.test');
+
+  const fallo = await accion(vista.id, 'cancel');
+  assert.equal(fallo.statusCode, 502, fallo.body);
+  const tras = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+  assert.equal(tras.estado, 'preparando');
+  assert.match(tras.error ?? '', /^No se ha podido cancelar el cambio: .*fallo inyectado/);
+  // Ana ya no recibe en la dirección nueva, y la vista no dice lo contrario.
+  assert.equal(motor.entregar('ana@cfalla-nuevo.test'), null);
+  assert.equal(tras.recepcionPreparada, false);
+  // Si lo que la corta es un reinicio, al arrancar queda dicho.
+  db.prepare('UPDATE domain_migrations SET error = NULL WHERE id = ?').run(vista.id);
+  assert.ok(marcarCambiosInterrumpidos() >= 1);
+  assert.match(
+    ((await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista).error ?? '',
+    /La cancelación se interrumpió por un reinicio del panel/,
+  );
+  assert.equal(tras.compuertas.find((c) => c.id === 'recepcion')?.ok, false);
+  assert.equal(tras.puedePasar, false);
+
+  // La preparación la rehace en su siguiente vuelta…
+  await vigilarCambiosDeDominio();
+  assert.equal(motor.entregar('ana@cfalla-nuevo.test'), 'ana@cfalla-viejo.test');
+  assert.equal(((await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista).recepcionPreparada, true);
+  // …y «Cancelar» se puede repetir.
+  const otra = await accion(vista.id, 'cancel');
+  assert.equal(otra.statusCode, 200, otra.body);
+  assert.equal((otra.json() as CambioDominioVista).estado, 'cancelada');
+  assert.equal(motor.entregar('ana@cfalla-nuevo.test'), null);
+});
+
+test('cancelar con un dominio nuevo que ya existía: si su MX ya apunta aquí, 409', async (t) => {
+  const e = await escenario('cexiste-viejo.test', { buzones: ['ana'] });
+  await createDomain(ctx, e.clientId, 'cexiste-nuevo.test');
+  const vista = await cambioListo(e, 'cexiste-nuevo.test');
+  assert.equal(vista.creoDestino, false);
+  instalarDnsFalso(t, { mx: { 'cexiste-nuevo.test': [{ priority: 10, exchange: SERVIDOR }] } });
+  const res = await accion(vista.id, 'cancel');
+  assert.equal(res.statusCode, 409, res.body);
+  assert.equal(res.json().code, 'migration_new_mx_here');
+  assert.equal(motorDemo().entregar('ana@cexiste-nuevo.test'), 'ana@cexiste-viejo.test');
+  const sigue = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+  assert.deepEqual([sigue.estado, sigue.error], ['listo', null], 'una comprobación que no pasa no cambia el cambio');
+});
+
+test('una baja que falla a mitad se puede reintentar (también desde Skyway)', async (t) => {
+  const e = await escenario('bfalla-viejo.test', { buzones: ['ana', 'luis'], alias: { info: ['ana@bfalla-viejo.test'] } });
+  const vista = await cambioListo(e, 'bfalla-nuevo.test');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  mxFuera(t, 'bfalla-viejo.test');
+  motorDemo().fallarProxima('setAddresses', 'luis@bfalla-nuevo.test');
+
+  const fallo = await accion(vista.id, 'retire', { confirm: 'bfalla-viejo.test' });
+  assert.equal(fallo.statusCode, 502, fallo.body);
+  const aMedias = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+  assert.equal(aMedias.estado, 'dando_de_baja');
+  assert.match(aMedias.error ?? '', /fallo inyectado/);
+  assert.equal(aMedias.puedeDarDeBaja, true);
+  assert.equal(aMedias.puedeVolver, false);
+
+  const reintento = await accion(vista.id, 'retire', { confirm: 'bfalla-viejo.test' });
+  assert.equal(reintento.statusCode, 200, reintento.body);
+  assert.equal((reintento.json() as CambioDominioVista).estado, 'dado_de_baja');
+  assert.deepEqual((await motorDemo().getPrincipal('luis@bfalla-nuevo.test'))?.emails, ['luis@bfalla-nuevo.test']);
+});
+
+test('un buzón borrado durante el cambio no cuenta al volver ni al pasar otra vez', async () => {
+  const e = await escenario('borrado-viejo.test', { buzones: ['ana', 'luis'] });
+  const vista = await cambioListo(e, 'borrado-nuevo.test');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/mailboxes/${e.buzones.luis!.mailboxId}`,
+    headers: sesion(),
+  });
+  assert.equal(borrar.statusCode, 200, borrar.body);
+  // Otro luis, ya en el dominio nuevo, y un alias que reenvía a él.
+  const nuevoLuis = await post('/api/mailboxes', { domainId: vista.hacia.domainId, localPart: 'luis' });
+  assert.equal(nuevoLuis.statusCode, 200, nuevoLuis.body);
+  const otro = await createDomain(ctx, e.clientId, 'borrado-otro.test');
+  const equipo = await post('/api/aliases', {
+    domainId: otro.domainId,
+    localPart: 'equipo',
+    destinations: ['luis@borrado-nuevo.test'],
+  });
+  assert.equal(equipo.statusCode, 200, equipo.body);
+
+  const volver = await accion(vista.id, 'rollback');
+  assert.equal(volver.statusCode, 200, volver.body);
+  assert.equal((volver.json() as CambioDominioVista).buzones.total, 1);
+  // El alias sigue apuntando al luis nuevo, que se queda en el dominio nuevo.
+  assert.deepEqual(destinos((equipo.json() as { id: string }).id), ['luis@borrado-nuevo.test']);
+
+  const otraVez = await accion(vista.id, 'switch');
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  assert.equal((otraVez.json() as CambioDominioVista).estado, 'pasado');
+});
+
+test('el dominio anterior de un cambio ya pasado no abre la alerta de DNS roto', async (t) => {
+  const e = await escenario('alerta-viejo.test', { buzones: ['ana'] });
+  marcarDnsActivo(e.viejo.domainId);
+  const control = await createDomain(ctx, e.clientId, 'alerta-control.test');
+  marcarDnsActivo(control.domainId);
+  const vista = await cambioListo(e, 'alerta-nuevo.test');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+
+  // Como pide la baja, el MX del dominio anterior deja de apuntar aquí.
+  const nulo = [{ priority: 0, exchange: '' }];
+  instalarDnsFalso(t, { mx: { 'alerta-viejo.test': nulo, 'alerta-control.test': nulo } });
+  await reviewDomainDns(getDomain(control.domainId));
+  assert.equal(alertaAbierta(`domain_dns:${control.domainId}`), true, 'un dominio sin cambio sí avisa');
+  await reviewDomainDns(getDomain(e.viejo.domainId));
+  assert.equal(alertaAbierta(`domain_dns:${e.viejo.domainId}`), false);
+});
+
+test('una creación cortada por un reinicio se marca y crearla otra vez la termina', async () => {
+  const e = await escenario('corte-viejo.test', { buzones: ['ana'] });
+  // Como si el panel se hubiera reiniciado mientras daba de alta el dominio nuevo.
+  const id = randomId('dmg');
+  const t0 = Date.now();
+  db.prepare(
+    `INSERT INTO domain_migrations (id, client_id, from_domain_id, from_domain, to_domain, estado, created_at, updated_at)
+     VALUES (?, ?, ?, 'corte-viejo.test', 'corte-nuevo.test', 'preparando', ?, ?)`,
+  ).run(id, e.clientId, e.viejo.domainId, t0, t0);
+  db.prepare(
+    `INSERT INTO domain_migration_items (migration_id, tipo, item_id, local_part) VALUES (?, 'buzon', ?, 'ana')`,
+  ).run(id, e.buzones.ana!.mailboxId);
+  assert.ok(marcarCambiosInterrumpidos() >= 1);
+  const marcada = (await get(`/api/domain-migrations/${id}`)).json() as CambioDominioVista;
+  assert.match(marcada.error ?? '', /se interrumpió por un reinicio del panel/);
+  assert.equal(marcada.hacia.domainId, null);
+
+  const otra = await crearCambioDeDominio(ctx, e.viejo.domainId, 'corte-nuevo.test');
+  assert.equal(otra.statusCode, 200, otra.body);
+  assert.equal(otra.vista.id, id);
+  assert.ok(otra.vista.hacia.domainId);
+  assert.equal(otra.vista.creoDestino, true);
+  assert.equal(otra.vista.error, null);
+});
+
+test('un cambio de usuario a medias se concilia antes de pasar', async () => {
+  const e = await escenario('marca-viejo.test', { buzones: ['ana'] });
+  const vista = await cambioListo(e, 'marca-nuevo.test');
+  // El panel cayó tras marcar el cambio de usuario y antes de renombrar.
+  db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(
+    'ana@marca-nuevo.test',
+    e.buzones.ana!.mailboxId,
+  );
+  const res = await accion(vista.id, 'switch');
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, 'ana@marca-viejo.test');
+  const marca = db.prepare('SELECT usuario_cambiando_a FROM mailboxes WHERE id = ?').get(e.buzones.ana!.mailboxId) as {
+    usuario_cambiando_a: string | null;
+  };
+  assert.equal(marca.usuario_cambiando_a, null);
+});
+
+test('avisos: sin plaza para el webmail nuevo, y un dominio que aloja la plataforma no se da de baja', async () => {
+  const e = await escenario('aviso-viejo.test', { buzones: ['ana'], webmail: true });
+  // El cliente ya tiene el máximo de dominios propios (el webmail viejo y otros).
+  for (let i = 1; i < MAX_WHITELABEL_PER_CLIENT; i++) {
+    db.prepare(
+      `INSERT INTO client_domains (id, client_id, hostname, kind, status, created_at, is_primary)
+       VALUES (?, ?, ?, 'webmail', 'pending_dns', ?, 0)`,
+    ).run(`wld_aviso_${i}`, e.clientId, `web${i}.aviso-otro.test`, Date.now());
+  }
+  const codigos = (lista: { code: string }[]) => lista.map((a) => a.code);
+  const plan = async () =>
+    (await post('/api/domain-migrations/plan', { fromDomainId: e.viejo.domainId, toDomain: 'aviso-nuevo.test' })).json() as PlanCambioDominio;
+  assert.ok(codigos((await plan()).avisos).includes('whitelabel_limit'));
+
+  const anterior = getInstanceSettings().mailHostname;
+  setInstanceSettings({ mailHostname: 'mail.aviso-viejo.test' });
+  try {
+    assert.ok(codigos((await plan()).avisos).includes('domain_hosts_instance'));
+    const vista = await cambioListo(e, 'aviso-nuevo.test');
+    assert.ok(codigos(vista.avisos).includes('whitelabel_limit'));
+    assert.equal(vista.webmail.nuevo, null);
+    assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+    const pasado = (await get(`/api/domain-migrations/${vista.id}`)).json() as CambioDominioVista;
+    assert.deepEqual(codigos(pasado.bloqueosBaja), ['domain_hosts_instance']);
+    assert.equal(pasado.puedeDarDeBaja, false);
+    const baja = await accion(vista.id, 'retire', { confirm: 'aviso-viejo.test' });
+    assert.equal(baja.statusCode, 409, baja.body);
+    assert.equal(baja.json().code, 'domain_hosts_instance');
+  } finally {
+    setInstanceSettings({ mailHostname: anterior });
+  }
+});
+
+test('tras una baja temprana, el webmail nuevo pasa a principal en cuanto se activa', async (t) => {
+  const e = await escenario('wbaja-viejo.test', { buzones: ['ana'], webmail: true });
+  const vista = await cambioListo(e, 'wbaja-nuevo.test');
+  assert.equal(vista.webmail.nuevo?.status, 'pending_dns');
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  mxFuera(t, 'wbaja-viejo.test');
+  const baja = await accion(vista.id, 'retire', { confirm: 'wbaja-viejo.test' });
+  assert.equal(baja.statusCode, 200, baja.body);
+  // El webmail viejo (el principal) ya no existe y el nuevo aún no está activo.
+  db.prepare("UPDATE client_domains SET status = 'active', activated_at = ? WHERE hostname = ?").run(
+    Date.now(),
+    'webmail.wbaja-nuevo.test',
+  );
+  await vigilarCambiosDeDominio();
+  const principal = db
+    .prepare("SELECT hostname FROM client_domains WHERE client_id = ? AND kind = 'webmail' AND is_primary = 1")
+    .get(e.clientId) as { hostname: string } | undefined;
+  assert.equal(principal?.hostname, 'webmail.wbaja-nuevo.test');
+});
+
+/* ------------------------------ Cloudflare ------------------------------ */
+
+interface RegistroCf {
+  id: string;
+  zoneId: string;
+  type: string;
+  name: string;
+  content: string;
+  priority?: number;
+  proxied: boolean;
+  ttl: number;
+  comment: string | null;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Cloudflare de mentira, lo justo para aplicar el DNS de un dominio: verificar
+ * el token, zonas, listado de registros y lotes (el completo, con sus códigos
+ * de error, está en cloudflare.test.ts). Sustituye fetch durante la prueba.
+ */
+function instalarCloudflareFalso(t: Parameters<typeof instalarDnsFalso>[0], zonas: string[]) {
+  const zonasCf = zonas.map((name) => ({
+    id: `zona_${name.replace(/\W/g, '_')}`,
+    name,
+    status: 'active',
+    account: { id: 'acc1', name: 'Cuenta' },
+    name_servers: ['ana.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+  }));
+  let registros: RegistroCf[] = [];
+  let seq = 0;
+  const respuesta = (status: number, cuerpo: unknown) =>
+    new Response(JSON.stringify(cuerpo), { status, headers: { 'Content-Type': 'application/json' } });
+  const ok = (result: unknown, lista = false) =>
+    respuesta(200, {
+      success: true,
+      errors: [],
+      messages: [],
+      result,
+      ...(lista ? { result_info: { page: 1, per_page: 1000, total_pages: 1 } } : {}),
+    });
+  const desde = (zoneId: string, b: Record<string, unknown>, id?: string): RegistroCf => ({
+    id: id ?? `rec_${++seq}`,
+    zoneId,
+    type: String(b.type),
+    name: String(b.name).toLowerCase(),
+    content: String(b.content ?? ''),
+    priority: b.priority as number | undefined,
+    proxied: Boolean(b.proxied),
+    ttl: Number(b.ttl ?? 1),
+    comment: (b.comment as string | undefined) ?? null,
+    data: b.data as Record<string, unknown> | undefined,
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const method = (init.method || 'GET').toUpperCase();
+    const body = init.body ? (JSON.parse(String(init.body)) as Record<string, Record<string, unknown>[]>) : {};
+    const path = url.pathname.replace(/^\/client\/v4/, '');
+    if (path === '/user/tokens/verify') return ok({ id: 'tok', status: 'active' });
+    if (path === '/zones') {
+      const name = url.searchParams.get('name');
+      return ok(zonasCf.filter((z) => !name || z.name === name), true);
+    }
+    const m = path.match(/^\/zones\/([^/]+)\/dns_records(\/batch)?$/);
+    if (m && !m[2] && method === 'GET') {
+      const name = url.searchParams.get('name');
+      const type = url.searchParams.get('type');
+      return ok(
+        registros.filter((r) => r.zoneId === m[1] && (!name || r.name === name) && (!type || r.type === type)),
+        true,
+      );
+    }
+    if (m && m[2] && method === 'POST') {
+      const zoneId = m[1]!;
+      const res = { deletes: [] as RegistroCf[], patches: [] as RegistroCf[], puts: [] as RegistroCf[], posts: [] as RegistroCf[] };
+      for (const d of body.deletes ?? []) {
+        res.deletes.push(...registros.filter((r) => r.id === d.id));
+        registros = registros.filter((r) => r.id !== d.id);
+      }
+      for (const p of body.puts ?? []) {
+        const nuevo = desde(zoneId, p, String(p.id));
+        registros = registros.map((r) => (r.id === nuevo.id ? nuevo : r));
+        res.puts.push(nuevo);
+      }
+      for (const p of body.patches ?? []) {
+        const r = registros.find((x) => x.id === p.id);
+        if (r && p.content !== undefined) r.content = String(p.content);
+        if (r) res.patches.push(r);
+      }
+      for (const p of body.posts ?? []) {
+        const nuevo = desde(zoneId, p);
+        registros.push(nuevo);
+        res.posts.push(nuevo);
+      }
+      return ok(res);
+    }
+    return respuesta(404, { success: false, errors: [{ code: 7000, message: 'No route for that URI' }], messages: [], result: null });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  return {
+    registro(zona: string, r: { type: string; name: string; content: string; priority?: number }) {
+      registros.push(desde(`zona_${zona.replace(/\W/g, '_')}`, r));
+    },
+    mx(nombre: string): string[] {
+      return registros.filter((r) => r.type === 'MX' && r.name === nombre).map((r) => r.content);
+    },
+  };
+}
+
+test('Cloudflare: el DNS automático no toca el MX de otro proveedor y «Cambiar el MX» lo hace tras la pre-recepción', async (t) => {
+  const cf = instalarCloudflareFalso(t, ['cf-nuevo.test']);
+  // dominio2.es recibe hoy en otro proveedor.
+  cf.registro('cf-nuevo.test', { type: 'MX', name: 'cf-nuevo.test', content: 'mx.otro-proveedor.test', priority: 10 });
+  const cuenta = await post('/api/cloudflare/accounts', { token: 'cfut_cambiodedominio0123456789abcdefghijklmno' });
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  const cuentaId = (cuenta.json() as { account: { id: string } }).account.id;
+  t.after(async () => {
+    await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${cuentaId}`, headers: sesion() });
+  });
+
+  // Sin la pre-recepción, el MX no se puede cambiar.
+  const guiado = await escenario('cfguiado-viejo.test', { buzones: ['ana'] });
+  const sinRecepcion = await crearCambioDeDominio(ctx, guiado.viejo.domainId, 'cfguiado-nuevo.test');
+  const pronto = await accion(sinRecepcion.vista.id, 'mx');
+  assert.equal(pronto.statusCode, 409, pronto.body);
+  assert.equal(pronto.json().code, 'migration_state');
+
+  const e = await escenario('cf-viejo.test', { buzones: ['ana'] });
+  const creado = await crearCambioDeDominio(ctx, e.viejo.domainId, 'cf-nuevo.test', { payload: { autoDns: true } });
+  assert.equal(creado.statusCode, 201, creado.body);
+  assert.equal(creado.vista.hacia.cloudflare, true);
+  // Escribir en la zona prueba la propiedad: la pre-recepción va en la misma petición.
+  assert.equal(creado.vista.recepcionPreparada, true);
+  assert.equal(motorDemo().entregar('ana@cf-nuevo.test'), 'ana@cf-viejo.test');
+  // Solo se crea lo que faltaba: el MX del proveedor actual sigue.
+  assert.deepEqual(cf.mx('cf-nuevo.test'), ['mx.otro-proveedor.test']);
+
+  const mx = await accion(creado.vista.id, 'mx');
+  assert.equal(mx.statusCode, 200, mx.body);
+  // El MX que propone el motor (el de demostración lo da como mail.<dominio>).
+  assert.deepEqual(cf.mx('cf-nuevo.test'), ['mail.cf-nuevo.test']);
+  const auditado = db
+    .prepare("SELECT 1 FROM audit_log WHERE action = 'domain.migration_mx_changed' AND detail LIKE ?")
+    .get(`%${creado.vista.id}%`);
+  assert.ok(auditado);
 });

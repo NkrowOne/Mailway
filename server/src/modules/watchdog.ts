@@ -392,12 +392,23 @@ export function intervaloDeMedicion(domain: DomainRecord, ahora = now()): number
   return HOUR;
 }
 
-async function reviewDomainDns(domain: DomainRecord): Promise<void> {
+/** Mide un dominio y abre o resuelve su alerta de DNS (exportada para las pruebas). */
+export async function reviewDomainDns(domain: DomainRecord): Promise<void> {
   try {
     const updated = await refreshDomainDns(domain.id);
     const key = `domain_dns:${domain.id}`;
     if (updated.status === 'active') {
       resolveAlert(key, { notify: true, what: `DNS de ${domain.domain}` });
+      return;
+    }
+    // El dominio anterior de un cambio ya pasado deja de recibir aquí a
+    // propósito: la baja exige que su MX apunte a otro sitio, y el correo ya
+    // sale con el dominio nuevo. Avisar de que «su DNS ha dejado de ser
+    // correcto» llevaría a aplicarlo otra vez, devolver el MX a este servidor
+    // y bloquear la baja.
+    const cambio = updated.migracion;
+    if (cambio?.rol === 'origen' && (cambio.estado === 'pasado' || cambio.estado === 'dando_de_baja')) {
+      resolveAlert(key);
       return;
     }
     // Solo es una avería si el dominio llegó a estar bien: uno que nunca se

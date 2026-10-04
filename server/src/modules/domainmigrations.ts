@@ -23,12 +23,14 @@ import {
   dominiosExentos,
   errorBuzonUsadoPorApp,
   loginParaMotor,
+  nombreEnMotor,
 } from './direcciones';
 import {
   altaDeDominioSinCerrojo,
   asegurarDominioEnMotor,
   assertDominioNoReservado,
   confirmarRecepcionExterna,
+  esBuzonDeLaInstancia,
   getDomain,
   medirDominio,
   normalizeDomain,
@@ -38,7 +40,7 @@ import {
 import { normalizarOrigen } from './forms';
 import { crearEnlaceConfiguracion } from './portal';
 import { sincronizarRecepcionExterna } from './recepcion';
-import { getInstanceSettings } from './settings';
+import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import {
   crearDominioPropio,
   dominiosPropiosDe,
@@ -57,6 +59,9 @@ import { destinosMx } from './zonefile';
  *
  *   preparando ⇄ listo ──Pasar──▶ pasando ──▶ pasado ──Dar de baja──▶ dando_de_baja ──▶ dado_de_baja
  *        └──Cancelar──▶ cancelada            └──Volver──▶ volviendo ──▶ listo
+ *
+ *   (con error, «pasando» y «volviendo» admiten también Volver y Cancelar, y
+ *   «dando_de_baja», Reintentar la baja: nunca queda un cambio sin salida)
  *
  * - Preparar (asíncrono, lo avanzan «Comprobar» y el vigilante): en cuanto se
  *   prueba la propiedad de dominio2.es, cada buzón y alias del origen recibe
@@ -307,6 +312,11 @@ function errorDeAccion(err: unknown): unknown {
   return err;
 }
 
+/** Alerta informativa «dominio2.es está listo para el cambio». */
+function alertaListo(id: string): string {
+  return `cambio_dominio:${id}:listo`;
+}
+
 function estadoNoValido(): HttpError {
   return conflict(
     'Esta acción no está disponible en el estado actual del cambio de dominio.',
@@ -319,9 +329,17 @@ function estadoNoValido(): HttpError {
  * desde Skyway: allí van también la web, las variables y los despliegues, y
  * hacerlo solo aquí los dejaría desacompasados. Las acciones de las personas
  * («Actualizar mis dispositivos») no pasan por aquí.
+ *
+ * Skyway habla con el token de gestión de la administración: un token que se
+ * crea un usuario del cliente (POST /api/tokens solo pide su sesión) no lo
+ * es, y con él se saltaría esta regla.
  */
+function esIntegracionDeAdministracion(req: FastifyRequest): boolean {
+  return req.authVia?.kind === 'token' && req.user?.role === 'admin';
+}
+
 function exigirOrigen(req: FastifyRequest, fila: FilaCambio): void {
-  if (fila.origen === 'skyway' && req.authVia?.kind !== 'token') {
+  if (fila.origen === 'skyway' && !esIntegracionDeAdministracion(req)) {
     throw conflict(
       'Este cambio de dominio se gestiona desde Skyway (proyecto vinculado). Continúa desde allí.',
       'migration_managed_externally',
@@ -686,14 +704,31 @@ function pendientesConApps(id: string): { buzon: BuzonDelCambio; apps: string[] 
     .filter((x) => x.apps.length > 0);
 }
 
+/** Nombres de las aplicaciones de Skyway («skyway:tienda» → «tienda»), sin repetir. */
+function nombresApps(apps: string[]): string[] {
+  return [...new Set(apps.map((a) => a.slice('skyway:'.length)).filter(Boolean))];
+}
+
+/** «usa una aplicación para enviar (tienda)» o «usan varias aplicaciones para enviar (tienda, blog)». */
+function quienLoUsa(apps: string[]): string {
+  return apps.length > 1
+    ? `usan varias aplicaciones para enviar (${apps.join(', ')})`
+    : `usa una aplicación para enviar${apps.length === 1 ? ` (${apps[0]})` : ''}`;
+}
+
 function bloqueosBajaDe(fila: FilaCambio): AvisoCambio[] {
   const bloqueos: AvisoCambio[] = [];
   const conApps = pendientesConApps(fila.id);
   if (conApps.length > 0) {
-    const lista = conApps.map((x) => `${x.buzon.local_part}@${x.buzon.domain}`).join(', ');
+    const apps = nombresApps(conApps.flatMap((x) => x.apps));
+    const que = apps.length > 1 ? 'las aplicaciones no dejen' : 'la aplicación no deje';
+    const direcciones = conApps.map((x) => `${x.buzon.local_part}@${x.buzon.domain}`);
     bloqueos.push({
       code: 'mailbox_used_by_app',
-      mensaje: `${conApps.length === 1 ? 'Este buzón lo usa' : 'Estos buzones los usa'} una aplicación para enviar (${lista}). Actualízalos desde Skyway para que la aplicación no deje de enviar, o revoca antes sus contraseñas de aplicación «skyway:…».`,
+      mensaje:
+        conApps.length === 1
+          ? `${direcciones[0]} lo ${quienLoUsa(apps)}. Actualízalo desde Skyway para que ${que} de enviar, o revoca antes sus contraseñas de aplicación «skyway:…».`
+          : `Estos buzones los ${quienLoUsa(apps)}: ${direcciones.join(', ')}. Actualízalos desde Skyway para que ${que} de enviar, o revoca antes sus contraseñas de aplicación «skyway:…».`,
     });
   }
   if (alojaLaInstancia(fila.from_domain)) {
@@ -732,10 +767,10 @@ function avisosDe(fila: FilaCambio, viejo: ClientDomain | null, nuevo: ClientDom
   if (!['dado_de_baja', 'cancelada'].includes(fila.estado)) {
     const conApps = pendientesConApps(fila.id);
     if (conApps.length > 0) {
-      const apps = [...new Set(conApps.flatMap((x) => x.apps.map((a) => a.slice('skyway:'.length))))].join(', ');
+      const apps = nombresApps(conApps.flatMap((x) => x.apps));
       avisos.push({
         code: 'apps_smtp',
-        mensaje: `${conApps.length === 1 ? 'Un buzón lo usa' : `${conApps.length} buzones los usa`} una aplicación para enviar (${apps}): su usuario se actualiza desde Skyway.`,
+        mensaje: `${conApps.length === 1 ? 'Un buzón lo' : `${conApps.length} buzones los`} ${quienLoUsa(apps)}: su usuario se actualiza desde Skyway.`,
       });
     }
   }
@@ -762,6 +797,10 @@ async function vistaDe(fila: FilaCambio, ctx: ContextoVista = {}): Promise<Cambi
     usadoPorApps: appsSkywayDe(b.id),
   }));
   const conError = fila.error !== null;
+  // Un «Pasar» o un «Volver» que fallaron se pueden reintentar, volver o
+  // cancelar, y una baja que falló se reintenta: ningún estado en curso con
+  // error se queda sin salida (Skyway, además, solo ofrece lo que diga aquí).
+  const aMedias = (fila.estado === 'pasando' || fila.estado === 'volviendo') && conError;
   return {
     id: fila.id,
     clientId: fila.client_id,
@@ -780,9 +819,10 @@ async function vistaDe(fila: FilaCambio, ctx: ContextoVista = {}): Promise<Cambi
     recepcionPreparada: fila.direcciones_at !== null,
     compuertas,
     puedePasar: (fila.estado === 'listo' && bloqueantesOk) || (fila.estado === 'pasando' && conError),
-    puedeVolver: fila.estado === 'pasado' || ((fila.estado === 'pasando' || fila.estado === 'volviendo') && conError),
-    puedeCancelar: EN_PREPARACION.has(fila.estado),
-    puedeDarDeBaja: fila.estado === 'pasado' && bloqueosBaja.length === 0,
+    puedeVolver: fila.estado === 'pasado' || aMedias,
+    puedeCancelar: EN_PREPARACION.has(fila.estado) || aMedias,
+    puedeDarDeBaja:
+      (fila.estado === 'pasado' || (fila.estado === 'dando_de_baja' && conError)) && bloqueosBaja.length === 0,
     bloqueosBaja,
     buzones: { total: buzones.length, pendientes: buzones.filter((b) => b.pendiente).length, lista: buzones },
     alias: { total: aliasVivos(fila.id).length },
@@ -951,10 +991,10 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
   const avisos: AvisoCambio[] = [];
   const conApps = buzones.filter((b) => b.usadoPorApps.length > 0);
   if (conApps.length > 0) {
-    const apps = [...new Set(conApps.flatMap((b) => b.usadoPorApps.map((a) => a.slice('skyway:'.length))))].join(', ');
+    const apps = nombresApps(conApps.flatMap((b) => b.usadoPorApps));
     avisos.push({
       code: 'apps_smtp',
-      mensaje: `${conApps.length === 1 ? 'Un buzón lo usa' : `${conApps.length} buzones los usa`} una aplicación para enviar (${apps}). Seguirá enviando durante el cambio; su usuario se actualiza desde Skyway antes de dar de baja ${desde}.`,
+      mensaje: `${conApps.length === 1 ? 'Un buzón lo' : `${conApps.length} buzones los`} ${quienLoUsa(apps)}. ${apps.length > 1 ? 'Seguirán' : 'Seguirá'} enviando durante el cambio; su usuario se actualiza desde Skyway antes de dar de baja ${desde}.`,
     });
   }
   if (viejo && nombreNuevo) {
@@ -1095,12 +1135,14 @@ async function avanzarSinCerrojo(id: string, errorMedida: string | null, log?: R
     ...(error === null ? { paso: '' } : {}),
     ...(listo && actual.estado !== 'listo' ? { listo_at: now() } : {}),
   });
+  // «Está listo para el cambio» deja de ser cierto en cuanto falla una compuerta.
+  if (!listo && actual.estado === 'listo') resolveAlert(alertaListo(id));
   if (listo && actual.estado !== 'listo') {
     fireAlert({
       severity: 'info',
       type: 'cambio_dominio',
       clientId: actual.client_id,
-      dedupeKey: `cambio_dominio:${id}:listo`,
+      dedupeKey: alertaListo(id),
       title: `${hacia} está listo para el cambio`,
       message: `Las comprobaciones para pasar de ${visible(actual.from_domain)} a ${hacia} están correctas.`,
       remedy:
@@ -1151,34 +1193,95 @@ async function conPlazo(promesa: Promise<unknown>, ms: number): Promise<void> {
 
 /* ---------------------------------- Pasar ---------------------------------- */
 
-/** Ninguna parte local de los ítems existe ya en el destino como buzón o alias. */
+/**
+ * Ninguna parte local de los ítems que siguen existiendo está ya en el destino
+ * como buzón o alias. Uno borrado durante el cambio no cuenta: tras «Volver»,
+ * su nombre en dominio2.es puede ser ya de un buzón nuevo, y no hay nada que
+ * mudar que pueda chocar con él.
+ */
 function colisionEnDestino(fila: FilaCambio): string | null {
   if (!fila.to_domain_id) return null;
-  const locales = new Set(
-    [...itemsDe(fila.id, 'buzon'), ...itemsDe(fila.id, 'alias')].map((i) => i.local_part),
-  );
+  const locales = new Set([...buzonesDe(fila.id), ...aliasVivos(fila.id)].map((i) => i.local_part));
   const ocupadas = db
     .prepare(
-      `SELECT local_part FROM mailboxes WHERE domain_id = ?
-       UNION SELECT local_part FROM aliases WHERE domain_id = ?`,
+      `SELECT local_part FROM mailboxes WHERE domain_id = ? AND id NOT IN
+         (SELECT item_id FROM domain_migration_items WHERE migration_id = ?)
+       UNION SELECT local_part FROM aliases WHERE domain_id = ? AND id NOT IN
+         (SELECT item_id FROM domain_migration_items WHERE migration_id = ?)`,
     )
-    .all(fila.to_domain_id, fila.to_domain_id) as { local_part: string }[];
+    .all(fila.to_domain_id, fila.id, fila.to_domain_id, fila.id) as { local_part: string }[];
   return ocupadas.find((o) => locales.has(o.local_part))?.local_part ?? null;
 }
 
-/** Reescribe en los alias de TODA la instancia los destinos que son exactamente una dirección del mapa. */
-function reescribirDestinos(mapa: Map<string, string>, dominioViejo: string): number {
-  if (mapa.size === 0) return 0;
+/* ----------------------------- Destinos de alias ---------------------------- */
+
+/**
+ * Dirección en `de` → la misma en `a` de cada buzón del cambio que sigue
+ * existiendo. Uno borrado no entra: su dirección ya no está en ningún alias
+ * (borrar un buzón la quita) y, tras «Volver», la del dominio nuevo puede ser
+ * de otro buzón creado después.
+ */
+function mapaDeBuzones(fila: FilaCambio, de: string, a: string): Map<string, string> {
+  return new Map(
+    buzonesDe(fila.id).map((b) => [`${b.local_part}@${de}`.toLowerCase(), `${b.local_part}@${a}`.toLowerCase()]),
+  );
+}
+
+interface AliasConDestinos {
+  id: string;
+  local_part: string;
+  domain: string;
+  destinations_json: string;
+}
+
+/** Alias de TODA la instancia con algún destino que es exactamente una de estas direcciones. */
+function aliasQueApuntanA(direcciones: Set<string>, dominio: string): AliasConDestinos[] {
+  if (direcciones.size === 0) return [];
   const candidatos = db
-    .prepare('SELECT id, destinations_json FROM aliases WHERE lower(destinations_json) LIKE ?')
-    .all(`%@${dominioViejo}"%`) as { id: string; destinations_json: string }[];
+    .prepare(
+      `SELECT a.id, a.local_part, d.domain, a.destinations_json
+       FROM aliases a JOIN domains d ON d.id = a.domain_id
+       WHERE lower(a.destinations_json) LIKE ?`,
+    )
+    .all(`%@${dominio}"%`) as AliasConDestinos[];
+  return candidatos.filter((a) => origenesDe(a.destinations_json).some((d) => direcciones.has(d.toLowerCase())));
+}
+
+/** Par alias–destino que «Volver» no toca (no lo escribió el cambio). */
+interface DestinoPrevio {
+  alias: string;
+  destino: string;
+}
+
+/**
+ * Destinos que ya eran una dirección del dominio nuevo ANTES de pasar: p. ej.
+ * un reenvío de otro cliente a ana@dominio2.es de cuando ese dominio aún no
+ * estaba en la instancia. «Pasar» no los escribió, así que «Volver» no puede
+ * convertirlos en ana@dominio.es. Se anotan en la tabla de ajustes, con una
+ * clave por cambio, porque el esquema del cambio no tiene columna para ellos;
+ * se borran al volver y al terminar.
+ */
+function claveDestinosPrevios(id: string): string {
+  return `cambio_dominio:${id}:destinos_previos`;
+}
+
+function olvidarDestinosPrevios(id: string): void {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(claveDestinosPrevios(id));
+}
+
+/**
+ * Reescribe en los alias de TODA la instancia los destinos que son
+ * exactamente una dirección del mapa, salvo los pares de `conservar`
+ * («<aliasId> <destino>»). Devuelve cuántos alias cambió.
+ */
+function reescribirDestinos(mapa: Map<string, string>, dominioViejo: string, conservar = new Set<string>()): number {
   let cambiados = 0;
-  for (const alias of candidatos) {
+  for (const alias of aliasQueApuntanA(new Set(mapa.keys()), dominioViejo)) {
     const destinos = origenesDe(alias.destinations_json);
     let cambia = false;
     const nuevos = destinos.map((d) => {
       const otro = mapa.get(d.toLowerCase());
-      if (!otro) return d;
+      if (!otro || conservar.has(`${alias.id} ${d.toLowerCase()}`)) return d;
       cambia = true;
       return otro;
     });
@@ -1187,6 +1290,40 @@ function reescribirDestinos(mapa: Map<string, string>, dominioViejo: string): nu
     cambiados += 1;
   }
   return cambiados;
+}
+
+/**
+ * Reenvíos de la instancia a un buzón que se muda. En el motor pueden ser
+ * miembros externos POR DIRECCIÓN (un alias creado cuando dominio.es aún no
+ * tenía la propiedad comprobada, p. ej. de otro cliente): seguirían apuntando
+ * a ana@dominio.es y, en cuanto su MX dejara de apuntar aquí o tras la baja,
+ * ese correo saldría a Internet mientras el panel enseña ana@dominio2.es. Se
+ * vuelven a escribir con el buzón como miembro por su usuario del motor (es
+ * decir, por id), como hacen el borrado de un buzón y el de un dominio:
+ * entregan en el mismo buzón pase lo que pase con sus direcciones.
+ */
+async function reenviosAlMotor(fila: FilaCambio): Promise<void> {
+  const engine = getEngine();
+  const buzones = new Map(buzonesDe(fila.id).map((b) => [`${b.local_part}@${fila.from_domain}`.toLowerCase(), b.id]));
+  const delCambio = new Set(itemsDe(fila.id, 'alias').map((a) => a.item_id));
+  for (const alias of aliasQueApuntanA(new Set(buzones.keys()), fila.from_domain)) {
+    const internos: string[] = [];
+    const externos: string[] = [];
+    for (const destino of origenesDe(alias.destinations_json)) {
+      const buzonId = buzones.get(destino.toLowerCase());
+      if (buzonId) {
+        const login = await loginDeBuzon(buzonId);
+        if (login) internos.push(login);
+      } else if (esBuzonDeLaInstancia(destino)) {
+        internos.push(nombreEnMotor(destino));
+      } else {
+        externos.push(destino);
+      }
+    }
+    // Un alias del cambio ya se llama como el dominio nuevo (se acaba de renombrar).
+    const nombre = delCambio.has(alias.id) ? `${alias.local_part}@${fila.to_domain}` : `${alias.local_part}@${alias.domain}`;
+    await engine.upsertAlias(nombre, [...new Set(internos)], externos);
+  }
 }
 
 async function motorPasar(fila: FilaCambio): Promise<void> {
@@ -1213,6 +1350,8 @@ async function motorPasar(fila: FilaCambio): Promise<void> {
     const extra = (actual?.emails ?? []).filter((e) => e !== viejo && e !== nuevo);
     await engine.renamePrincipal(viejo, nuevo, { expectEmail: viejo, emails: [nuevo, viejo, ...extra] });
   }
+  actualizar(fila.id, { paso: 'reenvíos' });
+  await reenviosAlMotor(fila);
   await engine.reloadDirectory();
 }
 
@@ -1237,9 +1376,18 @@ function basePasar(fila: FilaCambio): void {
        AND domain_id = @fromId`,
   ).run(params);
   // Los destinos de alias son direcciones: los que apuntaban a un buzón que
-  // se muda apuntan ya a su dirección nueva. En el motor no hace falta nada:
-  // los miembros de las listas van por id.
-  const mapa = new Map(itemsDe(fila.id, 'buzon').map((b) => [`${b.local_part}@${from}`, `${b.local_part}@${to}`]));
+  // se muda apuntan ya a su dirección nueva. En el motor ya van por id
+  // (reenviosAlMotor). Antes se anota lo que ya apuntaba al dominio nuevo:
+  // eso no lo escribe el cambio y «Volver» no lo toca.
+  const mapa = mapaDeBuzones(fila, from, to);
+  const nuevas = new Set(mapa.values());
+  const previos: DestinoPrevio[] = aliasQueApuntanA(nuevas, to).flatMap((a) =>
+    origenesDe(a.destinations_json)
+      .map((d) => d.toLowerCase())
+      .filter((d) => nuevas.has(d))
+      .map((destino) => ({ alias: a.id, destino })),
+  );
+  setJsonSetting(claveDestinosPrevios(fila.id), previos);
   reescribirDestinos(mapa, from);
   // Formularios: la web servida en el dominio nuevo debe poder enviar.
   const formularios = db
@@ -1305,11 +1453,50 @@ function baseVolver(fila: FilaCambio): void {
      WHERE id IN (SELECT item_id FROM domain_migration_items WHERE migration_id = @id AND tipo = 'alias')
        AND domain_id = @toId`,
   ).run(params);
-  const mapa = new Map(itemsDe(fila.id, 'buzon').map((b) => [`${b.local_part}@${to}`, `${b.local_part}@${from}`]));
-  reescribirDestinos(mapa, to);
+  // Solo lo que escribió «Pasar», y los destinos que se crearon después con
+  // la dirección nueva de un buzón del cambio (en el motor van por id). Si
+  // «Pasar» nunca llegó a la base (falló antes), no hay nada que deshacer.
+  const previos = getJsonSetting<DestinoPrevio[]>(claveDestinosPrevios(fila.id));
+  if (previos) {
+    const conservar = new Set(previos.map((p) => `${p.alias} ${p.destino}`));
+    reescribirDestinos(mapaDeBuzones(fila, to, from), to, conservar);
+  }
+  olvidarDestinosPrevios(fila.id);
   const viejo = webmailViejo(fila);
   moverWebmailPrincipal(fila.client_id, webmailNuevo(fila, viejo), viejo);
   actualizar(fila.id, { estado: 'listo', pasado_at: null, paso: '', error: null });
+}
+
+/**
+ * Guarda el destino del cambio: el dominio nuevo si ya era del cliente, o lo
+ * da de alta (con el viejo ya exento del plan, así que cabe aunque el plan
+ * esté justo). Si falla, el cambio a medio crear se elimina (sus ítems van en
+ * cascada): nada ha tocado todavía el motor.
+ */
+async function darDeAltaDestino(
+  req: FastifyRequest,
+  id: string,
+  alta: { clientId: string; to: string; comoAdministrador: boolean; esAdministrador: boolean },
+): Promise<void> {
+  try {
+    const destino = db.prepare('SELECT id FROM domains WHERE domain = ?').get(alta.to) as { id: string } | undefined;
+    if (destino) {
+      actualizar(id, { to_domain_id: destino.id, error: null });
+      return;
+    }
+    const toId = await altaDeDominioSinCerrojo({
+      clientId: alta.clientId,
+      domain: alta.to,
+      comoAdministrador: alta.comoAdministrador,
+      esAdministrador: alta.esAdministrador,
+      avisar: (err) => req.log.warn({ err, domain: alta.to }, 'No se ha podido generar el DKIM del dominio nuevo'),
+    });
+    actualizar(id, { to_domain_id: toId, creo_destino: 1, error: null });
+    audit(req, 'domain.created', { id: toId, domain: alta.to, clientId: alta.clientId, migrationId: id }, alta.clientId);
+  } catch (err) {
+    db.prepare('DELETE FROM domain_migrations WHERE id = ?').run(id);
+    throw err;
+  }
 }
 
 /* -------------------------------- Rutas: datos ------------------------------- */
@@ -1371,24 +1558,36 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = getDomain(body.fromDomainId);
     const clientId = inicial.clientId;
     requireClientAccess(req, clientId);
-    const porToken = req.authVia?.kind === 'token';
-    if (body.origen === 'skyway' && !porToken) {
+    if (body.origen === 'skyway' && !esIntegracionDeAdministracion(req)) {
       throw forbidden(
-        'Solo una integración con un token de gestión puede crear un cambio de dominio de Skyway.',
+        'Solo Skyway, con el token de gestión de la administración, puede crear un cambio de dominio de Skyway.',
         'token_required',
       );
     }
     const to = normalizeDomain(body.toDomain);
     const comoAdministrador = user.role === 'admin' && !pideSoloCliente(req.query);
     const permitirInstancia = permiteInstancia(user, req.query);
+    const alta = { clientId, to, comoAdministrador, esAdministrador: user.role === 'admin' };
 
-    const { id, creado } = await withLock('altas:dominios', () =>
+    const { id, creado, completado } = await withLock('altas:dominios', () =>
       withLock(clientLockKey(clientId), async () => {
         const existente = cambioIdentico(inicial.id, to);
-        if (existente) return { id: existente.id, creado: false };
+        if (existente?.to_domain_id) return { id: existente.id, creado: false, completado: false };
         const from = getDomain(inicial.id);
         const { bloqueosHttp } = calcularPlan(from, to, { comoAdministrador });
         const primero = bloqueosHttp[0];
+        if (existente) {
+          // Un reinicio cortó la creación mientras se daba de alta
+          // dominio2.es (el cambio existe, pero sin destino): Skyway reintenta
+          // y aquí se termina. Si ya no se puede, el cambio a medio crear se
+          // retira, como cuando la creación falla.
+          if (primero) {
+            db.prepare('DELETE FROM domain_migrations WHERE id = ?').run(existente.id);
+            throw new HttpError(primero.status, primero.mensaje, primero.code);
+          }
+          await darDeAltaDestino(req, existente.id, alta);
+          return { id: existente.id, creado: false, completado: true };
+        }
         if (primero) throw new HttpError(primero.status, primero.mensaje, primero.code);
 
         const nuevoId = randomId('dmg');
@@ -1428,33 +1627,12 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
           }
           throw err;
         }
-
-        try {
-          const destino = db.prepare('SELECT id FROM domains WHERE domain = ?').get(to) as { id: string } | undefined;
-          if (destino) {
-            actualizar(nuevoId, { to_domain_id: destino.id });
-          } else {
-            // Con el cambio ya guardado, el origen está exento del plan: el
-            // dominio nuevo cabe aunque el plan esté justo.
-            const toId = await altaDeDominioSinCerrojo({
-              clientId,
-              domain: to,
-              comoAdministrador,
-              esAdministrador: user.role === 'admin',
-              avisar: (err) => req.log.warn({ err, domain: to }, 'No se ha podido generar el DKIM del dominio nuevo'),
-            });
-            actualizar(nuevoId, { to_domain_id: toId, creo_destino: 1 });
-            audit(req, 'domain.created', { id: toId, domain: to, clientId, migrationId: nuevoId }, clientId);
-          }
-        } catch (err) {
-          db.prepare('DELETE FROM domain_migrations WHERE id = ?').run(nuevoId);
-          throw err;
-        }
-        return { id: nuevoId, creado: true };
+        await darDeAltaDestino(req, nuevoId, alta);
+        return { id: nuevoId, creado: true, completado: false };
       }),
     );
 
-    if (creado) {
+    if (creado || completado) {
       const fila = exigir(id);
       audit(
         req,
@@ -1572,15 +1750,32 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       if ('unavailable' in r) throw badRequest(r.unavailable, 'cloudflare_unavailable');
       anotarNombresCloudflare(fila.id, r.applied);
       const errorMx = r.errors.find((e) => e.type.toUpperCase() === 'MX');
+      if (errorMx) {
+        // El MX no ha cambiado: no se audita como tal, solo lo que sí se escribió.
+        if (r.applied.length > 0) {
+          audit(
+            req,
+            'cloudflare.dns_applied',
+            {
+              domainId: to.id,
+              domain: to.domain,
+              zone: r.zone.name,
+              applied: r.applied.length,
+              errors: r.errors.length,
+              replaceConflicts: false,
+              migrationId: fila.id,
+            },
+            fila.client_id,
+          );
+        }
+        throw new HttpError(502, `Cloudflare no ha aceptado el cambio del MX: ${errorMx.error}`, 'cloudflare_error');
+      }
       audit(
         req,
         'domain.migration_mx_changed',
         { id: fila.id, domain: to.domain, applied: r.applied.length, errors: r.errors.length },
         fila.client_id,
       );
-      if (errorMx) {
-        throw new HttpError(502, `Cloudflare no ha aceptado el cambio del MX: ${errorMx.error}`, 'cloudflare_error');
-      }
     });
     await avanzarPreparacion(inicial.id, (msg) => req.log.warn(msg));
     return vistaDe(exigir(inicial.id));
@@ -1612,7 +1807,10 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       });
       const fallidas = compuertas.filter((c) => c.bloquea && !c.ok);
       if (fallidas.length > 0) {
-        if (fila.estado === 'listo') actualizar(fila.id, { estado: 'preparando' });
+        if (fila.estado === 'listo') {
+          actualizar(fila.id, { estado: 'preparando' });
+          resolveAlert(alertaListo(fila.id));
+        }
         throw conflict(
           `Todavía no se puede pasar a ${hacia}: ${fallidas.map((c) => motivoDe(c, hacia)).join('; ')}.`,
           'migration_not_ready',
@@ -1637,7 +1835,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     });
     const fila = exigir(inicial.id);
     if (hecho) {
-      resolveAlert(`cambio_dominio:${fila.id}:listo`);
+      resolveAlert(alertaListo(fila.id));
       // Los nombres de autoconfiguración de dominio2.es pueden publicarse ya.
       void refreshAutoconfigHosts().catch(() => undefined);
       audit(
@@ -1675,26 +1873,46 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     return vistaDe(fila);
   });
 
-  /** Cancelar el cambio (antes de pasar). */
+  /**
+   * Cancelar el cambio: antes de pasar, o tras un «Pasar» o un «Volver» que
+   * fallaron (primero se vuelve a dominio.es). Si falla a medias, el cambio
+   * queda con error y sin la pre-recepción dada por hecha: la preparación la
+   * rehace y «Cancelar» se puede repetir.
+   */
   app.post('/api/domain-migrations/:id/cancel', async (req) => {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     vacioSchema.parse(req.body ?? {});
     const resultado = await conCerrojos(inicial, async () => {
       const fila = exigir(inicial.id);
-      if (!EN_PREPARACION.has(fila.estado)) throw estadoNoValido();
+      const aMedias = (fila.estado === 'pasando' || fila.estado === 'volviendo') && fila.error !== null;
+      if (!EN_PREPARACION.has(fila.estado) && !aMedias) throw estadoNoValido();
+      // Las comprobaciones no cambian nada: si no pasan, el cambio sigue igual.
+      await comprobarCancelacion(fila);
       try {
         return await cancelarSinCerrojo(req, fila);
       } catch (err) {
+        // Si falló al volver a dominio.es, el error es el de «Volver» (la
+        // interfaz ya lo presenta así); si no, el de la cancelación.
+        const enVolver = leer(fila.id)?.estado === 'volviendo';
+        actualizar(fila.id, {
+          error: enVolver ? mensajeDe(err) : `No se ha podido cancelar el cambio: ${mensajeDe(err)}`,
+        });
         throw errorDeAccion(err);
       }
     });
     const fila = exigir(inicial.id);
-    resolveAlert(`cambio_dominio:${fila.id}:listo`);
+    resolveAlert(alertaListo(fila.id));
     audit(
       req,
       'domain.migration_cancelled',
-      { id: fila.id, from: fila.from_domain, to: fila.to_domain, destinoEliminado: resultado.destinoEliminado },
+      {
+        id: fila.id,
+        from: fila.from_domain,
+        to: fila.to_domain,
+        destinoEliminado: resultado.destinoEliminado,
+        volvio: resultado.volvio,
+      },
       fila.client_id,
     );
     return vistaDe(fila);
@@ -1796,32 +2014,61 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
 
 /* --------------------------------- Cancelar --------------------------------- */
 
-async function cancelarSinCerrojo(req: FastifyRequest, fila: FilaCambio): Promise<{ destinoEliminado: boolean }> {
-  const engine = getEngine();
-  const to = dominioOpcional(fila.to_domain_id);
-  const hacia = visible(fila.to_domain);
-  // También tras una pre-recepción a medias (falló a mitad) o una
-  // cancelación anterior a medias: puede haber direcciones de dominio2.es.
-  const conDirecciones =
-    fila.direcciones_at !== null || fila.paso.startsWith('direcciones') || fila.paso.startsWith('quitando');
+/** ¿Tiene (o puede tener, tras un fallo a medias) direcciones de dominio2.es? */
+function conPreRecepcion(fila: FilaCambio): boolean {
+  return (
+    fila.direcciones_at !== null ||
+    fila.paso.startsWith('direcciones') ||
+    fila.paso.startsWith('quitando') ||
+    fila.estado === 'pasando' ||
+    fila.estado === 'volviendo'
+  );
+}
 
-  if (fila.creo_destino === 1 && fila.direcciones_at !== null && to) {
-    // Quitar las direcciones haría rechazar el correo que ya llega a @dominio2.es.
-    const mx = await mxApuntaAqui(to.domain);
-    if (mx === null) {
-      throw new HttpError(
-        503,
-        `No se ha podido consultar el DNS de ${hacia}. Vuelve a intentarlo en unos minutos.`,
-        'dns_unknown',
-      );
-    }
-    if (mx) {
-      throw conflict(
-        `El MX de ${hacia} ya apunta a este servidor. Cámbialo o quítalo antes de cancelar: si no, el correo que llegue a @${hacia} se rechazaría.`,
-        'migration_new_mx_here',
-      );
-    }
+/**
+ * Antes de cancelar: si los buzones ya tienen sus direcciones de dominio2.es,
+ * su MX no puede apuntar a este servidor. Quitarlas haría rechazar el correo
+ * que ya llega (crítica C5), tanto si el dominio lo creó el cambio como si ya
+ * existía (p. ej. se cambió el MX desde otro proveedor siguiendo el asistente).
+ */
+async function comprobarCancelacion(fila: FilaCambio): Promise<void> {
+  if (!conPreRecepcion(fila)) return;
+  const hacia = visible(fila.to_domain);
+  const mx = await mxApuntaAqui(fila.to_domain);
+  if (mx === null) {
+    throw new HttpError(
+      503,
+      `No se ha podido consultar el DNS de ${hacia}. Vuelve a intentarlo en unos minutos.`,
+      'dns_unknown',
+    );
   }
+  if (mx) {
+    throw conflict(
+      `El MX de ${hacia} ya apunta a este servidor. Cámbialo o quítalo antes de cancelar: si no, el correo que llegue a @${hacia} se rechazaría.`,
+      'migration_new_mx_here',
+    );
+  }
+}
+
+async function cancelarSinCerrojo(
+  req: FastifyRequest,
+  inicial: FilaCambio,
+): Promise<{ destinoEliminado: boolean; volvio: boolean }> {
+  const engine = getEngine();
+  let fila = inicial;
+  const conDirecciones = conPreRecepcion(fila);
+
+  // Tras un «Pasar» o un «Volver» que fallaron, primero se vuelve a
+  // dominio.es: es lo mismo que «Volver» y deja el cambio en «listo».
+  let volvio = false;
+  if (fila.estado === 'pasando' || fila.estado === 'volviendo') {
+    actualizar(fila.id, { estado: 'volviendo', error: null });
+    await motorVolver(fila);
+    db.transaction(() => baseVolver(exigir(fila.id)))();
+    fila = exigir(fila.id);
+    volvio = true;
+  }
+  const to = dominioOpcional(fila.to_domain_id);
 
   // Quien actualizó al usuario de dominio2.es antes de un «Volver» vuelve a
   // entrar con su dirección vigente (la de dominio.es).
@@ -1837,6 +2084,12 @@ async function cancelarSinCerrojo(req: FastifyRequest, fila: FilaCambio): Promis
     const buzones = itemsDe(fila.id, 'buzon');
     const alias = aliasVivos(fila.id);
     const total = buzones.length + alias.length;
+    // Antes de tocar el motor, la pre-recepción deja de darse por hecha: si
+    // algo falla a medias, la vista no dirá «dominio2.es ya recibe en los
+    // buzones» (alguien podría cambiar el MX a este servidor) y la siguiente
+    // vuelta de la preparación la rehace entera, también tras un reinicio.
+    if (fila.estado === 'listo') resolveAlert(alertaListo(fila.id));
+    actualizar(fila.id, { estado: 'preparando', direcciones_at: null, paso: `quitando direcciones 0/${total}` });
     let k = 0;
     for (const b of buzones) {
       k += 1;
@@ -1855,7 +2108,6 @@ async function cancelarSinCerrojo(req: FastifyRequest, fila: FilaCambio): Promis
       }
     }
     await engine.reloadDirectory();
-    actualizar(fila.id, { direcciones_at: null, paso: '' });
   }
 
   // El webmail nuevo lo creó este cambio: se va con él.
@@ -1881,8 +2133,11 @@ async function cancelarSinCerrojo(req: FastifyRequest, fila: FilaCambio): Promis
     }
   }
 
-  actualizar(fila.id, { estado: 'cancelada', terminado_at: now(), paso: '', error: null });
-  return { destinoEliminado };
+  db.transaction(() => {
+    actualizar(fila.id, { estado: 'cancelada', terminado_at: now(), paso: '', error: null });
+    olvidarDestinosPrevios(fila.id);
+  })();
+  return { destinoEliminado, volvio };
 }
 
 /* -------------------------------- Dar de baja ------------------------------- */
@@ -1940,7 +2195,7 @@ async function darDeBajaSinCerrojo(
   if (quedan.length > 0) {
     throw new HttpError(
       502,
-      `En el servidor de correo, ${quedan.join(', ')} conserva direcciones de ${desde}. Revísalo y vuelve a intentarlo.`,
+      `En el servidor de correo, ${quedan.join(', ')} ${quedan.length === 1 ? 'conserva' : 'conservan'} direcciones de ${desde}. Revísalo y vuelve a intentarlo.`,
       'engine_error',
     );
   }
@@ -1967,6 +2222,7 @@ async function darDeBajaSinCerrojo(
     for (const propio of propios) eliminarDominioPropio(propio.id);
     db.prepare('DELETE FROM domains WHERE id = ?').run(fromId);
     actualizar(fila.id, { estado: 'dado_de_baja', terminado_at: now(), paso: '', error: null });
+    olvidarDestinosPrevios(fila.id);
   })();
   // El vigilante ya no volverá a medir este dominio.
   resolveAlert(`domain_dns:${fromId}`);
@@ -1981,18 +2237,37 @@ async function darDeBajaSinCerrojo(
  * sola: quien la lanzó decide (todas son idempotentes).
  */
 export function marcarCambiosInterrumpidos(): number {
-  return db
+  const t = now();
+  const enCurso = db
     .prepare(
       `UPDATE domain_migrations SET error = 'Interrumpido por un reinicio del panel. Pulsa «Reintentar».', updated_at = ?
        WHERE estado IN ('pasando', 'volviendo', 'dando_de_baja') AND error IS NULL`,
     )
-    .run(now()).changes;
+    .run(t).changes;
+  // Una creación que el reinicio cortó mientras se daba de alta dominio2.es:
+  // el cambio existe sin destino y la preparación no puede avanzar. Crearlo
+  // otra vez con el mismo dominio lo termina (Skyway lo hace al reintentar).
+  const sinDestino = db
+    .prepare(
+      `UPDATE domain_migrations SET error = 'La preparación se interrumpió por un reinicio del panel antes de dar de alta el dominio nuevo. Cancela el cambio y vuelve a crearlo.', updated_at = ?
+       WHERE estado = 'preparando' AND to_domain_id IS NULL AND error IS NULL`,
+    )
+    .run(t).changes;
+  // Una cancelación cortada a mitad ya dejó de dar la pre-recepción por hecha
+  // (la preparación la rehace): solo falta decirlo.
+  const cancelando = db
+    .prepare(
+      `UPDATE domain_migrations SET error = 'La cancelación se interrumpió por un reinicio del panel. Vuelve a pulsar «Cancelar el cambio».', updated_at = ?
+       WHERE estado = 'preparando' AND paso LIKE 'quitando%' AND error IS NULL`,
+    )
+    .run(t).changes;
+  return enCurso + sinDestino + cancelando;
 }
 
 /**
  * Lo que hace el vigilante con los cambios de dominio: avanza la preparación
- * de los que esperan al DNS y, tras pasar, convierte en principal el webmail
- * nuevo en cuanto está activo.
+ * de los que esperan al DNS y, tras pasar (o tras la baja), convierte en
+ * principal el webmail nuevo en cuanto está activo.
  */
 export async function vigilarCambiosDeDominio(log?: Registro): Promise<void> {
   const enPreparacion = db
@@ -2000,7 +2275,16 @@ export async function vigilarCambiosDeDominio(log?: Registro): Promise<void> {
     .all() as { id: string }[];
   for (const { id } of enPreparacion) await avanzarPreparacion(id, log);
 
-  const pasados = db.prepare("SELECT * FROM domain_migrations WHERE estado = 'pasado'").all() as FilaCambio[];
+  // Tras pasar, y también tras una baja que llegó antes de que el webmail
+  // nuevo estuviera activo (sin el viejo, el cliente se queda sin principal).
+  // Las bajas, solo durante un mes: después, lo que haya es elección suya.
+  const pasados = db
+    .prepare(
+      `SELECT * FROM domain_migrations
+       WHERE estado IN ('pasado', 'dando_de_baja')
+          OR (estado = 'dado_de_baja' AND creo_webmail_id IS NOT NULL AND terminado_at >= ?)`,
+    )
+    .all(now() - 30 * 24 * 3600_000) as FilaCambio[];
   for (const fila of pasados) {
     try {
       const viejo = webmailViejo(fila);
