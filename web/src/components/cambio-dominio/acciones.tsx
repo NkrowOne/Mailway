@@ -20,6 +20,9 @@ export function useAccionCambio<V = void>(
   const toast = useToast();
   return useMutation({
     mutationFn: (variables: V) => accion(id, variables),
+    // Una relectura en vuelo (la vista se sondea) no debe pisar la vista que
+    // devuelve la acción con una anterior.
+    onMutate: () => queryClient.cancelQueries({ queryKey: claveCambio(id) }),
     onSuccess: async (vista) => {
       queryClient.setQueryData(claveCambio(id), vista);
       if (opciones.aviso) toast('ok', opciones.aviso(vista));

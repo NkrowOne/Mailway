@@ -16,7 +16,7 @@ import {
   type RespuestaAltaDominio,
 } from '../lib/cloudflare';
 import { sugerenciaSinWww } from '../lib/dominios';
-import { etiquetaMigracion } from '../lib/cambioDominio';
+import { dominiosQueCuentan, etiquetaMigracion } from '../lib/cambioDominio';
 import { formatDate, plural } from '../lib/format';
 import { useAltaDesdeEnlace, useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
@@ -74,17 +74,19 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
 
   // El dominio anterior de un cambio de dominio abierto no cuenta en el plan
   // (el uso del cliente sí lo incluye): se descuenta como hace el servidor.
-  const exentosDe = (idCliente: string) =>
-    (domains.data?.domains ?? []).filter((d) => d.clientId === idCliente && d.migracion && !d.migracion.cuentaEnPlan)
-      .length;
+  const usadosEnPlan = (cliente: { id: string; usage: { domains: number } }) =>
+    dominiosQueCuentan(
+      cliente.usage.domains,
+      (domains.data?.domains ?? []).filter((d) => d.clientId === cliente.id),
+    );
 
   // Límite del plan: un cliente lo ve antes de rellenar nada; el
   // administrador, al elegir el cliente en el formulario.
   const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
-  const usadosPropio = clientePropio ? Math.max(0, clientePropio.usage.domains - exentosDe(clientePropio.id)) : 0;
+  const usadosPropio = clientePropio ? usadosEnPlan(clientePropio) : 0;
   const limitePropio = clientePropio ? usadosPropio >= clientePropio.plan.maxDomains : false;
   const elegido = isAdmin && clientId ? clientes.get(clientId) : undefined;
-  const limiteElegido = elegido ? elegido.usage.domains - exentosDe(elegido.id) >= elegido.plan.maxDomains : false;
+  const limiteElegido = elegido ? usadosEnPlan(elegido) >= elegido.plan.maxDomains : false;
 
   const create = useMutation({
     mutationFn: (confirmWww: boolean) =>

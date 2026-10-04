@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ApiError } from '../../lib/api';
@@ -37,17 +37,25 @@ export function HojaCambioDominio({
   terminado?: CambioDominioVista | null;
 }) {
   const migracion = dominio.migracion ?? null;
+  /*
+    El cambio dado de baja mientras la ficha estaba abierta (o el que llega
+    al navegar desde la del dominio anterior). Se guarda aquí, y no en el
+    asistente, porque al releer el dominio `migracion` pasa a null y el
+    asistente desaparece: sin esto, la tarjeta saltaba a «Elegir» y se perdía
+    el aviso de mantener registrado el dominio anterior.
+  */
+  const [final, setFinal] = useState<CambioDominioVista | null>(terminado ?? null);
   return (
     <div id={ANCLA_CAMBIO} className="scroll-mt-20">
       <Hoja title="Cambiar de dominio" flush>
         {migracion ? (
-          <AsistenteCambio key={migracion.id} id={migracion.id} dominio={dominio} />
-        ) : terminado ? (
+          <AsistenteCambio key={migracion.id} id={migracion.id} dominio={dominio} onDadoDeBaja={setFinal} />
+        ) : final && final.estado === 'dado_de_baja' ? (
           <>
             <Seccion>
               <PasosCambio actual="terminado" />
             </Seccion>
-            <CambioTerminado vista={terminado} />
+            <CambioTerminado vista={final} />
           </>
         ) : (
           <>
@@ -62,19 +70,49 @@ export function HojaCambioDominio({
   );
 }
 
-function AsistenteCambio({ id, dominio }: { id: string; dominio: DominioCorreo }) {
+/**
+ * Cada cuánto se relee la vista. Con una acción en marcha, cada pocos
+ * segundos, para seguir el paso. En la transición, cada 30 segundos: las
+ * personas actualizan sus dispositivos desde «Mi buzón» o su enlace, y Skyway
+ * puede volver o dar de baja, sin pasar por esta página. En la preparación
+ * no hace falta: la comprobación de cada 30 segundos ya devuelve la vista.
+ * Con la pestaña oculta no se relee (React Query no sondea en segundo plano).
+ */
+function intervaloVista(v: CambioDominioVista | undefined): number | false {
+  if (!v) return false;
+  if (accionEnMarcha(v)) return 3000;
+  if (faseDe(v.estado) === 'transicion') return 30_000;
+  return false;
+}
+
+function AsistenteCambio({
+  id,
+  dominio,
+  onDadoDeBaja,
+}: {
+  id: string;
+  dominio: DominioCorreo;
+  onDadoDeBaja: (vista: CambioDominioVista) => void;
+}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const vista = useQuery({
     queryKey: claveCambio(id),
     queryFn: () => cambioDominio.obtener(id),
-    // Mientras otra pestaña (o Skyway) pasa, vuelve o da de baja, se sigue el avance.
-    refetchInterval: (q) => (q.state.data && accionEnMarcha(q.state.data) ? 3000 : false),
+    refetchInterval: (q) => intervaloVista(q.state.data),
+    // Al volver a la pestaña se relee: el portal, los enlaces o Skyway
+    // cambian el cambio sin pasar por esta página.
+    refetchOnWindowFocus: true,
   });
 
   // Un cambio que ya terminó (cancelado o dado de baja en otro sitio) deja la
-  // ficha con un `migracion` antiguo: se relee el dominio.
+  // ficha con un `migracion` antiguo: se relee el dominio. Si se dio de baja,
+  // la tarjeta conserva el paso «Terminado» aunque el asistente desaparezca.
   const fase = vista.data ? faseDe(vista.data.estado) : null;
+  const dadoDeBaja = vista.data?.estado === 'dado_de_baja' ? vista.data : null;
+  useEffect(() => {
+    if (dadoDeBaja) onDadoDeBaja(dadoDeBaja);
+  }, [dadoDeBaja, onDadoDeBaja]);
   useEffect(() => {
     if (fase === 'terminado') void queryClient.invalidateQueries({ queryKey: ['domain', dominio.id] });
   }, [fase, dominio.id, queryClient]);
@@ -118,8 +156,9 @@ function AsistenteCambio({ id, dominio }: { id: string; dominio: DominioCorreo }
           onDadoDeBaja={(nueva) => {
             // La ficha del dominio anterior ya no existe: se sigue en la del
             // nuevo, sustituyendo la entrada del historial («Atrás» no debe
-            // llevar a un dominio que ya no está).
-            if (nueva.hacia.domainId) {
+            // llevar a un dominio que ya no está). Si la ficha abierta ya es
+            // la del nuevo, no se navega: «Terminado» lo guarda la tarjeta.
+            if (nueva.hacia.domainId && nueva.hacia.domainId !== dominio.id) {
               navigate(`/dominios/${nueva.hacia.domainId}`, { replace: true, state: { cambioTerminado: nueva } });
             }
           }}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api, type Mailbox } from '../../lib/api';
 import { cambioDominio, mensajeCambio, textoMensajeEquipo, type CambioDominioVista } from '../../lib/cambioDominio';
 import { AvisoError, BotonCopiar, Cargando, Dialogo } from '../../ui/kit';
@@ -7,9 +7,15 @@ import { AvisoError, BotonCopiar, Cargando, Dialogo } from '../../ui/kit';
 /*
   «Mensaje para tu equipo»: crea un enlace de configuración (7 días, sin
   contraseña) para cada persona pendiente y prepara el texto para enviarlo.
-  Los enlaces se crean al abrir el diálogo, una vez: cada apertura los crea
-  de nuevo, así que no se piden en segundo plano.
+
+  Cada petición crea enlaces nuevos (y una entrada de auditoría por persona),
+  así que se piden la primera vez que se abre el diálogo y se conservan
+  mientras la página siga abierta: abrir y cerrar no multiplica los enlaces
+  válidos. Solo se vuelven a pedir si alguno está a punto de caducar.
 */
+
+/** Margen antes de la caducidad con el que se crean enlaces nuevos al abrir. */
+const MARGEN_CADUCIDAD = 60 * 60_000;
 
 /** Nombre visible de cada buzón, para que el mensaje diga «Ana (ana@…)». */
 export function useNombresBuzones(): Map<string, string> {
@@ -33,32 +39,48 @@ export function MensajeEquipo({
   onClose: () => void;
 }) {
   const nombres = useNombresBuzones();
-  const enlaces = useMutation({ mutationFn: () => cambioDominio.enlaces(vista.id) });
+  const enlaces = useQuery({
+    queryKey: ['domain-migration-links', vista.id],
+    queryFn: () => cambioDominio.enlaces(vista.id),
+    // Es un POST con efectos: solo al abrir, sin reintentos automáticos ni
+    // relecturas (ni al volver a la pestaña ni al reconectar).
+    enabled: open,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   const mensajeRef = useRef<HTMLDivElement>(null);
 
-  // Se piden al abrir (no al montar la tarjeta): cada petición crea enlaces nuevos.
-  const { mutate, reset } = enlaces;
+  // Si la página lleva abierta casi los 7 días, los enlaces guardados caducan:
+  // al abrir de nuevo se crean otros.
+  const { data, refetch } = enlaces;
   useEffect(() => {
-    if (open) mutate();
-    else reset();
-  }, [open, mutate, reset]);
+    if (!open || !data) return;
+    if (data.enlaces.some((e) => e.expiresAt - Date.now() < MARGEN_CADUCIDAD)) void refetch();
+  }, [open, data, refetch]);
 
-  const texto = enlaces.data
-    ? textoMensajeEquipo(
-        vista.hacia.domain,
-        enlaces.data.enlaces.map((e) => ({ email: e.email, url: e.url, nombre: nombres.get(e.mailboxId) })),
-      )
-    : '';
+  // Quien ya actualizó desde que se crearon los enlaces no necesita el suyo.
+  const pendientes = new Set(vista.buzones.lista.filter((p) => p.pendiente).map((p) => p.id));
+  const vigentes = (data?.enlaces ?? []).filter((e) => pendientes.has(e.mailboxId));
+
+  const texto = textoMensajeEquipo(
+    vista.hacia.domain,
+    vigentes.map((e) => ({ email: e.email, url: e.url, nombre: nombres.get(e.mailboxId) })),
+  );
 
   return (
     <Dialogo open={open} onClose={onClose} title="Mensaje para tu equipo" ancho="amplio">
-      {enlaces.isPending || (!enlaces.data && !enlaces.isError) ? (
+      {enlaces.isFetching && !data ? (
         <Cargando label="Creando los enlaces…" />
-      ) : enlaces.isError ? (
-        <AvisoError onRetry={() => mutate()} retrying={enlaces.isPending}>
+      ) : enlaces.isError && !data ? (
+        <AvisoError onRetry={() => void refetch()} retrying={enlaces.isFetching}>
           {mensajeCambio(enlaces.error, 'No se han podido crear los enlaces de configuración.')}
         </AvisoError>
-      ) : enlaces.data && enlaces.data.enlaces.length === 0 ? (
+      ) : !data ? (
+        <Cargando label="Creando los enlaces…" />
+      ) : vigentes.length === 0 ? (
         <p className="text-base text-tinta-2">Todas las personas han actualizado ya sus dispositivos.</p>
       ) : (
         <div className="flex flex-col gap-3">

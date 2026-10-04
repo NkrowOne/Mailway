@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import {
   esDispositivoMovil,
+  esUsadoPorApp,
   fechaLarga,
   mensajeError,
+  TEXTO_USADO_POR_APP,
   type RespuestaActualizarUsuario,
   type SetupPublico,
 } from '../../lib/portal';
@@ -121,6 +123,10 @@ export default function ConectarPagina() {
   const movil = esDispositivoMovil();
   // El usuario que funciona ahora: el anterior mientras no se actualice.
   const usuario = datos.connection.username || datos.login || datos.email;
+  // Con una aplicación que envía con el buzón, el titular no puede actualizar
+  // (lo hace Skyway): no se ofrece el botón. El enlace no siempre lo dice de
+  // antemano; si no, se sabe al pulsar.
+  const usadoPorApp = Boolean(datos.usadoPorApp) || (actualizar.isError && esUsadoPorApp(actualizar.error));
   const notaContrasena = datos.password
     ? 'La indicada en el apartado «Contraseña del buzón».'
     : 'La contraseña del buzón que te ha facilitado la persona que administra tu correo.';
@@ -138,7 +144,21 @@ export default function ConectarPagina() {
         </>
       }
     >
-      {datos.loginPending && !actualizado && (
+      {datos.loginPending && !actualizado && usadoPorApp && (
+        <Hoja
+          title={
+            <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">
+              Tu dirección ahora es {datos.email}
+            </h2>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <p className="max-w-[70ch] text-base text-tinta-2">Ya recibes el correo en las dos direcciones.</p>
+            <Nota>{TEXTO_USADO_POR_APP}</Nota>
+          </div>
+        </Hoja>
+      )}
+      {datos.loginPending && !actualizado && !usadoPorApp && (
         <Hoja
           title={
             <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">

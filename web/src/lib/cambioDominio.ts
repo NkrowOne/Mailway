@@ -1,5 +1,5 @@
-import type { QueryClient } from '@tanstack/react-query';
-import { api, ApiError, type Mailbox } from './api';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { api, ApiError, type DomainRecord, type Mailbox } from './api';
 import { plural } from './format';
 
 /*
@@ -230,6 +230,19 @@ export function motivoAltaBloqueada(m: MigracionDominio | null | undefined): str
   return 'Disponible al pasar a este dominio';
 }
 
+/**
+ * Dominios que cuentan en el plan: el uso del cliente (`usage.domains`)
+ * incluye el dominio anterior de un cambio abierto, que no cuenta (§3.13).
+ * Se descuenta igual que hace el servidor en el límite y en el exceso del plan.
+ */
+export function dominiosQueCuentan(
+  usados: number,
+  dominios: readonly { migracion?: MigracionDominio | null }[],
+): number {
+  const exentos = dominios.filter((d) => d.migracion && !d.migracion.cuentaEnPlan).length;
+  return Math.max(0, usados - exentos);
+}
+
 /** Etiqueta del dominio en la lista de dominios («Dominio anterior…», «Sustituye a…»). */
 export function etiquetaMigracion(m: MigracionDominio, isAdmin: boolean): string {
   if (m.rol === 'origen') {
@@ -295,7 +308,46 @@ export function mensajeCambio(err: unknown, generico: string): string {
   return err instanceof ApiError ? err.message : generico;
 }
 
-/** La confirmación de la baja admite mayúsculas y espacios alrededor; el servidor compara el nombre técnico. */
+/**
+ * Nombre técnico (ASCII) de un dominio escrito a mano: «señor.es» pasa a
+ * «xn--seor-hqa.es» y «Dominio.ES » a «dominio.es». La conversión la hace el
+ * navegador al analizar el nombre como el host de una URL. Con caracteres
+ * que una URL interpreta (@, /, :…) se compara tal cual: el host analizado
+ * sería solo una parte de lo escrito («x@dominio.es» daría dominio.es).
+ */
+export function nombreTecnico(escrito: string): string {
+  const limpio = escrito.trim().toLowerCase();
+  if (!limpio || /[\s/@:?#\\%]/.test(limpio)) return limpio;
+  try {
+    return new URL(`http://${limpio}`).hostname;
+  } catch {
+    return limpio;
+  }
+}
+
+/**
+ * La confirmación de la baja admite mayúsculas, espacios alrededor y, en un
+ * dominio internacionalizado, tanto la forma que ve el usuario («señor.es»)
+ * como la técnica. Al servidor se envía siempre la técnica (`dominio`), que
+ * es la que compara.
+ */
 export function confirmacionCoincide(escrito: string, dominio: string): boolean {
-  return escrito.trim().toLowerCase() === dominio.toLowerCase();
+  return nombreTecnico(escrito) === dominio.toLowerCase();
+}
+
+/**
+ * Nombre de un dominio tal como se ve en el resto del panel: la vista del
+ * cambio da el técnico («xn--seor-hqa.es») y la ficha y la lista muestran
+ * «señor.es». Solo consulta la lista de dominios si el nombre es
+ * internacionalizado; si no la tiene, devuelve el técnico.
+ */
+export function useNombreVisible(domainId: string | null, tecnico: string): string {
+  const idn = tecnico.split('.').some((etiqueta) => etiqueta.startsWith('xn--'));
+  const dominios = useQuery({
+    queryKey: ['domains'],
+    queryFn: () => api.get<{ domains: DomainRecord[] }>('/api/domains'),
+    enabled: idn && domainId !== null,
+  });
+  if (!idn) return tecnico;
+  return dominios.data?.domains.find((d) => d.id === domainId)?.domainUnicode || tecnico;
 }

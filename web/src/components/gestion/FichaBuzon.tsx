@@ -130,7 +130,14 @@ export function FichaBuzon({
             />
           )}
           {vista === 'aplicaciones' && (
-            <ContrasenasAplicacion mailboxId={mailbox.id} email={mailbox.email} onPendiente={setAppPendiente} />
+            // El «Usuario» que acompaña a la contraseña nueva es el del motor:
+            // tras un cambio de dominio, la dirección nueva no autentica hasta
+            // actualizar el usuario, y cada intento fallido suma al bloqueo de IPs.
+            <ContrasenasAplicacion
+              mailboxId={mailbox.id}
+              email={mailbox.login || mailbox.email}
+              onPendiente={setAppPendiente}
+            />
           )}
           {vista === 'estado' && (
             <Estado mailbox={mailbox} clienteSuspendido={clienteSuspendido} onHecho={volver} />

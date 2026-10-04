@@ -11,8 +11,10 @@ import {
 } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import {
+  esUsadoPorApp,
   formatoBytes,
   mensajeError,
+  TEXTO_USADO_POR_APP,
   type ContrasenaAplicacion,
   type PortalMe,
   type RespuestaActualizarUsuario,
@@ -279,7 +281,16 @@ function HojaNuevaDireccion({
       onActualizado(data.login || me.email);
       setPreguntando(false);
     },
+    onError: (err) => {
+      // Una aplicación empezó a enviar con el buzón después de cargar la
+      // página: se cierra la confirmación y la tarjeta lo explica sin botón.
+      if (esUsadoPorApp(err)) {
+        setPreguntando(false);
+        void queryClient.invalidateQueries({ queryKey: ['portal-me'] });
+      }
+    },
   });
+  const usadoPorApp = me.usadoPorApp || (actualizar.isError && esUsadoPorApp(actualizar.error));
 
   const titulo = (
     <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">Tu dirección ahora es {me.email}</h2>
@@ -329,10 +340,8 @@ function HojaNuevaDireccion({
           Ya recibes el correo en las dos direcciones. Para terminar, actualiza tus dispositivos: tu contraseña no
           cambia.
         </p>
-        {me.usadoPorApp ? (
-          <Nota>
-            Este buzón lo usa una aplicación para enviar. Pide a quien gestiona la web que lo actualice desde Skyway.
-          </Nota>
+        {usadoPorApp ? (
+          <Nota>{TEXTO_USADO_POR_APP}</Nota>
         ) : (
           <Button
             variant="principal"
