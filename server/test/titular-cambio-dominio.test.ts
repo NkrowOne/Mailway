@@ -176,11 +176,19 @@ before(async () => {
     buzones: [{ id: prep.mailboxId, local: 'pilar' }],
   });
 
-  // La tienda envía con una contraseña de aplicación de Skyway.
+  // La tienda envía con una contraseña de aplicación de Skyway (que la crea
+  // con su token: desde la sesión del panel ese prefijo está reservado).
+  const token = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/tokens',
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Skyway' },
+  });
+  assert.equal(token.statusCode, 200, token.body);
   const app = await ctx.app.inject({
     method: 'POST',
     url: `/api/mailboxes/${buzones.tienda!.mailboxId}/app-passwords`,
-    headers: { cookie: ctx.adminCookie },
+    headers: { authorization: `Bearer ${(token.json() as { token: string }).token}` },
     payload: { name: 'skyway:tienda' },
   });
   assert.equal(app.statusCode, 200, app.body);

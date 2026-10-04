@@ -856,14 +856,16 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
    */
   app.post('/api/mailboxes/:id/login-update', async (req) => {
     const { id } = req.params as { id: string };
-    const { domain } = requireMailboxAccess(req, id);
+    const { user, domain } = requireMailboxAccess(req, id);
     z.object({}).parse(req.body ?? {});
     // Ya al día: no hay nada que cambiar ni que comprobar (idempotente).
     if (!getMailbox(id).loginPending) return { mailbox: getMailbox(id) };
-    const porIntegracion = req.authVia?.kind === 'token';
     // Una aplicación de Skyway envía con el usuario anterior: solo Skyway
-    // (con su token) puede cambiarlo, porque después actualiza sus
-    // variables y la vuelve a desplegar.
+    // (con el token de gestión de la administración) puede cambiarlo, porque
+    // después actualiza sus variables y la vuelve a desplegar. Un token que
+    // se crea un usuario del cliente no lo es: con él la aplicación dejaría
+    // de enviar sin que nadie la actualizara.
+    const porIntegracion = req.authVia?.kind === 'token' && user.role === 'admin';
     const apps = appsSkywayDe(id);
     if (apps.length > 0 && !porIntegracion) throw errorBuzonUsadoPorApp(apps);
     const cambio = await actualizarUsuario(id);

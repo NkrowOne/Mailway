@@ -736,10 +736,30 @@ test('POST /api/mailboxes/:id/login-update: acceso, aplicaciones de Skyway y tok
   });
   assert.equal(ajeno.statusCode, 403, ajeno.body);
 
-  const app = await ctx.app.inject({
+  const token = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/tokens',
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Skyway' },
+  });
+  assert.equal(token.statusCode, 200, token.body);
+  const bearer = { authorization: `Bearer ${(token.json() as { token: string }).token}` };
+
+  // El prefijo «skyway:» es de Skyway: desde la sesión del panel no se usa.
+  const aMano = await ctx.app.inject({
     method: 'POST',
     url: `/api/mailboxes/${olga.mailboxId}/app-passwords`,
     headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Skyway:tienda' },
+  });
+  assert.equal(aMano.statusCode, 400, aMano.body);
+  assert.equal(aMano.json().code, 'app_password_name_reserved');
+  assert.deepEqual(appsSkywayDe(olga.mailboxId), []);
+
+  const app = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${olga.mailboxId}/app-passwords`,
+    headers: bearer,
     payload: { name: 'skyway:tienda' },
   });
   assert.equal(app.statusCode, 200, app.body);
@@ -756,14 +776,24 @@ test('POST /api/mailboxes/:id/login-update: acceso, aplicaciones de Skyway y tok
   assert.match(conSesion.json().error, /\(tienda\)/);
   assert.equal(fila(olga.mailboxId).usuario_motor, olga.login, 'no se ha tocado nada');
 
-  const token = await ctx.app.inject({
+  // Un token que se crea un usuario del cliente no es el de Skyway: tampoco.
+  const tokenCliente = await ctx.app.inject({
     method: 'POST',
     url: '/api/tokens',
-    headers: { cookie: ctx.adminCookie },
-    payload: { name: 'Skyway' },
+    headers: { cookie: userCookie },
+    payload: { name: 'Mi script' },
   });
-  assert.equal(token.statusCode, 200, token.body);
-  const bearer = { authorization: `Bearer ${(token.json() as { token: string }).token}` };
+  assert.equal(tokenCliente.statusCode, 200, tokenCliente.body);
+  const conTokenCliente = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${olga.mailboxId}/login-update`,
+    headers: { authorization: `Bearer ${(tokenCliente.json() as { token: string }).token}` },
+    payload: {},
+  });
+  assert.equal(conTokenCliente.statusCode, 409, conTokenCliente.body);
+  assert.equal(conTokenCliente.json().code, 'mailbox_used_by_app');
+  assert.equal(fila(olga.mailboxId).usuario_motor, olga.login, 'no se ha tocado nada');
+
   const conToken = await ctx.app.inject({
     method: 'POST',
     url: `/api/mailboxes/${olga.mailboxId}/login-update`,
@@ -904,6 +934,51 @@ test('datosWebmail no ofrece un usuario anterior que hoy es otro buzón', async 
   // Y si llega por otro camino (un buzón que se muda a esa dirección), tampoco se ofrece.
   db.prepare('UPDATE mailboxes SET login_anterior = ? WHERE id = ?').run('ana@webmail-dos.test', ana.mailboxId);
   assert.deepEqual(datosWebmail(ana.mailboxId).anteriores, []);
+});
+
+test('datosWebmail tras dos cambios seguidos (A→B y B→C): ofrece las filas de los dos usuarios anteriores', async () => {
+  const c = await createClient(ctx);
+  assert.equal((await cambiarPlan(c.clientId, 'plan_agencia')).statusCode, 200);
+  const a = await createDomain(ctx, c.clientId, 'cadena-a.test');
+  const b = await createDomain(ctx, c.clientId, 'cadena-b.test');
+  const cc = await createDomain(ctx, c.clientId, 'cadena-c.test');
+  const eva = await createMailbox(ctx, a.domainId, 'eva');
+  // A→B dado de baja (la baja la pasó a su usuario de B) y B→C pasado, con
+  // Eva ya actualizada a C. No entró en el webmail entre medias: Roundcube
+  // aún tiene su fila como eva@cadena-a.test.
+  const primero = crearCambio({
+    cliente: c.clientId,
+    desde: a,
+    hacia: b,
+    estado: 'dado_de_baja',
+    buzones: [{ id: eva.mailboxId, local: 'eva' }],
+  });
+  db.prepare('UPDATE domain_migrations SET created_at = created_at - 60000 WHERE id = ?').run(primero);
+  crearCambio({
+    cliente: c.clientId,
+    desde: b,
+    hacia: cc,
+    estado: 'pasado',
+    direccionesAt: Date.now(),
+    buzones: [{ id: eva.mailboxId, local: 'eva' }],
+  });
+  db.prepare('UPDATE mailboxes SET domain_id = ?, usuario_motor = NULL, login_anterior = ? WHERE id = ?').run(
+    cc.domainId,
+    'eva@cadena-b.test',
+    eva.mailboxId,
+  );
+  // Del más reciente al más antiguo; las identidades con cualquiera de las dos pasan a la vigente.
+  assert.deepEqual(datosWebmail(eva.mailboxId), {
+    login: 'eva@cadena-c.test',
+    email: 'eva@cadena-c.test',
+    anteriores: ['eva@cadena-b.test', 'eva@cadena-a.test'],
+    otrasDirecciones: ['eva@cadena-b.test', 'eva@cadena-a.test'],
+  });
+
+  // Si eva@cadena-a.test es hoy otra persona, su fila no se traslada.
+  const otra = await createMailbox(ctx, a.domainId, 'eva');
+  assert.deepEqual(datosWebmail(eva.mailboxId).anteriores, ['eva@cadena-b.test']);
+  assert.deepEqual(datosWebmail(otra.mailboxId).anteriores, []);
 });
 
 /* ------------------------------- connection.ts ------------------------------- */

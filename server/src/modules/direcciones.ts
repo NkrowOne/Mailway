@@ -228,8 +228,12 @@ export function assertAltasPermitidas(domainId: string): void {
   const cambio = cambioAbiertoDeDominio(domainId);
   if (!cambio) return;
   if (cambio.rol === 'origen') {
+    // Tras pasar ya no se cancela: los buzones y alias nuevos van ya en el destino.
+    const pasado = cambio.estado === 'pasado' || cambio.estado === 'dando_de_baja';
     throw conflict(
-      `${cambio.fromDomain} está en un cambio de dominio: crea los buzones y alias en ${cambio.toDomain} cuando pases a él, o cancela el cambio.`,
+      pasado
+        ? `${cambio.fromDomain} está en un cambio de dominio: crea los buzones y alias en ${cambio.toDomain}.`
+        : `${cambio.fromDomain} está en un cambio de dominio: crea los buzones y alias en ${cambio.toDomain} cuando pases a él, o cancela el cambio.`,
       'domain_migrating',
     );
   }
@@ -495,29 +499,40 @@ export function datosWebmail(mailboxId: string): {
   if (!fila) throw notFound('Buzón no encontrado.');
   const login = loginDe(fila);
   const email = direccionDe(fila);
-  // Un usuario anterior que hoy lleva a otro buzón (una dirección que se
-  // liberó y se volvió a dar de alta) no se ofrece: el complemento le
-  // trasladaría a este buzón la fila de Roundcube de esa otra persona.
-  const anterior = fila.login_anterior;
-  const anteriores =
-    anterior && anterior !== login && (resolverBuzon(anterior)?.mailboxId ?? mailboxId) === mailboxId
-      ? [anterior]
-      : [];
+  // Del más reciente al más antiguo: el complemento traslada la fila del
+  // primer anterior que encuentre en Roundcube.
   const cambios = db
     .prepare(
       `SELECT dm.estado, dm.from_domain, dm.to_domain, i.local_part FROM domain_migrations dm
        JOIN domain_migration_items i ON i.migration_id = dm.id AND i.tipo = 'buzon' AND i.item_id = ?
        WHERE dm.estado <> 'cancelada'
-       ORDER BY dm.created_at`,
+       ORDER BY dm.created_at DESC`,
     )
     .all(mailboxId) as { estado: string; from_domain: string; to_domain: string; local_part: string }[];
+  // Usuarios anteriores: el último y, por si la persona no entró en el
+  // webmail entre dos cambios seguidos (A→B y después B→C), la dirección de
+  // origen de cada cambio en que el buzón se mudó, que fue su usuario. Uno
+  // que hoy lleva a otro buzón (una dirección que se liberó y se volvió a dar
+  // de alta) no se ofrece: el complemento le trasladaría a este buzón la fila
+  // de Roundcube de esa otra persona.
+  const candidatos = [fila.login_anterior, ...cambios.map((c) => `${c.local_part}@${c.from_domain}`)];
+  const anteriores = [
+    ...new Set(candidatos.filter((c): c is string => Boolean(c)).map((c) => c.toLowerCase())),
+  ].filter((c) => c !== login && (resolverBuzon(c)?.mailboxId ?? mailboxId) === mailboxId);
   const otras: string[] = [];
   for (const cambio of cambios) {
+    const de = `${cambio.local_part}@${cambio.from_domain}`;
+    const a = `${cambio.local_part}@${cambio.to_domain}`;
     if (fila.domain === cambio.to_domain) {
       // También tras la baja: el webmail aún puede tener identidades con la vieja.
-      otras.push(`${cambio.local_part}@${cambio.from_domain}`);
-    } else if (fila.domain === cambio.from_domain && cambio.estado !== 'dado_de_baja') {
-      otras.push(`${cambio.local_part}@${cambio.to_domain}`);
+      otras.push(de);
+    } else if (fila.domain === cambio.from_domain) {
+      if (cambio.estado !== 'dado_de_baja') otras.push(a);
+    } else {
+      // El buzón se mudó después otra vez (A→B y luego B→C): las dos
+      // direcciones de este cambio fueron suyas, y la fila trasladada de A
+      // puede tener todavía sus identidades.
+      otras.push(de, a);
     }
   }
   return {

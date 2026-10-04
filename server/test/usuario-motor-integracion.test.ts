@@ -182,10 +182,18 @@ test('el enlace de configuración dice si una aplicación de Skyway usa el buzó
   assert.equal(antes.statusCode, 200, antes.body);
   assert.equal(antes.json().usadoPorApp, false);
 
+  // Skyway la crea con su token: desde la sesión del panel ese prefijo está reservado.
+  const skyway = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/tokens',
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Skyway' },
+  });
+  assert.equal(skyway.statusCode, 200, skyway.body);
   const app = await ctx.app.inject({
     method: 'POST',
     url: `/api/mailboxes/${tienda.mailboxId}/app-passwords`,
-    headers: { cookie: ctx.adminCookie },
+    headers: { authorization: `Bearer ${(skyway.json() as { token: string }).token}` },
     payload: { name: 'skyway:tienda' },
   });
   assert.equal(app.statusCode, 200, app.body);

@@ -220,6 +220,17 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const { user, mailbox, domain } = requireMailboxAccess(req, id);
     const body = createSchema.parse(req.body ?? {});
+    // Skyway marca sus contraseñas con «skyway:» y de ese prefijo dependen el
+    // 409 mailbox_used_by_app y la baja del dominio anterior en un cambio de
+    // dominio: una creada a mano desde el panel con ese nombre bloquearía las
+    // dos. Las integraciones (con token) sí pueden usarlo; el portal del
+    // titular ya lo reserva.
+    if (req.authVia?.kind !== 'token' && body.name.toLowerCase().startsWith('skyway:')) {
+      throw badRequest(
+        'Los nombres que empiezan por «skyway:» están reservados para las aplicaciones de Skyway. Elige otro nombre.',
+        'app_password_name_reserved',
+      );
+    }
     const result = await createAppPassword(id, body.name, user.id);
     audit(req, 'mailbox.app_password_created', {
       mailboxId: id,

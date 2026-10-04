@@ -425,10 +425,15 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
   contraseña. Lo peor que puede pasar es que unos dispositivos dejen de conectar
   antes de tiempo. La ruta tiene el límite de las rutas públicas.
 - **Aplicaciones que envían por SMTP.** Un buzón con contraseñas de aplicación
-  `skyway:*` activas solo cambia de usuario con un token de gestión: Skyway lo
-  actualiza, cambia sus variables y vuelve a desplegar la aplicación. Ni el
-  titular ni la sesión del panel pueden dejarla sin enviar
-  (`409 mailbox_used_by_app`), y la baja no sigue con alguno pendiente.
+  `skyway:*` activas solo cambia de usuario con el token de gestión de la
+  administración: Skyway lo actualiza, cambia sus variables y vuelve a
+  desplegar la aplicación. Ni el titular, ni la sesión del panel, ni un token
+  que se crea un usuario del cliente pueden dejarla sin enviar
+  (`409 mailbox_used_by_app`), tampoco cancelando un cambio que devolvería el
+  buzón a su usuario anterior, y la baja no sigue con alguno pendiente. El
+  prefijo `skyway:` está reservado a las integraciones: el panel y «Mi buzón»
+  no crean contraseñas con ese nombre (`400 app_password_name_reserved`), que
+  bloquearían la actualización del buzón y la baja de todo el dominio.
 - **Cambios de Skyway.** Un cambio creado por Skyway (`origen: "skyway"`) solo
   se crea, se pasa, se vuelve, se cancela o se da de baja con el token de
   gestión de la administración, que es el que usa Skyway. Con la sesión del
@@ -436,7 +441,8 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
   solo pide su sesión), crearlo da `403 token_required` y las acciones,
   `409 migration_managed_externally`. Así nadie
   desacompasa por error el correo de la web y los despliegues que lleva
-  Skyway.
+  Skyway. Por lo mismo, Skyway no adopta un cambio que se lleva desde el panel
+  ni el de otro proyecto: pedir el mismo cambio da `409 migration_exists`.
 - **El complemento del webmail traslada la fila de Roundcube antes de
   comprobar la contraseña.** Al entrar, `mailway_cuentas` pregunta al panel
   (con el token del webmail, nunca con la contraseña) cuál es el usuario

@@ -1384,7 +1384,11 @@ usuario.
   ningún dispositivo. En los destinos de los alias solo se deshace lo que
   escribió «Pasar» (y lo que se creó después con la dirección nueva de un buzón
   del cambio): un reenvío que ya apuntaba a `ana@dominio2.es` antes de pasar se
-  queda como estaba.
+  queda como estaba. Si el MX de dominio.es apuntaba aquí al pasar y desde
+  entonces se ha llevado a otro sitio (el paso previo a la baja), volver
+  responde `409 migration_old_mx_elsewhere`: el correo saldría otra vez como
+  `@dominio.es` y las respuestas no llegarían a estos buzones. Se vuelve a
+  apuntar el MX aquí y se repite.
 - **Dar de baja.** A quien no actualizó se le cambia el usuario (sus
   dispositivos dejarán de conectar hasta que lo cambien), se quitan las
   direcciones `@dominio.es`, el dominio y sus claves DKIM salen del motor y la
@@ -1440,6 +1444,13 @@ administración, que es el que usa Skyway; con la sesión del panel o con un
 token creado por un usuario del cliente: `409 migration_managed_externally`.
 Las de las personas (actualizar dispositivos) se permiten siempre.
 
+Crear otra vez el mismo cambio (mismo origen y destino) lo devuelve con `200`,
+pero Skyway (`origen: "skyway"`) solo recupera el suyo: si el cambio abierto se
+lleva desde el panel, o es de otro proyecto (otra `referenciaExterna`), `409
+migration_exists`. El panel podría pasarlo por su cuenta y dejar a Skyway sin
+salida. Con el token de la administración, el plan ya da ese bloqueo para un
+cambio que se lleva desde el panel.
+
 | Método y ruta | Cuerpo | Respuesta |
 |---|---|---|
 | `POST /api/domain-migrations/plan` | `{ fromDomainId, toDomain }` | `PlanCambioDominio`, sin efectos |
@@ -1447,13 +1458,13 @@ Las de las personas (actualizar dispositivos) se permiten siempre.
 | `GET /api/domain-migrations?clientId=&domainId=` | — | `{ migraciones: CambioDominioVista[] }` (un cliente, solo los suyos) |
 | `GET /api/domain-migrations/:id` | — | Vista |
 | `POST /api/domain-migrations/:id/check` | `{}` | Mide dominio2.es, avanza la preparación y devuelve la vista |
-| `POST /api/domain-migrations/:id/mx` | `{}` | Con Cloudflare y la pre-recepción hecha: reemplaza el MX de dominio2.es por el de este servidor (solo el MX) |
+| `POST /api/domain-migrations/:id/mx` | `{}` | Con Cloudflare y la pre-recepción hecha: reemplaza el MX de dominio2.es por el de este servidor y crea a la vez el SPF y el DMARC que Cloudflare aplaza mientras el correo está en otro proveedor (como «Hacer el cambio» en la ficha del dominio); el resto de conflictos se conserva |
 | `POST /api/domain-migrations/:id/switch` | `{}` | Pasar (desde `listo`, o `pasando` para reintentar; en `pasado` no hace nada) |
-| `POST /api/domain-migrations/:id/rollback` | `{}` | Volver (desde `pasado`, o desde `pasando`/`volviendo` con error) |
+| `POST /api/domain-migrations/:id/rollback` | `{}` | Volver (desde `pasado`, o desde `pasando`/`volviendo` con error). Desde `pasado`, `409 migration_old_mx_elsewhere` si el MX de dominio.es se ha llevado a otro sitio desde que se pasó |
 | `POST /api/domain-migrations/:id/cancel` | `{}` | Cancelar (desde `preparando` o `listo`, o desde `pasando`/`volviendo` con error: antes vuelve a dominio.es) |
 | `POST /api/domain-migrations/:id/retire` | `{ confirm: "dominio.es" }` | Dar de baja (desde `pasado`, o `dando_de_baja` para reintentar) |
-| `POST /api/domain-migrations/:id/setup-links` | `{}` | `{ enlaces: [{ mailboxId, email, url, expiresAt }] }`: un enlace de configuración de 7 días, sin contraseña, por persona pendiente («Mensaje para tu equipo») |
-| `POST /api/mailboxes/:id/login-update` | `{}` | `{ mailbox }`: el usuario del buzón pasa a ser su dirección (idempotente) |
+| `POST /api/domain-migrations/:id/setup-links` | `{}` | `{ enlaces: [{ mailboxId, email, url, expiresAt }] }`: un enlace de configuración de 7 días, sin contraseña, por persona pendiente («Mensaje para tu equipo»); los buzones que usa una aplicación de Skyway no llevan enlace (los actualiza Skyway) |
+| `POST /api/mailboxes/:id/login-update` | `{}` | `{ mailbox }`: el usuario del buzón pasa a ser su dirección (idempotente). Con contraseñas de aplicación `skyway:*`, solo con el token de gestión de la administración |
 
 Al crear con `autoDns` (por defecto) y una zona de Cloudflare utilizable, se
 crea **solo lo que falta** en dominio2.es: el MX únicamente si no había ninguno
@@ -1506,8 +1517,17 @@ cambio: cancelar lo elimina si no tiene buzones ni alias propios.
 **Cancelar** (`POST …/cancel`): si los buzones ya tienen sus direcciones de
 dominio2.es (pre-recepción) y su MX apunta aquí, `409 migration_new_mx_here`,
 tanto si el cambio creó dominio2.es como si ya existía: quitar las direcciones
-haría rechazar el correo que ya llega. Sin DNS, `503 dns_unknown`. Estas
-comprobaciones no cambian nada del cambio.
+haría rechazar el correo que ya llega. Sin DNS, `503 dns_unknown`. Si un
+buzón con contraseñas de aplicación `skyway:*` entra con su usuario de
+dominio2.es (se actualizó antes de un «Volver»), cancelar lo devolvería a
+dominio.es y la aplicación dejaría de enviar: solo se cancela con el token de
+gestión de la administración (Skyway, que después actualiza sus variables y la
+vuelve a desplegar); con la sesión del panel, `409 mailbox_used_by_app` (se
+revocan antes esas contraseñas y la aplicación se vuelve a conectar después).
+Estas comprobaciones no cambian nada del cambio.
+
+Las contraseñas de aplicación con nombre `skyway:…` son de Skyway: el panel y
+«Mi buzón» no las crean (`400 app_password_name_reserved`); con un token, sí.
 
 ### 10.5 Reserva del dominio dado de baja
 
@@ -1521,7 +1541,7 @@ otro cliente recibe `409 domain_reserved`.
 
 | Código | Cuándo |
 |---|---|
-| `409 migration_exists` | El origen o el destino ya están en otro cambio abierto |
+| `409 migration_exists` | El origen o el destino ya están en otro cambio abierto, o Skyway pide el mismo cambio y no es suyo |
 | `400 migration_same_domain` | El dominio nuevo es el mismo |
 | `400 migration_related_domains` | Uno de los dos dominios es subdominio del otro |
 | `409 migration_destination_in_use` | dominio2.es ya es del cliente y tiene buzones o alias |
@@ -1530,10 +1550,12 @@ otro cliente recibe `409 domain_reserved`.
 | `409 migration_collision` | Una parte local ya existe en dominio2.es |
 | `409 migration_managed_externally` | Cambio de Skyway pedido sin el token de gestión de la administración |
 | `409 migration_old_mx_here` / `409 migration_new_mx_here` | MX que apunta aquí (baja / cancelación) |
+| `409 migration_old_mx_elsewhere` | Al volver, el MX de dominio.es ya no apunta aquí (y al pasar sí) |
 | `503 dns_unknown` | No se pudo consultar el DNS para comprobar el MX |
 | `409 domain_migrating` | Alta de buzón o alias, o borrado del dominio, durante el cambio |
 | `409 domain_hosts_instance` | El dominio viejo aloja la instancia |
-| `409 mailbox_used_by_app` | Buzón pendiente usado por una aplicación de Skyway: al actualizarlo sin token, y en la baja siempre (también con token: Skyway lo actualiza antes) |
+| `409 mailbox_used_by_app` | Buzón usado por una aplicación de Skyway: al actualizarlo sin el token de la administración, al cancelar sin él si entra con su usuario de dominio2.es, y en la baja siempre que esté pendiente (también con token: Skyway lo actualiza antes) |
+| `400 app_password_name_reserved` | Contraseña de aplicación `skyway:…` creada desde el panel o «Mi buzón» |
 | `409 mailbox_login_updating` | Hay un cambio de usuario del buzón a medias; vuelve a intentarlo en unos minutos |
 | `400 confirm_mismatch` | `confirm` no coincide con el dominio |
 | `403 token_required` | `origen: "skyway"` sin el token de gestión de la administración |

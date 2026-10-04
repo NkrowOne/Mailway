@@ -716,6 +716,41 @@ function quienLoUsa(apps: string[]): string {
     : `usa una aplicación para enviar${apps.length === 1 ? ` (${apps[0]})` : ''}`;
 }
 
+/**
+ * Buzones con aplicaciones de Skyway que hoy entran con su usuario de
+ * dominio2.es (lo actualizaron antes de un «Volver»). Cancelar los devuelve a
+ * local@dominio.es, y la aplicación, que envía con SMTP_USER =
+ * local@dominio2.es, dejaría de enviar sin ningún aviso.
+ */
+function appsConUsuarioNuevo(fila: FilaCambio): { buzon: BuzonDelCambio; apps: string[] }[] {
+  return buzonesDe(fila.id)
+    .filter((b) => (b.usuario_motor ?? `${b.local_part}@${b.domain}`) === `${b.local_part}@${fila.to_domain}`)
+    .map((buzon) => ({ buzon, apps: appsSkywayDe(buzon.id) }))
+    .filter((x) => x.apps.length > 0);
+}
+
+/**
+ * 409 mailbox_used_by_app al cancelar. Solo Skyway (con el token de la
+ * administración) cancela con esos buzones, porque después actualiza las
+ * variables de la aplicación y la vuelve a desplegar; desde el panel, primero
+ * se revocan sus contraseñas de aplicación.
+ */
+function errorCancelarConApps(fila: FilaCambio, conApps: { buzon: BuzonDelCambio; apps: string[] }[]): HttpError {
+  const apps = nombresApps(conApps.flatMap((x) => x.apps));
+  const desde = visible(fila.from_domain);
+  const hacia = visible(fila.to_domain);
+  const direcciones = conApps.map((x) => `${x.buzon.local_part}@${desde}`);
+  const que = apps.length > 1 ? 'las aplicaciones dejarían' : 'la aplicación dejaría';
+  const sujeto =
+    conApps.length === 1
+      ? `${direcciones[0]} lo ${quienLoUsa(apps)} con su usuario de ${hacia}`
+      : `Estos buzones los ${quienLoUsa(apps)} con su usuario de ${hacia}: ${direcciones.join(', ')}`;
+  return conflict(
+    `${sujeto}. Al cancelar, ${conApps.length === 1 ? 'el buzón volvería' : 'volverían'} a entrar con su dirección de ${desde} y ${que} de enviar. Revoca antes sus contraseñas de aplicación «skyway:…» y, después de cancelar, vuelve a conectar ${apps.length > 1 ? 'las aplicaciones' : 'la aplicación'} desde Skyway.`,
+    'mailbox_used_by_app',
+  );
+}
+
 function bloqueosBajaDe(fila: FilaCambio): AvisoCambio[] {
   const bloqueos: AvisoCambio[] = [];
   const conApps = pendientesConApps(fila.id);
@@ -873,6 +908,40 @@ function cambioIdentico(fromDomainId: string, to: string): FilaCambio | null {
 interface OpcionesPlan {
   /** Administrador que no actúa en nombre de un cliente: salta las reservas. */
   comoAdministrador: boolean;
+  /**
+   * Quién gestionaría el cambio. Con Skyway, el mismo cambio ya abierto solo
+   * vale si es suyo (`referencia` undefined: el plan no sabe de qué proyecto
+   * es, y solo descarta el que se lleva desde el panel).
+   */
+  gestor?: { origen: 'panel' | 'skyway'; referencia?: string | null };
+}
+
+/**
+ * Crear otra vez el mismo cambio lo devuelve (Skyway reintenta tras una
+ * respuesta perdida), pero Skyway no puede adoptar uno que no es suyo: el de
+ * otro proyecto, o uno que se lleva desde el panel, que podría pasarse por su
+ * cuenta y dejar a Skyway esperando un «listo» que ya no llegaría, sin poder
+ * pasar, volver ni cancelar. Devuelve el bloqueo, o null si se puede devolver.
+ */
+function ajenoAlGestor(existente: FilaCambio, gestor: OpcionesPlan['gestor']): Bloqueo | null {
+  if (gestor?.origen !== 'skyway') return null;
+  const desde = visible(existente.from_domain);
+  const hacia = visible(existente.to_domain);
+  if (existente.origen !== 'skyway') {
+    return {
+      status: 409,
+      code: 'migration_exists',
+      mensaje: `${desde} ya está en un cambio de dominio a ${hacia} que se gestiona desde el panel de Mailway. Continúalo o cancélalo allí, o cambia solo la web.`,
+    };
+  }
+  if (gestor.referencia !== undefined && existente.referencia_externa !== gestor.referencia) {
+    return {
+      status: 409,
+      code: 'migration_exists',
+      mensaje: `${desde} ya está en un cambio de dominio a ${hacia} que gestiona otro proyecto de Skyway.`,
+    };
+  }
+  return null;
 }
 
 /**
@@ -947,6 +1016,8 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
     }
   }
   const identico = cambioIdentico(from.id, to);
+  const ajeno = identico ? ajenoAlGestor(identico, opts.gestor) : null;
+  if (ajeno) bloqueos.push(ajeno);
   const abierto = identico ? null : cambioAbiertoCon([from.domain, to]);
   if (abierto) {
     const afectado = [abierto.from_domain, abierto.to_domain].includes(from.domain) ? desde : hacia;
@@ -1265,8 +1336,19 @@ function claveDestinosPrevios(id: string): string {
   return `cambio_dominio:${id}:destinos_previos`;
 }
 
-function olvidarDestinosPrevios(id: string): void {
-  db.prepare('DELETE FROM settings WHERE key = ?').run(claveDestinosPrevios(id));
+/**
+ * ¿Apuntaba aquí el MX de dominio.es al pasar? (true, false o null si no se
+ * pudo consultar). «Volver» solo se frena si entonces sí y ahora no: el MX se
+ * ha llevado a otro sitio durante la transición. Un dominio que nunca recibió
+ * aquí (su MX ya estaba en otro proveedor) vuelve a su estado de antes.
+ */
+function claveMxOrigen(id: string): string {
+  return `cambio_dominio:${id}:mx_origen_aqui`;
+}
+
+/** Olvida lo anotado al pasar: se hace al volver, al cancelar y al dar de baja. */
+function olvidarNotasDePasar(id: string): void {
+  db.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(claveDestinosPrevios(id), claveMxOrigen(id));
 }
 
 /**
@@ -1461,7 +1543,7 @@ function baseVolver(fila: FilaCambio): void {
     const conservar = new Set(previos.map((p) => `${p.alias} ${p.destino}`));
     reescribirDestinos(mapaDeBuzones(fila, to, from), to, conservar);
   }
-  olvidarDestinosPrevios(fila.id);
+  olvidarNotasDePasar(fila.id);
   const viejo = webmailViejo(fila);
   moverWebmailPrincipal(fila.client_id, webmailNuevo(fila, viejo), viejo);
   actualizar(fila.id, { estado: 'listo', pasado_at: null, paso: '', error: null });
@@ -1548,6 +1630,9 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const to = normalizeDomain(body.toDomain);
     const { bloqueosHttp: _b, ...plan } = calcularPlan(from, to, {
       comoAdministrador: user.role === 'admin' && !pideSoloCliente(req.query),
+      // El plan no dice el origen: con el token de la administración lo pide
+      // Skyway, que no puede adoptar un cambio que se lleva desde el panel.
+      gestor: esIntegracionDeAdministracion(req) ? { origen: 'skyway' } : undefined,
     });
     return plan;
   });
@@ -1568,13 +1653,16 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const comoAdministrador = user.role === 'admin' && !pideSoloCliente(req.query);
     const permitirInstancia = permiteInstancia(user, req.query);
     const alta = { clientId, to, comoAdministrador, esAdministrador: user.role === 'admin' };
+    const gestor = { origen: body.origen ?? 'panel', referencia: body.referenciaExterna || null } as const;
 
     const { id, creado, completado } = await withLock('altas:dominios', () =>
       withLock(clientLockKey(clientId), async () => {
         const existente = cambioIdentico(inicial.id, to);
+        const ajeno = existente ? ajenoAlGestor(existente, gestor) : null;
+        if (ajeno) throw new HttpError(ajeno.status, ajeno.mensaje, ajeno.code);
         if (existente?.to_domain_id) return { id: existente.id, creado: false, completado: false };
         const from = getDomain(inicial.id);
-        const { bloqueosHttp } = calcularPlan(from, to, { comoAdministrador });
+        const { bloqueosHttp } = calcularPlan(from, to, { comoAdministrador, gestor });
         const primero = bloqueosHttp[0];
         if (existente) {
           // Un reinicio cortó la creación mientras se daba de alta
@@ -1743,7 +1831,16 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       }
       const r = await aplicarDnsDominio(to.id, {
         replaceConflicts: false,
-        reemplazar: [claveCambio({ type: 'MX', name: to.domain })],
+        // El MX y lo que Cloudflare aplaza hasta él (el SPF y el DMARC de un
+        // dominio que no los tenía), como «Hacer el cambio» en la ficha del
+        // dominio: sin ellos la compuerta del DNS no se cumpliría nunca. Solo
+        // se aplican junto con el MX (ejecutarPlan), y los demás conflictos
+        // (autodiscover, un mail.<dominio> del hosting) se conservan.
+        reemplazar: [
+          claveCambio({ type: 'MX', name: to.domain }),
+          claveCambio({ type: 'TXT', name: to.domain }),
+          claveCambio({ type: 'TXT', name: `_dmarc.${to.domain}` }),
+        ],
         includeRecommended: true,
         permitirInstancia: permiteInstancia(user, req.query),
       });
@@ -1823,10 +1920,15 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
           'migration_collision',
         );
       }
+      // Para «Volver»: si el MX de dominio.es recibía aquí al pasar.
+      const mxOrigen = await mxApuntaAqui(fila.from_domain).catch(() => null);
       actualizar(fila.id, { estado: 'pasando', error: null });
       try {
         await motorPasar(fila);
-        db.transaction(() => basePasar(exigir(fila.id)))();
+        db.transaction(() => {
+          basePasar(exigir(fila.id));
+          setJsonSetting(claveMxOrigen(fila.id), mxOrigen);
+        })();
       } catch (err) {
         actualizar(fila.id, { error: mensajeDe(err) });
         throw errorDeAccion(err);
@@ -1858,6 +1960,20 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       const valido =
         fila.estado === 'pasado' || fila.estado === 'volviendo' || (fila.estado === 'pasando' && fila.error !== null);
       if (!valido || !fila.to_domain_id || !fila.from_domain_id) throw estadoNoValido();
+      // Si el MX de dominio.es se ha llevado a otro sitio desde que se pasó
+      // (el paso previo a la baja), volver haría salir el correo otra vez como
+      // @dominio.es y las respuestas no llegarían a estos buzones. Solo desde
+      // «pasado»: a medias («pasando» o «volviendo» con error), volver es la
+      // salida y no se frena. Sin DNS tampoco: no se puede saber y volver es
+      // la vía segura.
+      const mxAlPasar = getJsonSetting<boolean | null>(claveMxOrigen(fila.id));
+      if (fila.estado === 'pasado' && mxAlPasar === true && (await mxApuntaAqui(fila.from_domain)) === false) {
+        const desde = visible(fila.from_domain);
+        throw conflict(
+          `El MX de ${desde} ya no apunta a este servidor. Si vuelves, el correo saldrá otra vez como @${desde} y las respuestas no llegarían a estos buzones. Apunta antes el MX de ${desde} a este servidor y vuelve a intentarlo.`,
+          'migration_old_mx_elsewhere',
+        );
+      }
       actualizar(fila.id, { estado: 'volviendo', error: null });
       try {
         await motorVolver(fila);
@@ -1888,6 +2004,10 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       const aMedias = (fila.estado === 'pasando' || fila.estado === 'volviendo') && fila.error !== null;
       if (!EN_PREPARACION.has(fila.estado) && !aMedias) throw estadoNoValido();
       // Las comprobaciones no cambian nada: si no pasan, el cambio sigue igual.
+      if (!esIntegracionDeAdministracion(req)) {
+        const conApps = appsConUsuarioNuevo(fila);
+        if (conApps.length > 0) throw errorCancelarConApps(fila, conApps);
+      }
       await comprobarCancelacion(fila);
       try {
         return await cancelarSinCerrojo(req, fila);
@@ -1991,7 +2111,11 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
         'client_suspended',
       );
     }
-    const pendientes = buzonesDe(fila.id).filter((b) => b.usuario_motor !== null && b.status === 'active');
+    // Un buzón que usa una aplicación de Skyway no lo actualiza su titular
+    // (su enlace respondería 409 mailbox_used_by_app): lo hace Skyway.
+    const pendientes = buzonesDe(fila.id).filter(
+      (b) => b.usuario_motor !== null && b.status === 'active' && appsSkywayDe(b.id).length === 0,
+    );
     const enlaces: { mailboxId: string; email: string; url: string; expiresAt: number }[] = [];
     for (const b of pendientes) {
       const email = `${b.local_part}@${b.domain}`;
@@ -2135,7 +2259,7 @@ async function cancelarSinCerrojo(
 
   db.transaction(() => {
     actualizar(fila.id, { estado: 'cancelada', terminado_at: now(), paso: '', error: null });
-    olvidarDestinosPrevios(fila.id);
+    olvidarNotasDePasar(fila.id);
   })();
   return { destinoEliminado, volvio };
 }
@@ -2222,7 +2346,7 @@ async function darDeBajaSinCerrojo(
     for (const propio of propios) eliminarDominioPropio(propio.id);
     db.prepare('DELETE FROM domains WHERE id = ?').run(fromId);
     actualizar(fila.id, { estado: 'dado_de_baja', terminado_at: now(), paso: '', error: null });
-    olvidarDestinosPrevios(fila.id);
+    olvidarNotasDePasar(fila.id);
   })();
   // El vigilante ya no volverá a medir este dominio.
   resolveAlert(`domain_dns:${fromId}`);

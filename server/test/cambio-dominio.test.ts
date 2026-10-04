@@ -575,7 +575,10 @@ test('actualizar, volver y pasar otra vez: nadie pierde su usuario y los alias v
 /* -------------------------- Mensaje para tu equipo ------------------------- */
 
 test('mensaje para tu equipo: un enlace de 7 días, sin contraseña, por persona pendiente', async () => {
-  const e = await escenario('equipo-viejo.test', { buzones: ['ana', 'luis'] });
+  const e = await escenario('equipo-viejo.test', { buzones: ['ana', 'luis', 'tienda'] });
+  // El buzón de una aplicación de Skyway no lo actualiza una persona: su
+  // enlace respondería 409 mailbox_used_by_app.
+  await createAppPassword(e.buzones.tienda!.mailboxId, 'skyway:tienda', null);
   const { id } = await cambioListo(e, 'equipo-nuevo.test');
   assert.equal((await accion(id, 'switch')).statusCode, 200);
   // Ana ya actualizó: no necesita enlace.
@@ -1120,6 +1123,134 @@ test('tras una baja temprana, el webmail nuevo pasa a principal en cuanto se act
   assert.equal(principal?.hostname, 'webmail.wbaja-nuevo.test');
 });
 
+/* ------------------- Aplicaciones de Skyway, origen y MX ------------------- */
+
+test('cancelar tras volver: un buzón que una aplicación de Skyway usa con su usuario nuevo solo lo cancela Skyway', async (t) => {
+  const e = await escenario('appcancela-viejo.test', { buzones: ['ana'] });
+  const app = await createAppPassword(e.buzones.ana!.mailboxId, 'skyway:tienda', null);
+  const { id } = await cambioListo(e, 'appcancela-nuevo.test');
+  assert.equal((await accion(id, 'switch')).statusCode, 200);
+  // Skyway actualiza el buzón de la tienda (SMTP_USER = ana@appcancela-nuevo.test) y después se vuelve.
+  const actualizado = await post(`/api/mailboxes/${e.buzones.ana!.mailboxId}/login-update`, {}, bearer(adminToken));
+  assert.equal(actualizado.statusCode, 200, actualizado.body);
+  assert.equal((await accion(id, 'rollback')).statusCode, 200);
+  assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, 'ana@appcancela-nuevo.test');
+  mxFuera(t, 'appcancela-nuevo.test');
+  const motor = motorDemo();
+
+  // Desde el panel, cancelar devolvería el buzón a ana@appcancela-viejo.test y la tienda dejaría de enviar.
+  const panel = await accion(id, 'cancel');
+  assert.equal(panel.statusCode, 409, panel.body);
+  assert.equal(panel.json().code, 'mailbox_used_by_app');
+  assert.match(
+    panel.json().error,
+    /^ana@appcancela-viejo\.test lo usa una aplicación para enviar \(tienda\) con su usuario de appcancela-nuevo\.test\. Al cancelar/,
+  );
+  assert.equal(((await get(`/api/domain-migrations/${id}`)).json() as CambioDominioVista).estado, 'listo');
+  assert.equal(await motor.verifyCredentials('ana@appcancela-nuevo.test', app.password), true, 'la tienda sigue enviando');
+
+  // Skyway cancela con su token y después pone al día las variables de la aplicación.
+  const skyway = await accion(id, 'cancel', {}, bearer(adminToken));
+  assert.equal(skyway.statusCode, 200, skyway.body);
+  assert.equal((skyway.json() as CambioDominioVista).estado, 'cancelada');
+  assert.equal(await motor.verifyCredentials('ana@appcancela-viejo.test', app.password), true);
+});
+
+test('crear: Skyway no adopta un cambio que se lleva desde el panel ni el de otro proyecto', async () => {
+  const e = await escenario('adopta-viejo.test', { buzones: ['ana'] });
+  const delPanel = await crearCambioDeDominio(ctx, e.viejo.domainId, 'adopta-nuevo.test');
+  assert.equal(delPanel.statusCode, 201, delPanel.body);
+  const pedir = { fromDomainId: e.viejo.domainId, toDomain: 'adopta-nuevo.test' };
+
+  // Skyway (con el token de la administración) lo ve ya en el plan.
+  const planSkyway = await post('/api/domain-migrations/plan', pedir, bearer(adminToken));
+  assert.equal(planSkyway.statusCode, 200, planSkyway.body);
+  const bloqueos = (planSkyway.json() as PlanCambioDominio).bloqueos;
+  assert.deepEqual(bloqueos.map((b) => b.code), ['migration_exists']);
+  assert.match(bloqueos[0]!.mensaje, /se gestiona desde el panel de Mailway/);
+  // Para el panel, el mismo cambio no es un bloqueo: lo continúa.
+  assert.deepEqual(((await post('/api/domain-migrations/plan', pedir)).json() as PlanCambioDominio).bloqueos, []);
+
+  const comoSkyway = { ...pedir, autoDns: false, origen: 'skyway', referenciaExterna: 'skyway:project:p-adopta' };
+  const adoptar = await post('/api/domain-migrations', comoSkyway, bearer(adminToken));
+  assert.equal(adoptar.statusCode, 409, adoptar.body);
+  assert.equal(adoptar.json().code, 'migration_exists');
+  const sigue = (await get(`/api/domain-migrations/${delPanel.vista.id}`)).json() as CambioDominioVista;
+  assert.deepEqual([sigue.origen, sigue.referenciaExterna], ['panel', null]);
+
+  // Uno de Skyway: el mismo proyecto lo recupera al reintentar; otro proyecto, no.
+  const e2 = await escenario('adopta2-viejo.test', { buzones: ['ana'] });
+  const deSkyway = { ...comoSkyway, fromDomainId: e2.viejo.domainId, toDomain: 'adopta2-nuevo.test' };
+  const creado = await post('/api/domain-migrations', deSkyway, bearer(adminToken));
+  assert.equal(creado.statusCode, 201, creado.body);
+  const reintento = await post('/api/domain-migrations', deSkyway, bearer(adminToken));
+  assert.equal(reintento.statusCode, 200, reintento.body);
+  assert.equal(reintento.json().id, creado.json().id);
+  const otroProyecto = await post(
+    '/api/domain-migrations',
+    { ...deSkyway, referenciaExterna: 'skyway:project:p-otro' },
+    bearer(adminToken),
+  );
+  assert.equal(otroProyecto.statusCode, 409, otroProyecto.body);
+  assert.equal(otroProyecto.json().code, 'migration_exists');
+  assert.match(otroProyecto.json().error, /otro proyecto de Skyway/);
+  // El panel lo encuentra (y lo enseña gestionado desde Skyway).
+  const desdePanel = await post('/api/domain-migrations', { ...pedir, fromDomainId: e2.viejo.domainId, toDomain: 'adopta2-nuevo.test', autoDns: false });
+  assert.equal(desdePanel.statusCode, 200, desdePanel.body);
+  assert.equal((desdePanel.json() as CambioDominioVista).origen, 'skyway');
+});
+
+/** DNS completo de un dominio tal como lo pide el motor de demostración (MX, SPF, DKIM y DMARC). */
+function dnsCompleto(dominio: string): { mx: NonNullable<ZonaDns['mx']>; txt: NonNullable<ZonaDns['txt']> } {
+  return {
+    mx: { [dominio]: [{ priority: 10, exchange: `mail.${dominio}` }] },
+    txt: {
+      [dominio]: ['v=spf1 mx -all'],
+      [`mail._domainkey.${dominio}`]: ['v=DKIM1; k=rsa; p=DEMO...'],
+      [`_dmarc.${dominio}`]: [`v=DMARC1; p=quarantine; rua=mailto:postmaster@${dominio}`],
+    },
+  };
+}
+
+test('volver: si el MX de dominio.es se ha llevado a otro sitio desde que se pasó, 409; si ya estaba fuera, se vuelve', async (t) => {
+  const e = await escenario('vuelvemx-viejo.test', { buzones: ['ana'] });
+  const fuera = await escenario('fuera-viejo.test', { buzones: ['ana'] });
+  const a = dnsCompleto('vuelvemx-nuevo.test');
+  const b = dnsCompleto('fuera-nuevo.test');
+  const otro = [{ priority: 10, exchange: 'mx.otro-proveedor.test' }];
+  const zona: ZonaDns = {
+    mx: { ...a.mx, ...b.mx, 'vuelvemx-viejo.test': [{ priority: 10, exchange: SERVIDOR }], 'fuera-viejo.test': otro },
+    txt: { ...a.txt, ...b.txt },
+    a: { 'mx.otro-proveedor.test': ['198.51.100.7'] },
+  };
+  instalarDnsFalso(t, zona);
+
+  const { id } = await cambioListo(e, 'vuelvemx-nuevo.test');
+  const pasado = await accion(id, 'switch');
+  assert.equal(pasado.statusCode, 200, pasado.body);
+  // Tras pasar, el origen ya no admite altas ni se puede cancelar: el texto lo dice.
+  const alta = await post('/api/mailboxes', { domainId: e.viejo.domainId, localPart: 'nuevo' });
+  assert.equal(alta.json().code, 'domain_migrating');
+  assert.equal(alta.json().error, 'vuelvemx-viejo.test está en un cambio de dominio: crea los buzones y alias en vuelvemx-nuevo.test.');
+
+  // El paso previo a la baja: el MX de dominio.es pasa a otro proveedor.
+  zona.mx!['vuelvemx-viejo.test'] = otro;
+  const frenado = await accion(id, 'rollback');
+  assert.equal(frenado.statusCode, 409, frenado.body);
+  assert.equal(frenado.json().code, 'migration_old_mx_elsewhere');
+  assert.equal(((await get(`/api/domain-migrations/${id}`)).json() as CambioDominioVista).estado, 'pasado');
+  zona.mx!['vuelvemx-viejo.test'] = [{ priority: 10, exchange: SERVIDOR }];
+  const vuelto = await accion(id, 'rollback');
+  assert.equal(vuelto.statusCode, 200, vuelto.body);
+  assert.equal((vuelto.json() as CambioDominioVista).estado, 'listo');
+
+  // Un dominio que nunca recibió aquí vuelve a su estado de antes.
+  const otroCambio = await cambioListo(fuera, 'fuera-nuevo.test');
+  assert.equal((await accion(otroCambio.id, 'switch')).statusCode, 200);
+  const sinFreno = await accion(otroCambio.id, 'rollback');
+  assert.equal(sinFreno.statusCode, 200, sinFreno.body);
+});
+
 /* ------------------------------ Cloudflare ------------------------------ */
 
 interface RegistroCf {
@@ -1228,6 +1359,33 @@ function instalarCloudflareFalso(t: Parameters<typeof instalarDnsFalso>[0], zona
     mx(nombre: string): string[] {
       return registros.filter((r) => r.type === 'MX' && r.name === nombre).map((r) => r.content);
     },
+    /**
+     * El DNS público que resultaría de la zona, leído en cada consulta: lo que
+     * se escribe en Cloudflare se ve al medir el dominio justo después.
+     */
+    dns(): ZonaDns {
+      const de = <T>(tipo: string, valor: (r: RegistroCf) => T): Record<string, T[]> => {
+        const tabla: Record<string, T[]> = {};
+        for (const r of registros.filter((x) => x.type === tipo)) (tabla[r.name] ??= []).push(valor(r));
+        return tabla;
+      };
+      // Un TXT largo viaja troceado («"parte1" "parte2"»): el DNS lo da entero.
+      const txt = (c: string) => (c.startsWith('"') ? c.slice(1, -1).split('" "').join('') : c);
+      return {
+        get mx() {
+          return de('MX', (r) => ({ priority: r.priority ?? 10, exchange: r.content }));
+        },
+        get txt() {
+          return de('TXT', (r) => txt(r.content));
+        },
+        get a() {
+          return de('A', (r) => r.content);
+        },
+        get cname() {
+          return de('CNAME', (r) => r.content);
+        },
+      };
+    },
   };
 }
 
@@ -1259,10 +1417,21 @@ test('Cloudflare: el DNS automático no toca el MX de otro proveedor y «Cambiar
   // Solo se crea lo que faltaba: el MX del proveedor actual sigue.
   assert.deepEqual(cf.mx('cf-nuevo.test'), ['mx.otro-proveedor.test']);
 
+  // Desde aquí, el DNS público es el de la zona: lo que escribe «Cambiar el
+  // MX» se mide al momento, como haría el vigilante.
+  instalarDnsFalso(t, cf.dns());
   const mx = await accion(creado.vista.id, 'mx');
   assert.equal(mx.statusCode, 200, mx.body);
   // El MX que propone el motor (el de demostración lo da como mail.<dominio>).
   assert.deepEqual(cf.mx('cf-nuevo.test'), ['mail.cf-nuevo.test']);
+  // Con el MX van el SPF y el DMARC que Cloudflare aplaza mientras el correo
+  // está en otro proveedor: sin ellos el DNS no se completaría nunca.
+  const zona = cf.dns();
+  assert.ok(zona.txt?.['cf-nuevo.test']?.some((v) => v.startsWith('v=spf1')), JSON.stringify(zona.txt));
+  assert.ok(zona.txt?.['_dmarc.cf-nuevo.test']?.some((v) => v.startsWith('v=DMARC1')), JSON.stringify(zona.txt));
+  const vista = mx.json() as CambioDominioVista;
+  assert.equal(vista.estado, 'listo', JSON.stringify(vista.compuertas));
+  assert.equal(vista.puedePasar, true);
   const auditado = db
     .prepare("SELECT 1 FROM audit_log WHERE action = 'domain.migration_mx_changed' AND detail LIKE ?")
     .get(`%${creado.vista.id}%`);
