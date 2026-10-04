@@ -186,8 +186,13 @@ class Pila:
         self.entorno = {clave: valor for clave, valor in os.environ.items() if clave not in (
             'STALWART_ADMIN_PASSWORD', 'SKYWAY_TOKEN', 'CLOUDFLARE_API_TOKEN', 'LETSENCRYPT_EMAIL', 'MAILWAY_DOMINIO',
             'MAILWAY_MAIL_HOST', 'MAILWAY_WEBMAIL_HOST', 'MAILWAY_PANEL_HOST', 'MAILWAY_IP', 'MAIL_HOSTNAME')}
+        # La IP de deploy/.env es de documentación (192.0.2.10): sin MAILWAY_IP,
+        # el instalador la compararía con la de salida del ejecutor y, sin
+        # terminal, se detendría. --comprobar se limita al motor, el webmail
+        # y el extractor: aquí no hay panel, ni Traefik, ni DNS público.
         self.entorno.update({'MAILWAY_ENV_FILE': str(self.env), 'MAILWAY_COMPOSE_EXTRA': str(self.extra),
-                             'MAILWAY_ESPERA_DNS': '0', 'MAILWAY_TRAEFIK_PROVEEDOR': '0'})
+                             'MAILWAY_ESPERA_DNS': '0', 'MAILWAY_TRAEFIK_PROVEEDOR': '0',
+                             'MAILWAY_IP': valores['MAILWAY_PUBLIC_IP'], 'MAILWAY_COMPROBAR_SOLO_MOTOR': '1'})
 
     # -- preparación
 

@@ -1,6 +1,7 @@
 import tls from 'node:tls';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config';
 import { db } from '../core/db';
 import { decryptSecret } from '../core/crypto';
 import { badRequest, HttpError, notFound, upstream } from '../core/errors';
@@ -386,6 +387,15 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
   const clave = `${ALERT_HOSTNAME}:${actual}>${esperado}`;
   // Un aviso de otra pareja de nombres ya no describe la situación.
   resolveAlertsOfType(ALERT_HOSTNAME, { except: clave });
+  // Si el motor se anuncia con el nombre que trae el entorno, lo más probable
+  // es que el instalador haya cambiado el dominio de la plataforma y Ajustes
+  // conserve el anterior porque se cambió a mano: aplicar los ajustes
+  // recomendados devolvería el motor al nombre viejo.
+  const delInstalador = normalizeHostname(config.mailHostnameDefault);
+  const notaInstalador =
+    delInstalador && delInstalador === actual
+      ? ` ${actual} es el nombre que fijó el instalador (MAILWAY_MAIL_HOSTNAME del entorno del panel): si se ha cambiado con él el dominio de la plataforma, corrige el nombre en Ajustes → Identidad del servidor en lugar de aplicar los ajustes recomendados, que devolverían el motor a ${esperado}.`
+      : '';
   fireAlert({
     severity: 'warning',
     type: ALERT_HOSTNAME,
@@ -397,7 +407,8 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
     remedy:
       'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
-      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
+      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.' +
+      notaInstalador,
   });
 }
 

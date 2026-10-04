@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { config } from './config';
+import { adoptarEntornoAlArrancar } from './modules/entorno';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -18,6 +19,11 @@ async function main(): Promise<void> {
   app.log.info(
     `Mailway escuchando en http://${config.host}:${config.port} (datos en ${config.dataDir})`,
   );
+
+  // El instalador cambia el entorno (otro dominio, otra IP) y recrea el
+  // contenedor: lo que nadie ha tocado en Ajustes pasa a los valores nuevos.
+  // Después de escuchar: aplicar los ajustes recomendados habla con el motor.
+  void adoptarEntornoAlArrancar({ info: (msg) => app.log.info(msg), warn: (msg) => app.log.warn(msg) });
 
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
 }

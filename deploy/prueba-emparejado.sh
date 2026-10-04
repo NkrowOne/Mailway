@@ -59,6 +59,9 @@ comprobar() {
 contiene() { grep -Fq -- "$2" "$1"; }
 rechaza_correo() { ! correo_admin_valido "$1"; }
 no_contiene() { ! grep -Fq -- "$2" "$1"; }
+# Una línea exactamente igual a $2 (con «contiene», un salto de línea en el
+# patrón serían dos patrones, y uno vacío casa con todo).
+tiene_linea() { grep -Fxq -- "$2" "$1"; }
 igual() { [ "$1" = "$2" ]; }
 
 # ------------------------------------------------------------- simulación --
@@ -113,6 +116,15 @@ docker() {
   esac
 }
 esperar_sano() { return 0; }
+# Sin red: la IP con la que «sale» el servidor y si la guardada es de una de
+# sus interfaces los fija cada escenario.
+FAKE_IP_DETECTADA=203.0.113.7
+FAKE_IP_LOCAL=1
+detectar_ip() {
+  echo "DETECTAR_IP" >>"$REGISTRO"
+  printf '%s' "$FAKE_IP_DETECTADA"
+}
+ip_local() { [ "$FAKE_IP_LOCAL" = 0 ]; }
 
 # API de Skyway simulada. /api/health responde 200 solo en FAKE_SANA.
 FAKE_SANA=""
@@ -593,9 +605,9 @@ reiniciar_panel
 FAKE_CONTENEDORES="skyway-cliente-mailway"
 (detectar_respondiendo s && echo "SERVICIO=$PANEL_EXISTENTE_SERVICIO" && echo "CLAVE=$(valor_panel STALWART_ADMIN_PASSWORD)") >"$SALIDA" 2>&1
 comprobar "lo ignora" contiene "$SALIDA" "Se ignora el panel de Mailway del contenedor skyway-cliente-mailway"
-comprobar "no lo adopta" contiene "$SALIDA" "SERVICIO="$'\n'
+comprobar "no lo adopta" tiene_linea "$SALIDA" "SERVICIO="
 comprobar "ni pregunta" no_contiene "$SALIDA" "Skyway despliega un panel de Mailway: contenedor"
-comprobar "ni usa su entorno" contiene "$SALIDA" "CLAVE="$'\n'
+comprobar "ni usa su entorno" tiene_linea "$SALIDA" "CLAVE="
 reiniciar_panel
 SKYWAY_URL=http://127.0.0.1:4000
 SKYWAY_TOKEN=sky_indicado12345
@@ -943,6 +955,400 @@ reiniciar_panel
 CON_SKYWAY=0
 detectar_panel_existente >"$SALIDA" 2>&1
 comprobar "no consulta Docker" no_contiene "$REGISTRO" "docker ps"
+
+# ------------------------------------------- nombres e IP de la plataforma --
+
+# deploy/.env de una instalación anterior con el dominio ejemplo.test.
+env_anterior() {
+  cat >"$ENV_FILE" <<'ENV'
+MAILWAY_INSTALACION='skyway'
+MAIL_HOSTNAME='mail.ejemplo.test'
+WEBMAIL_HOSTNAME='webmail.ejemplo.test'
+PANEL_HOSTNAME='panel.ejemplo.test'
+MAILWAY_PUBLIC_IP='203.0.113.7'
+LETSENCRYPT_EMAIL='admin@ejemplo.test'
+MAILWAY_ADMIN_EMAIL='admin@ejemplo.test'
+ENV
+}
+# recoger_datos como el instalador (con set -e) y lo que deja, en $SALIDA.
+datos_con() {
+  (
+    set -e
+    comprobar_subred() { :; }
+    elegir_correo_admin() { ADMIN_EMAIL=admin@ejemplo.test; }
+    recoger_datos
+    echo "NOMBRES=$MAIL_HOSTNAME $WEBMAIL_HOSTNAME $PANEL_HOSTNAME"
+    echo "IP=$IP_PUBLICA"
+    echo "ADOPTAR=$ADOPTAR_EN_PANEL"
+    echo "ANTERIOR=$MAIL_HOSTNAME_ANTERIOR"
+  ) >"$SALIDA" 2>&1
+  CODIGO=$?
+}
+reiniciar_datos() {
+  reiniciar_panel
+  FAKE_IP_DETECTADA=203.0.113.7
+  FAKE_IP_LOCAL=1
+  unset MAILWAY_DOMINIO MAILWAY_CAMBIAR_NOMBRES MAILWAY_MAIL_HOST MAILWAY_WEBMAIL_HOST MAILWAY_PANEL_HOST
+  env_anterior
+}
+
+echo "# Con los mismos nombres y la misma IP no se pide nada ni se adopta nada"
+reiniciar_datos
+datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "conserva los nombres" contiene "$SALIDA" "NOMBRES=mail.ejemplo.test webmail.ejemplo.test panel.ejemplo.test"
+comprobar "no habla de un cambio de nombres" no_contiene "$SALIDA" "Cambio de los nombres"
+comprobar "el panel no tiene nada que adoptar" tiene_linea "$SALIDA" "ADOPTAR="
+
+echo "# Otro dominio sin terminal: se detiene sin tocar nada y dice cómo confirmarlo"
+reiniciar_datos
+cp "$ENV_FILE" "$TMP/env-antes"
+MAILWAY_DOMINIO=nuevo.test datos_con
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "resume lo que cambia" contiene "$SALIDA" "Servidor de correo: mail.ejemplo.test → mail.nuevo.test"
+comprobar "y lo que supone para los clientes" contiene "$SALIDA" "tendrán que apuntar su MX"
+comprobar "dice cómo confirmarlo" contiene "$SALIDA" "MAILWAY_CAMBIAR_NOMBRES=1"
+comprobar "deploy/.env no cambia" cmp -s "$ENV_FILE" "$TMP/env-antes"
+
+echo "# Otro dominio con MAILWAY_CAMBIAR_NOMBRES=1: los tres nombres pasan al nuevo y el panel los adopta"
+reiniciar_datos
+MAILWAY_DOMINIO=nuevo.test MAILWAY_CAMBIAR_NOMBRES=1 datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "nombres nuevos" contiene "$SALIDA" "NOMBRES=mail.nuevo.test webmail.nuevo.test panel.nuevo.test"
+comprobar "el panel los adopta aunque se cambiaran a mano" tiene_linea "$SALIDA" "ADOPTAR=servidor,webmail,panel"
+comprobar "recuerda el nombre anterior del servidor" contiene "$SALIDA" "ANTERIOR=mail.ejemplo.test"
+comprobar "dice que el panel anterior se conserva en Skyway" contiene "$SALIDA" "panel.ejemplo.test se conserva en Skyway"
+
+echo "# Con terminal se pregunta, y por defecto no se cambia nada"
+reiniciar_datos
+INTERACTIVO=1 datos_con <<<$'nuevo.test\n\n'
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "no ha cambiado nada" contiene "$SALIDA" "No se ha cambiado nada"
+reiniciar_datos
+INTERACTIVO=1 datos_con <<<$'nuevo.test\ns\n\n\n\n'
+comprobar "respondiendo que sí, sigue" igual "$CODIGO" 0
+comprobar "con los nombres nuevos" contiene "$SALIDA" "NOMBRES=mail.nuevo.test webmail.nuevo.test panel.nuevo.test"
+
+echo "# Solo cambia el nombre del webmail: solo se adopta ese"
+reiniciar_datos
+MAILWAY_WEBMAIL_HOST=correo-web.ejemplo.test MAILWAY_CAMBIAR_NOMBRES=1 datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "adopta solo el webmail" tiene_linea "$SALIDA" "ADOPTAR=webmail"
+comprobar "sin nombre anterior del servidor" tiene_linea "$SALIDA" "ANTERIOR="
+comprobar "avisa de que el anterior deja de responder" contiene "$SALIDA" "webmail.ejemplo.test deja de responder"
+
+echo "# IP guardada que no es la del servidor, sin terminal: se detiene y propone las dos salidas"
+reiniciar_datos
+FAKE_IP_DETECTADA=198.51.100.99
+datos_con
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "nombra las dos IP" contiene "$SALIDA" "La IP guardada (203.0.113.7) no es la de este servidor, que sale a Internet con 198.51.100.99"
+comprobar "propone la detectada" contiene "$SALIDA" "MAILWAY_IP=198.51.100.99"
+comprobar "y conservar la guardada" contiene "$SALIDA" "MAILWAY_IP=203.0.113.7"
+
+echo "# Con terminal se avisa y se propone la detectada, que el panel adopta"
+reiniciar_datos
+FAKE_IP_DETECTADA=198.51.100.99
+INTERACTIVO=1 datos_con <<<$'\n\n\n\n'
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "lo avisa" contiene "$SALIDA" "La IP guardada (203.0.113.7) no es la de este servidor"
+comprobar "elige la detectada por defecto" contiene "$SALIDA" "IP=198.51.100.99"
+comprobar "el panel la adopta" tiene_linea "$SALIDA" "ADOPTAR=ip"
+
+echo "# Con MAILWAY_IP manda la indicada y no se detecta nada"
+reiniciar_datos
+FAKE_IP_DETECTADA=198.51.100.99
+MAILWAY_IP=203.0.113.7 datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "usa la indicada" contiene "$SALIDA" "IP=203.0.113.7"
+comprobar "sin consultar la IP de salida" no_contiene "$REGISTRO" "DETECTAR_IP"
+comprobar "sin nada que adoptar" tiene_linea "$SALIDA" "ADOPTAR="
+
+echo "# La IP guardada sigue siendo de una interfaz del servidor: se conserva con un aviso"
+reiniciar_datos
+FAKE_IP_DETECTADA=198.51.100.99
+FAKE_IP_LOCAL=0
+datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "conserva la guardada" contiene "$SALIDA" "IP=203.0.113.7"
+comprobar "avisa de la IP de salida" contiene "$SALIDA" "sale a Internet con 198.51.100.99, no con 203.0.113.7"
+
+echo "# Sin poder detectar la IP se usa la guardada"
+reiniciar_datos
+FAKE_IP_DETECTADA=""
+datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "usa la guardada" contiene "$SALIDA" "IP=203.0.113.7"
+comprobar "lo dice" contiene "$SALIDA" "No se ha podido detectar la IP pública"
+
+echo "# Un A que ya apunta a la IP de este servidor no se devuelve a la guardada"
+: >"$REGISTRO"
+FAKE_CF_EXISTENTES=$A_OTRA_IP
+(IP_DETECTADA=198.51.100.9 && INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s) >"$SALIDA" 2>&1
+comprobar "sin terminal no escribe nada, ni con MAILWAY_DNS_REEMPLAZAR=1" igual "$(escrituras_cf)" ""
+comprobar "explica por qué" contiene "$SALIDA" "la IP con la que este servidor sale a Internet"
+comprobar "sin proponer MAILWAY_DNS_REEMPLAZAR, que no lo cambiaría" no_contiene "$SALIDA" "MAILWAY_DNS_REEMPLAZAR=1"
+: >"$REGISTRO"
+(IP_DETECTADA=198.51.100.9 && INTERACTIVO=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s <<<"") >"$SALIDA" 2>&1
+comprobar "con terminal, la respuesta por defecto es no" igual "$(escrituras_cf)" ""
+: >"$REGISTRO"
+(IP_DETECTADA=203.0.113.7 && INTERACTIVO=0 && MAILWAY_DNS_REEMPLAZAR=1 && cf_registro A mail.ejemplo.test 203.0.113.7 s) >"$SALIDA" 2>&1
+comprobar "a la IP de este servidor sí lo mueve (mudanza)" contiene <(escrituras_cf) "cf_api PUT /zones/zona1/dns_records/rec1"
+
+# ------------------------------------------ identidad del servidor en el panel --
+
+FAKE_IDENTIDAD=1
+FAKE_IDENTIDAD_SALIDA='{"cambios":[{"campo":"servidor","antes":"mail.ejemplo.test","despues":"mail.nuevo.test"}]}'
+docker() {
+  printf 'docker %s\n' "$*" >>"$REGISTRO"
+  case "$*" in
+    "exec panel-c test -f server/dist/tools/identidad.js") [ "$FAKE_IDENTIDAD" = 1 ] ;;
+    "exec -u node panel-c node server/dist/tools/identidad.js --adoptar "*)
+      echo "Aviso: algo que contar" >&2
+      printf '%s\n' "$FAKE_IDENTIDAD_SALIDA"
+      ;;
+    *)
+      echo "docker no simulado: $*" >>"$REGISTRO"
+      return 1
+      ;;
+  esac
+}
+
+echo "# Sin cambio confirmado, no se llama a la herramienta de identidad"
+: >"$REGISTRO"
+(ADOPTAR_EN_PANEL="" && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
+comprobar "no llama a nada" no_contiene "$REGISTRO" "identidad.js"
+comprobar "sin línea en el resumen" contiene "$SALIDA" "RESUMEN="
+
+echo "# Con el cambio confirmado, el panel adopta lo indicado"
+: >"$REGISTRO"
+(ADOPTAR_EN_PANEL=servidor,webmail && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
+comprobar "pasa la lista a --adoptar" contiene "$REGISTRO" "docker exec -u node panel-c node server/dist/tools/identidad.js --adoptar servidor,webmail"
+comprobar "como el usuario del panel" contiene "$REGISTRO" "exec -u node panel-c"
+comprobar "muestra los avisos de la herramienta" contiene "$SALIDA" "[aviso] algo que contar"
+comprobar "el resumen dice qué ha cambiado" contiene "$SALIDA" "RESUMEN=adoptada en Ajustes del panel (mail.ejemplo.test → mail.nuevo.test)"
+
+echo "# Un panel sin la herramienta: se dice que se revise a mano"
+: >"$REGISTRO"
+FAKE_IDENTIDAD=0
+(ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
+comprobar "queda pendiente" contiene "$SALIDA" "RESUMEN=pendiente"
+comprobar "y dónde revisarla" contiene "$SALIDA" "Ajustes → Identidad del servidor"
+FAKE_IDENTIDAD=1
+
+# ------------------------------------------------------------- DNS inverso --
+
+# curl simulado para las consultas DoH: la respuesta de cada resolutor, o
+# «falla» si no responde.
+FAKE_DOH_CF=falla
+FAKE_DOH_GOOGLE=falla
+curl() {
+  local url=${*: -1}
+  printf 'curl %s\n' "$url" >>"$REGISTRO"
+  local respuesta
+  case "$url" in
+    https://cloudflare-dns.com/*) respuesta=$FAKE_DOH_CF ;;
+    https://dns.google/*) respuesta=$FAKE_DOH_GOOGLE ;;
+    *) return 7 ;;
+  esac
+  [ "$respuesta" != falla ] || return 7
+  printf '%s' "$respuesta"
+}
+ptr_con() {
+  FAKE_DOH_CF=$1
+  FAKE_DOH_GOOGLE=$2
+  : >"$REGISTRO"
+  (IP_PUBLICA=203.0.113.7 && MAIL_HOSTNAME=mail.ejemplo.test && comprobar_ptr && echo "PTR=$RESUMEN_PTR") >"$SALIDA" 2>&1
+}
+PTR_BIEN='{"Status":0,"Answer":[{"name":"7.113.0.203.in-addr.arpa.","type":12,"data":"Mail.Ejemplo.TEST."}]}'
+
+echo "# PTR: si ningún resolutor responde, no se da por «sin configurar»"
+ptr_con falla falla
+comprobar "dice que no se ha podido comprobar" contiene "$SALIDA" "PTR=sin comprobar: ningún resolutor ha respondido"
+comprobar "no manda pedírselo al proveedor" no_contiene "$SALIDA" "SIN CONFIGURAR"
+comprobar "prueba los dos resolutores" contiene "$REGISTRO" "https://dns.google/resolve?name=7.113.0.203.in-addr.arpa&type=PTR"
+
+echo "# PTR: si el primero falla responde el segundo; sin distinguir mayúsculas ni el punto final"
+ptr_con falla "$PTR_BIEN"
+comprobar "correcto" contiene "$SALIDA" "PTR=correcto (203.0.113.7 → mail.ejemplo.test)"
+
+echo "# PTR: un SERVFAIL no cuenta como respuesta"
+ptr_con '{"Status":2}' "$PTR_BIEN"
+comprobar "usa el segundo resolutor" contiene "$SALIDA" "PTR=correcto"
+
+echo "# PTR: el nombre no existe (NXDOMAIN)"
+ptr_con '{"Status":3}' falla
+comprobar "sin configurar" contiene "$SALIDA" "PTR=SIN CONFIGURAR: pide al proveedor del servidor el DNS inverso 203.0.113.7 → mail.ejemplo.test"
+
+echo "# PTR: delegación con CNAME (RFC 2317) y otro nombre"
+ptr_con '{"Status":0,"Answer":[{"type":5,"data":"7.0-25.113.0.203.in-addr.arpa."},{"type":12,"data":"vps-1.proveedor.test."}]}' falla
+comprobar "incorrecto, con el PTR y no el CNAME" contiene "$SALIDA" "PTR=INCORRECTO: 203.0.113.7 → vps-1.proveedor.test (debe ser mail.ejemplo.test"
+unset -f curl
+
+# ----------------------------------------------------- imágenes y resumen --
+
+echo "# --actualizar sin poder descargar las imágenes: avisa y queda en el resumen"
+: >"$REGISTRO"
+compose() {
+  printf 'compose %s\n' "$*" >>"$REGISTRO"
+  echo "Error response from daemon: toomanyrequests" >&2
+  return 1
+}
+(descargar_imagenes --profile proxy && echo "IMAGENES=$RESUMEN_IMAGENES") >"$SALIDA" 2>&1
+comprobar "lo intenta con --ignore-buildable" tiene_linea "$REGISTRO" "compose --profile proxy pull --quiet --ignore-buildable"
+comprobar "y sin él" tiene_linea "$REGISTRO" "compose --profile proxy pull --quiet"
+comprobar "avisa" contiene "$SALIDA" "No se han podido descargar las imágenes nuevas"
+comprobar "queda en el resumen" contiene "$SALIDA" "IMAGENES=NO DESCARGADAS"
+compose() { printf 'compose %s\n' "$*" >>"$REGISTRO"; }
+(descargar_imagenes && echo "IMAGENES=$RESUMEN_IMAGENES") >"$SALIDA" 2>&1
+comprobar "si se descargan, se dice" contiene "$SALIDA" "IMAGENES=descargadas las últimas versiones"
+unset -f compose
+
+resumen_con() {
+  (
+    datos_instalacion
+    CON_SKYWAY=1 RESUMEN_SKYWAY=x RESUMEN_EMPAREJADO=x RESUMEN_DNS=x RESUMEN_PTR=x RESUMEN_CERT=x
+    EMPAREJADO_ADMIN_EMAIL=admin@ejemplo.test EMPAREJADO_OK=1 PANEL_CONTENEDOR=panel-c CF_PANEL_CONECTADA=1
+    RESUMEN_P25=abierto RESUMEN_IMAGENES="" RESUMEN_IDENTIDAD="" MAIL_HOSTNAME_ANTERIOR=""
+    "$@"
+    resumen
+  ) >"$SALIDA" 2>&1
+}
+
+echo "# Resumen: el puerto 25 bloqueado es un paso que dar"
+resumen_con eval 'RESUMEN_P25=BLOQUEADO'
+comprobar "en «Siguientes pasos»" contiene "$SALIDA" "Pide al proveedor del servidor que desbloquee el puerto 25 de salida"
+resumen_con true
+comprobar "abierto, no" no_contiene "$SALIDA" "desbloquee el puerto 25"
+
+echo "# Resumen tras cambiar el nombre del servidor y sin imágenes nuevas"
+resumen_con eval 'MAIL_HOSTNAME=mail.nuevo.test MAIL_HOSTNAME_ANTERIOR=mail.ejemplo.test RESUMEN_IMAGENES="NO DESCARGADAS: x" RESUMEN_IDENTIDAD="pendiente: y"'
+comprobar "manda cambiar el MX de los dominios" contiene "$SALIDA" "Cambia a mail.nuevo.test el MX"
+comprobar "y reconfigurar los programas de correo" contiene "$SALIDA" "programas de correo que usaban mail.ejemplo.test"
+comprobar "la línea de las imágenes" contiene "$SALIDA" "Imágenes:            NO DESCARGADAS: x"
+comprobar "y repetir --actualizar" contiene "$SALIDA" "cuando haya conexión con Docker Hub"
+comprobar "la identidad pendiente" contiene "$SALIDA" "Identidad en el panel: pendiente: y"
+comprobar "y dónde revisarla" contiene "$SALIDA" "En Ajustes → Identidad del servidor, comprueba los nombres y la IP nuevos"
+
+# ------------------------------------------------------------- --comprobar --
+
+# Dobles para el diagnóstico: estado de cada contenedor, API del motor, lo que
+# se ejecuta en el webmail, parámetros de Traefik, DNS, PTR y puerto 25.
+declare -A FAKE_ESTADOS=()
+FAKE_PANEL_RESPONDE=1
+FAKE_TRAEFIK='["--providers.http.endpoint=http://skyway:4000/api/traefik/mailway"]'
+FAKE_DNS=0
+FAKE_PTR_LEIDOS=mail.ejemplo.test
+FAKE_P25=1
+reiniciar_diagnostico() {
+  : >"$REGISTRO"
+  FAKE_ESTADOS=([mailway-mail]=healthy [mailway-webmail]=healthy [skyway-mailway-panel]=healthy [skyway-traefik]=running [mailway-certs-dumper]=ausente)
+  FAKE_PANEL_RESPONDE=1
+  FAKE_TRAEFIK='["--providers.http.endpoint=http://skyway:4000/api/traefik/mailway"]'
+  FAKE_DNS=0
+  FAKE_PTR_LEIDOS=mail.ejemplo.test
+  FAKE_P25=1
+}
+diagnostico() {
+  (
+    CON_SKYWAY=1 MAIL_HOSTNAME=mail.ejemplo.test WEBMAIL_HOSTNAME=webmail.ejemplo.test PANEL_HOSTNAME=panel.ejemplo.test
+    IP_PUBLICA=203.0.113.7 PANEL_INTERNAL_URL=http://skyway-mailway-panel:4100 INTERNAL_SUBNET=10.203.53.0/24
+    STALWART_ADMIN_PASSWORD=clave
+    "$@"
+    comprobar_instalacion
+  ) >"$SALIDA" 2>&1
+  CODIGO=$?
+}
+estado_contenedor() { printf '%s' "${FAKE_ESTADOS[$1]:-ausente}"; }
+motor_api() {
+  printf '{"data":{"server.hostname":"mail.ejemplo.test","server.allowed-ip.10.203.53.0/24":"","acme.mailway.directory":"x"}}'
+}
+argumentos_traefik() { printf '%s' "$FAKE_TRAEFIK"; }
+resuelve_a() {
+  echo "DNS $1" >>"$REGISTRO"
+  DNS_LEIDAS=""
+  if [ "$FAKE_DNS" = 1 ]; then DNS_LEIDAS=198.51.100.1; fi
+  return "$FAKE_DNS"
+}
+consultar_ptr() { PTR_LEIDOS=$FAKE_PTR_LEIDOS; }
+puerto25_abierto() { [ "$FAKE_P25" = 1 ]; }
+docker() {
+  printf 'docker %s\n' "$*" >>"$REGISTRO"
+  case "$*" in
+    "exec -u www-data mailway-webmail php "*) echo "OK: comprobado" ;;
+    "exec mailway-webmail curl -fsS --max-time 8 http://skyway-mailway-panel:4100/api/health")
+      [ "$FAKE_PANEL_RESPONDE" = 1 ] && echo '{"ok":true,"name":"mailway","version":"1.2.0"}'
+      ;;
+    *)
+      echo "docker no simulado: $*" >>"$REGISTRO"
+      return 1
+      ;;
+  esac
+}
+
+echo "# --comprobar con todo bien junto a Skyway"
+reiniciar_diagnostico
+diagnostico true
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "revisa el contenedor del panel" contiene "$SALIDA" "skyway-mailway-panel: en marcha y sano"
+comprobar "y que el webmail llega a él, con su versión" contiene "$SALIDA" "El webmail llega al panel (http://skyway-mailway-panel:4100): Mailway 1.2.0"
+comprobar "revisa Traefik" contiene "$SALIDA" "Traefik lee las rutas de Mailway a través de Skyway"
+comprobar "el DNS de los tres nombres" contiene "$REGISTRO" "DNS panel.ejemplo.test"
+comprobar "el PTR" contiene "$SALIDA" "DNS inverso (PTR) correcto"
+comprobar "el puerto 25" contiene "$SALIDA" "Puerto 25 de salida abierto"
+comprobar "ya no dice que el DNS y el PTR quedan fuera" no_contiene "$SALIDA" "Quedan fuera el DNS público"
+
+echo "# --comprobar con el panel parado: ya no dice «Todo correcto»"
+reiniciar_diagnostico
+FAKE_ESTADOS[skyway-mailway-panel]=exited
+FAKE_PANEL_RESPONDE=0
+diagnostico true
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "lo dice" contiene "$SALIDA" "skyway-mailway-panel: exited"
+comprobar "y que el webmail no llega a él" contiene "$SALIDA" "El webmail no llega al panel en http://skyway-mailway-panel:4100"
+comprobar "sin «Todo correcto»" no_contiene "$SALIDA" "Todo correcto"
+
+echo "# --comprobar: Traefik sin las rutas de Mailway, DNS a otra IP, PTR ajeno y 25 bloqueado"
+reiniciar_diagnostico
+FAKE_TRAEFIK='["--entrypoints.web.address=:80"]'
+FAKE_DNS=1
+FAKE_PTR_LEIDOS=vps-1.proveedor.test
+FAKE_P25=0
+diagnostico true
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "Traefik" contiene "$SALIDA" "El Traefik de Skyway no lee las rutas de Mailway"
+comprobar "el DNS, con la IP a la que apunta" contiene "$SALIDA" "mail.ejemplo.test apunta a 198.51.100.1, no a 203.0.113.7"
+comprobar "el PTR" contiene "$SALIDA" "DNS inverso (PTR) INCORRECTO: 203.0.113.7 → vps-1.proveedor.test"
+comprobar "el puerto 25, con qué hacer" contiene "$SALIDA" "Pide al proveedor del servidor que lo desbloquee"
+comprobar "cuenta cada incidencia" contiene "$SALIDA" "6 comprobaciones con incidencias"
+
+echo "# --comprobar sin respuesta de los resolutores: se dice, pero no es una incidencia"
+reiniciar_diagnostico
+FAKE_DNS=2
+diagnostico true
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "lo dice" contiene "$SALIDA" "ningún resolutor público ha respondido"
+
+echo "# --comprobar sin el contenedor del panel en deploy/.env"
+reiniciar_diagnostico
+diagnostico eval 'PANEL_INTERNAL_URL=http://panel-pendiente.invalid:4100'
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "lo dice" contiene "$SALIDA" "deploy/.env no indica el contenedor del panel"
+
+echo "# MAILWAY_COMPROBAR_SOLO_MOTOR=1: solo el motor, el webmail y el extractor"
+reiniciar_diagnostico
+FAKE_ESTADOS[skyway-mailway-panel]=ausente
+FAKE_ESTADOS[skyway-traefik]=ausente
+FAKE_P25=0
+diagnostico export MAILWAY_COMPROBAR_SOLO_MOTOR=1
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "lo dice" contiene "$SALIDA" "MAILWAY_COMPROBAR_SOLO_MOTOR=1: sin el panel, Traefik ni las comprobaciones desde Internet"
+comprobar "no llama al panel" no_contiene "$REGISTRO" "api/health"
+comprobar "ni consulta el DNS" no_contiene "$REGISTRO" "DNS mail.ejemplo.test"
+
+echo "# El contenedor del panel sale de MAILWAY_PANEL_INTERNAL_URL"
+comprobar "con Skyway" igual "$(PANEL_INTERNAL_URL=http://skyway-correo-mailway:4100 contenedor_del_panel)" skyway-correo-mailway
+comprobar "el marcador de panel pendiente no es un contenedor" igual "$(PANEL_INTERNAL_URL=http://panel-pendiente.invalid:4100 contenedor_del_panel)" ""
 
 echo
 TERMINADA=1

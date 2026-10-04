@@ -44,7 +44,10 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
     una línea JSON por la salida estándar), que usa el instalador. Los pasos
-    del asistente que comparte viven en `modules/setup.ts`.
+    del asistente que comparte viven en `modules/setup.ts`;
+    `src/tools/identidad.ts`: Ajustes adopta la identidad del entorno tras un
+    cambio de dominio o de IP confirmado en el instalador (la comparación
+    con el entorno, en `modules/entorno.ts`).
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
   `src/pages/admin/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades

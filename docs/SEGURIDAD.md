@@ -77,6 +77,14 @@ cliente puede usar la API directamente, no solo la interfaz.
   pasan por argumentos, registros ni auditoría, que anota cada paso como
   «Sistema» y sin secretos. El instalador pasa el token a Skyway por la
   entrada estándar y muestra la contraseña una sola vez.
+- **Identidad del servidor desde el instalador**
+  (`server/src/tools/identidad.ts`): también solo desde la terminal, tras un
+  cambio de dominio o de IP que quien instala ha confirmado. Hace que Ajustes
+  adopte los valores del entorno del panel (nombre del servidor, URL del
+  webmail y del panel, IP) aunque se hubieran cambiado a mano; nada más.
+  Sin confirmación, el panel solo adopta lo que nadie ha cambiado en Ajustes
+  y avisa de lo demás (`modules/entorno.ts`). Su salida (nombres, URL e IP)
+  no lleva secretos.
 
 ### 3.3 Claves de API
 

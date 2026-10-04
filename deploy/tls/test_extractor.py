@@ -366,6 +366,55 @@ class VolumenDelMotor(Base):
         self.assertEqual(self.motor.recargas, 1)
 
 
+VIEJO = 'mail.anterior.example.com'
+
+
+class CambioDeNombre(Base):
+    """MAIL_HOSTNAME cambia: el motor sigue con el par del nombre anterior hasta que el instalador lo traslada."""
+
+    def setUp(self):
+        super().setUp()
+        # Lo que dejó el extractor con el nombre anterior, y el motor usándolo.
+        anterior = extractor.validar_par(PARES['exacto'].cadena, PARES['exacto'].clave, HOST, 'prueba')
+        extractor.Volumen(self.volumen, VIEJO).instalar(anterior)
+        self.motor.ajustes = {
+            'certificate.mailway.cert': f'%{{file:{RUTA_MOTOR}/{VIEJO}/cert.pem}}%',
+            'certificate.mailway.private-key': f'%{{file:{RUTA_MOTOR}/{VIEJO}/key.pem}}%',
+            'certificate.mailway.default': 'true',
+        }
+        self.escribir_acme('renovado')
+
+    def test_no_retira_el_par_que_usa_el_motor(self):
+        self.ext.pasada()
+        self.assertTrue((self.volumen / VIEJO / 'cert.pem').exists(), 'el motor lo vuelve a leer en cada recarga')
+        self.assertTrue((self.volumen / HOST / 'cert.pem').exists(), 'el del nombre nuevo queda listo')
+        self.assertEqual(len(self.versiones()), 2)
+        self.assertEqual(self.ext.estado.codigo, 'sin_referencia')
+        self.assertIn(f'aún usa el certificado de {VIEJO}', self.ext.estado.mensaje)
+        self.assertEqual(self.motor.recargas, 0)
+
+    def test_con_la_api_caida_no_retira_ningun_enlace(self):
+        self.motor.api.shutdown()
+        self.motor.api.server_close()
+        self.ext.pasada()
+        self.assertEqual(self.ext.estado.codigo, 'motor')
+        self.assertTrue((self.volumen / VIEJO / 'cert.pem').exists())
+
+    def test_trasladado_al_nombre_nuevo_retira_el_anterior(self):
+        self.ext.pasada()
+        self.motor.ajustes = dict(REFERENCIA)  # lo que hace deploy/instalar.sh
+        self.ext.pasada()
+        self.assertEqual(self.ext.estado.codigo, 'ok', self.ext.estado.mensaje)
+        self.assertFalse((self.volumen / VIEJO).exists(), 'ya no lo usa nadie')
+        self.assertEqual(len(self.versiones()), 1)
+        self.assertEqual(self.motor.sirve(), PARES['renovado'].huella)
+
+    def test_una_referencia_ajena_a_la_estructura_no_protege_nada(self):
+        self.motor.ajustes['certificate.mailway.private-key'] = '%{file:/etc/stalwart/clave.pem}%'
+        self.ext.pasada()
+        self.assertFalse((self.volumen / VIEJO).exists())
+
+
 class Motor(Base):
     def test_recarga_una_vez_y_comprueba_993_y_465(self):
         self.escribir_acme('exacto')
