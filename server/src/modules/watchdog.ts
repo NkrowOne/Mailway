@@ -334,8 +334,11 @@ export async function checkWebmail(): Promise<void> {
       message: `${
         status === null ? `No hay respuesta desde ${webmailUrl}.` : `${webmailUrl} responde con un error (HTTP ${status}).`
       } Los clientes no pueden leer su correo desde el navegador (los programas de correo y el móvil siguen funcionando).`,
+      // El compose depende del modo de la instalación (junto a Skyway o
+      // autónoma) y la ruta, de la carpeta: el instalador elige el bueno
+      // según deploy/.env, desde cualquier sitio.
       remedy:
-        'Ejecuta en el servidor: docker logs mailway-webmail y docker compose -f deploy/docker-compose.mail.yml up -d',
+        'Revisa su registro en el servidor con «docker logs mailway-webmail». Después, en la carpeta de Mailway, «sudo bash deploy/instalar.sh --comprobar» lo diagnostica y «sudo bash deploy/instalar.sh --actualizar» lo vuelve a levantar con la configuración de la instalación (junto a Skyway o autónoma).',
     });
   }
 }

@@ -107,6 +107,7 @@ const ETIQUETAS: Record<string, string> = {
   'setup.instance_configured': 'Identidad configurada',
   'setup.completed': 'Puesta en marcha completada',
   'settings.instance_updated': 'Ajustes de identidad actualizados',
+  'settings.instance_env_adopted': 'Identidad del servidor actualizada con la del instalador',
   'settings.engine_updated': 'Ajustes del motor actualizados',
   // Motor de correo
   'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',

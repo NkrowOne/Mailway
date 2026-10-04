@@ -22,6 +22,9 @@ import { ensureDefaultPlans } from './clients';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
 import { alCambiarIpGuardada } from './ipservidor';
+// Dependencia circular a propósito (entorno.ts usa el esquema y los ajustes
+// recomendados de aquí): solo se usa dentro de una ruta, nunca al cargar.
+import { revisarIdentidadConEntorno } from './entorno';
 import {
   type InstanceSettings,
   getEngineSettings,
@@ -92,7 +95,7 @@ function httpUrl(message: string) {
     .refine((value) => /^https?:\/\//i.test(value), message);
 }
 
-const instanceSchema = z.object({
+export const instanceSchema = z.object({
   brandName: z.string().trim().min(1).max(60).optional(),
   // Se escribe tal cual en la configuración del motor y en los registros MX:
   // el mismo validador que usan la comprobación DNS y el fichero de zona.
@@ -308,7 +311,7 @@ export async function saveInstanceIdentity(
 }
 
 /** Campos de la identidad que el instalador define en el entorno del panel. */
-const INSTANCE_FROM_ENV = [
+export const INSTANCE_FROM_ENV = [
   ['mailHostname', 'MAILWAY_MAIL_HOSTNAME', () => config.mailHostnameDefault],
   ['publicIp', 'MAILWAY_PUBLIC_IP', () => config.publicIpDefault],
   ['webmailUrl', 'MAILWAY_WEBMAIL_URL', () => config.webmailUrlDefault],
@@ -319,8 +322,9 @@ const INSTANCE_FROM_ENV = [
  * Lo que setInstanceSettings rechazaría aunque pase el esquema: la URL del
  * panel no admite credenciales, parámetros ni fragmentos. Se comprueba aquí
  * para descartar solo ese valor, en lugar de hacer fallar el guardado entero.
+ * Qué se hace con cada valor del entorno lo decide modules/entorno.ts.
  */
-function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string): boolean {
+export function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string): boolean {
   if (field !== 'panelUrl') return true;
   try {
     normalizePanelUrl(value);
@@ -328,30 +332,6 @@ function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string):
   } catch {
     return false;
   }
-}
-
-/**
- * Identidad del servidor que trae el entorno (`MAILWAY_MAIL_HOSTNAME`,
- * `MAILWAY_PUBLIC_IP`, `MAILWAY_WEBMAIL_URL`, `MAILWAY_PANEL_URL`), solo para
- * los campos que aún no se han guardado: lo que la administración cambió en
- * el panel no se pisa. Cada valor pasa por la misma validación que el
- * asistente; uno no válido se descarta con un aviso, sin repetir el valor.
- */
-export function instanceFromEnv(): { patch: InstanceInput; warnings: string[] } {
-  const stored = getJsonSetting<Partial<InstanceSettings>>('instance') || {};
-  const patch: InstanceInput = {};
-  const warnings: string[] = [];
-  for (const [field, variable, read] of INSTANCE_FROM_ENV) {
-    const value = read().trim();
-    if (!value || (stored[field] ?? '').trim()) continue;
-    const parsed = instanceSchema.shape[field].safeParse(value);
-    if (parsed.success && parsed.data && guardable(field, parsed.data)) {
-      patch[field] = parsed.data;
-    } else {
-      warnings.push(`El valor de ${variable} del entorno del panel no es válido y no se ha guardado.`);
-    }
-  }
-  return { patch, warnings };
 }
 
 type DnsVerdict = 'ok' | 'missing' | 'mismatch' | 'unknown';
@@ -571,6 +551,9 @@ export function registerSetupRoutes(app: FastifyInstance): void {
     exigirNombreDelServidor(body);
     const ipAnterior = getInstanceSettings().publicIp.trim();
     const instance = setInstanceSettings(body);
+    // Si ahora coincide (o deja de coincidir) con lo que fijó el instalador,
+    // el aviso de la diferencia se abre o se cierra ya, no al reiniciar.
+    revisarIdentidadConEntorno();
     // Un cambio de nombre o de IP cambia qué hosts de autoconfiguración se
     // pueden publicar: se recalcula ya, sin esperar a la vuelta del vigilante.
     void refreshAutoconfigHosts().catch(() => undefined);

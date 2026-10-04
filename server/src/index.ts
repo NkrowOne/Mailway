@@ -2,6 +2,7 @@ import { buildApp } from './app';
 import { config } from './config';
 import { retirarDelMotorDominiosSinPropiedad } from './modules/domains';
 import { revertirPropiedadSimulada } from './modules/demo';
+import { adoptarEntornoAlArrancar } from './modules/entorno';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -39,6 +40,10 @@ async function main(): Promise<void> {
       }
     })
     .catch((err) => app.log.warn(`No se han podido revisar los dominios sin propiedad del motor: ${(err as Error).message}`));
+  // El instalador cambia el entorno (otro dominio, otra IP) y recrea el
+  // contenedor: lo que nadie ha tocado en Ajustes pasa a los valores nuevos.
+  // Después de escuchar: aplicar los ajustes recomendados habla con el motor.
+  void adoptarEntornoAlArrancar({ info: (msg) => app.log.info(msg), warn: (msg) => app.log.warn(msg) });
 
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
 }
