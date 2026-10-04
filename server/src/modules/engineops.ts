@@ -389,13 +389,15 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
   resolveAlertsOfType(ALERT_HOSTNAME, { except: clave });
   // Si el motor se anuncia con el nombre que trae el entorno, lo más probable
   // es que el instalador haya cambiado el dominio de la plataforma y Ajustes
-  // conserve el anterior porque se cambió a mano: aplicar los ajustes
-  // recomendados devolvería el motor al nombre viejo.
+  // conserve el anterior: aplicar los ajustes recomendados devolvería el
+  // motor al nombre viejo, así que lo primero que se propone es corregir
+  // Ajustes, y el botón queda para el caso contrario.
   const delInstalador = normalizeHostname(config.mailHostnameDefault);
-  const notaInstalador =
+  const primerPaso =
     delInstalador && delInstalador === actual
-      ? ` ${actual} es el nombre que fijó el instalador (MAILWAY_MAIL_HOSTNAME del entorno del panel): si se ha cambiado con él el dominio de la plataforma, corrige el nombre en Ajustes → Identidad del servidor en lugar de aplicar los ajustes recomendados, que devolverían el motor a ${esperado}.`
-      : '';
+      ? `${actual} es el nombre que fijó el instalador (MAILWAY_MAIL_HOSTNAME del entorno del panel): si se ha cambiado con él el dominio de la plataforma, corrige el nombre en Ajustes → Identidad del servidor y no apliques los ajustes recomendados, que devolverían el motor a ${esperado}. ` +
+        `Si el correcto es ${esperado}, pulsa «Aplicar ajustes recomendados» en Ajustes → Servidor de correo y vuelve a ejecutar el instalador con ese nombre (sección 8.3 de docs/DESPLIEGUE-SKYWAY.md), que es el que usan Traefik y el certificado. `
+      : 'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». ';
   fireAlert({
     severity: 'warning',
     type: ALERT_HOSTNAME,
@@ -405,10 +407,10 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
       `El motor genera los registros DNS de los dominios (MX, SRV y autoconfiguración) con el nombre ${actual}, pero en Ajustes figura ${esperado}. ` +
       'La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.',
     remedy:
-      'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
+      primerPaso +
+      'Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
-      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.' +
-      notaInstalador,
+      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
   });
 }
 

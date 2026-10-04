@@ -63,6 +63,13 @@ no_contiene() { ! grep -Fq -- "$2" "$1"; }
 # patrón serían dos patrones, y uno vacío casa con todo).
 tiene_linea() { grep -Fxq -- "$2" "$1"; }
 igual() { [ "$1" = "$2" ]; }
+# ¿Hay una línea con $3 después de la primera con $2?
+despues_de() {
+  local a b
+  a=$(grep -nF -- "$2" "$1" | head -n 1 | cut -d: -f1)
+  b=$(grep -nF -- "$3" "$1" | tail -n 1 | cut -d: -f1)
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
 
 # ------------------------------------------------------------- simulación --
 
@@ -1081,6 +1088,40 @@ comprobar "termina bien" igual "$CODIGO" 0
 comprobar "usa la guardada" contiene "$SALIDA" "IP=203.0.113.7"
 comprobar "lo dice" contiene "$SALIDA" "No se ha podido detectar la IP pública"
 
+echo "# Un cambio confirmado que se interrumpe tras escribir deploy/.env se retoma en la siguiente ejecución"
+reiniciar_datos
+(
+  set -e
+  comprobar_subred() { :; }
+  elegir_correo_admin() { ADMIN_EMAIL=admin@ejemplo.test; }
+  MAILWAY_DOMINIO=nuevo.test MAILWAY_CAMBIAR_NOMBRES=1
+  recoger_datos
+  STALWART_ADMIN_PASSWORD=clave-del-motor ROUNDCUBE_DES_KEY=d PANEL_INTERNAL_URL=http://skyway-mailway-panel:4100
+  MAILWAY_SECRET=0123456789abcdef0123456789abcdef MAILWAY_SETUP_TOKEN=s MAILWAY_TRAEFIK_TOKEN=t MAILWAY_WEBMAIL_TOKEN=w
+  MAILWAY_MAIL_VOLUME="" MAILWAY_WEBMAIL_DB_VOLUME="" MAILWAY_PANEL_VOLUME=""
+  escribir_env
+  # Lo siguiente falla (p. ej., Skyway rechaza las variables del panel).
+  fallo "No se pudieron actualizar las variables del panel: HTTP 500."
+) >"$SALIDA" 2>&1
+comprobar "la primera ejecución se detiene" contiene "$SALIDA" "No se pudieron actualizar las variables del panel"
+comprobar "deploy/.env ya tiene los nombres nuevos" tiene_linea "$ENV_FILE" "MAIL_HOSTNAME='mail.nuevo.test'"
+comprobar "y lo que el panel debe adoptar" tiene_linea "$ENV_FILE" "MAILWAY_ADOPCION_PENDIENTE='servidor,webmail,panel'"
+comprobar "explicado en un comentario" tiene_linea "$ENV_FILE" "$COMENTARIO_ADOPCION"
+datos_con
+comprobar "la siguiente ejecución termina bien" igual "$CODIGO" 0
+comprobar "ya no ve un cambio de nombres" no_contiene "$SALIDA" "Cambio de los nombres"
+comprobar "pero retoma lo pendiente" tiene_linea "$SALIDA" "ADOPTAR=servidor,webmail,panel"
+comprobar "y lo dice" contiene "$SALIDA" "Pendiente de una ejecución anterior: que el panel adopte los valores nuevos (servidor,webmail,panel)"
+
+echo "# Lo pendiente se suma a un cambio nuevo sin repetirse, y lo que no es un campo se descarta"
+reiniciar_datos
+printf "MAILWAY_ADOPCION_PENDIENTE='ip,\$(id),toString,servidor'\n" >>"$ENV_FILE"
+FAKE_IP_DETECTADA=198.51.100.99
+MAILWAY_IP=198.51.100.99 datos_con
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "cada campo una sola vez" tiene_linea "$SALIDA" "ADOPTAR=ip,servidor"
+comprobar "sin ejecutar nada de lo guardado" no_contiene "$SALIDA" "uid="
+
 echo "# Un A que ya apunta a la IP de este servidor no se devuelve a la guardada"
 : >"$REGISTRO"
 FAKE_CF_EXISTENTES=$A_OTRA_IP
@@ -1097,15 +1138,34 @@ comprobar "a la IP de este servidor sí lo mueve (mudanza)" contiene <(escritura
 
 # ------------------------------------------ identidad del servidor en el panel --
 
+# El panel en marcha: su entorno (con un secreto que nunca debe salir), si
+# tiene la herramienta de identidad y lo que responde.
+ENTORNO_NUEVO=$'MAILWAY_SECRET=secreto-del-panel-0123456789\nMAILWAY_MAIL_HOSTNAME=Mail.Nuevo.test\nMAILWAY_WEBMAIL_URL=https://webmail.nuevo.test\nMAILWAY_PANEL_URL=https://panel.nuevo.test/\nMAILWAY_PUBLIC_IP=198.51.100.99'
+ENTORNO_VIEJO=$'MAILWAY_SECRET=secreto-del-panel-0123456789\nMAILWAY_MAIL_HOSTNAME=mail.ejemplo.test\nMAILWAY_WEBMAIL_URL=https://webmail.ejemplo.test\nMAILWAY_PANEL_URL=https://panel.ejemplo.test\nMAILWAY_PUBLIC_IP=203.0.113.7'
+FAKE_ENTORNO_IDENTIDAD=$ENTORNO_NUEVO
 FAKE_IDENTIDAD=1
+FAKE_IDENTIDAD_FALLA=0
 FAKE_IDENTIDAD_SALIDA='{"cambios":[{"campo":"servidor","antes":"mail.ejemplo.test","despues":"mail.nuevo.test"}]}'
 docker() {
   printf 'docker %s\n' "$*" >>"$REGISTRO"
   case "$*" in
-    "exec panel-c test -f server/dist/tools/identidad.js") [ "$FAKE_IDENTIDAD" = 1 ] ;;
-    "exec -u node panel-c node server/dist/tools/identidad.js --adoptar "*)
+    info) return 0 ;;
+    "inspect --type container -f {{range .Config.Env}}{{println .}}{{end}} "*) printf '%s\n' "$FAKE_ENTORNO_IDENTIDAD" ;;
+    "inspect --type container -f {{index .Config.Labels \"skyway.service\"}} "*) echo svc1 ;;
+    "inspect --type container -f {{index .Config.Labels \"skyway.project\"}} "*) echo prj1 ;;
+    "inspect --type container -f {{.State.Running}} skyway") echo true ;;
+    "inspect --type container "*) return 0 ;;
+    "exec "*" test -f server/dist/tools/identidad.js") [ "$FAKE_IDENTIDAD" = 1 ] ;;
+    "exec "*" test -f server/dist/tools/"*) return 0 ;;
+    "exec -u node "*" node server/dist/tools/identidad.js --adoptar "*)
       echo "Aviso: algo que contar" >&2
+      [ "$FAKE_IDENTIDAD_FALLA" = 0 ] || return 1
       printf '%s\n' "$FAKE_IDENTIDAD_SALIDA"
+      ;;
+    "exec -i -u node "*" node server/dist/tools/emparejar.js"*) printf '%s\n' "$FAKE_SALIDA" ;;
+    "exec -i skyway node server/dist/tools/mailway.js conectar"*)
+      cat >/dev/null
+      echo '{"ok":true,"version":"1.2.0","brandName":"Correo"}'
       ;;
     *)
       echo "docker no simulado: $*" >>"$REGISTRO"
@@ -1113,28 +1173,131 @@ docker() {
       ;;
   esac
 }
+# adoptar_identidad_en_panel (y lo que se pida después) con los valores
+# nuevos de esta ejecución y deploy/.env en $ENV_IDENTIDAD.
+ENV_IDENTIDAD="$TMP/env-identidad"
+identidad_con() {
+  : >"$REGISTRO"
+  (
+    ENV_FILE=$ENV_IDENTIDAD
+    MAIL_HOSTNAME=mail.nuevo.test WEBMAIL_HOSTNAME=webmail.nuevo.test PANEL_HOSTNAME=panel.nuevo.test IP_PUBLICA=198.51.100.99
+    RESUMEN_IDENTIDAD="" RESUMEN_EMPAREJADO="" EMPAREJADO_OK=0 PANEL_CONTENEDOR=panel-c
+    "$@"
+    echo "RESUMEN=$RESUMEN_IDENTIDAD"
+    echo "EMPAREJADO=$RESUMEN_EMPAREJADO"
+    echo "QUEDA=$ADOPTAR_EN_PANEL"
+  ) >"$SALIDA" 2>&1
+}
+# deploy/.env tras un cambio confirmado que el panel aún no ha adoptado.
+env_con_pendiente() {
+  cat >"$ENV_IDENTIDAD" <<ENV
+MAIL_HOSTNAME='mail.nuevo.test'
+STALWART_ADMIN_PASSWORD='clave-del-motor'
+
+$COMENTARIO_ADOPCION
+MAILWAY_ADOPCION_PENDIENTE='$1'
+MI_CLAVE='se-conserva'
+ENV
+  chmod 600 "$ENV_IDENTIDAD"
+}
 
 echo "# Sin cambio confirmado, no se llama a la herramienta de identidad"
-: >"$REGISTRO"
-(ADOPTAR_EN_PANEL="" && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
+identidad_con eval 'ADOPTAR_EN_PANEL="" && adoptar_identidad_en_panel panel-c'
 comprobar "no llama a nada" no_contiene "$REGISTRO" "identidad.js"
-comprobar "sin línea en el resumen" contiene "$SALIDA" "RESUMEN="
+comprobar "sin línea en el resumen" tiene_linea "$SALIDA" "RESUMEN="
 
-echo "# Con el cambio confirmado, el panel adopta lo indicado"
-: >"$REGISTRO"
-(ADOPTAR_EN_PANEL=servidor,webmail && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
-comprobar "pasa la lista a --adoptar" contiene "$REGISTRO" "docker exec -u node panel-c node server/dist/tools/identidad.js --adoptar servidor,webmail"
+echo "# Con el cambio confirmado y el panel ya con el entorno nuevo, adopta lo indicado y se olvida lo pendiente"
+env_con_pendiente servidor,webmail,panel,ip
+identidad_con eval 'ADOPTAR_EN_PANEL=servidor,webmail,panel,ip && adoptar_identidad_en_panel panel-c'
+comprobar "pasa la lista a --adoptar" contiene "$REGISTRO" "docker exec -u node panel-c node server/dist/tools/identidad.js --adoptar servidor,webmail,panel,ip"
 comprobar "como el usuario del panel" contiene "$REGISTRO" "exec -u node panel-c"
 comprobar "muestra los avisos de la herramienta" contiene "$SALIDA" "[aviso] algo que contar"
 comprobar "el resumen dice qué ha cambiado" contiene "$SALIDA" "RESUMEN=adoptada en Ajustes del panel (mail.ejemplo.test → mail.nuevo.test)"
+comprobar "no queda nada que adoptar" tiene_linea "$SALIDA" "QUEDA="
+comprobar "deploy/.env ya no lo guarda" no_contiene "$ENV_IDENTIDAD" "MAILWAY_ADOPCION_PENDIENTE"
+comprobar "ni su comentario" no_contiene "$ENV_IDENTIDAD" "$COMENTARIO_ADOPCION"
+comprobar "y conserva lo demás" contiene "$ENV_IDENTIDAD" "STALWART_ADMIN_PASSWORD='clave-del-motor'"
+comprobar "también lo añadido a mano" contiene "$ENV_IDENTIDAD" "MI_CLAVE='se-conserva'"
+comprobar "con permisos 600" igual "$(stat -c %a "$ENV_IDENTIDAD")" 600
+comprobar "sin leer el entorno del panel con otro programa" no_contiene "$SALIDA" "secreto-del-panel"
 
-echo "# Un panel sin la herramienta: se dice que se revise a mano"
-: >"$REGISTRO"
+echo "# El despliegue del panel falló o sigue en curso: el contenedor en marcha tiene el entorno anterior"
+for campo in servidor webmail panel ip; do
+  env_con_pendiente "$campo"
+  FAKE_ENTORNO_IDENTIDAD=$ENTORNO_NUEVO
+  case "$campo" in
+    servidor) FAKE_ENTORNO_IDENTIDAD=${ENTORNO_NUEVO/Mail.Nuevo.test/mail.ejemplo.test} ;;
+    webmail) FAKE_ENTORNO_IDENTIDAD=${ENTORNO_NUEVO/webmail.nuevo.test/webmail.ejemplo.test} ;;
+    panel) FAKE_ENTORNO_IDENTIDAD=${ENTORNO_NUEVO/panel.nuevo.test/panel.ejemplo.test} ;;
+    ip) FAKE_ENTORNO_IDENTIDAD=${ENTORNO_NUEVO/198.51.100.99/203.0.113.7} ;;
+  esac
+  identidad_con eval "ADOPTAR_EN_PANEL=$campo && adoptar_identidad_en_panel panel-c"
+  comprobar "$campo: no llama a la herramienta, que no vería nada que cambiar" no_contiene "$REGISTRO" "identidad.js --adoptar"
+  comprobar "$campo: queda pendiente y lo explica" contiene "$SALIDA" "RESUMEN=pendiente: el panel en marcha (panel-c) aún arranca con los valores anteriores"
+  comprobar "$campo: no dice que Ajustes ya los tenía" no_contiene "$SALIDA" "ya tenía los valores nuevos"
+  comprobar "$campo: deploy/.env lo sigue guardando" tiene_linea "$ENV_IDENTIDAD" "MAILWAY_ADOPCION_PENDIENTE='$campo'"
+done
+
+echo "# Con la identidad pendiente no se empareja: devolvería el motor al nombre anterior"
+FAKE_ENTORNO_IDENTIDAD=$ENTORNO_VIEJO
+FAKE_SALIDA="{\"adminEmail\":\"admin@ejemplo.test\",\"token\":\"$TOKEN_MWT\"}"
+env_con_pendiente servidor
+identidad_con eval 'ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c && emparejar_al_terminar && datos_instalacion && resumen'
+comprobar "no ejecuta el emparejado" no_contiene "$REGISTRO" "emparejar.js"
+comprobar "lo explica" contiene "$SALIDA" "No se empareja Skyway con el panel hasta que adopte la identidad nueva"
+comprobar "el resumen lo recoge" contiene "$SALIDA" "EMPAREJADO=sin emparejar: el panel aún no ha adoptado la identidad nueva"
+comprobar "«Siguientes pasos» manda repetir --actualizar" contiene "$SALIDA" "Cuando el panel esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar"
+comprobar "y no --emparejar por separado" no_contiene "$SALIDA" "Empareja Skyway con el panel: sudo bash deploy/instalar.sh --emparejar"
+
+echo "# Con el panel ya con el entorno nuevo, el emparejado va después de la adopción"
+FAKE_ENTORNO_IDENTIDAD=$ENTORNO_NUEVO
+env_con_pendiente servidor
+identidad_con eval 'ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c && emparejar_al_terminar'
+comprobar "adopta y empareja, en ese orden" despues_de "$REGISTRO" "identidad.js --adoptar" "emparejar.js --email"
+
+echo "# Un panel sin la herramienta o que falla: queda pendiente y no se empareja"
 FAKE_IDENTIDAD=0
-(ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c && echo "RESUMEN=$RESUMEN_IDENTIDAD") >"$SALIDA" 2>&1
+env_con_pendiente servidor
+identidad_con eval 'ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c && emparejar_al_terminar'
 comprobar "queda pendiente" contiene "$SALIDA" "RESUMEN=pendiente"
 comprobar "y dónde revisarla" contiene "$SALIDA" "Ajustes → Identidad del servidor"
+comprobar "sin emparejar" no_contiene "$REGISTRO" "emparejar.js"
+comprobar "deploy/.env lo sigue guardando" tiene_linea "$ENV_IDENTIDAD" "MAILWAY_ADOPCION_PENDIENTE='servidor'"
 FAKE_IDENTIDAD=1
+FAKE_IDENTIDAD_FALLA=1
+identidad_con eval 'ADOPTAR_EN_PANEL=servidor && adoptar_identidad_en_panel panel-c'
+comprobar "si la herramienta falla, también" contiene "$SALIDA" "RESUMEN=pendiente: el panel no ha podido adoptarla"
+comprobar "y deploy/.env lo sigue guardando" tiene_linea "$ENV_IDENTIDAD" "MAILWAY_ADOPCION_PENDIENTE='servidor'"
+FAKE_IDENTIDAD_FALLA=0
+
+echo "# --emparejar retoma lo pendiente antes de emparejar"
+cat >"$ENV_IDENTIDAD" <<ENV
+MAILWAY_INSTALACION='skyway'
+MAIL_HOSTNAME='mail.nuevo.test'
+WEBMAIL_HOSTNAME='webmail.nuevo.test'
+PANEL_HOSTNAME='panel.nuevo.test'
+MAILWAY_PUBLIC_IP='198.51.100.99'
+LETSENCRYPT_EMAIL='admin@ejemplo.test'
+MAILWAY_ADMIN_EMAIL='admin@ejemplo.test'
+MAILWAY_PANEL_INTERNAL_URL='http://skyway-correo-mailway:4100'
+
+$COMENTARIO_ADOPCION
+MAILWAY_ADOPCION_PENDIENTE='servidor,webmail'
+ENV
+cp "$ENV_IDENTIDAD" "$TMP/env-identidad-pendiente"
+FAKE_ENTORNO_IDENTIDAD=$ENTORNO_VIEJO
+identidad_con eval 'EMPAREJAR=1 && emparejar_solo'
+comprobar "con el entorno anterior, ni adopta" no_contiene "$REGISTRO" "identidad.js --adoptar"
+comprobar "ni empareja" no_contiene "$REGISTRO" "emparejar.js"
+comprobar "y el resumen lo dice" contiene "$SALIDA" "Identidad en el panel: pendiente: el panel en marcha (skyway-correo-mailway)"
+cp "$TMP/env-identidad-pendiente" "$ENV_IDENTIDAD"
+FAKE_ENTORNO_IDENTIDAD=$ENTORNO_NUEVO
+identidad_con eval 'EMPAREJAR=1 && emparejar_solo'
+comprobar "con el entorno nuevo, adopta lo pendiente" contiene "$REGISTRO" "identidad.js --adoptar servidor,webmail"
+comprobar "y después empareja" despues_de "$REGISTRO" "identidad.js --adoptar" "emparejar.js --email"
+comprobar "deploy/.env ya no lo guarda" no_contiene "$ENV_IDENTIDAD" "MAILWAY_ADOPCION_PENDIENTE"
+comprobar "el resumen dice qué ha cambiado" contiene "$SALIDA" "Identidad en el panel: adoptada en Ajustes del panel"
+comprobar "y que queda emparejado" contiene "$SALIDA" "Emparejado con Skyway: Skyway conectado con el panel"
 
 # ------------------------------------------------------------- DNS inverso --
 
@@ -1228,7 +1391,8 @@ comprobar "y reconfigurar los programas de correo" contiene "$SALIDA" "programas
 comprobar "la línea de las imágenes" contiene "$SALIDA" "Imágenes:            NO DESCARGADAS: x"
 comprobar "y repetir --actualizar" contiene "$SALIDA" "cuando haya conexión con Docker Hub"
 comprobar "la identidad pendiente" contiene "$SALIDA" "Identidad en el panel: pendiente: y"
-comprobar "y dónde revisarla" contiene "$SALIDA" "En Ajustes → Identidad del servidor, comprueba los nombres y la IP nuevos"
+comprobar "y que se retoma al repetir --actualizar" contiene "$SALIDA" "Cuando el panel esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar"
+comprobar "y dónde revisarla mientras" contiene "$SALIDA" "Mientras, compruébalos en Ajustes → Identidad del servidor."
 
 # ------------------------------------------------------------- --comprobar --
 
@@ -1242,6 +1406,8 @@ FAKE_PTR_LEIDOS=mail.ejemplo.test
 FAKE_P25=1
 reiniciar_diagnostico() {
   : >"$REGISTRO"
+  ENV_FILE="$TMP/env-diagnostico"
+  : >"$ENV_FILE"
   FAKE_ESTADOS=([mailway-mail]=healthy [mailway-webmail]=healthy [skyway-mailway-panel]=healthy [skyway-traefik]=running [mailway-certs-dumper]=ausente)
   FAKE_PANEL_RESPONDE=1
   FAKE_TRAEFIK='["--providers.http.endpoint=http://skyway:4000/api/traefik/mailway"]'
@@ -1328,6 +1494,14 @@ FAKE_DNS=2
 diagnostico true
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "lo dice" contiene "$SALIDA" "ningún resolutor público ha respondido"
+
+echo "# --comprobar con la identidad nueva aún pendiente en el panel"
+reiniciar_diagnostico
+printf "%s\nMAILWAY_ADOPCION_PENDIENTE='servidor'\n" "$COMENTARIO_ADOPCION" >"$ENV_FILE"
+diagnostico true
+comprobar "termina con código 1" igual "$CODIGO" 1
+comprobar "lo dice, con qué hacer" contiene "$SALIDA" "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env"
+comprobar "solo eso" contiene "$SALIDA" "1 comprobación con incidencias"
 
 echo "# --comprobar sin el contenedor del panel en deploy/.env"
 reiniciar_diagnostico

@@ -68,6 +68,12 @@ export interface Discrepancia {
   variable: string;
   guardado: string;
   entorno: string;
+  /**
+   * No hay registro del valor que aplicó el instalador (panel anterior a
+   * `instance_env`): no se sabe si lo guardado vino de él o de la
+   * administración.
+   */
+  sinRegistro: boolean;
 }
 
 export interface ResultadoSincronizacion {
@@ -159,7 +165,7 @@ export function sincronizarIdentidadConEntorno(opciones: OpcionesSincronizacion 
       resultado.cambios.push({ campo, variable, antes: actual, despues: entorno });
       continue;
     }
-    resultado.discrepancias.push({ campo, variable, guardado: actual, entorno });
+    resultado.discrepancias.push({ campo, variable, guardado: actual, entorno, sinRegistro: anterior === undefined });
   }
 
   if (!soloRevisar && Object.keys(patch).length > 0) {
@@ -184,7 +190,7 @@ export function sincronizarIdentidadConEntorno(opciones: OpcionesSincronizacion 
   for (const d of resultado.discrepancias) {
     resultado.avisos.push(
       `En Ajustes figura ${d.guardado} como ${ETIQUETA[d.campo]}, pero ${d.variable} del entorno del panel (el instalador) trae ${d.entorno}. ` +
-        `Se conserva ${d.guardado} porque se cambió en el panel; si el correcto es ${d.entorno}, cámbialo en Ajustes → Identidad del servidor.`,
+        `Se conserva ${d.guardado} porque ${motivoConservado(d)}; si el correcto es ${d.entorno}, cámbialo en Ajustes → Identidad del servidor.`,
     );
   }
   try {
@@ -206,6 +212,18 @@ export function revisarIdentidadConEntorno(): void {
   } catch {
     // Solo son avisos: guardar Ajustes no depende de esto.
   }
+}
+
+/**
+ * Por qué se conserva lo guardado. Sin registro no se puede afirmar que se
+ * cambiara en el panel: es lo que ocurre en el primer arranque de un panel
+ * anterior a `instance_env`, también cuando el instalador acaba de cambiar el
+ * dominio y va a pedir que se adopte (tools/identidad.ts).
+ */
+function motivoConservado(d: Discrepancia): string {
+  return d.sinRegistro
+    ? 'no consta si lo fijó el instalador o se cambió en el panel'
+    : 'se cambió en el panel';
 }
 
 /** Lo que usa el valor del instalador cuando el panel conserva otro (nombre del servidor o IP). */
@@ -238,10 +256,16 @@ function evaluarAvisosDeEntorno(discrepancias: Discrepancia[]): void {
       severity: 'warning',
       type: ALERTA_ENTORNO,
       dedupeKey: clave,
+      // Sin registro, solo la campana del panel: al cambiar el dominio de un
+      // panel anterior a este registro, el aviso se abre en su primer arranque
+      // y el instalador lo cierra segundos después al adoptar los valores
+      // nuevos; enviarlo a los canales sería una falsa alarma. Si nadie lo
+      // adopta, sigue a la vista en el panel.
+      quiet: d.sinRegistro,
       title: `Ajustes y el instalador no coinciden en ${ETIQUETA[d.campo]}`,
       message:
         `En Ajustes → Identidad del servidor figura ${d.guardado}; el instalador configuró ${d.entorno} (${d.variable} del entorno del panel). ` +
-        `Se conserva ${d.guardado} porque se cambió en el panel, pero ${consecuencia(d)}.`,
+        `Se conserva ${d.guardado} porque ${motivoConservado(d)}, pero ${consecuencia(d)}.`,
       remedy:
         `Si el correcto es ${d.entorno}, cámbialo en Ajustes → Identidad del servidor${
           d.campo === 'mailHostname' ? ' y pulsa «Aplicar ajustes recomendados» en Ajustes → Servidor de correo' : ''

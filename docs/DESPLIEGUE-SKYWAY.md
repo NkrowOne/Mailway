@@ -96,7 +96,7 @@ un motor que ya tiene datos.
 | Nombre del servicio en el webmail | `Webmail` | `MAILWAY_MARCA` |
 | Correo de contacto para Let's Encrypt | `postmaster@<dominio>` | `LETSENCRYPT_EMAIL` |
 | Correo de la cuenta de administración del panel (junto a Skyway) | el de Let's Encrypt | `MAILWAY_ADMIN_EMAIL` |
-| IPv4 pública del servidor | la de una ejecución anterior si coincide con la detectada; si no, con terminal se propone la detectada y sin terminal el instalador se detiene (sección 8.3) | `MAILWAY_IP` |
+| IPv4 pública del servidor | la de una ejecución anterior si coincide con la detectada, si sigue siendo de una interfaz del servidor (se conserva con un aviso) o si no se puede detectar ninguna; si no, con terminal se propone la detectada y sin terminal el instalador se detiene (sección 8.3) | `MAILWAY_IP` |
 | Token de API de Cloudflare (Intro para omitir) | — | `CLOUDFLARE_API_TOKEN` |
 | Token de API de Skyway (solo si Skyway no corre en este servidor; Intro para omitir) | — | `SKYWAY_TOKEN` |
 | ¿Configurar el Traefik de Skyway para los dominios de los clientes? | sí | `MAILWAY_TRAEFIK_PROVEEDOR` |
@@ -197,8 +197,10 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
     (sección 4.3).
 13. **Emparejado con Skyway** (sección 2.6): tras un cambio de nombres o de
-    IP confirmado, el panel adopta antes los valores nuevos (sección 8.3).
-    Con el panel desplegado y sano,
+    IP confirmado, el panel adopta antes los valores nuevos (sección 8.3); si
+    no puede (el panel en marcha aún tiene los anteriores), no se empareja y
+    el resumen dice que se repita `--actualizar`. Con el panel desplegado y
+    sano,
     crea su cuenta de administración si aún no existe, completa su puesta en
     marcha y conecta Skyway con un token de gestión, sin pasos manuales. Se
     hace en cada ejecución, así que repetir el instalador completa lo que
@@ -347,6 +349,12 @@ Toma de `deploy/.env` el correo de la cuenta de administración
 (`MAILWAY_ADMIN_EMAIL`, o el de Let's Encrypt), la URL del panel y su
 contenedor (`MAILWAY_PANEL_INTERNAL_URL`); el servicio y el proyecto de
 Skyway salen de las etiquetas del contenedor. No necesita token de Skyway.
+
+El emparejado no se hace mientras el panel no haya adoptado un cambio de
+nombres o de IP confirmado (`MAILWAY_ADOPCION_PENDIENTE` en `deploy/.env`):
+aplicaría en el motor los ajustes del panel, que aún tiene la identidad
+anterior. Tanto la instalación como `--emparejar` intentan antes esa
+adopción y solo emparejan si se completa (sección 8.3).
 
 A mano, el mismo emparejado es (con `jq` instalado en el servidor):
 
@@ -606,7 +614,10 @@ de Cloudflare. Cada 30 segundos:
 Si el motor obtiene su propio certificado por ACME (sección 5.1), el extractor
 no hace nada. Si además conserva `certificate.mailway`, mantiene esos ficheros
 al día sin recargar el motor, porque el motor los vuelve a cargar en cada
-recarga de certificados.
+recarga de certificados. Si `certificate.mailway` apunta al par de otro
+nombre (el anterior a cambiar `MAIL_HOSTNAME`), ya no es «nada que hacer»: ese
+par no lo renueva nadie, así que el extractor deja listo el del nombre actual
+y su estado lo señala hasta que el instalador traslada `certificate.mailway`.
 
 Tras cambiar `MAIL_HOSTNAME`, `certificate.mailway` sigue apuntando al par del
 nombre anterior hasta que el instalador lo traslada (sección 8.3). Mientras
@@ -1043,7 +1054,13 @@ Con el cambio confirmado, el instalador:
     otra, ese token puede no tener acceso: lo deja como estaba, lo avisa y
     hay que repetir con `CLOUDFLARE_API_TOKEN` (permisos en la zona nueva) o
     emitirlo en Ajustes → Servidor de correo → certificado automático. Con
-    `CLOUDFLARE_API_TOKEN`, lo configura entero para la zona nueva;
+    `CLOUDFLARE_API_TOKEN`, lo configura entero para la zona nueva. Si el
+    motor conserva además `certificate.mailway` en el par del extractor del
+    nombre anterior (instalaciones que empezaron con el extractor y
+    añadieron después un token de Cloudflare), ese par ya no lo renueva
+    nadie: pasa al del nombre nuevo como con el extractor (abajo). Con el
+    ACME en otra zona, es además el certificado que el motor presenta para
+    el nombre nuevo;
   - **extractor**: arranca con el nombre nuevo, espera a que Traefik tenga su
     certificado y entonces cambia `certificate.mailway` (certificado, clave y
     sujeto) en una sola operación. Hasta entonces el motor conserva el par
@@ -1056,6 +1073,22 @@ Con el cambio confirmado, el instalador:
   servidor (nombre del servidor, URL del webmail y URL del panel) aunque se
   hubieran cambiado a mano, y le aplica al motor los ajustes recomendados con
   el nombre nuevo, antes del emparejado (`server/dist/tools/identidad.js`).
+
+**Si algo queda a medias.** Lo que el panel aún no ha adoptado se guarda en
+`deploy/.env` (`MAILWAY_ADOPCION_PENDIENTE`, con un comentario) desde la
+primera escritura, y cada ejecución (también `--emparejar`) lo retoma hasta
+lograrlo; después se borra. Así, si la ejecución se interrumpe después de
+escribir `deploy/.env` (un error de Skyway o de Cloudflare, Ctrl-C), basta con
+repetir `sudo bash deploy/instalar.sh --actualizar`, aunque `deploy/.env` ya
+tenga los nombres nuevos. Antes de adoptar, el instalador comprueba que el
+panel en marcha arranca ya con los valores nuevos: si el despliegue en
+Skyway ha fallado o sigue en curso, el contenedor que corre es el anterior,
+con el entorno anterior. En ese caso, y siempre que la adopción quede
+pendiente, **no empareja** (el emparejado aplica en el motor los ajustes del
+panel y lo devolvería al nombre anterior) y el resumen dice que se repita
+`--actualizar` cuando el panel esté desplegado y en marcha. `--comprobar`
+también lo señala. Para descartar lo pendiente sin adoptarlo, borra esa línea
+de `deploy/.env`.
 
 Lo que el instalador no puede hacer por ti, y recuerda en «Siguientes pasos»:
 
@@ -1093,7 +1126,12 @@ servidor (el aviso se cierra al guardar); si es el de Ajustes, repite el
 instalador con ese valor. Las URL del webmail y del panel no abren aviso:
 una propia que funcione es legítima y, si el webmail no responde, ya avisa
 el vigilante. Un panel anterior a este registro solo adopta valores nuevos
-cuando el instalador lo pide tras una confirmación.
+cuando el instalador lo pide tras una confirmación. Hasta entonces, como no
+consta si lo guardado vino del instalador o se cambió en el panel, el aviso
+lo dice así y solo aparece en la campana del panel, sin enviarse a los
+canales de aviso: al cambiar el dominio de un panel de antes de este
+registro, se abre en su primer arranque y el instalador lo cierra segundos
+después.
 
 ## 9. Primer cliente
 
@@ -1299,6 +1337,9 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
 - que el webmail llega al panel por la dirección interna con la que cambia
   las contraseñas (`/api/health`), y la versión del panel;
 - el estado del extractor del certificado, si está en marcha;
+- si queda pendiente que el panel adopte los nombres o la IP nuevos de un
+  cambio confirmado (`MAILWAY_ADOPCION_PENDIENTE` en `deploy/.env`, sección
+  8.3);
 - junto a Skyway, que su Traefik lee las rutas de Mailway (webmail de marca
   blanca y autoconfiguración de los dominios de los clientes);
 - desde Internet: que `mail.`, `webmail.` y `panel.` resuelven a la IP de
@@ -1393,7 +1434,8 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | El instalador se detiene: «La IP guardada (…) no es la de este servidor» | Mudanza, IP nueva del proveedor o un servidor que sale a Internet por otra IP | `MAILWAY_IP=<detectada>` si ha cambiado de IP; `MAILWAY_IP=<guardada>` si la guardada es la correcta (sección 8.3). |
 | El instalador se detiene: «Los nombres de la plataforma cambiarían» | `MAILWAY_DOMINIO` o `MAILWAY_*_HOST` distintos de los de `deploy/.env`, sin terminal | Si es lo que quieres, repite con `MAILWAY_CAMBIAR_NOMBRES=1`; si no, sin esas variables (sección 8.3). |
 | Aviso «Ajustes y el instalador no coinciden en …» | El nombre del servidor o la IP de Ajustes → Identidad del servidor, cambiados a mano, no son los que fijó el instalador | Si el correcto es el del instalador, cámbialo en Ajustes; si es el de Ajustes, repite el instalador con ese valor (sección 8.3). |
-| El extractor dice «El motor aún usa el certificado de …» | Ha cambiado `MAIL_HOSTNAME` y el motor sigue con el par del nombre anterior | `sudo bash deploy/instalar.sh --actualizar` lo traslada cuando Traefik tenga el certificado del nombre nuevo (sección 8.3). |
+| El extractor dice «El motor aún usa el certificado de …» | Ha cambiado `MAIL_HOSTNAME` y el motor sigue con el par del nombre anterior | `sudo bash deploy/instalar.sh --actualizar` lo traslada cuando Traefik tenga el certificado del nombre nuevo, también si el motor usa además su propio ACME (sección 8.3). |
+| Resumen del instalador: «Identidad en el panel: pendiente» y «sin emparejar: el panel aún no ha adoptado la identidad nueva» | Tras un cambio de nombres o de IP, el panel en marcha aún arranca con los valores anteriores (despliegue fallido o en curso en Skyway), no está sano o no tiene `identidad.js` | Resuelve el despliegue en Skyway (o despliega la versión actual) y repite `sudo bash deploy/instalar.sh --actualizar`: retoma la adopción y el emparejado (sección 8.3). |
 
 ---
 

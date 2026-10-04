@@ -409,6 +409,25 @@ class CambioDeNombre(Base):
         self.assertEqual(len(self.versiones()), 1)
         self.assertEqual(self.motor.sirve(), PARES['renovado'].huella)
 
+    def test_con_el_acme_del_motor_prepara_el_par_nuevo_para_trasladarlo(self):
+        # Instalación que empezó con el extractor y añadió después un token de
+        # Cloudflare: el ACME del motor ya emite para el nombre nuevo, pero
+        # certificate.mailway sigue en el par del anterior, que nadie renueva.
+        acme = {'acme.mailway.directory': 'https://acme-v02.api.letsencrypt.org/directory',
+                'acme.mailway.domains.0': HOST}
+        self.motor.ajustes.update(acme)
+        self.ext.pasada()
+        self.assertEqual(self.ext.estado.codigo, 'sin_referencia', 'no es «nada que hacer»: el par anterior caducaría')
+        self.assertFalse(self.ext.estado.ok)
+        self.assertIn(f'aún usa el certificado de {VIEJO}', self.ext.estado.mensaje)
+        self.assertTrue((self.volumen / HOST / 'cert.pem').exists(), 'el instalador lo traslada en cuanto existe')
+        self.assertTrue((self.volumen / VIEJO / 'cert.pem').exists())
+        self.assertEqual(self.motor.recargas, 0)
+        self.motor.ajustes = {**REFERENCIA, **acme}  # lo que hace deploy/instalar.sh
+        self.ext.pasada()
+        self.assertEqual(self.ext.estado.codigo, 'acme_y_fichero', self.ext.estado.mensaje)
+        self.assertFalse((self.volumen / VIEJO).exists(), 'ya no lo usa nadie')
+
     def test_una_referencia_ajena_a_la_estructura_no_protege_nada(self):
         self.motor.ajustes['certificate.mailway.private-key'] = '%{file:/etc/stalwart/clave.pem}%'
         self.ext.pasada()

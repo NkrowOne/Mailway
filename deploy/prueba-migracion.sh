@@ -336,6 +336,56 @@ comprobar "el resumen lo explica" contiene "$SALIDA" "RESUMEN_CERT=pendiente: el
 comprobar "sin darlo por configurado" contiene "$SALIDA" "CERT_CONFIGURADO=0"
 FAKE_CERT_ESCRITO=1
 
+# certificate.mailway en el par del nombre anterior y, además, el ACME del
+# motor (instalación que empezó con el extractor y añadió después un token de
+# Cloudflare): ese par ya no lo renueva nadie y debe pasar al del nombre nuevo.
+MAILWAY_ANTERIOR="\"certificate.mailway.cert\":\"%{file:$ANTERIOR/cert.pem}%\",\"certificate.mailway.private-key\":\"%{file:$ANTERIOR/key.pem}%\",\"certificate.mailway.subjects.0\":\"mail.anterior.test\""
+CERT_NUEVO="[\"certificate.mailway.cert\",\"%{file:$RUTA/cert.pem}%\"],[\"certificate.mailway.private-key\",\"%{file:$RUTA/key.pem}%\"]"
+
+echo "# ACME en la misma zona y certificate.mailway del nombre anterior: los dos pasan al nuevo"
+FAKE_AJUSTES="{\"data\":{$ACME_ANTES,\"acme.mailway.domains.0\":\"mail.anterior.ejemplo.test\",\"acme.mailway.origin\":\"ejemplo.test\",$MAILWAY_ANTERIOR}}"
+probar_motor
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "el ACME emite para el nombre nuevo" contiene <(cuerpos_post) '["acme.mailway.domains.0","mail.ejemplo.test"]'
+comprobar "lo anuncia" contiene "$SALIDA" "certificate.mailway usa el certificado de mail.anterior.test, que ya nadie renueva"
+comprobar "arranca antes el extractor con el nombre nuevo" \
+  despues_de "$REGISTRO" "compose_q --profile tls up -d --force-recreate certs-dumper" "certificate.mailway.cert"
+comprobar "reescribe el certificado, la clave y el sujeto en la misma petición" \
+  en_la_misma_peticion <(cuerpos_post) "$CERT_NUEVO" '["certificate.mailway.subjects.0","mail.ejemplo.test"]'
+comprobar "sin tocar cuál es el certificado por defecto" no_contiene <(cuerpos_post) "certificate.mailway.default"
+comprobar "y recarga el certificado" contiene "$REGISTRO" "motor_api GET /api/reload/certificate"
+comprobar "el resumen lo recoge" contiene "$SALIDA" "certificate.mailway, con el de Traefik para mail.ejemplo.test"
+
+echo "# ACME en otra zona y certificate.mailway del nombre anterior: el motor tiene igualmente certificado para el nuevo"
+FAKE_AJUSTES="{\"data\":{$ACME_ANTES,\"acme.mailway.domains.0\":\"mail.antiguo.test\",\"acme.mailway.origin\":\"antiguo.test\",$MAILWAY_ANTERIOR}}"
+probar_motor
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "no cambia el dominio del ACME" no_contiene <(cuerpos_post) "acme.mailway.domains.0"
+comprobar "pasa certificate.mailway al nombre nuevo" contiene <(cuerpos_post) "$CERT_NUEVO"
+comprobar "con él, el motor ya tiene certificado para el nombre nuevo" contiene "$SALIDA" "CERT_CONFIGURADO=1"
+comprobar "y el ACME sigue pendiente de un token para la zona nueva" contiene "$SALIDA" "RESUMEN_CERT=PENDIENTE: el motor sigue emitiendo para mail.antiguo.test"
+
+echo "# ACME y certificate.mailway del nombre anterior, sin el par nuevo todavía: se conserva el anterior"
+FAKE_AJUSTES="{\"data\":{$ACME_ANTES,\"acme.mailway.domains.0\":\"mail.ejemplo.test\",\"acme.mailway.origin\":\"ejemplo.test\",$MAILWAY_ANTERIOR}}"
+FAKE_CERT_ESCRITO=0
+probar_motor
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "no apunta el motor a ficheros que no existen" no_contiene <(cuerpos_post) "certificate.mailway.cert"
+comprobar "el resumen dice que se retoma" contiene "$SALIDA" "certificate.mailway sigue con el de mail.anterior.test hasta que Traefik tenga el de mail.ejemplo.test (vuelve a ejecutar con --actualizar)"
+FAKE_CERT_ESCRITO=1
+
+echo "# Con un token de Cloudflare nuevo y certificate.mailway del nombre anterior: también pasa al nuevo"
+FAKE_AJUSTES="{\"data\":{$MAILWAY_ANTERIOR}}"
+CF_TOKEN=cf_token_de_prueba_0123456789
+CF_ZONA_NOMBRE=ejemplo.test
+probar_motor
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "configura el ACME para el nombre nuevo" contiene <(cuerpos_post) '["acme.mailway.domains.0","mail.ejemplo.test"]'
+comprobar "y pasa certificate.mailway al nombre nuevo" \
+  en_la_misma_peticion <(cuerpos_post) "$CERT_NUEVO" '["certificate.mailway.subjects.0","mail.ejemplo.test"]'
+CF_TOKEN=""
+CF_ZONA_NOMBRE=""
+
 echo "# Certificado propio y nombres nuevos: se respeta, pero se pide comprobar que cubre el nombre"
 FAKE_AJUSTES='{"data":{"certificate.default.cert":"%{file:/etc/stalwart/propio/cert.pem}%","certificate.default.private-key":"%{file:/etc/stalwart/propio/key.pem}%"}}'
 MAIL_HOSTNAME_ANTERIOR=mail.anterior.test

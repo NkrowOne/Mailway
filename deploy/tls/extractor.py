@@ -960,7 +960,11 @@ class Extractor:
         else:
             self.volumen.proteger = {ajustes.referido} if ajustes.referido and ajustes.referido != host else set()
 
-        if ajustes and ajustes.acme and not ajustes.referencia:
+        # Con el ACME del motor no hay nada que hacer, salvo que certificate.mailway
+        # siga en el par de otro nombre (el anterior a cambiar MAIL_HOSTNAME):
+        # ese par ya no lo renueva nadie, y el instalador lo traslada al del
+        # nombre actual en cuanto este servicio lo deja en el volumen.
+        if ajustes and ajustes.acme and not ajustes.referencia and not ajustes.referido:
             self._purgar()
             self._fijar(True, 'acme', 'El motor obtiene su propio certificado por ACME: este servicio no tiene nada que hacer.')
             return

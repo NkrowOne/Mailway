@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../src/config';
@@ -10,7 +12,7 @@ import { db } from '../src/core/db';
 import { listAlerts } from '../src/modules/alerts';
 import { evaluateHostnameAlert } from '../src/modules/engineops';
 import { ALERTA_ENTORNO, adoptarEntornoAlArrancar, sincronizarIdentidadConEntorno } from '../src/modules/entorno';
-import { getInstanceSettings, setInstanceSettings } from '../src/modules/settings';
+import { getInstanceSettings, setInstanceSettings, setJsonSetting } from '../src/modules/settings';
 import { emparejar } from '../src/tools/emparejar';
 import { adoptarIdentidad, leerArgumentos } from '../src/tools/identidad';
 import { cookieFrom, getTestApp } from './helpers';
@@ -144,6 +146,8 @@ test('un panel anterior a este registro no adopta nada sin la confirmación del 
   assert.equal(getInstanceSettings().mailHostname, 'mail.cuarto.test');
   assert.equal(r.discrepancias.length, 3);
   assert.equal(r.avisos.length, 3, 'a quien ejecuta la herramienta se le dicen las tres');
+  assert.ok(r.discrepancias.every((d) => d.sinRegistro));
+  assert.ok(r.avisos.every((a) => !a.includes('porque se cambió en el panel')), 'no se sabe si se cambió en el panel');
   // En el panel, solo el nombre del servidor y la IP: una URL propia que
   // funcione es legítima y, si el webmail no responde, ya avisa el vigilante.
   assert.equal(avisosDeEntorno().length, 1);
@@ -215,14 +219,73 @@ test('el aviso del nombre del motor no propone volver al nombre anterior cuando 
   evaluateHostnameAlert('mail.viejo.test', 'mail.nuevo.test');
   const aviso = listAlerts({}).find((a) => a.type === 'engine_hostname');
   assert.ok(aviso);
-  assert.match(aviso.remedy, /mail\.nuevo\.test es el nombre que fijó el instalador/);
-  assert.match(aviso.remedy, /devolverían el motor a mail\.viejo\.test/);
+  // Lo primero que se propone es corregir Ajustes, no el botón que devolvería
+  // el motor al nombre viejo: ese queda para el caso contrario.
+  assert.ok(aviso.remedy.startsWith('mail.nuevo.test es el nombre que fijó el instalador'), aviso.remedy);
+  assert.match(aviso.remedy, /no apliques los ajustes recomendados, que devolverían el motor a mail\.viejo\.test/);
+  const boton = aviso.remedy.indexOf('pulsa «Aplicar ajustes recomendados»');
+  assert.ok(boton > aviso.remedy.indexOf('Si el correcto es mail.viejo.test'), aviso.remedy);
 
   // Con otro nombre en el motor, no hay nada que decir del instalador.
   evaluateHostnameAlert('mail.viejo.test', 'mail.otro.test');
   const otro = listAlerts({}).find((a) => a.type === 'engine_hostname' && a.title.includes('mail.otro.test'));
   assert.ok(otro);
   assert.doesNotMatch(otro.remedy, /fijó el instalador/);
+  assert.ok(otro.remedy.startsWith('En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados».'), otro.remedy);
+});
+
+test('sin registro del instalador, el aviso no afirma que se cambiara en el panel ni se envía a los canales', async () => {
+  // Un webhook local: lo que el panel envía a los canales de aviso.
+  const recibidos: string[] = [];
+  const servidor = http.createServer((req, res) => {
+    let cuerpo = '';
+    req.on('data', (trozo: Buffer) => (cuerpo += trozo.toString()));
+    req.on('end', () => {
+      recibidos.push(cuerpo);
+      res.end('{}');
+    });
+  });
+  await new Promise<void>((ok) => servidor.listen(0, '127.0.0.1', ok));
+  const { port } = servidor.address() as AddressInfo;
+  setJsonSetting('notify', { webhookUrl: `http://127.0.0.1:${port}/` });
+  const esperarEnvios = () => new Promise((ok) => setTimeout(ok, 300));
+  try {
+    // Primer arranque de un panel anterior al registro con el dominio que
+    // acaba de cambiar el instalador (sección 8.3): nadie lo ha cambiado a
+    // mano y el instalador va a pedir que se adopte.
+    entorno('octavo.test');
+    setInstanceSettings({ mailHostname: 'mail.septimo.test' });
+    db.prepare(`DELETE FROM settings WHERE key = 'instance_env'`).run();
+    const registro: string[] = [];
+    await adoptarEntornoAlArrancar({ info: () => undefined, warn: (m) => registro.push(m) });
+    const [abierto] = avisosDeEntorno();
+    assert.ok(abierto, 'el desacuerdo sigue a la vista en el panel');
+    for (const texto of [abierto.message, registro.join('\n')]) {
+      assert.doesNotMatch(texto, /porque se cambió en el panel/);
+      assert.match(texto, /no consta si lo fijó el instalador o se cambió en el panel/);
+    }
+    await esperarEnvios();
+    assert.deepEqual(recibidos, [], 'ni webhook, ni Discord, ni Telegram');
+    // El instalador lo adopta segundos después y el aviso se cierra.
+    await adoptarIdentidad(['mailHostname']);
+    assert.deepEqual(avisosDeEntorno(), []);
+
+    // Con registro sí consta que se cambió en el panel, y se avisa por los canales.
+    setInstanceSettings({ mailHostname: 'correo.a-mano.test' });
+    entorno('noveno.test');
+    sincronizarIdentidadConEntorno();
+    const [cambiado] = avisosDeEntorno();
+    assert.ok(cambiado);
+    assert.match(cambiado.message, /porque se cambió en el panel/);
+    await esperarEnvios();
+    assert.equal(recibidos.length, 1, 'el aviso llega a los canales');
+    assert.match(recibidos[0]!, /correo\.a-mano\.test/);
+  } finally {
+    setJsonSetting('notify', {});
+    await new Promise((ok) => servidor.close(ok));
+    setInstanceSettings({ mailHostname: 'mail.noveno.test' });
+    sincronizarIdentidadConEntorno();
+  }
 });
 
 /* ------------------------- La herramienta de terminal ------------------------ */
