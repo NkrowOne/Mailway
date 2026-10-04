@@ -217,7 +217,8 @@ export default function ConectarPagina() {
       <div ref={guiasRef} className="scroll-mt-4">
         <Hoja title="Elige tu dispositivo">
           <GuiasDispositivo
-            email={usuario}
+            email={datos.email}
+            usuario={usuario}
             conexion={datos.connection}
             appleProfileUrl={datos.appleProfileUrl}
             perfilPublico

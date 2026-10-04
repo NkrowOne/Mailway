@@ -192,7 +192,8 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
         ) : (
           <>
             <DatosManuales
-              email={conexion.data.username || email}
+              email={email}
+              usuario={conexion.data.username || undefined}
               conexion={conexion.data}
               notaContrasena="La del buzón, o una contraseña de aplicación."
               compacto

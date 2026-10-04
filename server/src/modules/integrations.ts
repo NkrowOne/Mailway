@@ -143,6 +143,10 @@ interface SummaryMailbox {
   domain: string;
   localPart: string;
   email: string;
+  /** Usuario con el que autentica en el motor (en un cambio de dominio, el anterior hasta actualizar). */
+  login: string;
+  /** Pendiente de actualizar dispositivos: login distinto de la dirección. */
+  loginPending: boolean;
   displayName: string;
   quotaMb: number;
   status: 'active' | 'suspended';
@@ -194,6 +198,8 @@ async function summaryMailboxes(clientId: string): Promise<SummaryMailbox[]> {
     domain: m.domain,
     localPart: m.localPart,
     email: m.email,
+    login: m.login,
+    loginPending: m.loginPending,
     displayName: m.displayName,
     quotaMb: m.quotaMb,
     status: m.status,

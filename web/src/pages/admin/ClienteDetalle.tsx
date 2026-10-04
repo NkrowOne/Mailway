@@ -22,6 +22,7 @@ import {
   type ClientUser,
   type SuspensionResult,
 } from '../../lib/gestion';
+import { dominiosQueCuentan } from '../../lib/cambioDominio';
 import { lecturaDominio } from '../../lib/cloudflare';
 import { pesoVeredicto } from '../../lib/dominios';
 import { Button, estiloBoton } from '../../ui/Button';
@@ -99,6 +100,9 @@ export default function ClienteDetalle() {
   const data = client.data.client;
   const plan = client.data.plan ?? data.plan;
   const usage = client.data.usage ?? data.usage;
+  // El dominio anterior de un cambio abierto no cuenta en el plan: se descuenta
+  // igual que hace el servidor en el límite y en el exceso del plan.
+  const usoPlan = usage && { ...usage, domains: dominiosQueCuentan(usage.domains, domains.data?.domains ?? []) };
   const users = client.data.users ?? data.users ?? [];
   // Mismo veredicto y orden que en «Dominios»: lo pendiente, primero.
   const domainList = [...(domains.data?.domains ?? [])].sort(
@@ -211,7 +215,7 @@ export default function ClienteDetalle() {
             {plan && usage ? (
               <>
                 <div className="flex flex-col gap-3">
-                  <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
+                  <Escala label="Dominios" usado={usoPlan?.domains ?? usage.domains} maximo={plan.maxDomains} />
                   <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />
                   <Escala label="Alias" usado={usage.aliases} maximo={plan.maxAliases} />
                 </div>
@@ -398,12 +402,12 @@ export default function ClienteDetalle() {
         />
       )}
       {dialogo === 'eliminar' && <EliminarCliente client={data} onClose={() => setDialogo(null)} />}
-      {dialogo !== null && typeof dialogo === 'object' && plan && usage && (
+      {dialogo !== null && typeof dialogo === 'object' && plan && usoPlan && (
         <CambiarPlan
           clientId={id}
           actual={plan}
           nuevo={dialogo.plan}
-          usage={usage}
+          usage={usoPlan}
           mailboxes={mailboxList}
           onClose={() => setDialogo(null)}
         />

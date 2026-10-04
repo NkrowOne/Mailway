@@ -8,6 +8,7 @@ import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { appsSkywayDe } from './direcciones';
 import { requireAuth, requireClientAccess } from './auth';
 import {
   createAppPassword,
@@ -682,6 +683,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         titular.displayName,
         settings,
       ),
+      // Un buzón con el que envía una aplicación de Skyway solo lo actualiza
+      // Skyway: así la página no ofrece un botón que respondería 409.
+      usadoPorApp: appsSkywayDe(titular.id).length > 0,
     };
   });
 

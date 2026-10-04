@@ -220,7 +220,8 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       {!actualizado && (
         <Hoja title="Configurar un dispositivo">
           <GuiasDispositivo
-            email={usuario}
+            email={me.email}
+            usuario={usuario}
             conexion={me.connection}
             appleProfileUrl={me.appleProfileUrl}
             perfilPublico={false}
@@ -320,7 +321,8 @@ function HojaNuevaDireccion({
           </dl>
           <div className="regla-cabecera" aria-hidden />
           <GuiasDispositivo
-            email={usuario}
+            email={me.email}
+            usuario={usuario}
             conexion={me.connection}
             appleProfileUrl={me.appleProfileUrl}
             perfilPublico={false}

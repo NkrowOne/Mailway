@@ -5,6 +5,7 @@ import { comprobarPuerto25, type ResultadoPuerto25 } from '../core/puerto25';
 import { engineConfigured, getEngine } from '../engine';
 import type { QueueSummary } from '../engine/types';
 import { alertaAbierta, fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
+import { conciliarUsuariosEnCambio } from './direcciones';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { listDomains, refreshDomainDns, retirarDelMotorDominiosSinPropiedad, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
@@ -546,6 +547,20 @@ async function checkRecepcionExterna(): Promise<void> {
   await sincronizarRecepcionExterna();
 }
 
+/**
+ * Cambios de dominio, cada 2 minutos. De momento solo concilia los cambios de
+ * usuario del motor que quedaron a medias (motor caído a mitad de un
+ * renombrado): sin esto, la marca bloquearía ese buzón hasta el siguiente
+ * arranque del panel. La orquestación del cambio añade aquí el avance de la
+ * preparación y el webmail principal.
+ */
+async function tickCambiosDeDominio(): Promise<void> {
+  if (!due('cambios_de_dominio', 2 * MINUTE)) return;
+  markRun('cambios_de_dominio');
+  const conMarca = db.prepare('SELECT 1 FROM mailboxes WHERE usuario_cambiando_a IS NOT NULL LIMIT 1').get();
+  if (conMarca) await conciliarUsuariosEnCambio();
+}
+
 /* ------------------------------ Planificador ------------------------------ */
 
 let timer: NodeJS.Timeout | null = null;
@@ -579,6 +594,7 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('certificado del motor', checkTlsDelMotor, log);
     await paso('nombre del motor', checkNombreDelMotor, log);
     await paso('recepción en otro proveedor', checkRecepcionExterna, log);
+    await paso('cambios de dominio', tickCambiosDeDominio, log);
     // Tarea única de la actualización (dominios sin propiedad que versiones
     // anteriores crearon en el motor): solo trabaja hasta completarse.
     await paso('dominios sin propiedad en el motor', async () => {

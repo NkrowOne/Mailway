@@ -19,6 +19,7 @@ import {
   type MotivoBloqueoDominio,
 } from '../components/gestion/comun';
 import { useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
+import { motivoAltaBloqueada } from '../lib/cambioDominio';
 import { esPropiedadPendiente } from '../lib/dominios';
 
 const MAX_DESTINOS = 20;
@@ -285,7 +286,9 @@ export default function Alias() {
             const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
             return cliente ? `${d.domain} · ${cliente}` : d.domain;
           }}
-          motivoBloqueo={(d) => bloqueoAlias(clientes.get(d.clientId))}
+          // Un dominio en un cambio de dominio no admite alias nuevos (el
+          // servidor responde 409 domain_migrating): se dice en el selector.
+          motivoBloqueo={(d) => motivoAltaBloqueada(d.migracion) ?? bloqueoAlias(clientes.get(d.clientId))}
           onClose={() => setEditor(null)}
         />
       )}

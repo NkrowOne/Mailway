@@ -32,6 +32,7 @@ import { lookupA, lookupAaaa, lookupMx, lookupTxt, type MxRecord } from '../core
 import { canonicalIpv6 } from '../core/hostnames';
 import { sincronizarRecepcionExterna } from './recepcion';
 import { dominiosPropiosDe, eliminarDominioPropio } from './whitelabel';
+import { loginParaMotor, nombreEnMotor } from './direcciones';
 import { getInstanceSettings, getSetting, setSetting } from './settings';
 
 /** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
@@ -871,7 +872,10 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     for (const mailbox of mailboxes) {
       const email = `${mailbox.local_part}@${domain.domain}`;
       try {
-        await engine.deleteMailbox(email);
+        // Con su usuario del motor, que tras un cambio de dominio puede no ser
+        // su dirección. Con un cambio de usuario a medias responde 409 y el
+        // buzón queda para el reintento, cuando se sepa con qué nombre está.
+        await engine.deleteMailbox(loginParaMotor(mailbox.id));
         db.prepare('DELETE FROM mailboxes WHERE id = ?').run(mailbox.id);
       } catch (err) {
         req.log.warn({ err, email }, 'No se ha podido borrar el buzón en el motor');
@@ -1005,9 +1009,22 @@ async function retirarReenviosAlDominio(
   const eliminados: string[] = [];
   const fallidos: string[] = [];
   if (buzones.size === 0) return { actualizados, eliminados, fallidos };
+  // Cada alias se relee justo antes de usarlo y otra vez antes de guardarlo,
+  // como al borrar un buzón: pasar o volver de un cambio de dominio reescriben
+  // los destinos de toda la instancia mientras aquí se espera al motor, y
+  // guardar la lista leída al principio devolvería direcciones que ya no son
+  // las vigentes.
+  const leerDestinos = (aliasId: string): string[] | null => {
+    const fila = db.prepare('SELECT destinations_json FROM aliases WHERE id = ?').get(aliasId) as
+      | { destinations_json: string }
+      | undefined;
+    return fila ? destinosDe(fila.destinations_json) : null;
+  };
+  const sinLosDelDominio = (destinos: string[]) => destinos.filter((d) => !buzones.has(d.toLowerCase()));
   for (const alias of candidatos) {
-    const destinos = destinosDe(alias.destinations_json);
-    const restantes = destinos.filter((d) => !buzones.has(d.toLowerCase()));
+    const destinos = leerDestinos(alias.id);
+    if (!destinos) continue;
+    const restantes = sinLosDelDominio(destinos);
     if (restantes.length === destinos.length) continue;
     const email = `${alias.local_part}@${alias.domain}`;
     try {
@@ -1018,8 +1035,15 @@ async function retirarReenviosAlDominio(
       } else {
         const internos = restantes.filter(esBuzonDeLaInstancia);
         const externos = restantes.filter((d) => !internos.includes(d));
-        await engine.upsertAlias(email, internos, externos);
-        db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(restantes), alias.id);
+        // Los miembros de una lista van por nombre del motor, no por dirección.
+        await engine.upsertAlias(email, internos.map(nombreEnMotor), externos);
+        const actuales = leerDestinos(alias.id);
+        if (actuales) {
+          db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(
+            JSON.stringify(sinLosDelDominio(actuales)),
+            alias.id,
+          );
+        }
         actualizados.push(email);
       }
     } catch (err) {

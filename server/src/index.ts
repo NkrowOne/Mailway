@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { config } from './config';
+import { conciliarUsuariosEnCambio } from './modules/direcciones';
 import { retirarDelMotorDominiosSinPropiedad } from './modules/domains';
 import { revertirPropiedadSimulada } from './modules/demo';
 import { adoptarEntornoAlArrancar } from './modules/entorno';
@@ -40,6 +41,16 @@ async function main(): Promise<void> {
       }
     })
     .catch((err) => app.log.warn(`No se han podido revisar los dominios sin propiedad del motor: ${(err as Error).message}`));
+  // Un cambio de usuario del motor que una caída dejó a medias bloquea su
+  // buzón (409 mailbox_login_updating) hasta saber con qué nombre quedó el
+  // principal. En segundo plano y sin lanzar: lo que no se resuelva ahora
+  // (motor aún arrancando) lo reintenta el vigilante.
+  void conciliarUsuariosEnCambio().then((r) => {
+    if (r.resueltos > 0) app.log.info(`Resueltos ${r.resueltos} cambio(s) de usuario del motor interrumpido(s).`);
+    if (r.pendientes > 0) {
+      app.log.warn(`${r.pendientes} cambio(s) de usuario del motor siguen a medias: los reintentará el vigilante.`);
+    }
+  });
   // El instalador cambia el entorno (otro dominio, otra IP) y recrea el
   // contenedor: lo que nadie ha tocado en Ajustes pasa a los valores nuevos.
   // Después de escuchar: aplicar los ajustes recomendados habla con el motor.
