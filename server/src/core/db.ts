@@ -454,6 +454,81 @@ const migrations: { id: string; sql: string }[] = [
       );
     `,
   },
+  {
+    // El 010 queda libre a propósito: lo reserva la especificación del cambio
+    // de dominio por si otro lote necesita una migración antes que esta.
+    id: '011-cambio-de-dominio',
+    sql: `
+      -- Cambio de dominio de un cliente (dominio.es → dominio2.es). Un dominio
+      -- solo puede estar en UN cambio abierto, como origen o como destino (los
+      -- dos índices; el cruce origen↔destino y el encadenado se comprueban en
+      -- código).
+      CREATE TABLE domain_migrations (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        from_domain_id TEXT REFERENCES domains(id) ON DELETE SET NULL,
+        to_domain_id TEXT REFERENCES domains(id) ON DELETE SET NULL,
+        from_domain TEXT NOT NULL,
+        to_domain TEXT NOT NULL,
+        estado TEXT NOT NULL CHECK (estado IN ('preparando', 'listo', 'pasando', 'pasado', 'volviendo',
+          'dando_de_baja', 'dado_de_baja', 'cancelada')),
+        paso TEXT NOT NULL DEFAULT '',
+        error TEXT,
+        origen TEXT NOT NULL DEFAULT 'panel' CHECK (origen IN ('panel', 'skyway')),
+        -- 'skyway:project:<id>'
+        referencia_externa TEXT,
+        -- 1 = el destino lo dio de alta este cambio (cancelar lo elimina).
+        creo_destino INTEGER NOT NULL DEFAULT 0,
+        -- Dominio propio (client_domains) que creó este cambio: el webmail nuevo.
+        creo_webmail_id TEXT,
+        -- permiteInstancia() de quien lo creó: Cloudflare en segundo plano.
+        permitir_instancia INTEGER NOT NULL DEFAULT 0,
+        -- A/AAAA/CNAME creados en Cloudflare (Skyway los reserva).
+        nombres_cloudflare_json TEXT NOT NULL DEFAULT '[]',
+        -- Pre-recepción hecha y directorio recargado.
+        direcciones_at INTEGER,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        listo_at INTEGER,
+        pasado_at INTEGER,
+        terminado_at INTEGER
+      );
+      CREATE UNIQUE INDEX idx_dm_from_abierto ON domain_migrations(from_domain)
+        WHERE estado NOT IN ('dado_de_baja', 'cancelada');
+      CREATE UNIQUE INDEX idx_dm_to_abierto ON domain_migrations(to_domain)
+        WHERE estado NOT IN ('dado_de_baja', 'cancelada');
+      CREATE INDEX idx_dm_cliente ON domain_migrations(client_id);
+
+      -- Buzones y alias que se mudan: los del origen al crear el cambio (desde
+      -- ese momento el origen no admite altas). Volver devuelve exactamente
+      -- estos, y la pre-recepción no tiene que perseguir altas nuevas.
+      CREATE TABLE domain_migration_items (
+        migration_id TEXT NOT NULL REFERENCES domain_migrations(id) ON DELETE CASCADE,
+        tipo TEXT NOT NULL CHECK (tipo IN ('buzon', 'alias')),
+        item_id TEXT NOT NULL,
+        local_part TEXT NOT NULL,
+        PRIMARY KEY (migration_id, tipo, item_id)
+      );
+      CREATE INDEX idx_dmi_item ON domain_migration_items(item_id);
+
+      -- Usuario del motor cuando NO coincide con la dirección (pendiente de
+      -- actualizar dispositivos): Stalwart solo autentica por el nombre del
+      -- principal, así que el móvil sigue entrando con el usuario viejo
+      -- mientras el correo ya sale con la dirección nueva. Invariante: NULL o
+      -- distinto de local_part@dominio.
+      ALTER TABLE mailboxes ADD COLUMN usuario_motor TEXT;
+      -- Cambio de usuario en curso (para terminarlo o deshacerlo tras una caída).
+      ALTER TABLE mailboxes ADD COLUMN usuario_cambiando_a TEXT;
+      -- Último usuario anterior: el complemento del webmail traslada su fila.
+      ALTER TABLE mailboxes ADD COLUMN login_anterior TEXT;
+      -- Dirección con la que nació el perfil de Apple: instalarlo de nuevo
+      -- sustituye al anterior en vez de duplicar la cuenta.
+      ALTER TABLE mailboxes ADD COLUMN semilla_perfil TEXT;
+      CREATE UNIQUE INDEX idx_mailboxes_usuario_motor ON mailboxes(usuario_motor)
+        WHERE usuario_motor IS NOT NULL;
+    `,
+  },
 ];
 
 function runMigrations(): void {

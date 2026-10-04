@@ -5,6 +5,7 @@ import type {
   CreateMailboxInput,
   EngineDnsRecord,
   EngineHealth,
+  EnginePrincipal,
   EngineReloadResult,
   EngineSettings,
   MailEngine,
@@ -467,6 +468,31 @@ export class StalwartEngine implements MailEngine {
     return { changed: true, customized: false, ...(await this.reload()) };
   }
 
+  /*
+   * Contrato del cambio de dominio (§3.2). Marcadores mínimos para compilar
+   * esta rama: la implementación real es la de la pieza del motor, que
+   * sustituye estos cinco métodos al integrar.
+   */
+  async getPrincipal(_name: string): Promise<EnginePrincipal | null> {
+    throw sinCambioDeDominio();
+  }
+
+  async setAddresses(_name: string, _ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]> {
+    throw sinCambioDeDominio();
+  }
+
+  async renamePrincipal(_from: string, _to: string, _opts: { expectEmail: string; emails?: string[] }): Promise<void> {
+    throw sinCambioDeDominio();
+  }
+
+  async reloadDirectory(): Promise<void> {
+    throw sinCambioDeDominio();
+  }
+
+  async removeDkim(_domain: string): Promise<string[]> {
+    throw sinCambioDeDominio();
+  }
+
   private async updatePrincipal(name: string, updates: PrincipalUpdate[]): Promise<void> {
     await this.request('PATCH', `/api/principal/${encodeURIComponent(name)}`, updates);
   }
@@ -483,6 +509,10 @@ export class StalwartEngine implements MailEngine {
       throw err;
     }
   }
+}
+
+function sinCambioDeDominio(): HttpError {
+  return upstream('Esta versión del driver de Stalwart aún no admite el cambio de dominio.', 'engine_error');
 }
 
 interface PrincipalUpdate {

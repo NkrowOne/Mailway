@@ -88,6 +88,45 @@ export interface MailEngine {
    * falló). Nunca sobrescribe una configuración personalizada del motor.
    */
   syncRemoteDomains(domains: string[], opts?: { reload?: boolean }): Promise<RemoteDomainsResult>;
+
+  /** Principal por nombre, sin secretos. null si no existe (engine_not_found). */
+  getPrincipal(name: string): Promise<EnginePrincipal | null>;
+
+  /**
+   * Lee y fusiona las direcciones de un principal (buzón o alias) y las escribe con UN
+   * PATCH `set emails`: quita `remove`, añade al final las de `add` que falten y, con
+   * `primary`, la pone la primera (añadiéndola si falta). Conserva las que no se mencionan.
+   * Sin cambios no envía nada. No recarga. Devuelve la lista final.
+   * Errores: engine_not_found (principal o dominio de una dirección), engine_exists (dirección de otro).
+   */
+  setAddresses(name: string, ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]>;
+
+  /**
+   * Renombra conservando el id: el correo, las contraseñas ($6$ y $app$), los filtros y la
+   * pertenencia a listas. UN PATCH atómico (manage.rs:2034-2059) con `set name` y, si se pasa,
+   * `set emails`. Nunca envía `members` (C21). No recarga: la autenticación lee NameToId.
+   * Idempotente: si `from` no existe y `to` existe con `expectEmail` entre sus direcciones, no hace nada.
+   * `to` ocupado por otro principal → engine_exists. Ninguno de los dos → engine_not_found.
+   */
+  renamePrincipal(from: string, to: string, opts: { expectEmail: string; emails?: string[] }): Promise<void>;
+
+  /** GET /api/reload (vacía la caché del directorio). Con errores en la respuesta: HttpError 502 engine_error. */
+  reloadDirectory(): Promise<void>;
+
+  /**
+   * Borra SOLO las claves DKIM del dominio exacto. Lee las claves con
+   * GET /api/settings/keys?prefixes=signature, toma como ids los X con signature.X.domain === domain,
+   * asigna cada clave al id más largo que la prefija (así signature.rsa-d.es.mx.* no es de rsa-d.es),
+   * borra con POST /api/settings [{type:'delete', keys}] y recarga. Devuelve los ids borrados.
+   */
+  removeDkim(domain: string): Promise<string[]>;
+}
+
+export interface EnginePrincipal {
+  id: number;
+  type: string;        // 'individual' | 'list' | 'domain' | …
+  name: string;
+  emails: string[];    // la primera es la principal; Stalwart omite el campo vacío o lo da como cadena
 }
 
 export interface RemoteDomainsResult {

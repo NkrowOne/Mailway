@@ -8,6 +8,7 @@ import { withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { assertClientActive } from './clients';
+import { loginParaMotor } from './direcciones';
 import { getMailbox, requireMailboxAccess } from './mailboxes';
 import { bloquesContrasenaAplicacion, getConnectionSettings, type BloqueVariables } from './connection';
 
@@ -150,7 +151,9 @@ async function createAppPasswordNow(
     );
   }
   const password = newAppPassword();
-  const stored = await getEngine().addAppPassword(mailbox.email, password, engineLabel(name));
+  // Con el usuario del motor, que durante un cambio de dominio no es la dirección.
+  const login = loginParaMotor(mailboxId);
+  const stored = await getEngine().addAppPassword(login, password, engineLabel(name));
   const id = randomId('app');
   try {
     db.prepare(
@@ -159,7 +162,7 @@ async function createAppPasswordNow(
     ).run(id, mailboxId, name, stored, createdBy, now());
   } catch (err) {
     // Sin registro en el panel no se podría revocar: se retira del motor.
-    await getEngine().removeAppPassword(mailbox.email, stored).catch(() => undefined);
+    await getEngine().removeAppPassword(login, stored).catch(() => undefined);
     throw err;
   }
   const row = db.prepare('SELECT * FROM app_passwords WHERE id = ?').get(id) as AppPasswordRow;
@@ -178,6 +181,8 @@ export function variablesContrasenaAplicacion(
   const mailbox = getMailbox(appPassword.mailboxId);
   return bloquesContrasenaAplicacion({
     email: mailbox.email,
+    // SMTP_USER es el usuario del motor; el remitente sigue siendo la dirección.
+    usuario: mailbox.login,
     password,
     name: appPassword.name,
     settings: getConnectionSettings(mailbox.domain, mailbox.clientId),
@@ -191,8 +196,7 @@ export async function revokeAppPassword(mailboxId: string, appId: string): Promi
     .get(appId, mailboxId) as AppPasswordRow | undefined;
   if (!row) throw notFound('Contraseña de aplicación no encontrada.');
   if (row.revoked_at) return;
-  const mailbox = getMailbox(mailboxId);
-  await getEngine().removeAppPassword(mailbox.email, row.stored_secret);
+  await getEngine().removeAppPassword(loginParaMotor(mailboxId), row.stored_secret);
   db.prepare('UPDATE app_passwords SET revoked_at = ? WHERE id = ?').run(now(), appId);
 }
 

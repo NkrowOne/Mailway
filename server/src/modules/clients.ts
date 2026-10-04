@@ -6,6 +6,7 @@ import { badRequest, conflict, notFound } from '../core/errors';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
+import { dominiosExentos, loginDe } from './direcciones';
 
 /* --------------------------------- Planes -------------------------------- */
 
@@ -227,9 +228,12 @@ function contar(n: number, singular: string, pluralForm: string): string {
 export function planExcess(clientId: string, plan: Plan): string[] {
   const usage = getClientUsage(clientId);
   const excess: string[] = [];
-  if (usage.domains > plan.maxDomains) {
+  // El dominio que se deja en un cambio de dominio no cuenta: solo sigue para
+  // recibir mientras dura el cambio.
+  const domains = dominiosQueCuentan(clientId, usage.domains);
+  if (domains > plan.maxDomains) {
     excess.push(
-      `el cliente tiene ${contar(usage.domains, 'dominio', 'dominios')} y el plan permite ${plan.maxDomains}`,
+      `el cliente tiene ${contar(domains, 'dominio', 'dominios')} y el plan permite ${plan.maxDomains}`,
     );
   }
   if (usage.mailboxes > plan.maxMailboxes) {
@@ -256,6 +260,14 @@ export function planExcess(clientId: string, plan: Plan): string[] {
     );
   }
   return excess;
+}
+
+/**
+ * Dominios del cliente que cuentan para el plan: todos menos el origen de cada
+ * cambio de dominio abierto. getClientUsage sigue dando el total real.
+ */
+function dominiosQueCuentan(clientId: string, total: number): number {
+  return Math.max(0, total - dominiosExentos(clientId).length);
 }
 
 /** Ejecuta tareas asíncronas con un máximo de `limit` a la vez. */
@@ -294,10 +306,16 @@ export async function applyClientSuspension(
 ): Promise<SuspensionResult> {
   const rows = db
     .prepare(
-      `SELECT m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+      `SELECT m.usuario_motor, m.local_part, m.status, d.domain
+       FROM mailboxes m JOIN domains d ON d.id = m.domain_id
        WHERE d.client_id = ?`,
     )
-    .all(clientId) as { local_part: string; status: 'active' | 'suspended'; domain: string }[];
+    .all(clientId) as {
+      usuario_motor: string | null;
+      local_part: string;
+      status: 'active' | 'suspended';
+      domain: string;
+    }[];
   const result: SuspensionResult = { updated: 0, skipped: 0, failed: [] };
   const targets = rows.filter((row) => row.status === 'active');
   result.skipped = rows.length - targets.length;
@@ -307,7 +325,8 @@ export async function applyClientSuspension(
   await runLimited(targets, 5, async (row) => {
     const email = `${row.local_part}@${row.domain}`;
     try {
-      await engine.updateMailbox(email, { suspended });
+      // Con el usuario del motor, que durante un cambio de dominio no es la dirección.
+      await engine.updateMailbox(loginDe(row), { suspended });
       result.updated += 1;
     } catch (err) {
       result.failed.push({ email, error: (err as Error).message });
@@ -740,7 +759,8 @@ export function assertWithinLimit(
   const plan = getPlan(client.planId);
   const usage = getClientUsage(clientId);
   const limits: Record<typeof resource, { used: number; max: number; label: string }> = {
-    domains: { used: usage.domains, max: plan.maxDomains, label: 'dominios' },
+    // El origen de un cambio de dominio abierto no cuenta: así cabe el dominio nuevo.
+    domains: { used: dominiosQueCuentan(clientId, usage.domains), max: plan.maxDomains, label: 'dominios' },
     mailboxes: { used: usage.mailboxes, max: plan.maxMailboxes, label: 'buzones' },
     aliases: { used: usage.aliases, max: plan.maxAliases, label: 'alias' },
   };

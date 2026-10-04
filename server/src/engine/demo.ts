@@ -1,9 +1,11 @@
+import { HttpError } from '../core/errors';
 import { normalizeHostname } from '../core/hostnames';
 import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
 import type {
   CreateMailboxInput,
   EngineDnsRecord,
   EngineHealth,
+  EnginePrincipal,
   EngineReloadResult,
   MailEngine,
   QueueSummary,
@@ -24,8 +26,14 @@ export class DemoEngine implements MailEngine {
     return { ok: true, version: 'demo', detail: 'Modo demostración: sin motor de correo real.' };
   }
 
-  async createDomain(): Promise<void> {}
-  async deleteDomain(): Promise<void> {}
+  async createDomain(domain: string): Promise<void> {
+    this.dominios.add(domain.toLowerCase());
+  }
+
+  async deleteDomain(domain: string): Promise<void> {
+    this.dominios.delete(domain.toLowerCase());
+  }
+
   async ensureDkim(): Promise<void> {}
 
   async getDnsRecords(domain: string): Promise<EngineDnsRecord[]> {
@@ -54,12 +62,30 @@ export class DemoEngine implements MailEngine {
   private readonly appPasswords = new Map<string, Set<string>>();
   private readonly suspended = new Set<string>();
   private readonly settings = new Map<string, string>();
+  /*
+   * Directorio mínimo (nombre → principal) para el contrato del cambio de
+   * dominio. La pieza del motor lo sustituye por el modelo de principales
+   * completo; aquí basta para renombrar y leer direcciones en las pruebas.
+   */
+  private readonly principales = new Map<string, { id: number; type: string; emails: string[] }>();
+  private readonly dominios = new Set<string>();
+  private siguienteId = 1;
+  /** Recargas del directorio pedidas (para las pruebas). */
+  recargas = 0;
+
+  private registrar(name: string, type: string): void {
+    const key = name.toLowerCase();
+    if (!this.principales.has(key)) {
+      this.principales.set(key, { id: this.siguienteId++, type, emails: [key] });
+    }
+  }
 
   async createMailbox(input: CreateMailboxInput): Promise<void> {
     const email = input.email.toLowerCase();
     this.passwords.set(email, sha512Crypt(input.password));
     this.appPasswords.set(email, new Set());
     this.suspended.delete(email);
+    this.registrar(email, 'individual');
   }
 
   async setMailboxPassword(email: string, password: string): Promise<void> {
@@ -77,10 +103,90 @@ export class DemoEngine implements MailEngine {
     this.passwords.delete(key);
     this.appPasswords.delete(key);
     this.suspended.delete(key);
+    this.principales.delete(key);
   }
 
-  async upsertAlias(): Promise<void> {}
-  async deleteAlias(): Promise<void> {}
+  async upsertAlias(alias: string): Promise<void> {
+    this.registrar(alias, 'list');
+  }
+
+  async deleteAlias(alias: string): Promise<void> {
+    this.principales.delete(alias.toLowerCase());
+  }
+
+  async getPrincipal(name: string): Promise<EnginePrincipal | null> {
+    const key = name.toLowerCase();
+    const p = this.principales.get(key);
+    return p ? { id: p.id, type: p.type, name: key, emails: [...p.emails] } : null;
+  }
+
+  /** Comprueba que cada dirección es de un dominio del motor y de nadie más. */
+  private comprobarDirecciones(propio: string, emails: string[]): void {
+    for (const email of emails) {
+      const dominio = email.slice(email.lastIndexOf('@') + 1);
+      if (!this.dominios.has(dominio)) {
+        throw new HttpError(502, `El motor de correo no encuentra el elemento (${dominio}).`, 'engine_not_found');
+      }
+      for (const [name, p] of this.principales) {
+        if (name !== propio && p.emails.includes(email)) {
+          throw new HttpError(502, `El motor de correo ya tiene ese elemento «${email}».`, 'engine_exists');
+        }
+      }
+    }
+  }
+
+  async setAddresses(name: string, ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]> {
+    const key = name.toLowerCase();
+    const p = this.principales.get(key);
+    if (!p) throw new HttpError(502, `El motor de correo no encuentra el elemento (${key}).`, 'engine_not_found');
+    const quitar = new Set((ops.remove ?? []).map((e) => e.toLowerCase()));
+    let lista = p.emails.filter((e) => !quitar.has(e));
+    for (const e of (ops.add ?? []).map((x) => x.toLowerCase())) if (!lista.includes(e)) lista.push(e);
+    if (ops.primary) {
+      const primera = ops.primary.toLowerCase();
+      lista = [primera, ...lista.filter((e) => e !== primera)];
+    }
+    if (lista.join(',') === p.emails.join(',')) return [...lista];
+    this.comprobarDirecciones(key, lista.filter((e) => !p.emails.includes(e)));
+    p.emails = lista;
+    return [...lista];
+  }
+
+  async renamePrincipal(from: string, to: string, opts: { expectEmail: string; emails?: string[] }): Promise<void> {
+    const origen = from.toLowerCase();
+    const destino = to.toLowerCase();
+    const p = this.principales.get(origen);
+    const ocupado = this.principales.get(destino);
+    if (!p) {
+      if (ocupado?.emails.includes(opts.expectEmail.toLowerCase())) return;
+      if (ocupado) throw new HttpError(502, `El motor de correo ya tiene ese elemento «${destino}».`, 'engine_exists');
+      throw new HttpError(502, `El motor de correo no encuentra el elemento (${origen}).`, 'engine_not_found');
+    }
+    if (ocupado) throw new HttpError(502, `El motor de correo ya tiene ese elemento «${destino}».`, 'engine_exists');
+    if (opts.emails) {
+      const emails = [...new Set(opts.emails.map((e) => e.toLowerCase()))];
+      this.comprobarDirecciones(origen, emails.filter((e) => !p.emails.includes(e)));
+      p.emails = emails;
+    }
+    this.principales.delete(origen);
+    this.principales.set(destino, p);
+    // Las contraseñas (principal y de aplicación) y la suspensión van con el principal.
+    for (const mapa of [this.passwords, this.appPasswords] as Map<string, unknown>[]) {
+      if (mapa.has(origen)) {
+        mapa.set(destino, mapa.get(origen));
+        mapa.delete(origen);
+      }
+    }
+    if (this.suspended.delete(origen)) this.suspended.add(destino);
+  }
+
+  async reloadDirectory(): Promise<void> {
+    this.recargas += 1;
+  }
+
+  async removeDkim(): Promise<string[]> {
+    return [];
+  }
 
   async addAppPassword(email: string, password: string, label: string): Promise<string> {
     const stored = `$app$${label}$${sha512Crypt(password)}`;
