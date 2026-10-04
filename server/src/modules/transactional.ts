@@ -525,6 +525,11 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     if (!row) throw notFound('Clave no encontrada.');
     requireClientAccess(req, row.client_id);
     if (row.revoked_at) throw conflict('Esta clave ya estaba revocada.');
+    // El usuario del motor se resuelve ANTES de revocar: con un cambio de
+    // usuario a medias (409) no se toca nada y se puede reintentar. Revocar
+    // primero dejaría la contraseña de aplicación válida en el motor sin una
+    // clave activa desde la que volver a retirarla.
+    const login = loginParaMotor(row.sender_mailbox_id);
     db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(now(), id);
     forgetApiKey(id);
     // Se retira también la contraseña de aplicación del motor.
@@ -532,7 +537,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
       const engine = getEngine();
       const credentials = parseSmtpCredentials(row.smtp_password_enc);
       if (credentials.stored) {
-        await engine.removeAppPassword(loginParaMotor(row.sender_mailbox_id), credentials.stored);
+        await engine.removeAppPassword(login, credentials.stored);
       }
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la contraseña de aplicación al revocar la clave');

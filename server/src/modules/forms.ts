@@ -912,13 +912,17 @@ export function registerFormRoutes(app: FastifyInstance): void {
     requireAuth(req);
     const row = filaPorId(id);
     requireClientAccess(req, row.client_id);
+    // El usuario del motor se resuelve ANTES de borrar: con un cambio de
+    // usuario a medias (409) no se toca nada y se puede reintentar. Sin la
+    // fila del formulario ya no habría forma de retirar su credencial.
+    const login = loginParaMotor(row.recipient_mailbox_id);
     db.prepare('DELETE FROM forms WHERE id = ?').run(id);
     forgetTransport(id);
     // La credencial SMTP del formulario se retira del motor: sin formulario,
     // nadie la necesita.
     try {
       const { stored } = credencialSmtp(row);
-      if (stored) await getEngine().removeAppPassword(loginParaMotor(row.recipient_mailbox_id), stored);
+      if (stored) await getEngine().removeAppPassword(login, stored);
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la credencial SMTP al eliminar el formulario');
     }

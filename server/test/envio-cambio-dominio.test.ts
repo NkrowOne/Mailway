@@ -15,8 +15,9 @@ import { adminContext, createClient, createDomain, createMailbox, type TestConte
  * Envío durante un cambio de dominio: las claves de API y los formularios
  * autentican en el SMTP del motor con el usuario del motor (el anterior,
  * mientras el buzón está pendiente de actualizar) y el mensaje sale con la
- * dirección nueva. Al actualizar el usuario, la huella del transporte cambia y
- * el pool se rehace con las credenciales al día.
+ * dirección nueva. Al pasar (cambia solo el remitente) y al actualizar el
+ * usuario, la huella del transporte cambia y el pool se rehace con las
+ * credenciales al día.
  */
 
 const ORIGEN = 'https://www.envio-nuevo.test';
@@ -26,6 +27,7 @@ let clientId: string;
 let mailboxId: string;
 let login: string;
 let email: string;
+let nuevoDomainId: string;
 let clave: { key: string; id: string };
 let formulario: { id: string; publicKey: string };
 
@@ -70,11 +72,12 @@ before(async () => {
   assert.equal(form.statusCode, 200, form.body);
   formulario = (form.json() as { form: { id: string; publicKey: string } }).form;
 
-  // «Pasar»: las dos direcciones en el motor y el buzón en el dominio nuevo,
-  // entrando todavía con su usuario anterior.
+  // Lo que «Pasar» hace en el motor: las dos direcciones, la nueva primero.
+  // La base se muda en la primera prueba, después de enviar con el dominio
+  // viejo (desde aquí nada más llama al motor).
+  nuevoDomainId = nuevo.domainId;
   await getEngine().createDomain(nuevo.domain);
   await getEngine().setAddresses(login, { add: [email], primary: email });
-  db.prepare('UPDATE mailboxes SET domain_id = ?, usuario_motor = ? WHERE id = ?').run(nuevo.domainId, login, mailboxId);
 
   setTransportFactoryForTests((options) => {
     const registro: Transporte = { options, enviados: [], cerrado: false };
@@ -141,22 +144,41 @@ function remitente(mensaje: Mail.Options): string {
 }
 
 test('tras pasar, la API y los formularios autentican con el usuario anterior y envían con la dirección nueva', async () => {
+  // Antes de pasar: usuario y remitente son la dirección vieja.
+  assert.equal((await enviarApi()).statusCode, 200);
+  assert.equal((await enviarFormulario()).statusCode, 200);
+  const deAntes = transportes.slice(-2);
+  assert.equal(deAntes.length, 2);
+  for (const t of deAntes) {
+    assert.equal(usuarioSmtp(t), login);
+    assert.equal(remitente(t.enviados[0]!), login);
+  }
+
+  // «Pasar» en la base: el buzón vive en el dominio nuevo y entra con su
+  // usuario anterior. El usuario SMTP no cambia, solo el remitente: la huella
+  // tiene que cambiar igual para que el pool se rehaga (crítica C9).
+  db.prepare('UPDATE mailboxes SET domain_id = ?, usuario_motor = ? WHERE id = ?').run(nuevoDomainId, login, mailboxId);
+
   const api = await enviarApi();
   assert.equal(api.statusCode, 200, api.body);
   assert.equal(api.json().status, 'sent');
   const deLaClave = transportes.at(-1)!;
+  assert.ok(!deAntes.includes(deLaClave), 'otro transporte para la clave');
   assert.equal(usuarioSmtp(deLaClave), login);
   assert.equal(remitente(deLaClave.enviados[0]!), email);
-  const fila = db.prepare('SELECT from_address FROM messages WHERE api_key_id = ?').get(clave.id) as { from_address: string };
+  const fila = db
+    .prepare('SELECT from_address FROM messages WHERE api_key_id = ? ORDER BY created_at DESC, rowid DESC')
+    .get(clave.id) as { from_address: string };
   assert.equal(fila.from_address, email);
 
   const form = await enviarFormulario();
   assert.equal(form.statusCode, 200, form.body);
   const delFormulario = transportes.at(-1)!;
-  assert.notEqual(delFormulario, deLaClave);
+  assert.ok(!deAntes.includes(delFormulario) && delFormulario !== deLaClave, 'otro transporte para el formulario');
   assert.equal(usuarioSmtp(delFormulario), login);
   assert.equal(remitente(delFormulario.enviados[0]!), email);
   assert.equal(delFormulario.enviados[0]!.to, email);
+  assert.ok(deAntes.every((t) => t.cerrado), 'los pools de antes de pasar se cierran');
 
   // Un segundo envío reutiliza el mismo pool: nada ha cambiado.
   const creados = transportes.length;

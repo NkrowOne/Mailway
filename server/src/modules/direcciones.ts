@@ -301,6 +301,22 @@ function falloAmbiguo(err: unknown): boolean {
   return !(err instanceof HttpError) || err.code === 'engine_unreachable';
 }
 
+/**
+ * Buzones cuya marca dejó en este proceso un fallo sin respuesta, con la hora
+ * del fallo. Tras el corte por tiempo, Stalwart puede seguir procesando el
+ * PATCH y aplicar el renombrado después: si se mirara el motor enseguida, se
+ * vería aún el usuario anterior, se limpiaría la marca y el renombrado
+ * llegaría más tarde, con la base apuntando a un nombre que ya no existe. Por
+ * eso el conciliador no mira esas marcas hasta que pasa este margen.
+ */
+const fallosSinRespuesta = new Map<string, number>();
+const ESPERA_TRAS_FALLO_MS = 60_000;
+
+/** Olvida las esperas tras un fallo sin respuesta (solo pruebas: simula que ya pasó el margen). */
+export function resetConciliacionForTests(): void {
+  fallosSinRespuesta.clear();
+}
+
 async function actualizarSinCerrojo(mailboxId: string): Promise<{ de: string; a: string } | null> {
   const fila = leerBuzon(mailboxId);
   if (!fila) throw notFound('Buzón no encontrado.');
@@ -335,14 +351,13 @@ async function actualizarSinCerrojo(mailboxId: string): Promise<{ de: string; a:
     if (!falloAmbiguo(err)) {
       // Stalwart aplica el PATCH entero o nada: con una respuesta de error,
       // el principal sigue con su nombre.
-      db.prepare('UPDATE mailboxes SET usuario_cambiando_a = NULL WHERE id = ?').run(mailboxId);
+      limpiarMarca(mailboxId);
       throw err;
     }
-    // Se mira el motor. Si no responde, la marca se queda para el conciliador:
-    // limpiarla podría dejar al panel usando un nombre que ya no existe.
-    const resultado = await conciliarFila(mailboxId, false);
-    const despues = leerBuzon(mailboxId);
-    if (resultado === 'resuelto' && despues && despues.usuario_motor === null) return { de, a };
+    // Sin respuesta, la marca se queda: limpiarla podría dejar al panel usando
+    // un nombre que ya no existe. Mientras tanto el buzón responde 409, y el
+    // conciliador del vigilante decide pasado el margen (véase arriba).
+    fallosSinRespuesta.set(mailboxId, Date.now());
     throw err;
   }
   terminarCambioDeUsuario(mailboxId, de, null);
@@ -355,6 +370,13 @@ function terminarCambioDeUsuario(mailboxId: string, anterior: string, usuario: s
     `UPDATE mailboxes SET usuario_motor = ?, login_anterior = ?, usuario_cambiando_a = NULL
      WHERE id = ?`,
   ).run(usuario, anterior, mailboxId);
+  fallosSinRespuesta.delete(mailboxId);
+}
+
+/** Deshace la marca: el principal sigue con su nombre anterior. */
+function limpiarMarca(mailboxId: string): void {
+  db.prepare('UPDATE mailboxes SET usuario_cambiando_a = NULL WHERE id = ?').run(mailboxId);
+  fallosSinRespuesta.delete(mailboxId);
 }
 
 type Conciliacion = 'nada' | 'resuelto' | 'pendiente';
@@ -366,12 +388,19 @@ type Conciliacion = 'nada' | 'resuelto' | 'pendiente';
  * |------------------|-------------------------------------|---------------------------------|
  * | existe           | no existe                           | se limpia la marca              |
  * | no existe        | existe, con la dirección vigente    | se termina el cambio            |
- * | los dos o ninguno                                      | marca + alerta buzon_usuario:id |
+ * | cualquier otro caso                                    | marca + alerta buzon_usuario:id |
  * | el motor no responde                                   | marca                           |
+ *
+ * Una marca que dejó hace poco un fallo sin respuesta no se mira todavía.
  */
-async function conciliarFila(mailboxId: string, auditar: boolean): Promise<Conciliacion> {
+async function conciliarFila(mailboxId: string): Promise<Conciliacion> {
   const fila = leerBuzon(mailboxId);
-  if (!fila || !fila.usuario_cambiando_a) return 'nada';
+  if (!fila || !fila.usuario_cambiando_a) {
+    fallosSinRespuesta.delete(mailboxId);
+    return 'nada';
+  }
+  const fallo = fallosSinRespuesta.get(mailboxId);
+  if (fallo !== undefined && Date.now() - fallo < ESPERA_TRAS_FALLO_MS) return 'pendiente';
   const anterior = loginDe(fila);
   const nuevo = fila.usuario_cambiando_a;
   const direccion = direccionDe(fila);
@@ -388,25 +417,33 @@ async function conciliarFila(mailboxId: string, auditar: boolean): Promise<Conci
   }
   const clave = `buzon_usuario:${mailboxId}`;
   if (principalAnterior && !principalNuevo) {
-    db.prepare('UPDATE mailboxes SET usuario_cambiando_a = NULL WHERE id = ?').run(mailboxId);
+    limpiarMarca(mailboxId);
     resolveAlert(clave);
     return 'resuelto';
   }
-  if (
-    !principalAnterior &&
-    principalNuevo &&
-    principalNuevo.emails.some((e) => e.toLowerCase() === direccion)
-  ) {
+  const conDireccion = Boolean(principalNuevo?.emails.some((e) => e.toLowerCase() === direccion));
+  if (!principalAnterior && principalNuevo && conDireccion) {
     // Si el nombre nuevo no es la dirección (no debería pasar), se guarda
     // como usuario del motor para no romper el invariante.
     terminarCambioDeUsuario(mailboxId, anterior, nuevo === direccion ? null : nuevo);
     resolveAlert(clave);
-    if (auditar) {
-      auditSystem('mailbox.login_updated', { id: mailboxId, de: anterior, a: nuevo, por: 'conciliador' }, fila.client_id);
-    }
+    auditSystem('mailbox.login_updated', { id: mailboxId, de: anterior, a: nuevo, por: 'conciliador' }, fila.client_id);
     return 'resuelto';
   }
-  const motivo = principalAnterior && principalNuevo ? 'existen los dos usuarios' : 'no existe ninguno de los dos usuarios';
+  const { motivo, remedio } = principalAnterior
+    ? {
+        motivo: 'existen los dos usuarios',
+        remedio: 'Cuando solo quede uno de los dos, el panel termina o deshace el cambio por sí solo.',
+      }
+    : principalNuevo
+      ? {
+          motivo: `el usuario ${nuevo} existe, pero no tiene la dirección ${direccion}`,
+          remedio: `Cuando ${nuevo} tenga la dirección ${direccion}, el panel termina el cambio por sí solo.`,
+        }
+      : {
+          motivo: 'no existe ninguno de los dos usuarios',
+          remedio: 'Cuando vuelva a existir uno de los dos, el panel termina o deshace el cambio por sí solo.',
+        };
   fireAlert({
     severity: 'warning',
     type: 'buzon_usuario',
@@ -414,7 +451,7 @@ async function conciliarFila(mailboxId: string, auditar: boolean): Promise<Conci
     dedupeKey: clave,
     title: `No se ha podido terminar el cambio de usuario de ${direccion}`,
     message: `El cambio de usuario de ${anterior} a ${nuevo} se interrumpió y en el servidor de correo ${motivo}. Mientras no se resuelva, el panel no modifica este buzón.`,
-    remedy: `Revisa en el servidor de correo los usuarios ${anterior} y ${nuevo}. Cuando solo quede uno de los dos, el panel termina o deshace el cambio por sí solo.`,
+    remedy: `Revisa en el servidor de correo los usuarios ${anterior} y ${nuevo}. ${remedio}`,
   });
   return 'pendiente';
 }
@@ -435,7 +472,7 @@ export async function conciliarUsuariosEnCambio(): Promise<{ resueltos: number; 
     try {
       // Con el cerrojo del buzón: si un cambio de usuario está en curso, se
       // espera a que termine y se relee la fila (la marca ya no estará).
-      const resultado = await withLock(buzonLockKey(id), () => conciliarFila(id, true));
+      const resultado = await withLock(buzonLockKey(id), () => conciliarFila(id));
       if (resultado === 'resuelto') resueltos += 1;
       else if (resultado === 'pendiente') pendientes += 1;
     } catch {
@@ -458,7 +495,14 @@ export function datosWebmail(mailboxId: string): {
   if (!fila) throw notFound('Buzón no encontrado.');
   const login = loginDe(fila);
   const email = direccionDe(fila);
-  const anteriores = fila.login_anterior && fila.login_anterior !== login ? [fila.login_anterior] : [];
+  // Un usuario anterior que hoy lleva a otro buzón (una dirección que se
+  // liberó y se volvió a dar de alta) no se ofrece: el complemento le
+  // trasladaría a este buzón la fila de Roundcube de esa otra persona.
+  const anterior = fila.login_anterior;
+  const anteriores =
+    anterior && anterior !== login && (resolverBuzon(anterior)?.mailboxId ?? mailboxId) === mailboxId
+      ? [anterior]
+      : [];
   const cambios = db
     .prepare(
       `SELECT dm.estado, dm.from_domain, dm.to_domain, i.local_part FROM domain_migrations dm

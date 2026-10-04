@@ -361,13 +361,19 @@ async function createMailboxRecord(input: {
   const id = randomId('mbx');
   const t = now();
   try {
-    // Un buzón recién creado está vacío: así el listado no tiene que
-    // consultar al motor solo por él.
-    db.prepare(
-      `INSERT INTO mailboxes (id, domain_id, local_part, display_name, quota_mb, created_at,
-         used_bytes, usage_checked_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
-    ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
+    db.transaction(() => {
+      // Un buzón recién creado está vacío: así el listado no tiene que
+      // consultar al motor solo por él.
+      db.prepare(
+        `INSERT INTO mailboxes (id, domain_id, local_part, display_name, quota_mb, created_at,
+           used_bytes, usage_checked_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
+      // La dirección deja de ser el usuario anterior de otro buzón (tras un
+      // cambio de dominio): si no, el complemento del webmail le trasladaría
+      // a ese otro buzón la fila de Roundcube de este.
+      db.prepare('UPDATE mailboxes SET login_anterior = NULL WHERE login_anterior = ? AND id <> ?').run(email, id);
+    })();
   } catch (err) {
     // Otra petición ya registró esta dirección: el principal del motor es
     // SUYO (con su contraseña). Borrarlo dejaría su buzón en el panel sin
@@ -793,14 +799,25 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       // Sin filtrar por cliente: versiones anteriores permitían destinos de
       // otros clientes y esos alias también deben dejar de apuntar aquí.
       const candidates = db
-        .prepare(`${ALIAS_SELECT} WHERE lower(a.destinations_json) LIKE ?`)
-        .all(`%${email}%`) as AliasRow[];
+        .prepare(`SELECT a.id FROM aliases a WHERE lower(a.destinations_json) LIKE ?`)
+        .all(`%${email}%`) as { id: string }[];
+      // Cada alias se relee justo antes de usarlo y otra vez antes de
+      // guardarlo: este cerrojo no excluye pasar ni volver de un cambio de
+      // dominio, que reescriben los destinos de los alias de toda la
+      // instancia mientras aquí se espera al motor. Guardar la lista leída al
+      // principio devolvería a un alias direcciones que ya no son las vigentes.
+      const leerAlias = (aliasId: string) =>
+        db.prepare(`${ALIAS_SELECT} WHERE a.id = ?`).get(aliasId) as AliasRow | undefined;
+      const sinEste = (alias: AliasRow) =>
+        parseDestinations(alias.destinations_json).filter((d) => d.toLowerCase() !== email);
       const aliasesUpdated: string[] = [];
       const aliasesDeleted: string[] = [];
-      for (const alias of candidates) {
+      for (const { id: aliasId } of candidates) {
+        const alias = leerAlias(aliasId);
+        if (!alias) continue;
         const destinations = parseDestinations(alias.destinations_json);
         if (!destinations.some((d) => d.toLowerCase() === email)) continue;
-        const remaining = destinations.filter((d) => d.toLowerCase() !== email);
+        const remaining = sinEste(alias);
         const aliasEmail = `${alias.local_part}@${alias.domain}`;
         if (remaining.length === 0) {
           // Un alias sin destinos no entrega a nadie: se elimina.
@@ -808,11 +825,19 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
           db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
           aliasesDeleted.push(aliasEmail);
         } else {
-          const internal = remaining.filter((d) => d.toLowerCase() !== email && isInstanceMailbox(d));
+          const internal = remaining.filter((d) => isInstanceMailbox(d));
           const external = remaining.filter((d) => !internal.includes(d));
           // Los miembros de una lista van por nombre del motor, no por dirección.
           await engine.upsertAlias(aliasEmail, internal.map(nombreEnMotor), external);
-          db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(remaining), alias.id);
+          // En el motor los miembros van por id: lo que cambiara mientras
+          // tanto ya está bien allí, y aquí solo se quita la dirección borrada.
+          const actual = leerAlias(alias.id);
+          if (actual) {
+            db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(
+              JSON.stringify(sinEste(actual)),
+              alias.id,
+            );
+          }
           aliasesUpdated.push(aliasEmail);
         }
       }

@@ -1,6 +1,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
+import { HttpError } from '../src/core/errors';
 import { getEngine } from '../src/engine';
 import type { MailEngine } from '../src/engine/types';
 import { alertaAbierta } from '../src/modules/alerts';
@@ -21,6 +22,7 @@ import {
   dominiosExentos,
   loginParaMotor,
   nombreEnMotor,
+  resetConciliacionForTests,
   resolverBuzon,
 } from '../src/modules/direcciones';
 import { adminContext, createClient, createDomain, createMailbox, type TestContext } from './helpers';
@@ -305,6 +307,53 @@ test('contraseñas de aplicación, claves de API y formularios usan el usuario d
   assert.deepEqual(bajas.llamadas.map((l) => l[0]), [bea.login, bea.login]);
 });
 
+test('con un cambio de usuario a medias no se revoca una clave ni se borra un formulario', async () => {
+  const caro = await buzonPendiente('caro');
+  const clave = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/apikeys',
+    headers: { cookie: ctx.adminCookie },
+    payload: { clientId, name: 'Web', senderMailboxId: caro.mailboxId },
+  });
+  assert.equal(clave.statusCode, 200, clave.body);
+  const claveId = (clave.json() as { info: { id: string } }).info.id;
+  const form = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/forms',
+    headers: { cookie: ctx.adminCookie },
+    payload: { clientId, name: 'Presupuesto', recipientMailboxId: caro.mailboxId, allowedOrigins: ['https://www.nuevo-motor.test'] },
+  });
+  assert.equal(form.statusCode, 200, form.body);
+  const formId = (form.json() as { form: { id: string } }).form.id;
+
+  const bajas = espiar('removeAppPassword');
+  db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(caro.email, caro.mailboxId);
+  try {
+    const revocar = await ctx.app.inject({ method: 'DELETE', url: `/api/apikeys/${claveId}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(revocar.statusCode, 409, revocar.body);
+    assert.equal(revocar.json().code, 'mailbox_login_updating');
+    const borrar = await ctx.app.inject({ method: 'DELETE', url: `/api/forms/${formId}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(borrar.statusCode, 409, borrar.body);
+    assert.equal(borrar.json().code, 'mailbox_login_updating');
+    // Nada se ha tocado: la clave y el formulario siguen y se puede reintentar.
+    const fila = db.prepare('SELECT revoked_at FROM api_keys WHERE id = ?').get(claveId) as { revoked_at: number | null };
+    assert.equal(fila.revoked_at, null);
+    assert.ok(db.prepare('SELECT 1 FROM forms WHERE id = ?').get(formId));
+    assert.equal(bajas.llamadas.length, 0);
+  } finally {
+    db.prepare('UPDATE mailboxes SET usuario_cambiando_a = NULL WHERE id = ?').run(caro.mailboxId);
+  }
+  try {
+    const revocar = await ctx.app.inject({ method: 'DELETE', url: `/api/apikeys/${claveId}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(revocar.statusCode, 200, revocar.body);
+    const borrar = await ctx.app.inject({ method: 'DELETE', url: `/api/forms/${formId}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(borrar.statusCode, 200, borrar.body);
+  } finally {
+    bajas.restaurar();
+  }
+  assert.deepEqual(bajas.llamadas.map((l) => l[0]), [caro.login, caro.login], 'las credenciales se retiran del motor');
+});
+
 test('un alias con un destino pendiente envía como miembro el usuario del motor, también al borrar', async () => {
   const luis = await buzonPendiente('luis');
   const marta = await buzonPendiente('marta');
@@ -347,6 +396,41 @@ test('un alias con un destino pendiente envía como miembro el usuario del motor
     espia.restaurar();
     borrados.restaurar();
   }
+});
+
+test('al borrar un buzón, el alias se guarda sobre su lista vigente, no sobre la leída al principio', async () => {
+  const c = await createClient(ctx);
+  assert.equal((await cambiarPlan(c.clientId, 'plan_agencia')).statusCode, 200);
+  const d = await createDomain(ctx, c.clientId, 'releer-alias.test');
+  await createMailbox(ctx, d.domainId, 'eva');
+  const del = await createMailbox(ctx, d.domainId, 'del');
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/aliases',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domainId: d.domainId, localPart: 'todos', destinations: ['eva@releer-alias.test', 'del@releer-alias.test'] },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const aliasId = (alta.json() as { id: string }).id;
+
+  // Mientras el borrado espera al motor, «Pasar» (de este u otro cliente)
+  // reescribe los destinos de los alias de toda la instancia.
+  const espia = espiar('upsertAlias', (args) => {
+    if (args[0] !== 'todos@releer-alias.test') return;
+    db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(
+      JSON.stringify(['eva@releer-alias-nuevo.test', 'del@releer-alias.test']),
+      aliasId,
+    );
+  });
+  try {
+    const baja = await ctx.app.inject({ method: 'DELETE', url: `/api/mailboxes/${del.mailboxId}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(baja.statusCode, 200, baja.body);
+    assert.deepEqual((baja.json() as { aliasesUpdated: string[] }).aliasesUpdated, ['todos@releer-alias.test']);
+  } finally {
+    espia.restaurar();
+  }
+  const fila = db.prepare('SELECT destinations_json FROM aliases WHERE id = ?').get(aliasId) as { destinations_json: string };
+  assert.deepEqual(JSON.parse(fila.destinations_json), ['eva@releer-alias-nuevo.test']);
 });
 
 /* --------------------------------- Altas ------------------------------------ */
@@ -519,20 +603,81 @@ test('un cambio de usuario a medias: 409 mientras tanto y el conciliador lo desh
   db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(tere.email, tere.mailboxId);
   await motor().deleteMailbox(tere.login);
 
+  // Indeterminado: el nombre nuevo existe, pero sin la dirección vigente.
+  const uri = await buzonPendiente('uri');
+  db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(uri.email, uri.mailboxId);
+  await motor().deleteMailbox(uri.login);
+  await motor().createMailbox({ email: uri.email, password: uri.password });
+  await motor().setAddresses(uri.email, { remove: [uri.email], add: [`otra-uri@${nuevo.domain}`] });
+
   const resultado = await conciliarUsuariosEnCambio();
-  assert.deepEqual(resultado, { resueltos: 2, pendientes: 1 });
+  assert.deepEqual(resultado, { resueltos: 2, pendientes: 2 });
   assert.deepEqual(fila(rosa.mailboxId), { usuario_motor: rosa.login, usuario_cambiando_a: null, login_anterior: null });
   assert.deepEqual(fila(sara.mailboxId), { usuario_motor: null, usuario_cambiando_a: null, login_anterior: sara.login });
   assert.deepEqual(fila(tere.mailboxId), { usuario_motor: tere.login, usuario_cambiando_a: tere.email, login_anterior: null });
+  assert.deepEqual(fila(uri.mailboxId), { usuario_motor: uri.login, usuario_cambiando_a: uri.email, login_anterior: null });
   assert.equal(alertaAbierta(`buzon_usuario:${tere.mailboxId}`), true);
   assert.throws(() => loginParaMotor(tere.mailboxId), { code: 'mailbox_login_updating' });
+  const aviso = (id: string) =>
+    db.prepare('SELECT message FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL').get(`buzon_usuario:${id}`) as {
+      message: string;
+    };
+  assert.match(aviso(tere.mailboxId).message, /no existe ninguno de los dos usuarios/);
+  assert.match(aviso(uri.mailboxId).message, new RegExp(`el usuario ${uri.email} existe, pero no tiene la dirección ${uri.email}`));
 
   // Cuando vuelve a existir uno solo, la siguiente vuelta lo resuelve y cierra el aviso.
   await motor().createMailbox({ email: tere.login, password: tere.password });
-  assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 1, pendientes: 0 });
+  await motor().setAddresses(uri.email, { add: [uri.email] });
+  assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 2, pendientes: 0 });
   assert.equal(fila(tere.mailboxId).usuario_cambiando_a, null);
   assert.equal(alertaAbierta(`buzon_usuario:${tere.mailboxId}`), false);
+  assert.deepEqual(fila(uri.mailboxId), { usuario_motor: null, usuario_cambiando_a: null, login_anterior: uri.login });
+  assert.equal(alertaAbierta(`buzon_usuario:${uri.mailboxId}`), false);
   assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 0, pendientes: 0 });
+});
+
+test('un fallo sin respuesta del motor deja la marca, y el conciliador espera un margen antes de mirar', async () => {
+  // Aplicado tarde: el motor renombra después del corte por tiempo.
+  const ivan = await buzonPendiente('ivan');
+  // No aplicado: el PATCH no llegó al motor.
+  const julia = await buzonPendiente('julia');
+  const engine = motor() as unknown as Record<string, unknown>;
+  engine.renamePrincipal = async () => {
+    throw new HttpError(502, 'No se pudo conectar con el motor de correo.', 'engine_unreachable');
+  };
+  try {
+    for (const b of [ivan, julia]) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/mailboxes/${b.mailboxId}/login-update`,
+        headers: { cookie: userCookie },
+        payload: {},
+      });
+      assert.equal(res.statusCode, 502, res.body);
+      assert.equal(res.json().code, 'engine_unreachable');
+      assert.deepEqual(fila(b.mailboxId), { usuario_motor: b.login, usuario_cambiando_a: b.email, login_anterior: null });
+      assert.throws(() => loginParaMotor(b.mailboxId), { code: 'mailbox_login_updating' });
+    }
+  } finally {
+    delete engine.renamePrincipal;
+  }
+  await motor().renamePrincipal(ivan.login, ivan.email, { expectEmail: ivan.email });
+
+  // Justo después del fallo no se mira el motor: el renombrado aún podría llegar.
+  assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 0, pendientes: 2 });
+  assert.equal(fila(ivan.mailboxId).usuario_cambiando_a, ivan.email);
+  assert.equal(fila(julia.mailboxId).usuario_cambiando_a, julia.email);
+  assert.equal(alertaAbierta(`buzon_usuario:${ivan.mailboxId}`), false);
+
+  // Pasado el margen, se resuelve cada uno según lo que haya en el motor.
+  resetConciliacionForTests();
+  assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 2, pendientes: 0 });
+  assert.deepEqual(fila(ivan.mailboxId), { usuario_motor: null, usuario_cambiando_a: null, login_anterior: ivan.login });
+  assert.deepEqual(fila(julia.mailboxId), { usuario_motor: julia.login, usuario_cambiando_a: null, login_anterior: null });
+  const anotacion = db
+    .prepare("SELECT detail FROM audit_log WHERE action = 'mailbox.login_updated' AND detail LIKE ?")
+    .get(`%${ivan.mailboxId}%`) as { detail: string } | undefined;
+  assert.equal((JSON.parse(anotacion!.detail) as { por: string }).por, 'conciliador');
 });
 
 test('borrar un buzón mientras se actualiza su usuario espera a que termine', async () => {
@@ -737,6 +882,28 @@ test('resolverBuzon, nombreEnMotor y datosWebmail a lo largo de un cambio', asyn
   assert.equal(de('vera@resolver-viejo.test'), null);
   assert.equal(cambioAbiertoDeDominio(r2.domainId), null);
   assert.deepEqual(datosWebmail(vera.mailboxId).otrasDirecciones, ['vera@resolver-viejo.test']);
+});
+
+test('datosWebmail no ofrece un usuario anterior que hoy es otro buzón', async () => {
+  const c = await createClient(ctx);
+  assert.equal((await cambiarPlan(c.clientId, 'plan_agencia')).statusCode, 200);
+  const d1 = await createDomain(ctx, c.clientId, 'webmail-uno.test');
+  const d2 = await createDomain(ctx, c.clientId, 'webmail-dos.test');
+  const ana = await createMailbox(ctx, d1.domainId, 'ana');
+  // Lo que deja «Volver» y después «Cancelar» con un destino que ya existía:
+  // ana vuelve a entrar con su dirección y su usuario anterior es el del destino.
+  db.prepare('UPDATE mailboxes SET login_anterior = ? WHERE id = ?').run('ana@webmail-dos.test', ana.mailboxId);
+  assert.deepEqual(datosWebmail(ana.mailboxId).anteriores, ['ana@webmail-dos.test']);
+
+  // Esa dirección se da de alta para otra persona: deja de ser su usuario anterior.
+  const otra = await createMailbox(ctx, d2.domainId, 'ana');
+  assert.equal(fila(ana.mailboxId).login_anterior, null);
+  assert.deepEqual(datosWebmail(ana.mailboxId).anteriores, []);
+  assert.deepEqual(datosWebmail(otra.mailboxId).anteriores, []);
+
+  // Y si llega por otro camino (un buzón que se muda a esa dirección), tampoco se ofrece.
+  db.prepare('UPDATE mailboxes SET login_anterior = ? WHERE id = ?').run('ana@webmail-dos.test', ana.mailboxId);
+  assert.deepEqual(datosWebmail(ana.mailboxId).anteriores, []);
 });
 
 /* ------------------------------- connection.ts ------------------------------- */
