@@ -123,7 +123,7 @@ before(async () => {
   normal = await createDomain(ctx, clientId, 'titular-normal.test');
 
   // Buzones del dominio viejo, creados ANTES del cambio (después el origen no admite altas).
-  const locales = ['ana', 'bea', 'carla', 'dario', 'elena', 'fede', 'tienda'];
+  const locales = ['ana', 'bea', 'carla', 'dario', 'elena', 'fede', 'gema', 'tienda'];
   for (const local of locales) {
     const creado = await createMailbox(ctx, viejo.domainId, local);
     buzones[local] = {
@@ -232,6 +232,19 @@ function filaBuzon(mailboxId: string) {
   return db
     .prepare('SELECT usuario_motor, login_anterior, semilla_perfil FROM mailboxes WHERE id = ?')
     .get(mailboxId) as { usuario_motor: string | null; login_anterior: string | null; semilla_perfil: string | null };
+}
+
+/**
+ * Cambio de usuario a medias (usuario_cambiando_a), como lo deja un renombrado
+ * sin respuesta del motor hasta que lo resuelve el conciliador.
+ */
+async function conCambioAMedias<T>(buzon: Buzon, fn: () => Promise<T>): Promise<T> {
+  db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(buzon.nueva, buzon.mailboxId);
+  try {
+    return await fn();
+  } finally {
+    db.prepare('UPDATE mailboxes SET usuario_cambiando_a = NULL WHERE id = ?').run(buzon.mailboxId);
+  }
 }
 
 /** Usuario de entrada y de salida de un perfil de Apple. */
@@ -526,6 +539,12 @@ test('un buzón con el que envía una aplicación de Skyway no se actualiza desd
   const portal = await ctx.app.inject({ method: 'POST', url: '/api/portal/login-update', headers: { cookie }, payload: {} });
   assert.equal(portal.statusCode, 409);
   assert.equal(portal.json().code, 'mailbox_used_by_app');
+  // Al titular no se le propone revocar las contraseñas de la aplicación (la
+  // dejaría sin enviar): se le pide que lo actualice quien gestiona la web.
+  assert.equal(
+    portal.json().error,
+    'Este buzón lo usa una aplicación para enviar (tienda). Pide a quien gestiona la web que lo actualice desde Skyway.',
+  );
 
   const token = await crearEnlace(tienda.mailboxId);
   const abierto = await ctx.app.inject({ method: 'GET', url: `/api/public/setup/${token}`, remoteAddress: nuevaIp() });
@@ -538,8 +557,56 @@ test('un buzón con el que envía una aplicación de Skyway no se actualiza desd
   });
   assert.equal(enlace.statusCode, 409);
   assert.equal(enlace.json().code, 'mailbox_used_by_app');
+  assert.doesNotMatch(enlace.json().error, /revoca/);
   assert.equal(filaBuzon(tienda.mailboxId).usuario_motor, tienda.vieja, 'sigue pendiente');
   assert.equal(auditoria('mailbox.login_updated', tienda.mailboxId).length, 0);
+});
+
+test('«Mi buzón» no deja crear contraseñas de aplicación con el prefijo reservado de Skyway', async () => {
+  const cookie = await sesion(corriente.email, corriente.password);
+  const crear = (name: string) =>
+    ctx.app.inject({ method: 'POST', url: '/api/portal/app-passwords', headers: { cookie }, payload: { name } });
+  for (const name of ['skyway:falsa', '  Skyway:Otra ', 'SKYWAY:tienda']) {
+    const res = await crear(name);
+    assert.equal(res.statusCode, 400, `${name}: ${res.body}`);
+    assert.equal(res.json().code, 'app_password_name_reserved');
+  }
+  const activas = db
+    .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+    .get(corriente.mailboxId) as { c: number };
+  assert.equal(activas.c, 0, 'no se ha creado ninguna');
+  const me = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie } });
+  assert.equal(me.json().usadoPorApp, false);
+
+  // Solo el prefijo está reservado.
+  const valida = await crear('Móvil (skyway:no)');
+  assert.equal(valida.statusCode, 200, valida.body);
+});
+
+test('«Mi buzón» con un cambio de usuario a medias: responde como con el motor caído y cuenta el intento', async () => {
+  const gema = buzones.gema!;
+  const ip = nuevaIp();
+  await conCambioAMedias(gema, async () => {
+    // Exista o no la contraseña, la respuesta no dice que la dirección exista.
+    for (const [tecleada, password] of [
+      [gema.nueva, 'contrasena-cualquiera'],
+      [gema.vieja, gema.password],
+    ] as const) {
+      const res = await entrar(tecleada, password, ip);
+      assert.equal(res.statusCode, 503, `${tecleada}: ${res.body}`);
+      assert.deepEqual(res.json(), {
+        error: 'No se ha podido comprobar la contraseña en este momento. Vuelve a intentarlo en unos minutos.',
+        code: 'engine_unreachable',
+      });
+    }
+    const fallos = db
+      .prepare('SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ?')
+      .get(`buzon:${gema.mailboxId}`) as { c: number };
+    assert.equal(fallos.c, 2, 'cada intento cuenta para el límite del buzón');
+  });
+  db.prepare('DELETE FROM login_attempts WHERE ip = ?').run(`buzon:${gema.mailboxId}`);
+  const resuelto = await entrar(gema.vieja, gema.password);
+  assert.equal(resuelto.statusCode, 200, resuelto.body);
 });
 
 test('crearEnlaceConfiguracion: enlace sin contraseña que abre el titular', async () => {
@@ -675,6 +742,22 @@ test('/api/webmail/cuenta: 404 sin token configurado, 401 con un token erróneo 
   assert.equal(fallos.c, 0);
 });
 
+test('/api/webmail/cuenta con un cambio de usuario a medias: 409 y el webmail entra con lo tecleado', async () => {
+  const gema = buzones.gema!;
+  await conTokenWebmail(async () => {
+    await conCambioAMedias(gema, async () => {
+      for (const tecleado of [gema.nueva, gema.vieja]) {
+        const res = await cuentaWebmail(tecleado);
+        assert.equal(res.statusCode, 409, `${tecleado}: ${res.body}`);
+        assert.equal(res.json().code, 'mailbox_login_updating');
+      }
+    });
+    const resuelto = await cuentaWebmail(gema.nueva);
+    assert.equal(resuelto.statusCode, 200, resuelto.body);
+    assert.equal(resuelto.json().login, gema.vieja);
+  });
+});
+
 /* ----------------------------- Autoconfiguración ------------------------------ */
 
 test('Thunderbird: con una dirección pendiente, <username> es el usuario del motor; si no, %EMAILADDRESS%', async () => {
@@ -693,6 +776,23 @@ test('Thunderbird: con una dirección pendiente, <username> es el usuario del mo
   assert.equal(await thunderbird(corriente.email), '%EMAILADDRESS%');
   assert.equal(await thunderbird(`nadie@${normal.domain}`), '%EMAILADDRESS%');
   assert.equal(await thunderbird(`nadie@${nuevo.domain}`), '%EMAILADDRESS%');
+
+  // Con dirección no se cachea (el usuario cambia al actualizar los
+  // dispositivos), sea la dirección que sea; sin ella, el documento del dominio sí.
+  for (const email of [ana.nueva, corriente.email, `nadie@${normal.domain}`]) {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/mail/config-v1.1.xml?emailaddress=${encodeURIComponent(email)}`,
+    });
+    assert.equal(res.headers['cache-control'], 'no-store', email);
+  }
+  const porHost = await ctx.app.inject({
+    method: 'GET',
+    url: '/.well-known/autoconfig/mail/config-v1.1.xml',
+    headers: { host: `autoconfig.${normal.domain}` },
+  });
+  assert.equal(porHost.statusCode, 200, porHost.body);
+  assert.equal(porHost.headers['cache-control'], 'public, max-age=300');
 });
 
 test('Autodiscover: LoginName es el usuario del motor con la misma regla', async () => {

@@ -6,7 +6,11 @@
  * Usa la biblioteca de la imagen (rcube_db, rcube_user, rcube_plugin_api y el
  * cliente HTTP de rcube) y su esquema SQLite (SQL/sqlite.initial.sql) sobre
  * una base desechable en /tmp. El panel de Mailway se simula con el servidor
- * integrado de PHP en 127.0.0.1, dentro del mismo contenedor y sin red:
+ * integrado de PHP en 127.0.0.1, dentro del mismo contenedor y sin red. Al
+ * final entra como un navegador por el index.php de la imagen (servidor
+ * integrado de PHP, configuración de producción mailway.php e IMAP falso):
+ * rcmail::login, rcube_user::create y los ganchos tal y como los ejecuta el
+ * webmail.
  *
  *   docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" \
  *     roundcube/roundcubemail:1.7.x-apache php /opt/mailway-rc/pruebas/mailway_cuentas.php
@@ -299,6 +303,7 @@ if (isset($estado['dormir'])) {
     sleep((int) $estado['dormir']);
 }
 if (isset($estado['crudo'])) {
+    http_response_code((int) ($estado['codigo'] ?? 200));
     echo $estado['crudo'];
     return;
 }
@@ -460,6 +465,19 @@ comprobar($basura['user'] === 'sofia@viejo.test' && count($avisos) === 1, 'una r
 estadoPanel(['crudo' => json_encode(['login' => 'sin-arroba', 'email' => 'sofia@nuevo.test'])]);
 $malFormada = entrar('sofia@viejo.test');
 comprobar($malFormada['user'] === 'sofia@viejo.test', 'una respuesta sin la forma esperada deja lo tecleado');
+// Cambio de usuario a medias en el panel (409 mailbox_login_updating).
+$avisos = [];
+estadoPanel(['codigo' => 409, 'crudo' => json_encode([
+    'error' => 'Se está actualizando el usuario de este buzón. Vuelve a intentarlo en unos minutos.',
+    'code' => 'mailbox_login_updating',
+])]);
+$aMedias = entrar('sofia@viejo.test');
+comprobar(
+    $aMedias['user'] === 'sofia@viejo.test' && usuarioDe($sofia) === 'sofia@nuevo.test'
+        && count($avisos) === 1 && str_contains($avisos[0], 'se está actualizando el usuario'),
+    'con un cambio de usuario a medias (409) entra con lo tecleado, no traslada nada y lo registra',
+    implode(' | ', $avisos)
+);
 
 complemento($panel, 'secreto-equivocado');
 $tokenMalo = entrar('sofia@viejo.test');
@@ -478,6 +496,299 @@ comprobar(
     'con el panel caído se entra como siempre, sin esperar más de 2 s',
     sprintf('%.2f s', $espera)
 );
+
+/* -------------- Entrada real: index.php, rcmail::login y los ganchos ---------- */
+
+// Lo de arriba llama a los ganchos a mano. Aquí entra un navegador simulado por
+// el index.php de la imagen, con la configuración de producción (mailway.php),
+// un IMAP falso y el mismo panel simulado. Demuestra lo que solo se ve en el
+// flujo real: que Roundcube carga el complemento en la tarea «login», que
+// login_after se ejecuta y que el mail_host de hostDeAlmacen es el que guarda
+// rcube_user::create (si no coincidiera, trasladarFila no encontraría la fila
+// y el titular entraría a un webmail vacío).
+
+$puertoImap = 18766;
+$puertoRc = 18767;
+const CLAVE_IMAP = 'Clave-de-prueba-1';
+$estadoImap = '/tmp/mailway-cuentas-imap.json';
+$registroImap = '/tmp/mailway-cuentas-imap.jsonl';
+$imapFalso = '/tmp/mailway-cuentas-imap.php';
+$configRc = '/tmp/mailway-cuentas-config';
+$complementosRc = '/tmp/mailway-cuentas-complementos';
+$prependRc = '/tmp/mailway-cuentas-prepend.php';
+$registrosRc = '/tmp/mailway-cuentas-registro';
+@unlink($registroImap);
+@mkdir($configRc, 0700);
+@mkdir($complementosRc, 0700);
+@mkdir($registrosRc, 0700);
+
+// IMAP mínimo: LOGIN solo con el usuario y la contraseña del fichero de estado
+// (anota cada intento); al resto de órdenes, OK. Atiende una conexión cada vez,
+// como el servidor integrado de PHP una petición.
+file_put_contents($imapFalso, <<<'PHP'
+<?php
+$servidor = stream_socket_server('tcp://127.0.0.1:' . (int) $argv[1], $codigo, $error);
+if (!$servidor) {
+    fwrite(STDERR, "IMAP falso: {$error}\n");
+    exit(1);
+}
+$capacidades = 'IMAP4rev1 LITERAL+ NAMESPACE';
+$cadena = '"((?:[^"\\\\]|\\\\.)*)"';
+while (true) {
+    $c = @stream_socket_accept($servidor, -1);
+    if (!$c) {
+        continue;
+    }
+    fwrite($c, "* OK [CAPABILITY {$capacidades}] IMAP de prueba\r\n");
+    while (($linea = fgets($c)) !== false) {
+        $linea = rtrim($linea, "\r\n");
+        [$etiqueta, $orden, $resto] = array_pad(explode(' ', $linea, 3), 3, '');
+        switch (strtoupper($orden)) {
+            case 'LOGIN':
+                $estado = json_decode((string) @file_get_contents('/tmp/mailway-cuentas-imap.json'), true) ?: [];
+                $usuario = $clave = null;
+                if (preg_match('/^' . $cadena . ' ' . $cadena . '$/', $resto, $m)) {
+                    $usuario = stripcslashes($m[1]);
+                    $clave = stripcslashes($m[2]);
+                }
+                $valida = $usuario !== null && $usuario === ($estado['usuario'] ?? '') && $clave === ($estado['clave'] ?? '');
+                file_put_contents('/tmp/mailway-cuentas-imap.jsonl', json_encode(['usuario' => $usuario, 'valida' => $valida]) . "\n", FILE_APPEND);
+                fwrite($c, $valida
+                    ? "{$etiqueta} OK [CAPABILITY {$capacidades}] Dentro\r\n"
+                    : "{$etiqueta} NO [AUTHENTICATIONFAILED] Credenciales no válidas\r\n");
+                break;
+            case 'CAPABILITY':
+                fwrite($c, "* CAPABILITY {$capacidades}\r\n{$etiqueta} OK\r\n");
+                break;
+            case 'NAMESPACE':
+                fwrite($c, "* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n{$etiqueta} OK\r\n");
+                break;
+            case 'LIST':
+            case 'LSUB':
+                fwrite($c, ($resto === '"" ""' ? "* LIST (\\Noselect) \"/\" \"\"\r\n" : "* {$orden} (\\HasNoChildren) \"/\" INBOX\r\n") . "{$etiqueta} OK\r\n");
+                break;
+            case 'LOGOUT':
+                fwrite($c, "* BYE\r\n{$etiqueta} OK\r\n");
+                break 2;
+            default:
+                fwrite($c, "{$etiqueta} OK\r\n");
+        }
+    }
+    @fclose($c);
+}
+PHP);
+
+// Configuración: la de producción y, encima, lo que cambia en la prueba.
+file_put_contents($configRc . '/config.inc.php', '<?php
+$config = [];
+require ' . var_export(dirname(__DIR__) . '/mailway.php', true) . ';
+$config["db_dsnw"] = ' . var_export('sqlite:///' . $base . '?mode=0600', true) . ';
+$config["imap_host"] = ' . var_export("127.0.0.1:{$puertoImap}", true) . ';
+$config["plugins"] = ["mailway_cuentas"];
+$config["create_default_folders"] = false;
+$config["des_key"] = "mailway-prueba-24-bytes!";
+$config["log_driver"] = "file";
+$config["log_dir"] = ' . var_export($registrosRc, true) . ';
+$config["temp_dir"] = "/tmp";
+');
+// Los complementos de la imagen (Roundcube exige filesystem_attachments y
+// jqueryui) y el nuestro, como lo montan los compose en plugins/mailway_cuentas,
+// sin tocar la instalación de la imagen.
+$enlacesRc = ['mailway_cuentas' => realpath($complemento)];
+foreach (glob(INSTALL_PATH . 'plugins/*', \GLOB_ONLYDIR) ?: [] as $dir) {
+    $enlacesRc[basename($dir)] ??= $dir;
+}
+foreach ($enlacesRc as $nombre => $destino) {
+    @unlink("{$complementosRc}/{$nombre}");
+    symlink($destino, "{$complementosRc}/{$nombre}");
+}
+file_put_contents($prependRc, "<?php\ndefine('RCUBE_PLUGINS_DIR', " . var_export($complementosRc . '/', true) . ");\n");
+
+$imap = proc_open(
+    [\PHP_BINARY, $imapFalso, (string) $puertoImap],
+    [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/tmp/mailway-cuentas-imap.log', 'w']],
+    $tuberias
+);
+$webmail = proc_open(
+    [\PHP_BINARY, '-d', "auto_prepend_file={$prependRc}", '-S', "127.0.0.1:{$puertoRc}", '-t', INSTALL_PATH . 'public_html'],
+    [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/tmp/mailway-cuentas-rc.log', 'w']],
+    $tuberias,
+    INSTALL_PATH . 'public_html',
+    [
+        'PATH' => (string) getenv('PATH'),
+        'RCUBE_CONFIG_PATH' => INSTALL_PATH . 'config/' . \PATH_SEPARATOR . $configRc . '/',
+        'MAILWAY_PANEL_INTERNAL_URL' => $panel,
+        'MAILWAY_WEBMAIL_TOKEN' => 'secreto-de-prueba',
+    ]
+);
+register_shutdown_function(static function () use ($imap, $webmail): void {
+    foreach ([$imap, $webmail] as $proceso) {
+        if (is_resource($proceso)) {
+            proc_terminate($proceso);
+        }
+    }
+});
+$escuchan = true;
+foreach ([$puertoImap, $puertoRc] as $p) {
+    $listo = false;
+    for ($i = 0; $i < 50 && !$listo; $i++) {
+        $conexion = @fsockopen('127.0.0.1', $p, $codigo, $error, 0.2);
+        if ($conexion) {
+            fclose($conexion);
+            $listo = true;
+        } else {
+            usleep(100_000);
+        }
+    }
+    $escuchan = $escuchan && $listo;
+}
+comprobar($escuchan, "IMAP falso y Roundcube (index.php) escuchando en 127.0.0.1:{$puertoImap} y :{$puertoRc}");
+
+/** Entra por el formulario de Roundcube como un navegador: [estado HTTP, Location]. */
+function entrarPorFormulario(string $usuario, string $clave): array
+{
+    global $rcube, $puertoRc;
+    $navegador = $rcube->get_http_client([
+        'base_uri' => "http://127.0.0.1:{$puertoRc}/",
+        'cookies' => true,
+        'allow_redirects' => false,
+        'http_errors' => false,
+        'timeout' => 20,
+    ]);
+    $pagina = (string) $navegador->request('GET', '?_task=login')->getBody();
+    if (!preg_match('/name="_token" value="([^"]+)"/', $pagina, $m)) {
+        return [0, 'sin _token en la página de entrada'];
+    }
+    $respuesta = $navegador->request('POST', '?_task=login', ['form_params' => [
+        '_token' => $m[1],
+        '_task' => 'login',
+        '_action' => 'login',
+        '_timezone' => 'Europe/Madrid',
+        '_url' => '',
+        '_user' => $usuario,
+        '_pass' => $clave,
+    ]]);
+
+    return [$respuesta->getStatusCode(), $respuesta->getHeaderLine('Location')];
+}
+
+/** Último LOGIN que ha recibido el IMAP falso. */
+function ultimoLoginImap(): array
+{
+    $lineas = is_file('/tmp/mailway-cuentas-imap.jsonl')
+        ? file('/tmp/mailway-cuentas-imap.jsonl', \FILE_IGNORE_NEW_LINES | \FILE_SKIP_EMPTY_LINES)
+        : [];
+
+    return $lineas ? json_decode((string) end($lineas), true) : [];
+}
+
+function filaDe(string $usuario): array
+{
+    global $db;
+
+    return $db->fetch_assoc($db->query(
+        'SELECT * FROM ' . $db->table_name('users', true) . ' WHERE `username` = ?',
+        $usuario
+    )) ?: [];
+}
+
+/** Las últimas líneas de los registros, para entender un fallo. */
+function registrosDelFlujo(): string
+{
+    $salida = [];
+    foreach (glob('/tmp/mailway-cuentas-registro/*') ?: [] as $f) {
+        $salida[] = basename($f) . ': ' . implode(' | ', array_slice(file($f, \FILE_IGNORE_NEW_LINES) ?: [], -3));
+    }
+    foreach (['/tmp/mailway-cuentas-rc.log', '/tmp/mailway-cuentas-imap.log'] as $f) {
+        $lineas = array_values(array_filter(
+            is_file($f) ? (file($f, \FILE_IGNORE_NEW_LINES) ?: []) : [],
+            static fn (string $l): bool => !preg_match('/ (Accepted|Closing|\[\d+\]: (GET|POST) )/', $l)
+        ));
+        if ($lineas) {
+            $salida[] = basename($f) . ': ' . implode(' | ', array_slice($lineas, -3));
+        }
+    }
+
+    return implode(' || ', $salida);
+}
+
+$olgaVieja = 'olga@viejo.test';
+$olgaNueva = 'olga@nuevo.test';
+
+// 1. Pendiente de actualizar: se teclea la dirección nueva y Roundcube entra en
+// el IMAP con el usuario anterior; login_after deja la identidad en la nueva.
+$pendiente = ['login' => $olgaVieja, 'email' => $olgaNueva, 'anteriores' => [], 'otrasDirecciones' => [$olgaVieja]];
+estadoPanel(['cuentas' => [$olgaNueva => $pendiente, $olgaVieja => $pendiente]]);
+file_put_contents($estadoImap, json_encode(['usuario' => $olgaVieja, 'clave' => CLAVE_IMAP]));
+[$estado, $destino] = entrarPorFormulario('Olga@Nuevo.test', CLAVE_IMAP);
+comprobar(
+    $estado === 302 && str_contains($destino, '_task=mail'),
+    'flujo real: con la dirección nueva se entra (302 al correo)',
+    "{$estado} {$destino} " . registrosDelFlujo()
+);
+comprobar(
+    ultimoLoginImap() === ['usuario' => $olgaVieja, 'valida' => true],
+    'flujo real: Roundcube entra en el IMAP con el usuario del motor',
+    json_encode(ultimoLoginImap())
+);
+$filaOlga = filaDe($olgaVieja);
+$olga = (int) ($filaOlga['user_id'] ?? 0);
+comprobar(
+    $olga > 0 && ($filaOlga['mail_host'] ?? null) === mailway_cuentas_datos::hostDeAlmacen(null, "127.0.0.1:{$puertoImap}"),
+    'flujo real: rcube_user::create guarda el mail_host que calcula hostDeAlmacen',
+    json_encode($filaOlga)
+);
+$identidadesOlga = $olga > 0 ? (new rcube_user($olga))->list_identities() : [];
+comprobar(
+    count($identidadesOlga) === 1 && $identidadesOlga[0]['email'] === $olgaNueva,
+    'flujo real: login_after se ejecuta y la identidad creada al entrar pasa a la dirección nueva',
+    json_encode($identidadesOlga)
+);
+if ($olga > 0) {
+    crearContacto($olga, 'cliente-de-olga@externo.test');
+}
+
+// 2. Ya actualizado: se teclea la dirección vieja, se entra con la nueva y la
+// fila (con su contacto) pasa al usuario nuevo sin que se cree otra.
+$actualizada = ['login' => $olgaNueva, 'email' => $olgaNueva, 'anteriores' => [$olgaVieja], 'otrasDirecciones' => [$olgaVieja]];
+estadoPanel(['cuentas' => [$olgaNueva => $actualizada, $olgaVieja => $actualizada]]);
+file_put_contents($estadoImap, json_encode(['usuario' => $olgaNueva, 'clave' => CLAVE_IMAP]));
+$filas = contar('users');
+[$estado, $destino] = entrarPorFormulario($olgaVieja, CLAVE_IMAP);
+comprobar(
+    $estado === 302 && ultimoLoginImap() === ['usuario' => $olgaNueva, 'valida' => true],
+    'flujo real: tras actualizar, la dirección vieja entra con el usuario nuevo',
+    "{$estado} {$destino} " . json_encode(ultimoLoginImap()) . ' ' . registrosDelFlujo()
+);
+comprobar(
+    $olga > 0 && (int) (filaDe($olgaNueva)['user_id'] ?? 0) === $olga && !filaDe($olgaVieja) && contar('users') === $filas,
+    'flujo real: Roundcube usa la fila trasladada (mismo user_id) y no crea otra',
+    json_encode(filaDe($olgaNueva))
+);
+comprobar(contar('contacts', '`user_id` = ?', $olga) === 1, 'flujo real: los contactos siguen con la fila');
+
+// 3. La contraseña sigue comprobándose en el IMAP: con una errónea no se entra.
+[$estado] = entrarPorFormulario($olgaVieja, 'otra-clave');
+comprobar(
+    $estado !== 302 && ultimoLoginImap() === ['usuario' => $olgaNueva, 'valida' => false],
+    'flujo real: con una contraseña errónea no se entra',
+    (string) $estado
+);
+
+foreach ([$imap, $webmail] as $proceso) {
+    proc_terminate($proceso);
+}
+foreach ([$imapFalso, $estadoImap, $registroImap, $prependRc, $configRc . '/config.inc.php',
+    '/tmp/mailway-cuentas-imap.log', '/tmp/mailway-cuentas-rc.log'] as $f) {
+    @unlink($f);
+}
+foreach (array_keys($enlacesRc) as $nombre) {
+    @unlink("{$complementosRc}/{$nombre}");
+}
+array_map('unlink', glob($registrosRc . '/*') ?: []);
+@rmdir($registrosRc);
+@rmdir($configRc);
+@rmdir($complementosRc);
 
 // El panel acepta la conexión pero no contesta: el plazo total es de 2 s.
 // Va la última: el servidor integrado de PHP atiende una petición cada vez.

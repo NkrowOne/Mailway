@@ -72,7 +72,9 @@ abierta pide volver a entrar; al hacerlo, el complemento traslada la fila.
 
 La prueba `pruebas/mailway_cuentas.php` usa la biblioteca y el esquema SQLite
 de la imagen real de Roundcube, con el panel simulado dentro del mismo
-contenedor y sin red:
+contenedor y sin red. Además de los ganchos por separado, entra por el
+`index.php` de la imagen con la configuración `mailway.php` y un IMAP falso,
+como lo haría un navegador:
 
 ```sh
 docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" \

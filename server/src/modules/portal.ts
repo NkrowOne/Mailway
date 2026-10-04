@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret, hashToken, newSessionToken, randomId } from '../core/crypto';
-import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/errors';
+import { HttpError, badRequest, conflict, notFound, tooMany, unauthorized } from '../core/errors';
 import { buzonLockKey, withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
@@ -13,7 +13,6 @@ import {
   actualizarUsuario,
   appsSkywayDe,
   datosWebmail,
-  errorBuzonUsadoPorApp,
   loginDe,
   loginParaMotor,
   resolverBuzon,
@@ -61,6 +60,9 @@ const COOKIE_BUZON = 'mailway_buzon';
 /** La cookie del titular solo viaja a las rutas del portal: nada más la necesita. */
 const RUTA_COOKIE = '/api/portal';
 const SESION_HORAS = 12;
+
+/** Prefijo de las contraseñas de aplicación que crea Skyway (ver appsSkywayDe). */
+const PREFIJO_SKYWAY = 'skyway:';
 
 const VENTANA_INTENTOS_MS = 15 * 60_000;
 const MAX_FALLOS_POR_BUZON = 5;
@@ -112,6 +114,34 @@ function contrasenaDeAplicacion(): HttpError {
   return badRequest(
     'Has introducido una contraseña de aplicación. Aquí es necesaria la contraseña principal del buzón.',
     'app_password_not_allowed',
+  );
+}
+
+/**
+ * 409 mailbox_used_by_app para el titular. El mensaje general (el del panel)
+ * ofrece revocar las contraseñas de aplicación «skyway:…»; el titular podría
+ * hacerlo desde «Mi buzón» y la aplicación dejaría de enviar, así que a él se
+ * le pide que lo actualice quien gestiona la web. Mismo código que el general.
+ */
+function errorUsadoPorAppTitular(apps: string[]): HttpError {
+  const nombres = [...new Set(apps.map((a) => a.slice(PREFIJO_SKYWAY.length)).filter(Boolean))];
+  const cuales = nombres.length > 0 ? ` (${nombres.join(', ')})` : '';
+  return conflict(
+    `Este buzón lo usa una aplicación para enviar${cuales}. Pide a quien gestiona la web que lo actualice desde Skyway.`,
+    'mailbox_used_by_app',
+  );
+}
+
+/**
+ * Nombre de contraseña de aplicación reservado. Skyway marca las suyas con
+ * «skyway:» y de ese prefijo dependen el 409 mailbox_used_by_app y la baja del
+ * dominio anterior: una creada por el titular con ese nombre bloquearía su
+ * propia actualización y la baja de todo el dominio.
+ */
+function nombreReservado(): HttpError {
+  return badRequest(
+    'Los nombres que empiezan por «skyway:» están reservados para las aplicaciones de Skyway. Elige otro nombre.',
+    'app_password_name_reserved',
   );
 }
 
@@ -536,7 +566,7 @@ async function actualizarDispositivos(
   por: 'titular' | 'enlace',
 ): Promise<{ ok: true; login: string }> {
   if (!titular.loginPending && !titular.actualizando) return { ok: true, login: titular.login };
-  if (titular.appsSkyway.length > 0) throw errorBuzonUsadoPorApp(titular.appsSkyway);
+  if (titular.appsSkyway.length > 0) throw errorUsadoPorAppTitular(titular.appsSkyway);
   const cambio = await actualizarUsuario(titular.id);
   if (cambio) {
     auditTitular(req, titular.clientId, 'mailbox.login_updated', {
@@ -891,7 +921,19 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       registrarFallo(clave, ip);
       throw buzonSuspendido();
     }
-    await comprobarContrasenaPrincipal(titular, body.password, ip, credencialesIncorrectas);
+    try {
+      await comprobarContrasenaPrincipal(titular, body.password, ip, credencialesIncorrectas);
+    } catch (err) {
+      // Con un cambio de usuario a medias no se sabe con qué nombre comprobar
+      // la contraseña. El 409 de loginParaMotor diría a cualquiera, sin
+      // contraseña, que la dirección existe: se responde como con el motor
+      // caído y cuenta como intento, igual que un buzón suspendido.
+      if (err instanceof HttpError && err.code === 'mailbox_login_updating') {
+        registrarFallo(clave, ip);
+        throw sinComprobacion();
+      }
+      throw err;
+    }
     crearSesionBuzon(req, reply, titular.id);
     auditTitular(req, titular.clientId, 'portal.login', { email: titular.email });
     return { ok: true, email: titular.email };
@@ -973,6 +1015,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
   app.post('/api/portal/app-passwords', async (req, reply) => {
     const { titular } = sesionBuzon(req);
     const body = appPasswordSchema.parse(req.body);
+    if (body.name.toLowerCase().startsWith(PREFIJO_SKYWAY)) throw nombreReservado();
     // El máximo de activas (el mismo que en el panel, 409) lo aplica createAppPassword.
     const created = await createAppPassword(titular.id, body.name, null);
     auditTitular(req, titular.clientId, 'mailbox.app_password_created', {
@@ -1085,6 +1128,10 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { user } = webmailCuentaSchema.parse(req.body ?? {});
     const resuelto = resolverBuzon(user);
     if (!resuelto) throw notFound('No hay ningún buzón con esa dirección o ese usuario.', 'not_found');
+    // Con un cambio de usuario a medias no se sabe cuál es el vigente: 409
+    // mailbox_login_updating, y el complemento entra con lo tecleado en vez de
+    // traducirlo a un usuario que quizá ya no exista (ni trasladar filas).
+    loginParaMotor(resuelto.mailboxId);
     reply.header('Cache-Control', 'no-store');
     return datosWebmail(resuelto.mailboxId);
   });

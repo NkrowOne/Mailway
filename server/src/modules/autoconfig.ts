@@ -523,7 +523,14 @@ async function thunderbirdHandler(req: FastifyRequest, reply: FastifyReply): Pro
     xml = thunderbirdAutoconfigXml(base, getConnectionSettings(base, null), { placeholderDomain: true });
   }
   if (!xml) throw notFound('No hay autoconfiguración para ese dominio en este servidor.');
-  reply.type(AUTOCONFIG_CONTENT_TYPE).header('Cache-Control', 'public, max-age=300');
+  // Con dirección, el <username> depende del buzón (cambio de dominio) y cambia
+  // en cuanto el titular actualiza sus dispositivos: una caché intermedia
+  // serviría el usuario anterior. Sin cachear siempre que llega una dirección,
+  // y no solo cuando el usuario difiere, para que la cabecera no distinga una
+  // dirección en cambio de otra cualquiera.
+  reply
+    .type(AUTOCONFIG_CONTENT_TYPE)
+    .header('Cache-Control', emailParam ? 'no-store' : 'public, max-age=300');
   return xml;
 }
 
