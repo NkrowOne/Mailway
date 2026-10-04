@@ -223,3 +223,35 @@ test('datos de conexión con Traefik: solo administradores, con el bloque exacto
     config.traefik.panelBackend = original;
   }
 });
+
+/* --------------- Al eliminar el dominio de correo (CD-08) ------------------ */
+
+test('eliminar un dominio de correo se lleva su webmail de marca blanca, que otro cliente puede volver a usar', async () => {
+  const { domainId } = await createDomain(ctx, clientA.clientId, 'se-va-a.test');
+  verify(domainId);
+  const alta = await crear(clientA.userCookie!, { hostname: 'webmail.se-va-a.test' });
+  assert.equal(alta.statusCode, 200, alta.body);
+
+  const sinConfirmar = await ctx.app.inject({ method: 'DELETE', url: `/api/domains/${domainId}`, headers: { cookie: clientA.userCookie! } });
+  assert.equal(sinConfirmar.statusCode, 409);
+  assert.match((sinConfirmar.json() as { error: string }).error, /webmail\.se-va-a\.test \(dejará de publicarse\)/);
+
+  const res = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/domains/${domainId}?confirm=se-va-a.test`,
+    headers: { cookie: clientA.userCookie! },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.deepEqual((res.json() as { whitelabelDeleted: string[] }).whitelabelDeleted, ['webmail.se-va-a.test']);
+  assert.equal(db.prepare("SELECT 1 FROM client_domains WHERE hostname = 'webmail.se-va-a.test'").get(), undefined);
+  const auditado = db
+    .prepare("SELECT 1 FROM audit_log WHERE action = 'whitelabel.domain_deleted' AND client_id = ? AND detail LIKE '%webmail.se-va-a.test%'")
+    .get(clientA.clientId);
+  assert.ok(auditado, 'aparece en la Actividad del cliente');
+
+  // El dominio pasa a otro cliente: su webmail.<dominio> ya no está ocupado.
+  db.prepare('UPDATE plans SET max_domains = 10 WHERE id = ?').run(clientB.planId);
+  verify((await createDomain(ctx, clientB.clientId, 'se-va-a.test')).domainId);
+  const deB = await crear(clientB.userCookie!, { hostname: 'webmail.se-va-a.test' });
+  assert.equal(deB.statusCode, 200, deB.body);
+});

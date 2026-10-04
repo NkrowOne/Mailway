@@ -14,7 +14,7 @@ import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Dialogo, Hoja, MarcaFondo, Cargando, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
-import { BandaError, ResultadoCloudflare, claseEnlacePerfil } from '../cloudflare/comun';
+import { BandaAviso, BandaError, ResultadoCloudflare, claseEnlacePerfil } from '../cloudflare/comun';
 import { RevisionCambios } from '../cloudflare/RevisionCambios';
 
 /*
@@ -59,6 +59,27 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
     },
     onError: (err) => toast('error', mensaje(err, 'No se han podido comprobar las cuentas.')),
   });
+
+  // El motor puede usar el token de una cuenta de la instancia para renovar
+  // su certificado (lo copia el instalador o «Emitir» en Ajustes): entonces
+  // el diálogo no debe recomendar revocarlo.
+  const deInstancia = isAdmin && aBorrar !== null && aBorrar.clientId === null;
+  const usoMotor = useQuery({
+    queryKey: ['engine-acme-account', aBorrar?.id],
+    queryFn: () => api.get<{ inUse: boolean | null }>(`/api/engine/acme/accounts/${aBorrar!.id}`),
+    enabled: deInstancia,
+    staleTime: 0,
+  });
+  // true/false: respuesta del servidor; null: no se pudo saber (error de la
+  // petición o motor sin responder, que el servidor devuelve como inUse: null);
+  // undefined: todavía comprobándolo.
+  const usadaPorElMotor = !deInstancia
+    ? false
+    : usoMotor.isError
+      ? null
+      : usoMotor.data
+        ? usoMotor.data.inUse
+        : undefined;
 
   const borrar = useMutation({
     mutationFn: (id: string) => api.delete(`/api/cloudflare/accounts/${id}`),
@@ -217,9 +238,26 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
             Mailway dejará de usar la cuenta <strong className="text-tinta">{aBorrar?.label}</strong>.
-            Los registros DNS ya creados en Cloudflare no se modifican. El token sigue existiendo en
-            Cloudflare: si ya no lo necesitas, revócalo en Cloudflare (My Profile → API Tokens).
+            Los registros DNS ya creados en Cloudflare no se modifican.
+            {usadaPorElMotor === false &&
+              ' El token sigue existiendo en Cloudflare: si ya no lo necesitas, revócalo en Cloudflare (My Profile → API Tokens).'}
           </p>
+          {deInstancia && usadaPorElMotor === undefined && <Cargando label="Comprobando si el servidor de correo usa este token…" />}
+          {usadaPorElMotor === true && (
+            <BandaAviso titulo="El servidor de correo usa este token">
+              El motor lo usa para renovar el certificado de IMAP y SMTP (Let’s Encrypt). Eliminar la
+              cuenta de Mailway no lo cambia, pero no revoques el token en Cloudflare: la siguiente
+              renovación fallaría y, al caducar el certificado, los programas de correo dejarían de
+              conectar. Para dejar de usarlo, emite antes el certificado con otra cuenta en Ajustes →
+              Servidor de correo.
+            </BandaAviso>
+          )}
+          {usadaPorElMotor === null && (
+            <BandaAviso titulo="No se ha podido comprobar el servidor de correo">
+              No se sabe si el motor usa este token para renovar su certificado. Antes de revocarlo en
+              Cloudflare, compruébalo en Ajustes → Servidor de correo.
+            </BandaAviso>
+          )}
           {borrar.isError && <BandaError>{mensaje(borrar.error, 'No se ha podido eliminar la cuenta.')}</BandaError>}
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="plano" onClick={() => setABorrar(null)}>

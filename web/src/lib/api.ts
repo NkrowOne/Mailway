@@ -116,6 +116,11 @@ export interface DnsCheck {
   help: string;
   /** El motor no ha generado este registro obligatorio: no hay valor que copiar. */
   engineMissing?: boolean;
+  /**
+   * Valor con el que sustituir el registro que ya existe (el SPF actual con
+   * lo que le falta): pegar `expected` en su lugar borraría sus include.
+   */
+  suggested?: string;
 }
 
 export interface DomainRecord {
@@ -147,6 +152,8 @@ export interface DomainRecord {
   ownershipVerifiedAt?: number | null;
   /** Registro TXT que demuestra la propiedad del dominio. */
   ownershipRecord?: { type: 'TXT'; name: string; content: string };
+  /** El MX público apunta a otro servidor: el correo del dominio se recibe en otro proveedor. */
+  recepcionExterna?: boolean;
   createdAt: number;
 }
 

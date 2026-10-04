@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
-import { dnsOffline, lookupA, lookupCname } from '../core/dns';
+import { avisoCaa, caaPermiteLetsEncrypt, dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { resolveAlert } from './alerts';
 import { audit } from './audit';
@@ -334,6 +334,10 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
       detail: `El dominio apunta a ${ips.join(', ')} en lugar de a ${instance.publicIp}. Corrige el registro.`,
     };
   }
+  // Con un CAA que no autoriza a Let's Encrypt, Traefik no consigue el
+  // certificado y serviría el suyo por defecto: no se publica hasta corregirlo.
+  const caa = await caaPermiteLetsEncrypt(hostname);
+  if (caa && !caa.permite) return { status: 'failed', detail: avisoCaa(hostname, caa) };
   return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
 }
 
@@ -462,11 +466,61 @@ export function applyClientDomainCheck(
 }
 
 /**
+ * Dominio de correo del cliente del que cuelga un nombre: el más específico
+ * (con un dominio y un subdominio suyos, el subdominio). null si ninguno.
+ */
+function dominioDelQueCuelga(clientId: string, hostname: string): { id: string; domain: string; owner_verified_at: number | null } | null {
+  const propios = db
+    .prepare('SELECT id, domain, owner_verified_at FROM domains WHERE client_id = ?')
+    .all(clientId) as { id: string; domain: string; owner_verified_at: number | null }[];
+  return propios.filter((d) => hostname.endsWith(`.${d.domain}`)).sort((a, b) => b.domain.length - a.domain.length)[0] ?? null;
+}
+
+/**
+ * Dominios propios (webmail y panel) que cuelgan de un dominio de correo del
+ * cliente: al eliminarlo, se eliminan con él. Uno que cuelga de un dominio
+ * suyo más específico (webmail.sub.empresa.com con sub.empresa.com) no.
+ */
+export function dominiosPropiosDe(domainId: string): ClientDomain[] {
+  const dominio = db.prepare('SELECT client_id FROM domains WHERE id = ?').get(domainId) as { client_id: string } | undefined;
+  if (!dominio) return [];
+  return listClientDomains(dominio.client_id).filter((d) => dominioDelQueCuelga(d.clientId, d.hostname)?.id === domainId);
+}
+
+/** Retira un dominio propio: deja de publicarse en Traefik en su siguiente sondeo. */
+export function eliminarDominioPropio(id: string): void {
+  db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
+  fallosSeguidos.delete(id);
+  // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
+  resolveAlert(`whitelabel:${id}`);
+}
+
+/**
  * Avanza el dominio por sus estados: DNS correcto → Traefik lo publica →
  * certificado emitido → activo. Devuelve el dominio ya actualizado.
  */
 export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   const domain = getClientDomain(id);
+  // Red de seguridad: un nombre que ya no cuelga de un dominio de correo del
+  // cliente con la propiedad comprobada (borrado antes de esta versión, o
+  // que pasó a otro cliente) no se vuelve a publicar ni a ofrecer como su
+  // webmail: con su marca se serviría un nombre que ya no es suyo.
+  const padre = dominioDelQueCuelga(domain.clientId, domain.hostname);
+  if (!padre || padre.owner_verified_at === null) {
+    fallosSeguidos.delete(id);
+    const row = db
+      .prepare(
+        `UPDATE client_domains SET status = 'pending_dns', detail = ?, last_checked_at = ? WHERE id = ? RETURNING *`,
+      )
+      .get(
+        padre
+          ? 'Todavía no se ha comprobado la propiedad del dominio de correo del que cuelga este nombre: no se publica hasta comprobarla.'
+          : 'Este nombre ya no cuelga de ningún dominio de correo de este cliente, así que no se publica. Elimínalo o vuelve a dar de alta su dominio de correo.',
+        now(),
+        id,
+      ) as DomainRow;
+    return toDomain(row);
+  }
   const dns = await checkDns(domain.hostname);
   // Solo se prueba HTTPS cuando el DNS ya apunta aquí: antes no puede haber certificado.
   const https = dns.status === 'ok' ? await checkHttps(domain.hostname) : null;
@@ -720,10 +774,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
   app.delete('/api/whitelabel/domains/:id', async (req) => {
     const { id } = req.params as { id: string };
     const domain = requireDomainAccess(req, id);
-    db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
-    fallosSeguidos.delete(id);
-    // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
-    resolveAlert(`whitelabel:${id}`);
+    eliminarDominioPropio(id);
     audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname }, domain.clientId);
     // Traefik dejará de enrutarlo en su siguiente sondeo (unos segundos).
     return { ok: true };

@@ -10,6 +10,7 @@ import {
   type EstadoAltaDominio,
   type RespuestaAltaDominio,
 } from '../../lib/cloudflare';
+import { sugerenciaSinWww } from '../../lib/dominios';
 import { plural } from '../../lib/format';
 import { esCorreoValido, formatQuota, mensajeDe, vinculadoConSkyway } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
@@ -227,6 +228,8 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
   const deInstancia = cuentasUtilizables(cuentas.data?.accounts ?? [], { clientId: null, isAdmin: true });
   const hayCloudflare = deInstancia.length > 0;
   const conDns = hayCloudflare && autoDns && Boolean(dominio.trim());
+  // Quien pega la URL de la web suele querer el correo sin «www.».
+  const sinWww = sugerenciaSinWww(dominio);
 
   const plan = planList.find((p) => p.id === planId) ?? planList[0];
   // Por defecto, el usuario del panel es la persona de contacto.
@@ -253,6 +256,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             domain: dominio.trim().toLowerCase(),
             clientId: created.client.id,
             ...(conDns ? { autoDns: true } : {}),
+            // El aviso de «www.» se ha visto en el formulario (sinWww): si se
+            // mantiene, es a propósito.
+            ...(sinWww ? { confirmWww: true } : {}),
           });
           const alta: EstadoAltaDominio = {
             autoDns: conDns,
@@ -482,6 +488,19 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             placeholder="empresa.com"
             help="Después se indicarán los registros DNS que hay que configurar."
           />
+          {sinWww && (
+            <BandaAviso>
+              «{dominio.trim()}» empieza por «www.», que suele ser el nombre de la web. Con él, las
+              direcciones serían como nombre@www.{sinWww}.{' '}
+              <button
+                type="button"
+                className="font-medium text-petroleo underline"
+                onClick={() => limpiar(setDominio)(sinWww)}
+              >
+                Usar {sinWww}
+              </button>
+            </BandaAviso>
+          )}
           {hayCloudflare && dominio.trim() && (
             <Casilla
               checked={autoDns}
@@ -489,7 +508,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
               label="Configurar el DNS automáticamente en Cloudflare"
               help={`La zona del dominio debe estar en una cuenta de Cloudflare de la instancia (${deInstancia
                 .map((c) => c.label)
-                .join(', ')}). Solo se crean los registros que faltan: lo que ya existe (también un SPF que habría que completar) no se modifica y podrás revisarlo y aplicarlo en la ficha del dominio.`}
+                .join(', ')}). Solo se crean los registros que faltan: lo que ya existe (también un SPF que habría que completar) no se modifica y podrás revisarlo y aplicarlo en la ficha del dominio. Si el correo del dominio llega hoy a otro proveedor, el SPF y el DMARC se crean junto con el MX cuando hagas el cambio desde la ficha.`}
             />
           )}
         </section>

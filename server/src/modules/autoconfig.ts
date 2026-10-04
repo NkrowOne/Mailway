@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config';
 import { db, now } from '../core/db';
-import { lookupA, lookupCname } from '../core/dns';
+import { avisoCaa, caaPermiteLetsEncrypt, lookupA, lookupCname } from '../core/dns';
 import { conflict, notFound } from '../core/errors';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
@@ -144,11 +144,19 @@ export async function checkAutoconfigHost(host: string): Promise<HostCheck> {
     };
   }
   const [cname, a] = await Promise.all([lookupCname(host), lookupA(host)]);
-  if (target && cname?.some((c) => normalizeName(c) === target)) {
-    return { state: 'ok', detail: `El registro CNAME apunta a ${target}.` };
-  }
-  if (ip && a?.includes(ip)) {
-    return { state: 'ok', detail: `El nombre resuelve a ${ip}, la IP de este servidor.` };
+  const apunta =
+    target && cname?.some((c) => normalizeName(c) === target)
+      ? `El registro CNAME apunta a ${target}.`
+      : ip && a?.includes(ip)
+        ? `El nombre resuelve a ${ip}, la IP de este servidor.`
+        : null;
+  if (apunta) {
+    // Publicarlo en Traefik con un CAA que no autoriza a Let's Encrypt solo
+    // provocaría reintentos de ACME y el certificado por defecto de Traefik.
+    // Un CAA que no se pudo consultar no lo impide.
+    const caa = await caaPermiteLetsEncrypt(host);
+    if (caa && !caa.permite) return { state: 'pending', detail: avisoCaa(host, caa) };
+    return { state: 'ok', detail: apunta };
   }
   if (a === null) {
     return {

@@ -15,6 +15,7 @@ import {
   type EstadoAltaDominio,
   type RespuestaAltaDominio,
 } from '../lib/cloudflare';
+import { sugerenciaSinWww } from '../lib/dominios';
 import { formatDate, plural } from '../lib/format';
 import { useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
@@ -44,6 +45,8 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
   const [clientId, setClientId] = useState('');
   const [autoDns, setAutoDns] = useState(true);
   const [error, setError] = useState('');
+  // El servidor pregunta antes de dar de alta www.<dominio> (domain_www).
+  const [avisoWww, setAvisoWww] = useState<{ mensaje: string; sugerido: string | null } | null>(null);
 
   const domains = useQuery({
     queryKey: ['domains'],
@@ -76,11 +79,12 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
   const limiteElegido = elegido ? elegido.usage.domains >= elegido.plan.maxDomains : false;
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmWww: boolean) =>
       api.post<RespuestaAltaDominio>('/api/domains', {
         domain: domainName,
         clientId: isAdmin ? clientId : undefined,
         ...(hayCloudflare && autoDns ? { autoDns: true } : {}),
+        ...(confirmWww ? { confirmWww: true } : {}),
       }),
     onSuccess: async (data) => {
       await invalidarTrasAltaOBaja(queryClient, data.domain.clientId);
@@ -95,7 +99,13 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
       };
       navigate(`/dominios/${data.domain.id}`, { state: { alta } });
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta.'),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'domain_www') {
+        setAvisoWww({ mensaje: err.message, sugerido: sugerenciaSinWww(domainName) });
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta.');
+    },
   });
 
   function abrir() {
@@ -104,6 +114,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
     setClientId('');
     setAutoDns(true);
     setError('');
+    setAvisoWww(null);
     create.reset();
     setOpen(true);
   }
@@ -111,7 +122,8 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
   function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
-    create.mutate();
+    setAvisoWww(null);
+    create.mutate(false);
   }
 
   const list = [...(domains.data?.domains ?? [])].sort(
@@ -294,6 +306,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => {
               setDomainName(e.target.value);
               setError('');
+              setAvisoWww(null);
             }}
             placeholder="miempresa.com"
             autoComplete="off"
@@ -318,11 +331,35 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
                 faltan: lo que ya existe (también un SPF que habría que completar) no se
-                modifica y podrás revisarlo y aplicarlo en la ficha del dominio.
+                modifica y podrás revisarlo y aplicarlo en la ficha del dominio. Si el correo del
+                dominio llega hoy a otro proveedor, tampoco se crean el SPF ni el DMARC: se crean
+                junto con el MX cuando hagas el cambio desde la ficha.
               </p>
             </div>
           )}
 
+          {avisoWww && (
+            <BandaAviso titulo="Revisa el dominio">
+              <p>{avisoWww.mensaje}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {avisoWww.sugerido && (
+                  <Button
+                    type="button"
+                    variant="perfil"
+                    onClick={() => {
+                      setDomainName(avisoWww.sugerido!);
+                      setAvisoWww(null);
+                    }}
+                  >
+                    Usar {avisoWww.sugerido}
+                  </Button>
+                )}
+                <Button type="button" variant="plano" busy={create.isPending} onClick={() => create.mutate(true)}>
+                  Mantener el subdominio www
+                </Button>
+              </div>
+            </BandaAviso>
+          )}
           {error && <AvisoError>{error}</AvisoError>}
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="plano" onClick={() => setOpen(false)}>

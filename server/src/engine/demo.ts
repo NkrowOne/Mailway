@@ -7,8 +7,10 @@ import type {
   EngineReloadResult,
   MailEngine,
   QueueSummary,
+  RemoteDomainsResult,
   UpdateMailboxPatch,
 } from './types';
+import { normalizarDominiosRemotos } from './recepcion';
 
 /**
  * Motor de demostración: no habla con ningún servidor real. Permite probar el
@@ -133,5 +135,15 @@ export class DemoEngine implements MailEngine {
 
   async getQueueSummary(): Promise<QueueSummary> {
     return { pending: 0, oldestSeconds: null };
+  }
+
+  /** Dominios que el motor de demostración «entrega por MX» (para las pruebas). */
+  remoteDomains: string[] = [];
+
+  async syncRemoteDomains(domains: string[]): Promise<RemoteDomainsResult> {
+    const nuevos = normalizarDominiosRemotos(domains);
+    const changed = nuevos.join(',') !== this.remoteDomains.join(',');
+    this.remoteDomains = nuevos;
+    return { changed, customized: false, errors: [], warnings: [] };
   }
 }

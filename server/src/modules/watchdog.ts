@@ -4,8 +4,9 @@ import { checkDnsbl } from '../core/dns';
 import { engineConfigured, getEngine } from '../engine';
 import { fireAlert, resolveAlert } from './alerts';
 import { refreshAutoconfigHosts } from './autoconfig';
-import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
+import { listDomains, refreshDomainDns, retirarDelMotorDominiosSinPropiedad, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
+import { sincronizarRecepcionExterna } from './recepcion';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
 import { listClientDomains, refreshClientDomain, type ClientDomain } from './whitelabel';
@@ -324,6 +325,17 @@ async function checkNombreDelMotor(): Promise<void> {
   await checkEngineHostname();
 }
 
+/**
+ * Reglas de entrega de los dominios con el correo en otro proveedor (cada 10
+ * minutos): repara lo que no se pudo aplicar al medir (motor caído, recarga
+ * con errores) y lo que se haya perdido en el motor (una reinstalación).
+ */
+async function checkRecepcionExterna(): Promise<void> {
+  if (!due('recepcion_externa', 10 * MINUTE)) return;
+  markRun('recepcion_externa');
+  await sincronizarRecepcionExterna();
+}
+
 /* ------------------------------ Planificador ------------------------------ */
 
 let timer: NodeJS.Timeout | null = null;
@@ -356,6 +368,12 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('autoconfiguración', checkAutoconfigHosts, log);
     await paso('certificado del motor', checkTlsDelMotor, log);
     await paso('nombre del motor', checkNombreDelMotor, log);
+    await paso('recepción en otro proveedor', checkRecepcionExterna, log);
+    // Tarea única de la actualización (dominios sin propiedad que versiones
+    // anteriores crearon en el motor): solo trabaja hasta completarse.
+    await paso('dominios sin propiedad en el motor', async () => {
+      await retirarDelMotorDominiosSinPropiedad();
+    }, log);
     // Limpieza: las alertas resueltas hace más de 30 días no aportan nada.
     await paso('limpieza', async () => {
       db.prepare('DELETE FROM alerts WHERE resolved_at IS NOT NULL AND resolved_at < ?').run(

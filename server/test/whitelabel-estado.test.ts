@@ -30,6 +30,16 @@ function seed(id: string, hostname: string, status: string, activatedAt: number 
     'p',
     0,
   );
+  // El dominio de correo del que cuelga, del mismo cliente y con la
+  // propiedad comprobada (si no, la red de seguridad no lo publica).
+  const padre = hostname.split('.').slice(1).join('.');
+  db.prepare('INSERT OR IGNORE INTO domains (id,client_id,domain,created_at,owner_verified_at) VALUES (?,?,?,?,?)').run(
+    `d-${padre}`,
+    'c',
+    padre,
+    0,
+    1,
+  );
   db.prepare(
     `INSERT INTO client_domains (id,client_id,hostname,kind,status,activated_at,created_at)
      VALUES (?,?,?,'webmail',?,?,?)`,
@@ -133,4 +143,39 @@ test('activated_at se fija una sola vez y no se pisa al re-verificar', () => {
   seed('w5', 'webmail.antiguo.test', 'active', t0);
   applyClientDomainCheck('w5', { status: 'ok', detail: 'ok' }, { ok: true, detail: 'ok' });
   assert.equal(getClientDomain('w5').activatedAt, t0, 'la fecha de activación original debe conservarse');
+});
+
+/* --------------------------------- CAA (T16) ------------------------------- */
+
+test('un CAA que no autoriza a Let\'s Encrypt deja el dominio pendiente con el registro exacto que falta', async (t) => {
+  const { instalarDnsFalso } = await import('./dns-falso');
+  seed('w-caa', 'webmail.caa.test', 'pending_dns');
+  const zona = {
+    a: { 'webmail.caa.test': ['203.0.113.10'] },
+    // El hosting anterior dejó su CAA en el dominio: manda sobre el subdominio.
+    caa: { 'caa.test': [{ critical: 0, issue: 'sectigo.com' }] } as Record<string, { critical: number; issue?: string }[]>,
+  };
+  instalarDnsFalso(t, zona);
+  let domain = await refreshClientDomain('w-caa');
+  assert.equal(domain.status, 'pending_dns', 'no se publica en Traefik');
+  assert.match(domain.detail, /0 issue "letsencrypt\.org"/);
+  assert.match(domain.detail, /caa\.test/);
+
+  zona.caa['caa.test'] = [{ critical: 0, issue: 'sectigo.com' }, { critical: 0, issue: 'letsencrypt.org; validationmethods=http-01' }];
+  // Con el DNS correcto se prueba HTTPS: aquí, sin salir a la red.
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('certificate not yet issued');
+  });
+  domain = await refreshClientDomain('w-caa');
+  assert.notEqual(domain.status, 'pending_dns', 'con Let\'s Encrypt autorizado, avanza');
+});
+
+/* ------------------- Dominio de correo que ya no existe (CD-08) ------------ */
+
+test('red de seguridad: un webmail que ya no cuelga de un dominio de correo del cliente deja de publicarse', async () => {
+  seed('w-huerfano', 'webmail.huerfano.test', 'active', 1000);
+  db.prepare("DELETE FROM domains WHERE domain = 'huerfano.test'").run();
+  const domain = await refreshClientDomain('w-huerfano');
+  assert.equal(domain.status, 'pending_dns', 'fuera de Traefik y de los datos de conexión');
+  assert.match(domain.detail, /ya no cuelga de ningún dominio de correo de este cliente/);
 });

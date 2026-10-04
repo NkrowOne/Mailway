@@ -9,8 +9,16 @@ import type {
   EngineSettings,
   MailEngine,
   QueueSummary,
+  RemoteDomainsResult,
   UpdateMailboxPatch,
 } from './types';
+import {
+  CLAVES_RECEPCION,
+  esReglaDeMailway,
+  reglasIguales,
+  reglasRecepcionRemota,
+  soloClavesDeRecepcion,
+} from './recepcion';
 
 /** Dominio por el que se piden los registros para saber el nombre en ejecución. */
 const DOMINIO_SONDA = 'mailway.invalid';
@@ -425,6 +433,38 @@ export class StalwartEngine implements MailEngine {
       ? Math.max(0, Math.round((Date.now() - createdMs) / 1000))
       : null;
     return { pending: total, oldestSeconds: total > 0 ? oldestSeconds : null };
+  }
+
+  /**
+   * Reglas de entrega de los dominios con el correo en otro proveedor
+   * (engine/recepcion.ts). Se leen las tres claves (también en su forma de
+   * valor directo, que tendría prioridad sobre el bloque) y solo se escriben
+   * si faltan o son de Mailway. Las tres se vacían y se vuelven a escribir en
+   * la misma petición (`assert_empty`: tras vaciarlas, la primera clave no
+   * puede existir). Con una lista vacía solo se vacían: el motor vuelve a sus
+   * valores por defecto.
+   */
+  async syncRemoteDomains(domains: string[], opts: { reload?: boolean } = {}): Promise<RemoteDomainsResult> {
+    const claves = CLAVES_RECEPCION.join(',');
+    const leidos = await this.request<Record<string, string | null> | null>(
+      'GET',
+      `/api/settings/keys?keys=${claves}&prefixes=${claves}`,
+    );
+    const actuales = soloClavesDeRecepcion(
+      Object.fromEntries(Object.entries(leidos || {}).filter((e): e is [string, string] => typeof e[1] === 'string')),
+    );
+    const deseadas = reglasRecepcionRemota(domains);
+    if (reglasIguales(actuales, deseadas)) {
+      if (!opts.reload) return { changed: false, customized: false, errors: [], warnings: [] };
+      return { changed: false, customized: false, ...(await this.reload()) };
+    }
+    if (!esReglaDeMailway(actuales)) return { changed: false, customized: true, errors: [], warnings: [] };
+    const valores = Object.entries(deseadas);
+    await this.request('POST', '/api/settings', [
+      ...CLAVES_RECEPCION.map((c) => ({ type: 'clear', prefix: `${c}.` })),
+      ...(valores.length > 0 ? [{ type: 'insert', prefix: null, values: valores, assert_empty: true }] : []),
+    ]);
+    return { changed: true, customized: false, ...(await this.reload()) };
   }
 
   private async updatePrincipal(name: string, updates: PrincipalUpdate[]): Promise<void> {
