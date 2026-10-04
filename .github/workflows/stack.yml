@@ -4,17 +4,27 @@ name: Pila de correo
 # el extractor del certificado (perfil «tls») con la topología de
 # deploy/docker-compose.mail.yml (red interna con subred fija), montados por
 # deploy/instalar.sh, con certificados de laboratorio y credenciales
-# desechables. Complementa a ci.yml; no lo sustituye.
+# desechables. También el cambio de dominio con las mismas peticiones que el
+# driver del motor (server/src/engine) y el complemento mailway_cuentas con la
+# imagen real de Roundcube. Complementa a ci.yml; no lo sustituye.
 
 on:
   push:
     branches: [main]
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'deploy/prueba-cambio-dominio.py'
+      - 'deploy/roundcube/mailway_cuentas/**'
+      - 'deploy/roundcube/pruebas/**'
       - '.github/workflows/stack.yml'
   pull_request:
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'deploy/prueba-cambio-dominio.py'
+      - 'deploy/roundcube/mailway_cuentas/**'
+      - 'deploy/roundcube/pruebas/**'
       - '.github/workflows/stack.yml'
   workflow_dispatch:
   # Las imágenes de Roundcube (1.7.x) y de Python (3.13) siguen su versión
@@ -45,8 +55,12 @@ jobs:
         run: |
           python3 -m py_compile deploy/tls/extractor.py deploy/tls/laboratorio.py \
             deploy/tls/test_extractor.py deploy/prueba-stack.py
+          python3 -m py_compile deploy/prueba-cambio-dominio.py
           php -l deploy/roundcube/diagnostico/comprobar.php
           php -l deploy/roundcube/mailway.php
+          php -l deploy/roundcube/mailway_cuentas/mailway_cuentas.php
+          php -l deploy/roundcube/mailway_cuentas/datos.php
+          php -l deploy/roundcube/pruebas/mailway_cuentas.php
           for f in deploy/*.sh; do bash -n "$f"; done
           shellcheck -x -S style deploy/*.sh
 
@@ -73,10 +87,10 @@ jobs:
           done
 
   pila:
-    name: Stalwart y Roundcube reales (TLS, IMAP, SMTP y renovación)
+    name: Stalwart y Roundcube reales (TLS, IMAP, SMTP, renovación y cambio de dominio)
     needs: estatica
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -88,3 +102,21 @@ jobs:
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
         run: python3 deploy/prueba-stack.py
+
+      # Un Stalwart v0.15.5 desechable y las mismas peticiones que el driver
+      # (setAddresses, renamePrincipal, reloadDirectory y removeDkim): recibe
+      # en los dos dominios, envía con el usuario viejo como la dirección
+      # nueva, renombrar conserva el correo y las contraseñas, y la baja borra
+      # solo las claves DKIM del dominio viejo. Ver deploy/prueba-cambio-dominio.py.
+      - name: Cambio de dominio con Stalwart real
+        # Independiente de la pila del instalador: se ejecuta aunque esta falle.
+        if: ${{ !cancelled() }}
+        env:
+          MAILWAY_PRUEBA_DESECHABLE: '1'
+        run: python3 deploy/prueba-cambio-dominio.py
+
+      # trasladarFila y actualizarIdentidades del complemento con la biblioteca
+      # y el esquema SQLite de la imagen real de Roundcube.
+      - name: Complemento mailway_cuentas con Roundcube real
+        if: ${{ !cancelled() }}
+        run: docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" roundcube/roundcubemail:1.7.x-apache php /opt/mailway-rc/pruebas/mailway_cuentas.php
