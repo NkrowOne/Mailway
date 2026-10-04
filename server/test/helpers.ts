@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
 import { db } from '../src/core/db';
+import { getEngine } from '../src/engine';
+import { DemoEngine } from '../src/engine/demo';
+import type { CambioDominioVista } from '../src/modules/domainmigrations';
 
 /**
  * Utilidades comunes para probar las rutas reales con `app.inject()`.
@@ -150,4 +153,47 @@ export async function createMailbox(
   if (res.statusCode !== 200) throw new Error(`No se pudo crear el buzón: ${res.body}`);
   const body = res.json() as { mailbox: { id: string; email: string }; password: string };
   return { mailboxId: body.mailbox.id, email: body.mailbox.email, password: body.password };
+}
+
+/* ----------------------------- Cambio de dominio ---------------------------- */
+
+/** El motor de demostración de las pruebas, con sus ganchos (entregar, fallarProxima…). */
+export function motorDemo(): DemoEngine {
+  const engine = getEngine();
+  if (!(engine instanceof DemoEngine)) throw new Error('Las pruebas esperan el motor de demostración.');
+  return engine;
+}
+
+/**
+ * Da por bueno el DNS de un dominio (estado «active») y su propiedad, como si
+ * la medición los hubiera comprobado. Sin red, las mediciones siguientes no
+ * lo degradan: «no se pudo consultar» conserva el estado anterior.
+ */
+export function marcarDnsActivo(domainId: string): void {
+  const t = Date.now();
+  db.prepare(
+    `UPDATE domains SET status = 'active', owner_verified_at = COALESCE(owner_verified_at, ?),
+       verified_at = COALESCE(verified_at, ?)
+     WHERE id = ?`,
+  ).run(t, t, domainId);
+}
+
+/**
+ * Crea un cambio de dominio por la ruta real. Por defecto con la sesión del
+ * administrador y sin DNS automático; `headers` permite usar un token o la
+ * sesión de un usuario del cliente.
+ */
+export async function crearCambioDeDominio(
+  ctx: TestContext,
+  fromDomainId: string,
+  toDomain: string,
+  opts: { headers?: Record<string, string>; query?: string; payload?: Record<string, unknown> } = {},
+): Promise<{ statusCode: number; vista: CambioDominioVista; body: string }> {
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domain-migrations${opts.query ? `?${opts.query}` : ''}`,
+    headers: opts.headers ?? { cookie: ctx.adminCookie },
+    payload: { fromDomainId, toDomain, autoDns: false, ...opts.payload },
+  });
+  return { statusCode: res.statusCode, vista: res.json() as CambioDominioVista, body: res.body };
 }

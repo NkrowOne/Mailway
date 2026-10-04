@@ -664,6 +664,45 @@ export function buildTraefikConfig(): Record<string, unknown> {
   };
 }
 
+/**
+ * Da de alta un dominio propio (webmail o panel) de un cliente con todas las
+ * comprobaciones del alta: nombre válido y permitido, libre y dentro del
+ * máximo por cliente. No lo comprueba ni lo audita: eso lo hace quien llama.
+ * La usan la ruta de alta y el cambio de dominio, que crea el webmail con la
+ * marca del cliente en el dominio nuevo (webmail.dominio2.es).
+ */
+export function crearDominioPropio(clientId: string, hostnameEntrada: string, kind: DomainKind): ClientDomain {
+  if (!kindAvailable(kind)) {
+    throw badRequest(
+      kind === 'panel'
+        ? 'Los dominios de panel no están habilitados: falta configurar MAILWAY_PANEL_BACKEND_URL en el servidor.'
+        : 'Los dominios de webmail no están habilitados en este servidor.',
+      'kind_unavailable',
+    );
+  }
+  const hostname = normalizeHostname(hostnameEntrada);
+  assertHostnameAllowed(clientId, hostname);
+  const existing = db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname);
+  if (existing) throw conflict('Ese dominio ya está dado de alta.');
+  const count = (
+    db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
+      c: number;
+    }
+  ).c;
+  if (count >= MAX_WHITELABEL_PER_CLIENT) {
+    throw badRequest(
+      `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimina uno que no se utilice para añadir otro.`,
+      'whitelabel_limit',
+    );
+  }
+  const id = randomId('wld');
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, clientId, hostname, kind, now());
+  return getClientDomain(id);
+}
+
 /* --------------------------------- Rutas ---------------------------------- */
 
 function requireDomainAccess(req: FastifyRequest, id: string): ClientDomain {
@@ -757,42 +796,13 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const clientExists = db.prepare('SELECT 1 FROM clients WHERE id = ?').get(clientId);
     if (!clientExists) throw notFound('Cliente no encontrado.');
 
-    if (!kindAvailable(body.kind)) {
-      throw badRequest(
-        body.kind === 'panel'
-          ? 'Los dominios de panel no están habilitados: falta configurar MAILWAY_PANEL_BACKEND_URL en el servidor.'
-          : 'Los dominios de webmail no están habilitados en este servidor.',
-        'kind_unavailable',
-      );
-    }
-
-    const hostname = normalizeHostname(body.hostname);
-    assertHostnameAllowed(clientId, hostname);
-    const existing = db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname);
-    if (existing) throw conflict('Ese dominio ya está dado de alta.');
-    const count = (
-      db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
-        c: number;
-      }
-    ).c;
-    if (count >= MAX_WHITELABEL_PER_CLIENT) {
-      throw badRequest(
-        `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimina uno que no se utilice para añadir otro.`,
-        'whitelabel_limit',
-      );
-    }
-
-    const id = randomId('wld');
-    db.prepare(
-      `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, clientId, hostname, body.kind, now());
-    audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind }, clientId);
+    const creado = crearDominioPropio(clientId, body.hostname, body.kind);
+    audit(req, 'whitelabel.domain_created', { id: creado.id, hostname: creado.hostname, kind: body.kind }, clientId);
 
     // Primera comprobación inmediata: si el DNS ya estaba puesto, el usuario
     // ve el progreso sin tener que pulsar nada.
-    const domain = await refreshClientDomain(id).catch(() => getClientDomain(id));
-    return { domain, instructions: dnsInstructions(hostname) };
+    const domain = await refreshClientDomain(creado.id).catch(() => getClientDomain(creado.id));
+    return { domain, instructions: dnsInstructions(creado.hostname) };
   });
 
   app.get('/api/whitelabel/domains/:id', async (req) => {

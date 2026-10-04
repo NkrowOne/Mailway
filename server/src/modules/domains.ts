@@ -32,7 +32,7 @@ import { lookupA, lookupAaaa, lookupMx, lookupTxt, type MxRecord } from '../core
 import { canonicalIpv6 } from '../core/hostnames';
 import { sincronizarRecepcionExterna } from './recepcion';
 import { dominiosPropiosDe, eliminarDominioPropio } from './whitelabel';
-import { loginParaMotor, nombreEnMotor } from './direcciones';
+import { cambioAbiertoDeDominio, loginParaMotor, nombreEnMotor } from './direcciones';
 import { getInstanceSettings, getSetting, setSetting } from './settings';
 
 /** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
@@ -73,6 +73,33 @@ export interface DomainRecord {
    * aquí a sus direcciones sale por ese MX (modules/recepcion.ts).
    */
   recepcionExterna: boolean;
+  /**
+   * Cambio de dominio abierto en el que participa (dominio.es → dominio2.es),
+   * o null. `pareja` es el otro dominio del cambio; `cuentaEnPlan` es false
+   * para el origen: mientras dura el cambio no cuenta en el plan.
+   */
+  migracion: MigracionDominio | null;
+}
+
+export interface MigracionDominio {
+  id: string;
+  rol: 'origen' | 'destino';
+  estado: string;
+  pareja: string;
+  cuentaEnPlan: boolean;
+}
+
+/** Papel del dominio en su cambio de dominio abierto, para la ficha, la lista y el resumen. */
+function migracionDe(domainId: string): MigracionDominio | null {
+  const cambio = cambioAbiertoDeDominio(domainId);
+  if (!cambio) return null;
+  return {
+    id: cambio.id,
+    rol: cambio.rol,
+    estado: cambio.estado,
+    pareja: cambio.rol === 'origen' ? cambio.toDomain : cambio.fromDomain,
+    cuentaEnPlan: cambio.rol !== 'origen',
+  };
 }
 
 interface DomainRow {
@@ -118,6 +145,7 @@ function toDomain(row: DomainRow): DomainRecord {
     ownershipVerifiedAt: row.owner_verified_at ?? null,
     ownershipRecord: ownershipRecord(row.domain),
     recepcionExterna: row.recepcion_externa === 1,
+    migracion: migracionDe(row.id),
   };
 }
 
@@ -489,6 +517,108 @@ function requireDomainAccess(req: Parameters<typeof requireAuth>[0], domainId: s
   return { user, domain };
 }
 
+/**
+ * ¿Se dio de baja este dominio en un cambio de dominio de OTRO cliente? Tras
+ * la baja, su TXT de verificación y quizá su MX siguen en el DNS de su antiguo
+ * dueño y bastarían para «probar» la propiedad: queda reservado a ese cliente.
+ */
+function dadoDeBajaPorOtroCliente(domain: string, clientId: string): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM domain_migrations
+         WHERE from_domain = ? AND estado = 'dado_de_baja' AND client_id <> ? LIMIT 1`,
+      )
+      .get(domain, clientId),
+  );
+}
+
+/**
+ * Comprueba si el dominio está reservado para otro cliente: su DNS lo escribió
+ * el administrador con la cuenta de Cloudflare de la instancia, o lo dio de
+ * baja otro cliente en un cambio de dominio. El administrador (no en nombre de
+ * un cliente) puede darlo de alta igualmente. 409 domain_reserved.
+ */
+export function assertDominioNoReservado(domain: string, clientId: string, comoAdministrador: boolean): void {
+  if (comoAdministrador) return;
+  const reserva = reservaDeDominio(domain);
+  if (reserva && reserva.client_id !== clientId) {
+    throw conflict(
+      'Este dominio está reservado: su DNS lo configuró el administrador de la plataforma con su cuenta de Cloudflare. Solicita al administrador que lo dé de alta.',
+      'domain_reserved',
+    );
+  }
+  if (dadoDeBajaPorOtroCliente(domain, clientId)) {
+    throw conflict(
+      'Este dominio perteneció a otro cliente de la plataforma. Solicita al administrador que lo dé de alta.',
+      'domain_reserved',
+    );
+  }
+}
+
+/**
+ * Alta de un dominio de correo con todas sus comprobaciones (plan, existencia
+ * y reservas), su DKIM y la reserva de Cloudflare. Quien la llama ya tiene el
+ * cerrojo 'altas:dominios': entre comprobar que el dominio no existe y
+ * guardarlo hay llamadas al motor. La usan el alta de dominios y la creación
+ * de un cambio de dominio (el dominio nuevo). Devuelve el id del dominio.
+ */
+export async function altaDeDominioSinCerrojo(input: {
+  clientId: string;
+  domain: string;
+  /** Administrador que no actúa en nombre de un cliente (sin `soloCliente=1`): salta las reservas. */
+  comoAdministrador: boolean;
+  /** Quien pide es administrador (solo cambia el texto del límite del plan). */
+  esAdministrador: boolean;
+  /** Fallo del DKIM, que no impide el alta (se puede regenerar desde la ficha). */
+  avisar?: (err: unknown) => void;
+}): Promise<string> {
+  const { clientId, domain } = input;
+  assertWithinLimit(clientId, 'domains', 1, input.esAdministrador);
+  const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
+  if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
+  // Si el administrador escribió el DNS de este dominio con una cuenta de
+  // Cloudflare de la instancia, sus registros (MX, TXT de verificación)
+  // siguen en la zona del operador aunque el dominio se haya borrado, y
+  // probarían la propiedad al instante: solo ese cliente o el
+  // administrador (no en nombre de un cliente) pueden volver a darlo de alta.
+  // Lo mismo con un dominio que otro cliente dio de baja en un cambio de dominio.
+  assertDominioNoReservado(domain, clientId, input.comoAdministrador);
+  const reserva = reservaDeDominio(domain);
+
+  // El dominio NO se crea en el motor al darlo de alta: para Stalwart, un
+  // dominio que existe es local para todo el servidor (responde «550
+  // Mailbox does not exist» a cualquier dirección que no tenga y entrega
+  // en local lo demás). Dar de alta gmail.com, o el dominio de otro
+  // cliente, dejaría a todos los clientes sin poder escribirle. Se crea
+  // con el primer buzón o alias (asegurarDominioEnMotor), que exigen la
+  // propiedad comprobada. Las claves DKIM y los registros DNS que propone
+  // el motor no necesitan que el dominio exista.
+  const engine = getEngine();
+  try {
+    await engine.ensureDkim(domain, 'mail');
+  } catch (err) {
+    input.avisar?.(err);
+  }
+
+  const nuevoId = randomId('dom');
+  try {
+    db.prepare(
+      `INSERT INTO domains (id, client_id, domain, dkim_selector, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(nuevoId, clientId, domain, 'mail', now());
+  } catch (err) {
+    // Otra alta lo guardó entre la comprobación y el INSERT.
+    if (isUniqueViolation(err)) {
+      throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
+    }
+    throw err;
+  }
+  // El administrador decide a quién sirven esos registros: la reserva pasa al cliente nuevo.
+  if (reserva && reserva.client_id !== clientId) moverReservaDominio(domain, clientId);
+  return nuevoId;
+}
+
 /** Resultado de configurar el DNS en Cloudflare al dar de alta el dominio. */
 interface ResultadoAutoDns {
   applied: { action: string; type: string; name: string }[];
@@ -541,57 +671,15 @@ export function registerDomainRoutes(app: FastifyInstance): void {
     // no existe y guardarlo hay llamadas al motor, y dos altas simultáneas
     // del mismo dominio (de clientes distintos) acabarían con una borrando
     // en el motor el dominio que la otra acababa de crear.
-    const id = await withLock('altas:dominios', async () => {
-      assertWithinLimit(clientId, 'domains', 1, user.role === 'admin');
-      const existing = db.prepare('SELECT 1 FROM domains WHERE domain = ?').get(domain);
-      if (existing) throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
-      // Si el administrador escribió el DNS de este dominio con una cuenta de
-      // Cloudflare de la instancia, sus registros (MX, TXT de verificación)
-      // siguen en la zona del operador aunque el dominio se haya borrado, y
-      // probarían la propiedad al instante: solo ese cliente o el
-      // administrador (no en nombre de un cliente) pueden volver a darlo de alta.
-      const reserva = reservaDeDominio(domain);
-      const comoAdministrador = user.role === 'admin' && !pideSoloCliente(req.query);
-      if (reserva && reserva.client_id !== clientId && !comoAdministrador) {
-        throw conflict(
-          'Este dominio está reservado: su DNS lo configuró el administrador de la plataforma con su cuenta de Cloudflare. Solicita al administrador que lo dé de alta.',
-          'domain_reserved',
-        );
-      }
-
-      // El dominio NO se crea en el motor al darlo de alta: para Stalwart, un
-      // dominio que existe es local para todo el servidor (responde «550
-      // Mailbox does not exist» a cualquier dirección que no tenga y entrega
-      // en local lo demás). Dar de alta gmail.com, o el dominio de otro
-      // cliente, dejaría a todos los clientes sin poder escribirle. Se crea
-      // con el primer buzón o alias (asegurarDominioEnMotor), que exigen la
-      // propiedad comprobada. Las claves DKIM y los registros DNS que propone
-      // el motor no necesitan que el dominio exista.
-      const engine = getEngine();
-      try {
-        await engine.ensureDkim(domain, 'mail');
-      } catch (err) {
-        // El DKIM se puede regenerar desde la ficha del dominio.
-        req.log.warn({ err, domain }, 'No se ha podido generar el DKIM al crear el dominio');
-      }
-
-      const nuevoId = randomId('dom');
-      try {
-        db.prepare(
-          `INSERT INTO domains (id, client_id, domain, dkim_selector, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
-        ).run(nuevoId, clientId, domain, 'mail', now());
-      } catch (err) {
-        // Otra alta lo guardó entre la comprobación y el INSERT.
-        if (isUniqueViolation(err)) {
-          throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
-        }
-        throw err;
-      }
-      // El administrador decide a quién sirven esos registros: la reserva pasa al cliente nuevo.
-      if (reserva && reserva.client_id !== clientId) moverReservaDominio(domain, clientId);
-      return nuevoId;
-    });
+    const id = await withLock('altas:dominios', () =>
+      altaDeDominioSinCerrojo({
+        clientId,
+        domain,
+        comoAdministrador: user.role === 'admin' && !pideSoloCliente(req.query),
+        esAdministrador: user.role === 'admin',
+        avisar: (err) => req.log.warn({ err, domain }, 'No se ha podido generar el DKIM al crear el dominio'),
+      }),
+    );
     audit(req, 'domain.created', { id, domain, clientId }, clientId);
 
     // DNS automático: si una cuenta de Cloudflare accesible contiene la zona,
@@ -799,6 +887,17 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   app.delete('/api/domains/:id', async (req) => {
     const { id } = req.params as { id: string };
     const { domain } = requireDomainAccess(req, id);
+    // Un dominio en un cambio abierto (origen o destino) se gestiona desde el
+    // asistente: borrarlo aquí dejaría el cambio sin uno de sus dos dominios y
+    // sin forma de volver ni de terminar.
+    const cambio = cambioAbiertoDeDominio(id);
+    if (cambio) {
+      const visible = domainToUnicode(domain.domain) || domain.domain;
+      throw conflict(
+        `${visible} está en un cambio de dominio. Gestiónalo desde el asistente.`,
+        'domain_migrating',
+      );
+    }
     const mailboxCount = (
       db.prepare('SELECT COUNT(*) AS c FROM mailboxes WHERE domain_id = ?').get(id) as { c: number }
     ).c;

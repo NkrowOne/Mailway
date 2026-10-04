@@ -29,7 +29,10 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
     `clients` (planes, clientes, usuarios, `assertWithinLimit`), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
-    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `portal`
+    `mailboxes` (buzones, altas masivas, alias), `direcciones` (usuario del
+    motor de cada buzón, cambios abiertos y su conciliador),
+    `domainmigrations` (cambio de dominio: plan, preparar, pasar, volver,
+    cancelar y dar de baja), `apppasswords`, `portal`
     (enlaces de configuración, «Mi buzón», `/api/webmail/password`),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
@@ -99,7 +102,11 @@ prueba que lo reproduce.
   «puede» no cambian cuando se refieren a un tercero (el cliente, el buzón,
   el titular). Terminología fija: buzón, alias, clave de API, token de
   gestión, contraseña de aplicación, enlace de configuración, plan,
-  entregabilidad.
+  entregabilidad, cambio de dominio (pasar un cliente de dominio.es a
+  dominio2.es), dominio anterior (el origen de un cambio, que no cuenta en el
+  plan), actualizar dispositivos (el buzón pasa a entrar con su dirección
+  nueva) y usuario del motor (con el que entra un buzón; durante un cambio de
+  dominio puede no ser su dirección).
 - **Rutas**: `requireAuth` / `requireAdmin` / `requireClientAccess` según el
   recurso, y `requireSession` para lo que un token no debe poder hacer (crear
   tokens, cambiar la contraseña). `requireAdminSession` (administrador con
@@ -112,10 +119,20 @@ prueba que lo reproduce.
   secretos.
 - **Altas**: dentro de `withLock(clientLockKey(clientId), …)` (dominios:
   `'altas:dominios'`) y con `assertWithinLimit` dentro del cerrojo. Buzones y
-  alias exigen `assertDomainOwnership(domainId)`.
+  alias exigen `assertDomainOwnership(domainId)` y `assertAltasPermitidas`
+  (un dominio en un cambio de dominio no admite altas).
+- **Cerrojos** (`core/locks.ts`), siempre en este orden y nunca al revés
+  (`withLock` no es reentrante): `altas:dominios` → `altas:<cliente>`
+  (`clientLockKey`) → `cambio:<id>` (`cambioLockKey`) → `buzon:<id>`
+  (`buzonLockKey`) → `contrasenas-app:<id>`. Quien tiene uno solo pide los que
+  van después; lo que habla con el motor con el usuario de un buzón relee la
+  fila dentro de `buzon:<id>`.
 - **Motor**: las rutas nunca hablan con Stalwart directamente, siempre vía
-  `getEngine()`. Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
-  cuerpo `{ error }`; el driver los convierte en `HttpError` 502
+  `getEngine()`. Lo que identifica un buzón en el motor usa su usuario del
+  motor (`loginParaMotor(id)`, o `loginDe(fila)` para mostrarlo), nunca su
+  dirección, y los miembros de un alias van con `nombreEnMotor`. Stalwart
+  0.15 devuelve los errores de gestión con HTTP 200 y cuerpo `{ error }`; el
+  driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
   `engine_unreachable`). Los ajustes de Stalwart (`POST /api/settings`)
   exigen `assert_empty`.

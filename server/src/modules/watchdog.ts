@@ -6,6 +6,7 @@ import { engineConfigured, getEngine } from '../engine';
 import type { QueueSummary } from '../engine/types';
 import { alertaAbierta, fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
 import { conciliarUsuariosEnCambio } from './direcciones';
+import { vigilarCambiosDeDominio } from './domainmigrations';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { listDomains, refreshDomainDns, retirarDelMotorDominiosSinPropiedad, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
@@ -548,15 +549,19 @@ async function checkRecepcionExterna(): Promise<void> {
 }
 
 /**
- * Cambios de dominio, cada 2 minutos. De momento solo concilia los cambios de
- * usuario del motor que quedaron a medias (motor caído a mitad de un
- * renombrado): sin esto, la marca bloquearía ese buzón hasta el siguiente
- * arranque del panel. La orquestación del cambio añade aquí el avance de la
- * preparación y el webmail principal.
+ * Cambios de dominio, cada 2 minutos:
+ * - avanza la preparación de los que esperan al DNS de dominio2.es (la
+ *   propiedad, la pre-recepción y las compuertas para pasar), también con el
+ *   asistente cerrado;
+ * - tras pasar, convierte en principal el webmail nuevo en cuanto está activo;
+ * - concilia los cambios de usuario del motor que quedaron a medias (motor
+ *   caído a mitad de un renombrado): sin esto, la marca bloquearía ese buzón
+ *   hasta el siguiente arranque del panel.
  */
-async function tickCambiosDeDominio(): Promise<void> {
+async function tickCambiosDeDominio(log?: (msg: string) => void): Promise<void> {
   if (!due('cambios_de_dominio', 2 * MINUTE)) return;
   markRun('cambios_de_dominio');
+  await vigilarCambiosDeDominio(log);
   const conMarca = db.prepare('SELECT 1 FROM mailboxes WHERE usuario_cambiando_a IS NOT NULL LIMIT 1').get();
   if (conMarca) await conciliarUsuariosEnCambio();
 }
@@ -594,7 +599,7 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('certificado del motor', checkTlsDelMotor, log);
     await paso('nombre del motor', checkNombreDelMotor, log);
     await paso('recepción en otro proveedor', checkRecepcionExterna, log);
-    await paso('cambios de dominio', tickCambiosDeDominio, log);
+    await paso('cambios de dominio', () => tickCambiosDeDominio(log), log);
     // Tarea única de la actualización (dominios sin propiedad que versiones
     // anteriores crearon en el motor): solo trabaja hasta completarse.
     await paso('dominios sin propiedad en el motor', async () => {

@@ -10,7 +10,9 @@ Cómo conectar Mailway con otras piezas:
   configuración y «Mi buzón» (secciones 5 y 6);
 - **Traefik**: marca blanca y rutas (sección 7);
 - **otras plataformas** que envían correo (sección 8);
-- **webs estáticas**: formularios de contacto sin claves secretas (sección 9).
+- **webs estáticas**: formularios de contacto sin claves secretas (sección 9);
+- **cambio de dominio** de un cliente (dominio.es → dominio2.es) sin perder
+  correo, contraseñas ni configuración (sección 10).
 
 Base de todas las rutas: la URL pública del panel, p. ej.
 `https://panel.miempresa.com`.
@@ -120,12 +122,12 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, tokenExpiresAt, traefik }`. `tokenExpiresAt` es la caducidad (milisegundos) del token con el que se pregunta; `null` si no caduca o si se pregunta con la sesión del panel. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear, domainMigrations }, tokenExpiresAt, traefik }`. `tokenExpiresAt` es la caducidad (milisegundos) del token con el que se pregunta; `null` si no caduca o si se pregunta con la sesión del panel. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. `features.domainMigrations` (desde la 1.3) anuncia el cambio de dominio (sección 10). |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
 | `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (ver debajo); sin el parámetro, siempre. |
-| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Un usuario de otro cliente recibe `403` exista o no el id. |
+| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Cada buzón lleva `login` (su usuario del motor) y `loginPending` (pendiente de actualizar dispositivos), y cada dominio, `migracion` (sección 10). Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 `_`, `-`), empezando por letra o número; p. ej. `skyway:project:<id>`. Es
@@ -169,23 +171,26 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/domains?clientId=` | `{ domains: DomainRecord[] }`. |
-| `POST /api/domains` | `{ domain, clientId?, autoDns?, confirmWww? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*) y la URL completa de la web (se quitan el esquema y la ruta). Un dominio que empieza por `www.` responde `409 domain_www` («¿Querías decir empresa.com?») salvo con `confirmWww: true`: quien pega la URL de la web casi siempre quiere el correo sin `www.`, pero el correo en un subdominio es legítimo. El alta **no crea el dominio en el motor**: se crea con su primer buzón o alias, que exigen la propiedad comprobada (véase «Propiedad del dominio»). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. Dominio cuyo DNS escribió la administración con una cuenta de la instancia para otro cliente: `409 domain_reserved` (sección 4.3), salvo que lo dé de alta la administración sin `soloCliente`. |
+| `POST /api/domains` | `{ domain, clientId?, autoDns?, confirmWww? }` → `{ domain, cloudflare, cloudflareReason? }`. Admite dominios con acentos o «ñ» (se guardan en *punycode*) y la URL completa de la web (se quitan el esquema y la ruta). Un dominio que empieza por `www.` responde `409 domain_www` («¿Querías decir empresa.com?») salvo con `confirmWww: true`: quien pega la URL de la web casi siempre quiere el correo sin `www.`, pero el correo en un subdominio es legítimo. El alta **no crea el dominio en el motor**: se crea con su primer buzón o alias, que exigen la propiedad comprobada (véase «Propiedad del dominio»). Con `autoDns: true` aplica el DNS en Cloudflare (sección 4; con `?soloCliente=1`, solo con las cuentas del cliente, sección 4.3). Dominio ya dado de alta, incluso por otra petición simultánea: `409 domain_exists`. Dominio cuyo DNS escribió la administración con una cuenta de la instancia para otro cliente, o que otro cliente dio de baja en un cambio de dominio: `409 domain_reserved` (secciones 4.3 y 10.5), salvo que lo dé de alta la administración sin `soloCliente`. |
 | `GET /api/domains/:id` | `{ domain }`. |
 | `GET /api/domains/:id/dns` | `{ records: [{ type, name, content, required, category }], mxInternos }`, sin punto final, sin SRV de puertos que no se publican, sin registros de la web del dominio raíz ni de `www` (A, AAAA, CNAME, HTTPS y SVCB) y sin el CNAME `mail.<dominio>` que propone el motor (véase «SPF, DMARC y mail.<dominio> propuestos»). `category` es `obligatorio`, `autoconfiguracion`, `verificacion` (el TXT de propiedad, con `required: false`) o `endurecimiento` (MTA-STS y TLS-RPT). `mxInternos` lista los destinos MX que propone el motor y son nombres internos (ver «MX interno»); si no está vacío, no publiques la tabla. |
 | `GET /api/domains/:id/zonefile?nivel=obligatorios\|recomendados\|completo` | Fichero de zona BIND para importar (`recomendados` por defecto). Incluye el TXT de verificación salvo en `obligatorios`. Nunca incluye registros de la web del dominio raíz ni de `www`, ni el CNAME `mail.<dominio>`: si el motor propusiera alguno, la cabecera del fichero lo dice. Con un MX interno: `409 mx_hostname_internal`. |
 | `GET /api/domains/:id/conflicto` | ¿El dominio ya recibe correo en otro proveedor? → `{ hayOtroProveedor, mxActuales, spfActual, dmarcPolitica, aviso, mxInternos, avisoServidor, politicaMtaSts, avisoMtaSts }`. Los MX publicados se comparan con el nombre del servidor de Ajustes y con los destinos MX que genera el motor; si el motor no responde, solo con el de Ajustes. `dmarcPolitica` es `null` si hay varios DMARC. `avisoServidor` explica `mxInternos` (null si está vacío). `politicaMtaSts` es el TXT `_mta-sts.<dominio>` (`v=STSv1`) si el dominio publica una política MTA-STS; con otro proveedor, `avisoMtaSts` (y el final de `aviso`) explica qué hacer antes de cambiar el MX: añadir el MX nuevo a la política (o pasar a `mode: none`), cambiar su `id` y esperar su `max_age`; si no, los remitentes que la tengan en caché no entregan en el MX nuevo. Mailway no descarga el fichero de la política. |
 | `POST /api/domains/:id/verify` | Mide el DNS y actualiza el estado → `{ domain, ownershipCheck }`; mientras la propiedad esté pendiente, la comprueba también. `ownershipCheck` es el resultado de esa comprobación: `true`, `false` (el TXT o el MX no están) o `null` (no se pudo consultar el DNS, o la propiedad ya estaba comprobada). Con `?auto=1` (sondeo) no se anota cada vuelta en la actividad. |
 | `POST /api/domains/:id/dkim` | Regenera las claves DKIM en el motor. |
-| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias, dominio y los dominios de marca blanca que cuelgan de él (`webmail.<dominio>`…) → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted, whitelabelDeleted }` (ver «Baja de un dominio»). Con buzones o dominios de marca blanca exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar y qué nombres dejarán de publicarse). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). |
+| `DELETE /api/domains/:id?confirm=<dominio>` | Borra buzones, alias, dominio y los dominios de marca blanca que cuelgan de él (`webmail.<dominio>`…) → `{ ok, apiKeysRevoked, aliasesUpdated, aliasesDeleted, whitelabelDeleted }` (ver «Baja de un dominio»). Con buzones o dominios de marca blanca exige `confirm` (`409 needs_confirmation`, que ya indica cuántas claves de API dejarán de funcionar y qué nombres dejarán de publicarse). Si el motor falla a mitad: `502 partial_delete` (repetir completa el borrado). Un dominio en un cambio de dominio abierto, como origen o como destino: `409 domain_migrating` (se gestiona desde el asistente, sección 10). |
 
 `DomainRecord`: `{ id, clientId, domain, domainUnicode, status:
 pending_dns|active|error, dkimSelector, dnsStatus: { checks, requiredTotal,
 requiredOk, allRequiredOk, checkedAt }, lastCheckedAt, verifiedAt, createdAt,
 cloudflare: { accountId, zoneId } | null, dnsAppliedAt, ownershipVerifiedAt,
-ownershipRecord: { type: "TXT", name, content }, recepcionExterna }`.
+ownershipRecord: { type: "TXT", name, content }, recepcionExterna, migracion }`.
 `recepcionExterna` es `true` si la última medición definitiva del MX dice que el
 correo del dominio se recibe en otro servidor (véase «Recepción en otro
-proveedor»).
+proveedor»). `migracion` es el cambio de dominio abierto en el que participa,
+o `null`: `{ id, rol: origen|destino, estado, pareja, cuentaEnPlan }`, donde
+`pareja` es el otro dominio y `cuentaEnPlan` es `false` para el origen (el
+dominio anterior no cuenta en el plan mientras dura el cambio).
 
 Cada elemento de `checks` es `{ id, label, type, name, expected, found, status:
 ok|missing|mismatch|unknown, required, help, engineMissing?, suggested? }`.
@@ -1333,3 +1338,186 @@ permitido. El resto de la API no responde con CORS.
 - Queda en el historial de envíos (`GET /api/messages`, con
   `source: "form"`, que se conserva aunque el formulario se elimine, y
   `formId`) y suma en el contador del formulario.
+
+---
+
+## 10. Cambio de dominio
+
+Un cliente pasa de `@dominio.es` a `@dominio2.es` en tres pasos: **preparar**
+dominio2.es, **pasar** a él y, cuando el operador quiera, **dar de baja**
+dominio.es. Hasta la baja siempre se puede **volver**; antes de pasar, se puede
+**cancelar**. Se conserva todo: el correo, las contraseñas, las contraseñas de
+aplicación, las claves de API, los formularios, los alias y, en el webmail,
+los contactos, las firmas y las preferencias. Dentro del motor el buzón no se
+copia: solo cambian sus direcciones y, al actualizar los dispositivos, su
+usuario.
+
+### 10.1 Cómo funciona
+
+- **Preparar.** Se crea el cambio (y dominio2.es, si no existía). En cuanto se
+  prueba la propiedad de dominio2.es (TXT `_mailway`, MX hacia aquí o
+  escritura en una zona activa de Cloudflare: la propiedad no se hereda nunca),
+  cada buzón y alias recibe también `local@dominio2.es` y se recarga el
+  directorio del motor (**pre-recepción**): desde ese momento lo que llega a
+  cualquiera de las dos direcciones entra en el mismo buzón, así que el MX de
+  dominio2.es puede cambiarse cuando se quiera. Si el cliente tenía un webmail
+  con su marca en el dominio viejo (`webmail.dominio.es`), se crea el mismo
+  nombre en el nuevo. La preparación avanza sola (vigilante, cada 2 minutos)
+  y con `POST …/check`.
+- **Pasar.** El correo sale ya como `@dominio2.es` (la dirección nueva pasa a
+  ser la principal) y la vieja sigue recibiendo. Las filas de buzones y alias
+  se mudan al dominio nuevo; los alias se renombran en el motor. Los buzones
+  conservan su **usuario del motor** anterior (`login`), así que los móviles
+  siguen conectando: quedan «Pendiente de actualizar dispositivos»
+  (`loginPending`). Los destinos de los alias de toda la instancia y los
+  orígenes de los formularios (se añaden los de dominio2.es) se actualizan, y
+  el webmail nuevo pasa a ser el principal en cuanto está activo.
+- **Actualizar dispositivos.** Cada persona cambia su usuario a la dirección
+  nueva con un toque desde «Mi buzón», desde su enlace de configuración o desde
+  el panel (`POST /api/mailboxes/:id/login-update`). La contraseña no cambia.
+- **Volver.** Las direcciones vuelven a dominio.es como principal. Quien ya
+  actualizó sus dispositivos sigue entrando con su usuario nuevo: no se rompe
+  ningún dispositivo.
+- **Dar de baja.** A quien no actualizó se le cambia el usuario (sus
+  dispositivos dejarán de conectar hasta que lo cambien), se quitan las
+  direcciones `@dominio.es`, el dominio y sus claves DKIM salen del motor y la
+  fila y el webmail viejo, del panel. Exige que el MX de dominio.es ya no
+  apunte a este servidor (sección 10.4). Mantén dominio.es registrado al menos
+  uno o dos años: quien lo registrara recibiría el correo que aún se envíe a las
+  direcciones antiguas.
+
+Mientras dura el cambio no se crean buzones ni alias en dominio.es, ni en
+dominio2.es hasta pasar (`409 domain_migrating`): el conjunto que se muda es
+fijo desde la creación. Ningún dominio puede estar en dos cambios abiertos, y
+un cambio abierto no se borra con `DELETE /api/domains/:id`.
+
+### 10.2 Estados
+
+```
+preparando ⇄ listo ──Pasar──▶ pasando ──▶ pasado ──Dar de baja──▶ dando_de_baja ──▶ dado_de_baja
+     └──Cancelar──▶ cancelada               └──Volver──▶ volviendo ──▶ listo
+```
+
+- `listo` = las compuertas que bloquean están bien en la última evaluación;
+  «Pasar» las vuelve a medir siempre.
+- `pasando`, `volviendo` y `dando_de_baja` se guardan antes de empezar. Si algo
+  falla, queda `error` y la acción se repite tal cual («Reintentar»): todas son
+  idempotentes. Desde `pasando` con error también se puede volver. Si el panel
+  se reinicia a mitad, el cambio queda con el error «Interrumpido por un
+  reinicio del panel. Pulsa «Reintentar».» y no se reanuda solo.
+- Finales: `dado_de_baja` y `cancelada`.
+
+**Compuertas para pasar** (`compuertas[]` de la vista): `motor` (el servidor de
+correo responde), `cliente` (no está suspendido), `propiedad` (de dominio2.es),
+`recepcion` (pre-recepción hecha) y `dns` (dominio2.es activo: MX hacia aquí,
+SPF y DKIM) bloquean; `webmail` (el webmail nuevo activo) solo informa y solo
+aparece si había webmail con la marca en el dominio viejo.
+
+### 10.3 Rutas
+
+Todas exigen acceso al cliente del cambio. `?soloCliente=1` limita las cuentas
+de Cloudflare a las del cliente y aplica sus reservas, igual que
+`POST /api/domains`. Las acciones de un cambio creado por Skyway
+(`origen: "skyway"`) solo se hacen con un token de gestión; con la sesión del
+panel: `409 migration_managed_externally`. Las de las personas (actualizar
+dispositivos) se permiten siempre.
+
+| Método y ruta | Cuerpo | Respuesta |
+|---|---|---|
+| `POST /api/domain-migrations/plan` | `{ fromDomainId, toDomain }` | `PlanCambioDominio`, sin efectos |
+| `POST /api/domain-migrations` | `{ fromDomainId, toDomain, autoDns? (true), origen? (panel\|skyway, skyway solo con token), referenciaExterna? (≤ 200) }` | `201` con la vista; `200` si ya había un cambio abierto con el mismo origen y destino (Skyway reintenta) |
+| `GET /api/domain-migrations?clientId=&domainId=` | — | `{ migraciones: CambioDominioVista[] }` (un cliente, solo los suyos) |
+| `GET /api/domain-migrations/:id` | — | Vista |
+| `POST /api/domain-migrations/:id/check` | `{}` | Mide dominio2.es, avanza la preparación y devuelve la vista |
+| `POST /api/domain-migrations/:id/mx` | `{}` | Con Cloudflare y la pre-recepción hecha: reemplaza el MX de dominio2.es por el de este servidor (solo el MX) |
+| `POST /api/domain-migrations/:id/switch` | `{}` | Pasar (desde `listo`, o `pasando` para reintentar; en `pasado` no hace nada) |
+| `POST /api/domain-migrations/:id/rollback` | `{}` | Volver (desde `pasado`, o desde `pasando`/`volviendo` con error) |
+| `POST /api/domain-migrations/:id/cancel` | `{}` | Cancelar (desde `preparando` o `listo`) |
+| `POST /api/domain-migrations/:id/retire` | `{ confirm: "dominio.es" }` | Dar de baja (desde `pasado`, o `dando_de_baja` para reintentar) |
+| `POST /api/domain-migrations/:id/setup-links` | `{}` | `{ enlaces: [{ mailboxId, email, url, expiresAt }] }`: un enlace de configuración de 7 días, sin contraseña, por persona pendiente («Mensaje para tu equipo») |
+| `POST /api/mailboxes/:id/login-update` | `{}` | `{ mailbox }`: el usuario del buzón pasa a ser su dirección (idempotente) |
+
+Al crear con `autoDns` (por defecto) y una zona de Cloudflare utilizable, se
+crea **solo lo que falta** en dominio2.es: el MX únicamente si no había ninguno
+(un dominio sin MX no recibe correo de nadie, y la pre-recepción llega en la
+misma petición). Si dominio2.es ya recibe correo en otro proveedor
+(`hacia.recibeEnOtroProveedor`), el MX se cambia aparte, después de la
+pre-recepción: `POST …/mx` o, sin Cloudflare, a mano. Los A, AAAA y CNAME que
+el cambio crea en Cloudflare se devuelven en `nombresCloudflare` (Skyway los
+reserva para el proyecto).
+
+`PlanCambioDominio`: `{ desde: { domainId, domain }, hacia: { domain, existe,
+domainId }, buzones: [{ id, de, a, usadoPorApps }], alias: [{ id, de, a }],
+formularios: [{ id, name, origenesNuevos }], webmail: { viejo, nuevo }, avisos,
+bloqueos }`. Con `bloqueos` no vacío, la creación responde con el código del
+primero. Avisos: `apps_smtp` (buzones con contraseñas de aplicación
+`skyway:*`), `whitelabel_limit` (no cabe el webmail nuevo) y
+`domain_hosts_instance` (el dominio viejo aloja la instancia y no se podrá dar
+de baja desde aquí).
+
+`CambioDominioVista`: `{ id, clientId, origen, referenciaExterna, desde: {
+domainId, domain }, hacia: { domainId, domain, cloudflare,
+recibeEnOtroProveedor }, estado, paso, error, recepcionPreparada, compuertas,
+puedePasar, puedeVolver, puedeCancelar, puedeDarDeBaja, bloqueosBaja, buzones:
+{ total, pendientes, lista: [{ id, email, login, pendiente, usadoPorApps }] },
+alias: { total }, webmail: { viejo, nuevo }, nombresCloudflare, avisos, fechas:
+{ creado, listo, pasado, terminado }, creoDestino }`. `bloqueosBaja` dice, sin
+consultar la red, lo que impide la baja (apps SMTP pendientes e instancia); el
+MX se mide al pulsar. `creoDestino` indica que dominio2.es lo dio de alta este
+cambio: cancelar lo elimina si no tiene buzones ni alias propios.
+
+### 10.4 Condiciones de la baja y de la cancelación
+
+**Dar de baja** (`POST …/retire`):
+
+- `confirm` tiene que ser exactamente dominio.es (`400 confirm_mismatch`);
+- ningún buzón pendiente puede tener contraseñas de aplicación `skyway:*`
+  activas (`409 mailbox_used_by_app`): una aplicación de Skyway envía con el
+  usuario anterior, y es Skyway quien lo actualiza, cambia sus variables y la
+  vuelve a desplegar;
+- dominio.es no puede alojar el servidor de correo, el panel ni el webmail de
+  la instancia (`409 domain_hosts_instance`);
+- el MX de dominio.es, medido en ese momento, no puede apuntar a este servidor
+  (`409 migration_old_mx_here`); sin MX, tampoco su A o AAAA. Un MX nulo
+  («0 .») o un MX a otro sitio dejan continuar. Si el DNS no se puede consultar:
+  `503 dns_unknown`. Si acabas de cambiar el MX, espera al menos un día: algunos
+  servidores tardan en ver el cambio.
+
+**Cancelar** (`POST …/cancel`): si el cambio creó dominio2.es y su MX ya
+apunta aquí, `409 migration_new_mx_here` (quitar las direcciones haría
+rechazar el correo que ya llega); sin DNS, `503 dns_unknown`.
+
+### 10.5 Reserva del dominio dado de baja
+
+Tras la baja, el TXT de verificación y quizá el MX de dominio.es siguen en su
+DNS, y bastarían para que otro cliente «probara» la propiedad. Por eso un
+dominio dado de baja en un cambio de dominio queda **reservado a su cliente**:
+solo él o la administración (sin `soloCliente`) pueden volver a darlo de alta;
+otro cliente recibe `409 domain_reserved`.
+
+### 10.6 Códigos de error
+
+| Código | Cuándo |
+|---|---|
+| `409 migration_exists` | El origen o el destino ya están en otro cambio abierto |
+| `400 migration_same_domain` | El dominio nuevo es el mismo |
+| `400 migration_related_domains` | Uno de los dos dominios es subdominio del otro |
+| `409 migration_destination_in_use` | dominio2.es ya es del cliente y tiene buzones o alias |
+| `409 migration_state` | La acción no está disponible en el estado actual |
+| `409 migration_not_ready` | Al pasar, alguna compuerta que bloquea no se cumple (el mensaje dice cuál) |
+| `409 migration_collision` | Una parte local ya existe en dominio2.es |
+| `409 migration_managed_externally` | Cambio de Skyway pedido con la sesión del panel |
+| `409 migration_old_mx_here` / `409 migration_new_mx_here` | MX que apunta aquí (baja / cancelación) |
+| `503 dns_unknown` | No se pudo consultar el DNS para comprobar el MX |
+| `409 domain_migrating` | Alta de buzón o alias, o borrado del dominio, durante el cambio |
+| `409 domain_hosts_instance` | El dominio viejo aloja la instancia |
+| `409 mailbox_used_by_app` | Buzón usado por una aplicación de Skyway (actualizar o dar de baja sin token) |
+| `409 mailbox_login_updating` | Hay un cambio de usuario del buzón a medias; vuelve a intentarlo en unos minutos |
+| `400 confirm_mismatch` | `confirm` no coincide con el dominio |
+| `403 token_required` | `origen: "skyway"` sin token de gestión |
+
+También se reutilizan `domain_exists`, `domain_reserved`, `domain_www`,
+`plan_limit_reached`, `ownership_required`, `client_suspended`,
+`mailbox_exists`, `cloudflare_unavailable` y los `engine_*` (con
+`503 engine_unreachable` si el motor no responde); en las acciones, un fallo
+del motor deja el cambio con `error`.

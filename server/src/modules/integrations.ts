@@ -331,6 +331,9 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // registro existente, y la cuenta de Cloudflare de la instancia
         // asociada a un dominio nunca se usa en nombre de un cliente.
         cloudflareSoloCrear: true,
+        // Cambio de dominio de un cliente (POST /api/domain-migrations…):
+        // Skyway solo ofrece el del correo si lo ve.
+        domainMigrations: true,
       },
       // Caducidad del token con el que se pregunta (null: sin caducidad o con
       // sesión): Skyway la muestra para renovarlo antes de recibir un 401.

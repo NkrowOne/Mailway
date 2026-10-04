@@ -1852,6 +1852,55 @@ export async function conectarCuentaCloudflare(opts: {
   return { cuenta: toCuenta(cuentaRow(id)!, cache), creada: true, sustituida: false };
 }
 
+/* ------------------------- DNS de un dominio propio ------------------------ */
+
+/**
+ * Apunta un dominio propio del cliente (webmail o panel de marca blanca) a
+ * este servidor en Cloudflare: un CNAME al servidor de correo o, sin él, un A
+ * a la IP pública. Devuelve `{ unavailable }` si ninguna cuenta accesible
+ * contiene la zona. `soloCrear` crea el registro si falta y nunca modifica uno
+ * existente. La usan la ruta de la ficha y el cambio de dominio, que crea el
+ * webmail con la marca del cliente en el dominio nuevo.
+ */
+export async function aplicarDnsDominioPropio(
+  id: string,
+  opts: { replaceConflicts: boolean; soloCrear: boolean; permitirInstancia: boolean },
+): Promise<(ResultadoAplicacion & { domain: ClientDomain; zone: string }) | { unavailable: string }> {
+  const destino = getClientDomain(id);
+  const inst = getInstanceSettings();
+  const mail = sinPunto(inst.mailHostname || '');
+  const host = sinPunto(destino.hostname);
+  let deseado: Deseado;
+  if (mail && mail !== host) {
+    // El CNAME es preferible: si cambia la IP del servidor, no hay que tocar nada.
+    deseado = { type: 'CNAME', name: host, content: mail, required: true };
+  } else if (inst.publicIp) {
+    deseado = { type: 'A', name: host, content: inst.publicIp.trim(), required: true, proxyTolerado: false };
+  } else {
+    throw badRequest(
+      'Configura en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
+      'instance_incomplete',
+    );
+  }
+
+  const { resolucion, motivo } = await resolverZona(host, {
+    clientId: destino.clientId,
+    permitirInstancia: opts.permitirInstancia,
+  });
+  if (!resolucion) return { unavailable: motivo };
+  const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
+  const cambios = planificar([deseado], existentes, {
+    apex: resolucion.zona.name,
+    publicIp: inst.publicIp || undefined,
+  });
+  const resultado = await ejecutarPlan(resolucion.cliente, resolucion.zona.id, cambios, {
+    replaceConflicts: opts.replaceConflicts,
+    soloCrear: opts.soloCrear,
+  });
+  const domain: ClientDomain = await refreshClientDomain(id).catch(() => getClientDomain(id));
+  return { ...resultado, domain, zone: resolucion.zona.name };
+}
+
 /* ---------------------------------- Rutas --------------------------------- */
 
 const booleano = (campo: string) =>
@@ -2051,46 +2100,21 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const destino = getClientDomain(id);
     requireClientAccess(req, destino.clientId);
     const body = marcaBlancaSchema.parse(req.body) || {};
-
-    const inst = getInstanceSettings();
-    const mail = sinPunto(inst.mailHostname || '');
-    const host = sinPunto(destino.hostname);
-    let deseado: Deseado;
-    if (mail && mail !== host) {
-      // El CNAME es preferible: si cambia la IP del servidor, no hay que tocar nada.
-      deseado = { type: 'CNAME', name: host, content: mail, required: true };
-    } else if (inst.publicIp) {
-      deseado = { type: 'A', name: host, content: inst.publicIp.trim(), required: true, proxyTolerado: false };
-    } else {
-      throw badRequest(
-        'Configura en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
-        'instance_incomplete',
-      );
-    }
-
-    const { resolucion, motivo } = await resolverZona(host, {
-      clientId: destino.clientId,
-      permitirInstancia: permiteInstancia(user, req.query),
-    });
-    if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
-    const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
-    const cambios = planificar([deseado], existentes, {
-      apex: resolucion.zona.name,
-      publicIp: inst.publicIp || undefined,
-    });
-    const resultado = await ejecutarPlan(resolucion.cliente, resolucion.zona.id, cambios, {
+    const resultado = await aplicarDnsDominioPropio(id, {
       replaceConflicts: body.replaceConflicts === true,
       soloCrear: body.soloCrear === true,
+      permitirInstancia: permiteInstancia(user, req.query),
     });
-    const domain: ClientDomain = await refreshClientDomain(id).catch(() => getClientDomain(id));
+    if ('unavailable' in resultado) throw badRequest(resultado.unavailable, 'cloudflare_unavailable');
     audit(req, 'cloudflare.dns_applied', {
       whitelabelDomainId: id,
-      hostname: host,
-      zone: resolucion.zona.name,
+      hostname: resultado.domain.hostname,
+      zone: resultado.zone,
       applied: resultado.applied.length,
       errors: resultado.errors.length,
-    }, domain.clientId);
-    return { ...resultado, domain };
+    }, resultado.domain.clientId);
+    const { zone: _zona, ...respuesta } = resultado;
+    return respuesta;
   });
 
   /** DNS de la plataforma: vista previa (solo administrador). */

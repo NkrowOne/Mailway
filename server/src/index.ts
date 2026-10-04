@@ -1,6 +1,7 @@
 import { buildApp } from './app';
 import { config } from './config';
 import { conciliarUsuariosEnCambio } from './modules/direcciones';
+import { marcarCambiosInterrumpidos } from './modules/domainmigrations';
 import { retirarDelMotorDominiosSinPropiedad } from './modules/domains';
 import { revertirPropiedadSimulada } from './modules/demo';
 import { adoptarEntornoAlArrancar } from './modules/entorno';
@@ -24,6 +25,14 @@ async function main(): Promise<void> {
     app.log.warn(
       `${simulados} dominio(s) con la propiedad simulada en el modo demostración vuelven a estar pendientes de comprobar.`,
     );
+  }
+
+  // Pasar, volver o dar de baja que un reinicio cortó: quedan con error para
+  // que la interfaz ofrezca «Reintentar» (son idempotentes). No se reanudan
+  // solos: quien los lanzó decide.
+  const cortados = marcarCambiosInterrumpidos();
+  if (cortados > 0) {
+    app.log.warn(`${cortados} cambio(s) de dominio quedaron a medias en el arranque anterior: se pueden reintentar desde su asistente.`);
   }
 
   await app.listen({ port: config.port, host: config.host });
