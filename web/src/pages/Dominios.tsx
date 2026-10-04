@@ -16,6 +16,7 @@ import {
   type RespuestaAltaDominio,
 } from '../lib/cloudflare';
 import { sugerenciaSinWww } from '../lib/dominios';
+import { etiquetaMigracion } from '../lib/cambioDominio';
 import { formatDate, plural } from '../lib/format';
 import { useAltaDesdeEnlace, useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
@@ -71,12 +72,19 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
     : todas;
   const hayCloudflare = utilizables.length > 0;
 
+  // El dominio anterior de un cambio de dominio abierto no cuenta en el plan
+  // (el uso del cliente sí lo incluye): se descuenta como hace el servidor.
+  const exentosDe = (idCliente: string) =>
+    (domains.data?.domains ?? []).filter((d) => d.clientId === idCliente && d.migracion && !d.migracion.cuentaEnPlan)
+      .length;
+
   // Límite del plan: un cliente lo ve antes de rellenar nada; el
   // administrador, al elegir el cliente en el formulario.
   const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
-  const limitePropio = clientePropio ? clientePropio.usage.domains >= clientePropio.plan.maxDomains : false;
+  const usadosPropio = clientePropio ? Math.max(0, clientePropio.usage.domains - exentosDe(clientePropio.id)) : 0;
+  const limitePropio = clientePropio ? usadosPropio >= clientePropio.plan.maxDomains : false;
   const elegido = isAdmin && clientId ? clientes.get(clientId) : undefined;
-  const limiteElegido = elegido ? elegido.usage.domains >= elegido.plan.maxDomains : false;
+  const limiteElegido = elegido ? elegido.usage.domains - exentosDe(elegido.id) >= elegido.plan.maxDomains : false;
 
   const create = useMutation({
     mutationFn: (confirmWww: boolean) =>
@@ -149,7 +157,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
             {!domains.isPending && (clientePropio || list.length > 0) && (
               <span className="valor mt-1 block text-sm text-tinta-3">
                 {clientePropio
-                  ? `${clientePropio.usage.domains} de ${clientePropio.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
+                  ? `${usadosPropio} de ${clientePropio.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
                   : `${activos} de ${list.length} activos`}
               </span>
             )}
@@ -239,6 +247,11 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                     )}
                     {visible !== domain.domain && (
                       <span className="valor block break-all text-sm text-tinta-3">{domain.domain}</span>
+                    )}
+                    {domain.migracion && (
+                      <span className="block text-sm text-tinta-2 [overflow-wrap:anywhere]">
+                        {etiquetaMigracion(domain.migracion, isAdmin)}
+                      </span>
                     )}
                   </span>
 

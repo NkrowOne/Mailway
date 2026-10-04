@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Smartphone } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -15,13 +15,14 @@ import {
   mensajeError,
   type ContrasenaAplicacion,
   type PortalMe,
+  type RespuestaActualizarUsuario,
 } from '../../lib/portal';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
 import { Cargando, Dialogo, Escala, Hoja, Logotipo, Marca, MarcaFondo, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
-import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
+import { AvisoError, AvisoHecho, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
 import { VariablesIntegracion } from '../../components/VariablesIntegracion';
 
 /**
@@ -172,6 +173,12 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
 function InicioBuzon({ me }: { me: PortalMe }) {
   const queryClient = useQueryClient();
   const [saliendo, setSaliendo] = useState(false);
+  // Usuario recién actualizado: la tarjeta del cambio de dirección sigue a la
+  // vista con las guías aunque `me` ya no esté pendiente.
+  const [actualizado, setActualizado] = useState<string | null>(null);
+  // Tras un cambio de dominio, los dispositivos entran con el usuario anterior
+  // hasta actualizarlo: las guías dan ese usuario, que es el que funciona.
+  const usuario = me.connection.username || me.login || me.email;
 
   async function salir() {
     setSaliendo(true);
@@ -201,19 +208,26 @@ function InicioBuzon({ me }: { me: PortalMe }) {
         </Button>
       }
     >
+      {(me.loginPending || actualizado) && (
+        <HojaNuevaDireccion me={me} usuario={usuario} actualizado={actualizado} onActualizado={setActualizado} />
+      )}
+
       <HojaEspacio me={me} />
 
-      <Hoja title="Configurar un dispositivo">
-        <GuiasDispositivo
-          email={me.email}
-          conexion={me.connection}
-          appleProfileUrl={me.appleProfileUrl}
-          perfilPublico={false}
-          perfilIncluyeContrasena={false}
-          thunderbirdAndroidQr={me.thunderbirdAndroidQr}
-          notaContrasena="La contraseña del buzón o, mejor, una contraseña de aplicación creada para ese dispositivo (más abajo)."
-        />
-      </Hoja>
+      {/* Tras actualizar, las guías van en la tarjeta del cambio de dirección. */}
+      {!actualizado && (
+        <Hoja title="Configurar un dispositivo">
+          <GuiasDispositivo
+            email={usuario}
+            conexion={me.connection}
+            appleProfileUrl={me.appleProfileUrl}
+            perfilPublico={false}
+            perfilIncluyeContrasena={false}
+            thunderbirdAndroidQr={me.thunderbirdAndroidQr}
+            notaContrasena={NOTA_CONTRASENA}
+          />
+        </Hoja>
+      )}
 
       <Hoja title="Correo web">
         <div className="flex flex-col gap-3">
@@ -227,6 +241,146 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       <HojaContrasenasAplicacion />
       <HojaCambioContrasena />
     </MarcoPortal>
+  );
+}
+
+const NOTA_CONTRASENA =
+  'La contraseña del buzón o, mejor, una contraseña de aplicación creada para ese dispositivo (más abajo).';
+
+/* --------------------------- Cambio de dirección --------------------------- */
+
+/**
+ * Tras un cambio de dominio: el buzón ya recibe en las dos direcciones y sus
+ * dispositivos siguen entrando con el usuario anterior. Un toque cambia el
+ * usuario a la dirección nueva; la contraseña no cambia. Después, las guías
+ * de siempre con el usuario nuevo resaltado.
+ */
+function HojaNuevaDireccion({
+  me,
+  usuario,
+  actualizado,
+  onActualizado,
+}: {
+  me: PortalMe;
+  usuario: string;
+  actualizado: string | null;
+  onActualizado: (login: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [preguntando, setPreguntando] = useState(false);
+  // El usuario anterior, tal como estaba al abrir la confirmación.
+  const anterior = me.login || usuario;
+
+  const actualizar = useMutation({
+    mutationFn: () => api.post<RespuestaActualizarUsuario>('/api/portal/login-update', {}),
+    onSuccess: async (data) => {
+      // Se espera a releer «Mi buzón»: el perfil de Apple y el QR llevan ya el usuario nuevo.
+      await queryClient.invalidateQueries({ queryKey: ['portal-me'] });
+      onActualizado(data.login || me.email);
+      setPreguntando(false);
+    },
+  });
+
+  const titulo = (
+    <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">Tu dirección ahora es {me.email}</h2>
+  );
+
+  if (actualizado) {
+    return (
+      <Hoja title={titulo}>
+        <div className="flex flex-col gap-4">
+          <AvisoHecho>Listo. Ahora entras con {actualizado}. Configura cada dispositivo:</AvisoHecho>
+          <Muestra rotulo="Usuario nuevo">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="codigo min-w-0 grow break-all text-lg text-tinta">{actualizado}</span>
+              <BotonCopiarTactil texto={actualizado} />
+            </div>
+          </Muestra>
+          <dl className="flex flex-col gap-2.5">
+            <PasoDispositivo rotulo="iPhone o Mac">Instala el perfil de nuevo: sustituye al anterior.</PasoDispositivo>
+            <PasoDispositivo rotulo="A mano">
+              Ajustes → Mail → Cuentas → tu cuenta: cambia el usuario a{' '}
+              <span className="valor [overflow-wrap:anywhere]">{actualizado}</span> en el servidor de entrada y en el de
+              salida.
+            </PasoDispositivo>
+            <PasoDispositivo rotulo="Android con QR">
+              La lectura del código crea una cuenta nueva: borra después la anterior.
+            </PasoDispositivo>
+          </dl>
+          <div className="regla-cabecera" aria-hidden />
+          <GuiasDispositivo
+            email={usuario}
+            conexion={me.connection}
+            appleProfileUrl={me.appleProfileUrl}
+            perfilPublico={false}
+            perfilIncluyeContrasena={false}
+            thunderbirdAndroidQr={me.thunderbirdAndroidQr}
+            notaContrasena={NOTA_CONTRASENA}
+          />
+        </div>
+      </Hoja>
+    );
+  }
+
+  return (
+    <Hoja title={titulo}>
+      <div className="flex flex-col gap-3">
+        <p className="max-w-[70ch] text-base text-tinta-2">
+          Ya recibes el correo en las dos direcciones. Para terminar, actualiza tus dispositivos: tu contraseña no
+          cambia.
+        </p>
+        {me.usadoPorApp ? (
+          <Nota>
+            Este buzón lo usa una aplicación para enviar. Pide a quien gestiona la web que lo actualice desde Skyway.
+          </Nota>
+        ) : (
+          <Button
+            variant="principal"
+            className={`${TACTIL} self-stretch sm:self-start`}
+            onClick={() => {
+              actualizar.reset();
+              setPreguntando(true);
+            }}
+          >
+            Actualizar mis dispositivos
+          </Button>
+        )}
+      </div>
+
+      <Dialogo open={preguntando} onClose={() => setPreguntando(false)} title="Actualizar mis dispositivos">
+        <div className="flex flex-col gap-4">
+          <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
+            Los dispositivos que sigan configurados con {anterior} dejarán de conectar hasta que los actualices.
+          </p>
+          {actualizar.isError && (
+            <AvisoError>{mensajeError(actualizar.error, 'No se ha podido actualizar el usuario.')}</AvisoError>
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="plano" className={TACTIL} onClick={() => setPreguntando(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="principal"
+              className={TACTIL}
+              busy={actualizar.isPending}
+              onClick={() => actualizar.mutate()}
+            >
+              Actualizar
+            </Button>
+          </div>
+        </div>
+      </Dialogo>
+    </Hoja>
+  );
+}
+
+/** Qué hacer en cada tipo de dispositivo tras actualizar el usuario. */
+function PasoDispositivo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
+      <dt className="rotulo shrink-0 sm:w-36 sm:pt-0.5">{rotulo}</dt>
+      <dd className="min-w-0 max-w-[70ch] text-base text-tinta [overflow-wrap:anywhere]">{children}</dd>
+    </div>
   );
 }
 

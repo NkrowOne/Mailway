@@ -30,6 +30,8 @@ import { useAltaDesdeEnlace, useClientes, useUsuario, type FichaCliente } from '
 import { esPropiedadPendiente } from '../lib/dominios';
 import { propiedadPendiente } from '../lib/cloudflare';
 import { FichaBuzon, type VistaFicha } from '../components/gestion/FichaBuzon';
+import { LineaUsuarioPendiente } from '../components/cambio-dominio/ActualizarUsuario';
+import { motivoAltaBloqueada } from '../lib/cambioDominio';
 
 /** Nombre legible del dominio (con «ñ» o acentos si los tiene). */
 function nombreDominio(d: DomainRecord): string {
@@ -131,9 +133,10 @@ export default function Buzones() {
     const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
     return cliente ? `${d.domain} · ${cliente}` : d.domain;
   };
-  // Un dominio de un cliente suspendido o sin plazas no admite buzones: se
-  // dice en el selector, no al enviar el formulario.
-  const motivoBloqueo: MotivoBloqueoDominio = (d) => bloqueoCliente(clientes.get(d.clientId));
+  // Un dominio de un cliente suspendido o sin plazas, o en un cambio de
+  // dominio, no admite buzones: se dice en el selector, no al enviar el formulario.
+  const motivoBloqueo: MotivoBloqueoDominio = (d) =>
+    motivoAltaBloqueada(d.migracion) ?? bloqueoCliente(clientes.get(d.clientId));
 
   const fichaMailbox = ficha ? (all.find((m) => m.id === ficha.id) ?? ficha.mailbox) : null;
   const fichaCliente = fichaMailbox?.clientId ? clientes.get(fichaMailbox.clientId) : undefined;
@@ -449,6 +452,9 @@ function FilaBuzon({
           {mailbox.email}
         </button>
         <p className="text-sm text-tinta-3">{mailbox.displayName || 'Sin nombre visible'}</p>
+        {mailbox.loginPending && (
+          <LineaUsuarioPendiente login={mailbox.login} onActualizar={() => onAbrir('usuario')} className="mt-0.5" />
+        )}
       </div>
 
       {isAdmin && (

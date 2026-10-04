@@ -26,6 +26,13 @@ export interface DatosConexion {
 /** GET /api/public/setup/:token */
 export interface SetupPublico {
   email: string;
+  /**
+   * Usuario con el que entran los dispositivos. Tras un cambio de dominio es
+   * el de la dirección anterior hasta que el titular lo actualiza.
+   */
+  login: string;
+  /** El usuario aún es el de la dirección anterior: se ofrece «Actualizar y continuar». */
+  loginPending: boolean;
   displayName: string;
   brandName: string;
   connection: DatosConexion;
@@ -40,6 +47,15 @@ export interface SetupPublico {
 /** GET /api/portal/me */
 export interface PortalMe {
   email: string;
+  /** Usuario con el que entran los dispositivos (el anterior hasta actualizarlo). */
+  login: string;
+  /** Pendiente de actualizar dispositivos tras un cambio de dominio. */
+  loginPending: boolean;
+  /**
+   * Una aplicación de Skyway envía con este buzón: el titular no puede
+   * actualizar el usuario (lo hace Skyway para que la aplicación no deje de enviar).
+   */
+  usadoPorApp: boolean;
   displayName: string;
   domain: string;
   quotaMb: number;
@@ -59,6 +75,13 @@ export interface ContrasenaAplicacion {
   name: string;
   createdAt: number;
   revokedAt: number | null;
+}
+
+/** POST /api/portal/login-update y POST /api/public/setup/:token/login-update. */
+export interface RespuestaActualizarUsuario {
+  ok: true;
+  /** El usuario vigente: la dirección del buzón. */
+  login: string;
 }
 
 /** Fila de GET /api/mailboxes/:id/setup-links */
