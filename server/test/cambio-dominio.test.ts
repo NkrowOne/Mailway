@@ -533,6 +533,44 @@ test('actualizar, volver y pasar otra vez: nadie pierde su usuario y los alias v
   assert.equal(getMailbox(e.buzones.ana!.mailboxId).loginPending, false);
 });
 
+/* -------------------------- Mensaje para tu equipo ------------------------- */
+
+test('mensaje para tu equipo: un enlace de 7 días, sin contraseña, por persona pendiente', async () => {
+  const e = await escenario('equipo-viejo.test', { buzones: ['ana', 'luis'] });
+  const { id } = await cambioListo(e, 'equipo-nuevo.test');
+  assert.equal((await accion(id, 'switch')).statusCode, 200);
+  // Ana ya actualizó: no necesita enlace.
+  assert.equal((await post(`/api/mailboxes/${e.buzones.ana!.mailboxId}/login-update`)).statusCode, 200);
+
+  const otro = await createClient(ctx, { withUser: true });
+  assert.equal((await accion(id, 'setup-links', {}, { cookie: otro.userCookie! })).statusCode, 403);
+
+  const antes = Date.now();
+  const res = await accion(id, 'setup-links', {}, { cookie: e.userCookie });
+  assert.equal(res.statusCode, 200, res.body);
+  const { enlaces } = res.json() as { enlaces: { mailboxId: string; email: string; url: string; expiresAt: number }[] };
+  assert.deepEqual(
+    enlaces.map((l) => [l.mailboxId, l.email]),
+    [[e.buzones.luis!.mailboxId, 'luis@equipo-nuevo.test']],
+  );
+  const siete = 7 * 24 * 3600_000;
+  assert.ok(enlaces[0]!.expiresAt >= antes + siete && enlaces[0]!.expiresAt <= Date.now() + siete);
+
+  // El enlace funciona y enseña el usuario con el que entra hoy.
+  const token = enlaces[0]!.url.split('/conectar/')[1]!;
+  const abierto = await ctx.app.inject({ method: 'GET', url: `/api/public/setup/${token}` });
+  assert.equal(abierto.statusCode, 200, abierto.body);
+  const datos = abierto.json() as { email: string; login: string; loginPending: boolean; hasPassword: boolean };
+  assert.deepEqual(
+    [datos.email, datos.login, datos.loginPending, datos.hasPassword],
+    ['luis@equipo-nuevo.test', 'luis@equipo-viejo.test', true, false],
+  );
+  const auditado = db
+    .prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action = 'mailbox.setup_link_created' AND detail LIKE ?")
+    .get(`%${id}%`) as { c: number };
+  assert.equal(auditado.c, 1);
+});
+
 /* --------------------------------- Cancelar -------------------------------- */
 
 test('cancelar: con el MX nuevo aquí no se puede; sin él, se quitan las direcciones y el destino creado se elimina', async (t) => {

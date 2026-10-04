@@ -36,6 +36,7 @@ import {
   type DomainRecord,
 } from './domains';
 import { normalizarOrigen } from './forms';
+import { crearEnlaceConfiguracion } from './portal';
 import { sincronizarRecepcionExterna } from './recepcion';
 import { getInstanceSettings } from './settings';
 import {
@@ -293,7 +294,9 @@ function dominioOpcional(id: string | null): DomainRecord | null {
 }
 
 function mensajeDe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  const texto = (err instanceof Error ? err.message : String(err)).trim();
+  // Se encadena en frases («No se ha podido…: <mensaje>»): siempre con punto final.
+  return /[.!?…»)]$/.test(texto) ? texto : `${texto}.`;
 }
 
 /** «El motor no responde» es un 503 para quien llama a una acción (el driver lo da como 502). */
@@ -482,10 +485,14 @@ function formulariosDe(clientId: string, from: string, to: string): PlanCambioDo
 /* ---------------------------------- Webmail --------------------------------- */
 
 /** Webmail con la marca del cliente que cuelga del dominio viejo: el principal, si no el activo, si no el primero. */
-function webmailViejo(fila: FilaCambio): ClientDomain | null {
-  if (!fila.from_domain_id) return null;
-  const propios = dominiosPropiosDe(fila.from_domain_id).filter((d) => d.kind === 'webmail');
+function webmailDelDominio(domainId: string | null): ClientDomain | null {
+  if (!domainId) return null;
+  const propios = dominiosPropiosDe(domainId).filter((d) => d.kind === 'webmail');
   return propios.find((d) => d.isPrimary) ?? propios.find((d) => d.status === 'active') ?? propios[0] ?? null;
+}
+
+function webmailViejo(fila: FilaCambio): ClientDomain | null {
+  return webmailDelDominio(fila.from_domain_id);
 }
 
 /** El mismo nombre en el dominio nuevo (webmail.dominio.es → webmail.dominio2.es). */
@@ -907,13 +914,7 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
   }
   if (!destino && !identico) {
     // La creación da de alta el dominio nuevo con el viejo ya exento del plan.
-    const client = (() => {
-      try {
-        return getClient(from.clientId);
-      } catch {
-        return null;
-      }
-    })();
+    const client = suspendido ? null : getClient(from.clientId);
     if (client) {
       const plan = getPlan(client.planId);
       const exentos = new Set([...dominiosExentos(from.clientId), from.id]);
@@ -944,8 +945,7 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
       .all(from.id) as { id: string; local_part: string }[]
   ).map((a) => ({ id: a.id, de: `${a.local_part}@${from.domain}`, a: `${a.local_part}@${to}` }));
 
-  const filaFicticia = { from_domain_id: from.id } as FilaCambio;
-  const viejo = webmailViejo(filaFicticia);
+  const viejo = webmailDelDominio(from.id);
   const nombreNuevo = viejo ? hostEnDestino(viejo.hostname, from.domain, to) : null;
 
   const avisos: AvisoCambio[] = [];
@@ -1330,6 +1330,9 @@ const planSchema = crearSchema.pick({ fromDomainId: true, toDomain: true });
 
 const vacioSchema = z.object({}).passthrough();
 
+/** Caducidad de los enlaces de «Mensaje para tu equipo»: 7 días. */
+const HORAS_ENLACE = 7 * 24;
+
 const bajaSchema = z.object({
   confirm: z.string({ required_error: 'Escribe el dominio para confirmar.' }).max(300),
 });
@@ -1548,7 +1551,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     vacioSchema.parse(req.body ?? {});
-    const resultado = await conCerrojos(inicial, async () => {
+    await conCerrojos(inicial, async () => {
       const fila = exigir(inicial.id);
       if (!EN_PREPARACION.has(fila.estado) || fila.direcciones_at === null || !fila.to_domain_id) {
         throw estadoNoValido();
@@ -1578,9 +1581,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       if (errorMx) {
         throw new HttpError(502, `Cloudflare no ha aceptado el cambio del MX: ${errorMx.error}`, 'cloudflare_error');
       }
-      return r;
     });
-    void resultado;
     await avanzarPreparacion(inicial.id, (msg) => req.log.warn(msg));
     return vistaDe(exigir(inicial.id));
   });
@@ -1629,7 +1630,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
         await motorPasar(fila);
         db.transaction(() => basePasar(exigir(fila.id)))();
       } catch (err) {
-        actualizar(fila.id, { error: `No se ha podido terminar de pasar: ${mensajeDe(err)}` });
+        actualizar(fila.id, { error: mensajeDe(err) });
         throw errorDeAccion(err);
       }
       hecho = true;
@@ -1664,7 +1665,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
         await motorVolver(fila);
         db.transaction(() => baseVolver(exigir(fila.id)))();
       } catch (err) {
-        actualizar(fila.id, { error: `No se ha podido terminar de volver: ${mensajeDe(err)}` });
+        actualizar(fila.id, { error: mensajeDe(err) });
         throw errorDeAccion(err);
       }
     });
@@ -1735,7 +1736,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
       try {
         return await darDeBajaSinCerrojo(req, fila);
       } catch (err) {
-        actualizar(fila.id, { error: `No se ha podido terminar de dar de baja: ${mensajeDe(err)}` });
+        actualizar(fila.id, { error: mensajeDe(err) });
         throw errorDeAccion(err);
       }
     });
@@ -1792,9 +1793,6 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     return { enlaces };
   });
 }
-
-/** Caducidad de los enlaces de «Mensaje para tu equipo»: 7 días. */
-const HORAS_ENLACE = 7 * 24;
 
 /* --------------------------------- Cancelar --------------------------------- */
 
@@ -2011,20 +2009,4 @@ export async function vigilarCambiosDeDominio(log?: Registro): Promise<void> {
       log?.(`cambio de dominio ${fila.id}: ${mensajeDe(err)}`);
     }
   }
-}
-
-/* ----------------------- Enlaces de configuración (MW-C) ----------------------- */
-
-// TODO(MW-D, integración con MW-C): sustituir por `crearEnlaceConfiguracion`
-// de portal.ts en cuanto se una MW-C (§3.12). Hasta entonces la ruta
-// «Mensaje para tu equipo» responde 501 sin crear nada.
-function crearEnlaceConfiguracion(
-  _mailboxId: string,
-  _opts: { ttlHours: number; createdBy: string | null; baseUrl: string },
-): { id: string; url: string; expiresAt: number } {
-  throw new HttpError(
-    501,
-    'Los enlaces para el equipo todavía no están disponibles en esta versión del panel.',
-    'not_implemented',
-  );
 }
