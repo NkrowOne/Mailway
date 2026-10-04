@@ -1018,10 +1018,14 @@ En el panel (`https://panel.miempresa.com`):
 ## 10. Avisos
 
 El vigilante del panel comprueba cada minuto el motor, el webmail y la cola de
-salida; el DNS de los dominios cada 10 minutos mientras se espera un cambio
-(48 horas tras aplicar el DNS o 7 días tras el alta) y cada hora después; la
-marca blanca cada 10 minutos; la autoconfiguración cada hora; las listas
-negras y el certificado del motor una vez al día. Cuando algo falla abre una
+salida (50 mensajes pendientes, o uno retenido más de una hora sin el puerto
+25 comprobado como abierto); el DNS de los
+dominios cada 10 minutos mientras se espera un cambio (48 horas tras aplicar
+el DNS o 7 días tras el alta) y cada hora después; la marca blanca cada 10
+minutos; la autoconfiguración y la caducidad de los tokens de gestión cada
+hora (avisa 14 días antes de que caduque uno en uso); las listas negras, el
+certificado del motor, el puerto 25 de salida (cada hora mientras está
+bloqueado) y la IP pública una vez al día. Cuando algo falla abre una
 incidencia en **Avisos** y la envía por los canales configurados, sin repetir
 el mismo aviso y con mensaje de recuperación.
 
@@ -1201,6 +1205,50 @@ Las dos opciones usan `deploy/roundcube/diagnostico/comprobar.php`, que los
 compose montan en el webmail en `/opt/mailway` (fuera de la raíz web) y que
 solo funciona por línea de órdenes.
 
+### 13.2 Cambio de IP del servidor
+
+Tras una mudanza o si el proveedor cambia la IP, Ajustes conserva la IP
+anterior hasta que alguien la corrige (lo guardado en el panel manda sobre el
+entorno). Mientras tanto:
+
+- El webmail de marca blanca de los clientes **sigue en servicio** si su
+  dominio es un CNAME al servidor de correo o un A ya movido a la IP nueva:
+  la comprobación acepta las IP que tiene en ese momento el nombre del
+  servidor de correo, no solo la de Ajustes.
+- El vigilante compara a diario la IP de salida con la de Ajustes y, si el
+  nombre del servidor de correo ya no apunta a la guardada, abre el aviso «La
+  IP pública del servidor ha cambiado». Un servidor con varias IP cuyo nombre
+  sigue en la guardada no recibe el aviso.
+- En **Ajustes → Identidad del servidor**, con la misma regla, «Usar esta IP»
+  propone la IP detectada; guarda los cambios para aplicarla (el aviso se
+  cierra al guardar). Hasta entonces, Entregabilidad comprueba el PTR y las
+  listas negras de la IP anterior y «DNS de la plataforma» propone registros A
+  hacia ella.
+
+Recuerda también el PTR de la IP nueva (panel del proveedor) y el SPF de los
+dominios que incluyan la IP de forma explícita.
+
+### 13.3 Cambio del nombre del servidor de correo
+
+El nombre del servidor (`mail.<dominio>`) no hace falta cambiarlo al cambiar
+de marca: los titulares no lo ven más allá de sus datos de conexión. Si se
+cambia, al guardarlo en **Ajustes → Identidad del servidor** el panel muestra
+antes lo que arrastra:
+
+- los datos de conexión de los titulares (portal, perfiles, enlaces de
+  configuración) cambian al momento;
+- al aplicarlo en el motor («Aplicar ajustes recomendados», que también pide
+  confirmación), **todos los dominios** pasan a exigir el MX hacia el nombre
+  nuevo y figuran como pendientes de DNS hasta cambiarlo;
+- el nombre nuevo necesita su registro A, el PTR de la IP y un certificado
+  que lo cubra;
+- las rutas de Traefik, el certificado del extractor y `MAIL_HOSTNAME` de
+  `deploy/.env` solo los actualiza el instalador:
+  `sudo MAILWAY_MAIL_HOST=<nombre> bash deploy/instalar.sh --actualizar`
+  (con `MAILWAY_DOMINIO=<dominio>` delante si el nombre nuevo cuelga de otro
+  dominio base que el `MAIL_HOSTNAME` actual, lo que traslada también el
+  webmail y el panel).
+
 ---
 
 ## 14. Variables de entorno del panel
@@ -1244,7 +1292,9 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `mailway-mail` nunca llega a *healthy* | Núcleo sin IPv6, o puertos ocupados | Vuelve a ejecutar el instalador (cambia el motor a IPv4) y revisa `docker exec mailway-mail ls /opt/stalwart/logs`. |
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
 | No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
-| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
+| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). Entregabilidad lo mide y el vigilante abre «El puerto 25 de salida está bloqueado». |
+| Aviso «La IP pública del servidor ha cambiado» | Mudanza o IP nueva del proveedor, con Ajustes aún en la anterior | Ajustes → Identidad del servidor → «Usar esta IP» y guardar (sección 13.2). |
+| Aviso «El token de gestión «Skyway» caduca el …» | Token creado a mano con caducidad | `sudo bash deploy/instalar.sh --emparejar` crea uno sin caducidad y lo configura en Skyway, o crea otro en Conexiones → Tokens de gestión. |
 | Thunderbird o el iPhone avisan del certificado | Certificado de IMAP/SMTP sin configurar o autofirmado | Sección 5; estado en Ajustes → Servidor de correo o con `deploy/instalar.sh --comprobar`. |
 | `mailway-certs-dumper` no está sano y su registro dice «El motor rechaza la contraseña de administración (HTTP 401)» | `STALWART_ADMIN_PASSWORD` de `deploy/.env` no es la contraseña vigente del motor | Corrígela y recrea el extractor (`docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d --force-recreate certs-dumper`). No reintenta antes de una hora para no alimentar el bloqueo automático. |
 | El extractor dice «Traefik aún no tiene un certificado válido para mail.…» | El DNS de `mail.` aún no apunta aquí, los puertos 80/443 están cerrados o Traefik no tiene correo de Let's Encrypt | Sección 1; `docker logs skyway-traefik`. El motor conserva mientras tanto el certificado que tenga. |

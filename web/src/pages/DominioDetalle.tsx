@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type CheckStatus, type DnsCheck, type User } from '../lib/api';
+import { api, ApiError, type CheckStatus, type DnsCheck, type SetupStatus, type User } from '../lib/api';
 import {
   invalidarTrasAltaOBaja,
   lecturaDominio,
@@ -128,6 +128,23 @@ export default function DominioDetalle() {
   });
 
   const conflicto = useConflicto(id);
+
+  // En una instancia de demostración no hay DNS que medir: la propiedad se
+  // puede simular para recorrer buzones, alias y el portal.
+  const instancia = useQuery({
+    queryKey: ['setup'],
+    queryFn: () => api.get<SetupStatus>('/api/setup/status'),
+  });
+  const simular = useMutation({
+    mutationFn: () => api.post<{ domain: DominioCorreo }>(`/api/demo/domains/${id}/ownership`),
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], data);
+      await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      toast('ok', 'Propiedad simulada: ya puedes crear buzones y alias en este dominio de demostración.');
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido simular la propiedad.'),
+  });
 
   const verify = useMutation({
     mutationFn: (_origen: OrigenMedicion) =>
@@ -411,6 +428,11 @@ export default function DominioDetalle() {
             registro={record.ownershipRecord}
             midiendo={verify.isPending}
             onVerificar={() => verify.mutate('propiedad')}
+            demo={
+              instancia.data?.demoMode
+                ? { simulando: simular.isPending, onSimular: () => simular.mutate() }
+                : undefined
+            }
           />
         )}
 
@@ -544,22 +566,39 @@ function BloquePropiedad({
   registro,
   midiendo,
   onVerificar,
+  demo,
 }: {
   registro: RegistroPropiedad;
   midiendo: boolean;
   onVerificar: () => void;
+  /** Solo en una instancia de demostración (MAILWAY_DEMO=1). */
+  demo?: { simulando: boolean; onSimular: () => void };
 }) {
   return (
     <Hoja
       title="Comprobar la propiedad sin cambiar el MX"
       meta="Propiedad pendiente"
       actions={
-        <Button variant="perfil" busy={midiendo} onClick={onVerificar}>
-          Verificar
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {demo && (
+            <Button variant="perfil" busy={demo.simulando} onClick={demo.onSimular}>
+              Simular verificación
+            </Button>
+          )}
+          <Button variant="perfil" busy={midiendo} onClick={onVerificar}>
+            Verificar
+          </Button>
+        </div>
       }
     >
       <div className="flex flex-col gap-3">
+        {demo && (
+          <p className="max-w-[75ch] rounded-lg border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta-2">
+            Instancia de demostración: «Simular verificación» da por comprobada la propiedad sin
+            consultar el DNS, para poder crear buzones y alias. Al arrancar el panel sin el modo
+            demostración, la propiedad simulada vuelve a quedar pendiente.
+          </p>
+        )}
         <p className="max-w-[75ch] text-base text-tinta-2">
           Antes de crear buzones o alias es necesario comprobar que el dominio es tuyo. Queda
           comprobado en cuanto el registro MX apunta a este servidor. Si el correo del dominio

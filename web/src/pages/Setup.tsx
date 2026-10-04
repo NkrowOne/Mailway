@@ -55,7 +55,8 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
   const motorPorDefecto = status.engineDefaults ?? MOTOR_POR_DEFECTO;
   const queryClient = useQueryClient();
   const toast = useToast();
-  const initialStep = !status.hasAdmin || !user ? 0 : !status.engineConfigured ? 1 : 2;
+  // Con la identidad ya guardada, recargar en la comprobación no vuelve atrás.
+  const initialStep = !status.hasAdmin || !user ? 0 : !status.engineConfigured ? 1 : status.instanceSaved ? 3 : 2;
   const [step, setStep] = useState(initialStep);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -71,7 +72,11 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
   // Paso 2: motor
   const motorDelEntorno = Boolean(estado.engineFromEnv) && !status.demoMode;
-  const [engineKind, setEngineKind] = useState<'stalwart' | 'demo'>(status.demoMode ? 'demo' : 'stalwart');
+  // El motor ya conectado manda: tras recargar, una demostración elegida en el
+  // paso anterior no debe exigir el nombre del servidor.
+  const [engineKind, setEngineKind] = useState<'stalwart' | 'demo'>(
+    status.demoMode || status.engineKind === 'demo' ? 'demo' : 'stalwart',
+  );
   const [engineUrl, setEngineUrl] = useState(motorPorDefecto.url || 'http://mailway-mail:8080');
   const [engineUser, setEngineUser] = useState(motorPorDefecto.adminUser || 'admin');
   const [enginePassword, setEnginePassword] = useState('');
@@ -87,6 +92,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
   const [panelUrl, setPanelUrl] = useState(sugerencias.panelUrl);
   const [webmailUrl, setWebmailUrl] = useState(sugerencias.webmailUrl);
   const [detectando, setDetectando] = useState(false);
+  const [errorHostname, setErrorHostname] = useState('');
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -211,6 +217,13 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
   function submitInstance(e: FormEvent) {
     e.preventDefault();
+    // Sin él, los datos de conexión de los buzones salen sin servidor (el
+    // formulario es noValidate: el `required` del campo no basta).
+    if (engineKind === 'stalwart' && !mailHostname.trim()) {
+      setErrorHostname('Indica el nombre del servidor de correo, por ejemplo mail.miempresa.com.');
+      return;
+    }
+    setErrorHostname('');
     void run(async () => {
       const res = await api.post<{ recommended: ResultadoRecomendados | null }>('/api/setup/instance', {
         brandName,
@@ -485,7 +498,11 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   // En demostración no hay servidor real: no se exige.
                   required={engineKind === 'stalwart'}
                   value={mailHostname}
-                  onChange={(e) => setMailHostname(e.target.value)}
+                  onChange={(e) => {
+                    setErrorHostname('');
+                    setMailHostname(e.target.value);
+                  }}
+                  error={errorHostname || undefined}
                   placeholder="mail.miempresa.com"
                   help="Debe apuntar (registro A) a la IP del servidor y coincidir con el PTR de esa IP. Se aplica en el motor al guardar."
                 />
@@ -532,7 +549,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
             )}
 
             {step === 3 && (
-              <Comprobacion error={error} busy={busy} onFinish={finish} />
+              <Comprobacion error={error} busy={busy} onFinish={finish} onVolver={() => setStep(2)} />
             )}
           </Hoja>
         </div>
@@ -596,7 +613,18 @@ const ROLES: Record<string, string> = {
   webmail: 'Webmail',
 };
 
-function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean; onFinish: () => void }) {
+function Comprobacion({
+  error,
+  busy,
+  onFinish,
+  onVolver,
+}: {
+  error: string;
+  busy: boolean;
+  onFinish: () => void;
+  /** Vuelve a la identidad del servidor para corregirla. */
+  onVolver: () => void;
+}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const motor = useQuery({
@@ -757,9 +785,14 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
       </div>
 
       {error && <BandaError texto={error} />}
-      <Button variant="principal" busy={busy} onClick={onFinish} className="self-start">
-        Entrar al panel
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="principal" busy={busy} onClick={onFinish}>
+          Entrar al panel
+        </Button>
+        <Button variant="plano" disabled={busy} onClick={onVolver}>
+          Revisar la identidad del servidor
+        </Button>
+      </div>
     </div>
   );
 }

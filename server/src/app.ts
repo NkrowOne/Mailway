@@ -26,6 +26,9 @@ import { registerPortalRoutes } from './modules/portal';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
 import { registerEngineOpsRoutes } from './modules/engineops';
 import { registerFormRoutes } from './modules/forms';
+import { registerDemoRoutes } from './modules/demo';
+import { registerNombreServidorRoutes } from './modules/nombreservidor';
+import { registerIpServidorRoutes } from './modules/ipservidor';
 
 const MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -148,6 +151,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerAppPasswordRoutes(app);
   registerEngineOpsRoutes(app);
   registerFormRoutes(app);
+  registerDemoRoutes(app);
+  registerNombreServidorRoutes(app);
+  registerIpServidorRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');

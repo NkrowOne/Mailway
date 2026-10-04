@@ -1,6 +1,7 @@
 import { buildApp } from './app';
 import { config } from './config';
 import { retirarDelMotorDominiosSinPropiedad } from './modules/domains';
+import { revertirPropiedadSimulada } from './modules/demo';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -12,6 +13,14 @@ async function main(): Promise<void> {
   if (interrumpidas > 0) {
     app.log.warn(
       `${interrumpidas} envío(s) con Idempotency-Key quedaron a medias en el arranque anterior: el reintento con la misma clave volverá a enviarlos.`,
+    );
+  }
+
+  // Lo simulado en una demostración no sobrevive a un motor real.
+  const simulados = revertirPropiedadSimulada();
+  if (simulados > 0) {
+    app.log.warn(
+      `${simulados} dominio(s) con la propiedad simulada en el modo demostración vuelven a estar pendientes de comprobar.`,
     );
   }
 

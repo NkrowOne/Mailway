@@ -17,7 +17,7 @@ import {
 } from '../lib/cloudflare';
 import { sugerenciaSinWww } from '../lib/dominios';
 import { formatDate, plural } from '../lib/format';
-import { useClientes, useUsuario } from '../components/gestion/consultas';
+import { useAltaDesdeEnlace, useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
@@ -125,6 +125,12 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
     setAvisoWww(null);
     create.mutate(false);
   }
+
+  // «Añadir dominio» del resumen: con el plan lleno o la cuenta suspendida el
+  // botón está desactivado, y el atajo tampoco abre el alta.
+  useAltaDesdeEnlace(() => {
+    if (!limitePropio && !clientePropio?.suspended) abrir();
+  }, !domains.isPending);
 
   const list = [...(domains.data?.domains ?? [])].sort(
     (a, b) => ordenVeredicto[lecturaDominio(a).veredicto] - ordenVeredicto[lecturaDominio(b).veredicto],

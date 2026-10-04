@@ -369,7 +369,7 @@ function FormularioConexion({
                 help={
                   ambito
                     ? 'El cliente podrá usarla para sus dominios.'
-                    : 'Sirve para cualquier dominio cuya zona contenga, siempre a petición del administrador.'
+                    : 'Sirve para cualquier dominio cuya zona esté en esta cuenta de Cloudflare, siempre a petición del administrador.'
                 }
               >
                 <option value="">Toda la instancia</option>

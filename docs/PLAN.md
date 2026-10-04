@@ -432,7 +432,8 @@ controles táctiles de 44 px y un paso a la vez.
 - **Formularios de contacto** para webs estáticas: clave pública, orígenes
   permitidos, campo trampa, límites, Turnstile opcional y `widget.js`.
 - Vigilante (motor, cola, webmail, DNS, marca blanca, autoconfiguración,
-  listas negras, certificado) con avisos por Discord, Telegram o webhook.
+  listas negras, certificado, puerto 25 de salida, IP pública y caducidad de
+  los tokens de gestión) con avisos por Discord, Telegram o webhook.
 - Instalador idempotente con modo desatendido y migración desde 0.x.
 
 ### Hecho en la 1.1

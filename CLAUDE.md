@@ -35,11 +35,15 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
     (marca blanca y `/api/traefik/config`), `transactional` (claves y
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
-    `alerts`, `watchdog`, `dashboard`.
+    `nombreservidor` (lo que arrastra cambiar el nombre del servidor),
+    `ipservidor` (IP de salida frente a la de Ajustes: aviso y «Usar esta IP»),
+    `demo` (propiedad simulada solo con `MAILWAY_DEMO=1`), `alerts`,
+    `watchdog`, `dashboard`.
   - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
-    sha512-crypt.
+    sha512-crypt, prueba del puerto 25 (`puerto25.ts`) y detección de la IP
+    pública (`ippublica.ts`).
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;

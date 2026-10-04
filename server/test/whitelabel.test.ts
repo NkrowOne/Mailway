@@ -72,6 +72,21 @@ test('el propio dominio de correo (sin subdominio) no vale', async () => {
   assert.equal((res.json() as { code: string }).code, 'hostname_not_owned');
 });
 
+test('un nombre que repite un dominio del cliente se rechaza', async () => {
+  // «webmail.empresa-a.test» escrito como subdominio de empresa-a.test.
+  const doble = await crear(clientA.userCookie!, { hostname: 'webmail.empresa-a.test.empresa-a.test' });
+  assert.equal(doble.statusCode, 400);
+  assert.equal((doble.json() as { code: string }).code, 'hostname_repeats_domain');
+  assert.match((doble.json() as { error: string }).error, /webmail\.empresa-a\.test, indica ese nombre/);
+  // El nombre completo de otro dominio suyo, bajo el que sí está comprobado.
+  const otro = await crear(clientA.userCookie!, { hostname: 'webmail.sin-verificar-a.test.empresa-a.test' });
+  assert.equal(otro.statusCode, 400);
+  assert.equal((otro.json() as { code: string }).code, 'hostname_repeats_domain');
+  // Un subdominio de varios niveles legítimo sigue valiendo.
+  const varios = await crear(clientA.userCookie!, { hostname: 'correo.web.empresa-a.test' });
+  assert.equal(varios.statusCode, 200, varios.body);
+});
+
 test('la propiedad del dominio de correo tiene que estar comprobada', async () => {
   const res = await crear(clientA.userCookie!, { hostname: 'webmail.sin-verificar-a.test' });
   assert.equal(res.statusCode, 400);

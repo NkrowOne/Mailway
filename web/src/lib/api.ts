@@ -297,6 +297,11 @@ export interface SetupStatus {
   /** Hay un motor definido en el entorno que se puede conectar con un clic. */
   engineFromEnv?: boolean;
   engineConfigured?: boolean;
+  /** Motor conectado: el asistente solo exige el nombre del servidor con Stalwart. */
+  engineKind?: 'stalwart' | 'demo' | null;
+  /** La identidad del servidor ya se guardó (el asistente sigue en la comprobación). */
+  instanceSaved?: boolean;
+  /** Instancia de demostración (MAILWAY_DEMO=1); también llega a los clientes con sesión. */
   demoMode?: boolean;
   engineDefaults?: {
     url: string;
@@ -315,6 +320,18 @@ export interface InstanceSettings {
   webmailUrl: string;
   systemFrom: string;
   panelUrl: string;
+}
+
+/** GET /api/settings/public-ip: IP de salida frente a la de Ajustes. */
+export interface EstadoIpPublica {
+  /** '' si no se ha podido detectar. */
+  detectada: string;
+  guardada: string;
+  mailHostname: string;
+  /** Registro A del nombre del servidor de correo (null: sin dato). */
+  registroA: string[] | null;
+  /** La misma regla que el aviso del vigilante: el nombre ya no apunta a la IP guardada. */
+  proponer: boolean;
 }
 
 export interface AdminDashboard {
