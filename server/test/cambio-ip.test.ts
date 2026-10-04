@@ -34,6 +34,11 @@ function sembrar(id: string, hostname: string, status: string): void {
     'p',
     0,
   );
+  // La marca blanca solo se publica si cuelga de un dominio de correo del
+  // cliente con la propiedad comprobada.
+  db.prepare(
+    'INSERT OR IGNORE INTO domains (id,client_id,domain,status,owner_verified_at,created_at) VALUES (?,?,?,?,?,?)',
+  ).run('d', 'c', 'cliente.test', 'active', 1000, 0);
   db.prepare(
     `INSERT INTO client_domains (id,client_id,hostname,kind,status,activated_at,created_at)
      VALUES (?,?,?,'webmail',?,?,?)`,

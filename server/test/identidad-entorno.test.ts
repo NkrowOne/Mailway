@@ -231,7 +231,7 @@ test('el aviso del nombre del motor no propone volver al nombre anterior cuando 
   const otro = listAlerts({}).find((a) => a.type === 'engine_hostname' && a.title.includes('mail.otro.test'));
   assert.ok(otro);
   assert.doesNotMatch(otro.remedy, /fijó el instalador/);
-  assert.ok(otro.remedy.startsWith('En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados».'), otro.remedy);
+  assert.ok(otro.remedy.startsWith('Si el nombre correcto es mail.viejo.test, en Ajustes → Servidor de correo pulsa «Aplicar ajustes recomendados»'), otro.remedy);
 });
 
 test('sin registro del instalador, el aviso no afirma que se cambiara en el panel ni se envía a los canales', async () => {
