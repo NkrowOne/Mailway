@@ -1,10 +1,11 @@
 import tls from 'node:tls';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config';
 import { db } from '../core/db';
 import { decryptSecret } from '../core/crypto';
 import { badRequest, HttpError, notFound, upstream } from '../core/errors';
-import { normalizeHostname } from '../core/hostnames';
+import { isInternalHost, normalizeHostname } from '../core/hostnames';
 import { engineConfigured, getEngine } from '../engine';
 import type { EngineReloadResult, EngineSettings, MailEngine } from '../engine/types';
 import { fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
@@ -249,6 +250,34 @@ export async function probeEngineTls(
   return { ...inside, publicError: direct.error };
 }
 
+/**
+ * ¿Recibiría un certificado válido un programa de correo que entrase con otro
+ * nombre? Para avisar antes de cambiar el nombre del servidor. Se conecta por
+ * dentro (el DNS del nombre nuevo puede no apuntar aún aquí) con ese nombre
+ * como SNI: el motor presenta el certificado que tenga para él o, si no
+ * tiene ninguno, el que use por defecto. null en `cubre`: no se pudo medir.
+ */
+export async function certificadoParaNombre(
+  nombre: string,
+  settings: EngineSettings | null = getEngineSettings(),
+): Promise<{ cubre: boolean | null; detalle: string }> {
+  if (settings?.kind !== 'stalwart') {
+    return { cubre: null, detalle: 'No hay un servidor de correo real cuyo certificado comprobar.' };
+  }
+  const host = internalHostOf(settings) || normalizeHostname(getInstanceSettings().mailHostname);
+  if (!host) return { cubre: null, detalle: 'No se conoce la dirección del servidor de correo.' };
+  const estado = await probeTls(host, normalizeHostname(nombre), 'interno');
+  if (estado.error) {
+    return { cubre: null, detalle: `No se ha podido leer el certificado del servidor de correo (${estado.error}).` };
+  }
+  return estado.hostnameMatches
+    ? { cubre: true, detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) ya cubre ${nombre}.` }
+    : {
+        cubre: false,
+        detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) no cubre ${nombre}: los programas de correo rechazarían la conexión hasta emitir uno nuevo.`,
+      };
+}
+
 /* ------------------------------ Avisos TLS -------------------------------- */
 
 const ALERT_WARNING = 'engine_tls_warning';
@@ -256,7 +285,9 @@ const ALERT_CRITICAL = 'engine_tls_critical';
 
 const TLS_REMEDY =
   'En Ajustes → Servidor de correo puedes emitir un certificado de Let’s Encrypt mediante Cloudflare ' +
-  'o recargar el certificado actual. Si el certificado lo copia el extractor desde Traefik (perfil tls ' +
+  'o recargar el certificado actual. Si el motor renueva con Cloudflare, comprueba que el token de la cuenta ' +
+  'que usa sigue activo en Cloudflare y tiene acceso a la zona del servidor (Conexiones → Cloudflare). ' +
+  'Si el certificado lo copia el extractor desde Traefik (perfil tls ' +
   'del compose), revisa «docker logs mailway-certs-dumper» o ejecuta «sudo bash deploy/instalar.sh --comprobar».';
 
 /**
@@ -386,6 +417,31 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
   const clave = `${ALERT_HOSTNAME}:${actual}>${esperado}`;
   // Un aviso de otra pareja de nombres ya no describe la situación.
   resolveAlertsOfType(ALERT_HOSTNAME, { except: clave });
+  // Aplicar el nombre nuevo cambia el MX que se exige a TODOS los dominios:
+  // se dice cuántos antes de que alguien pulse el botón.
+  const dominios = (db.prepare('SELECT COUNT(*) AS c FROM domains').get() as { c: number }).c;
+  const consecuencia =
+    dominios === 0
+      ? ''
+      : ` Al aplicar ${esperado} en el motor, ${
+          dominios === 1 ? 'el dominio de correo pasará' : `los ${dominios} dominios de correo pasarán`
+        } a exigir el MX hacia ${esperado} y ${dominios === 1 ? 'figurará' : 'figurarán'} como pendiente${
+          dominios === 1 ? '' : 's'
+        } de DNS hasta que se cambie; el nombre ${esperado} necesita además su registro A, el PTR de la IP y un certificado que lo cubra.`;
+  // Si el motor se anuncia con el nombre que trae el entorno, lo más probable
+  // es que el instalador haya cambiado el dominio de la plataforma y Ajustes
+  // conserve el anterior: aplicar los ajustes recomendados devolvería el
+  // motor al nombre viejo, así que lo primero que se propone es corregir
+  // Ajustes, y el botón queda para el caso contrario.
+  const delInstalador = normalizeHostname(config.mailHostnameDefault);
+  const primerPaso =
+    delInstalador && delInstalador === actual
+      ? `${actual} es el nombre que fijó el instalador (MAILWAY_MAIL_HOSTNAME del entorno del panel): si se ha cambiado con él el dominio de la plataforma, corrige el nombre en Ajustes → Identidad del servidor y no apliques los ajustes recomendados, que devolverían el motor a ${esperado}. ` +
+        `Si el correcto es ${esperado}, pulsa «Aplicar ajustes recomendados» en Ajustes → Servidor de correo y vuelve a ejecutar el instalador con ese nombre (sección 8.3 de docs/DESPLIEGUE-SKYWAY.md), que es el que usan Traefik y el certificado. `
+      : `Si el nombre correcto es ${esperado}, en Ajustes → Servidor de correo pulsa «Aplicar ajustes recomendados» (antes muestra lo que cambia).${
+          // El identificador del contenedor nunca es el nombre correcto.
+          isInternalHost(actual) ? '' : ` Si el correcto es ${actual}, corrígelo en Ajustes → Identidad del servidor.`
+        } `;
   fireAlert({
     severity: 'warning',
     type: ALERT_HOSTNAME,
@@ -393,9 +449,10 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
     title: `El servidor de correo se anuncia como ${actual}, no como ${esperado}`,
     message:
       `El motor genera los registros DNS de los dominios (MX, SRV y autoconfiguración) con el nombre ${actual}, pero en Ajustes figura ${esperado}. ` +
-      'La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.',
+      `La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.${consecuencia}`,
     remedy:
-      'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
+      primerPaso +
+      'Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
       'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
   });
@@ -500,6 +557,41 @@ function statusKeys(): string[] {
   return ['server.hostname', 'http.use-x-forwarded', ...networks, ...ACME_KEYS, ...CERT_FILE_KEYS];
 }
 
+/* ---------------------- Cuenta de Cloudflare del ACME ---------------------- */
+
+/**
+ * Cuenta de Cloudflare de la instancia cuyo token usa el ACME del motor para
+ * renovar su certificado: la que se guardó al emitirlo desde Ajustes o, si
+ * lo configuró el instalador (que copia el token en el motor sin pasar por
+ * aquí), la que tiene ese mismo token. El token solo se compara aquí dentro;
+ * nunca sale en una respuesta. null = no se sabe (motor sin respuesta).
+ */
+export async function cuentaAcmeDelMotor(): Promise<{ id: string; label: string } | null | undefined> {
+  if (!engineConfigured()) return undefined;
+  let values: Record<string, string>;
+  try {
+    values = await getEngine().getServerSettings([`acme.${ACME_ID}.provider`, `acme.${ACME_ID}.secret`]);
+  } catch {
+    return null;
+  }
+  if (values[`acme.${ACME_ID}.provider`] !== 'cloudflare') return undefined;
+  const secreto = values[`acme.${ACME_ID}.secret`];
+  const filas = db
+    .prepare('SELECT id, client_id, label, token_enc FROM cloudflare_accounts WHERE client_id IS NULL')
+    .all() as CloudflareAccountRow[];
+  const stored = getJsonSetting<StoredAcme>('engine_acme');
+  for (const fila of filas) {
+    let token = '';
+    try {
+      token = decryptSecret(fila.token_enc);
+    } catch {
+      continue;
+    }
+    if (secreto ? token === secreto : stored?.accountId === fila.id) return { id: fila.id, label: fila.label };
+  }
+  return undefined;
+}
+
 /* -------------------------------- Rutas ----------------------------------- */
 
 const acmeSchema = z.object({
@@ -555,6 +647,9 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
 
     const acmeProvider = values[`acme.${ACME_ID}.provider`];
     const stored = getJsonSetting<StoredAcme>('engine_acme');
+    // El instalador configura el ACME sin pasar por aquí: la cuenta se
+    // reconoce por su token para que Ajustes diga cuál es.
+    const delMotor = !stored && acmeProvider === 'cloudflare' ? await cuentaAcmeDelMotor() : undefined;
     const acme = values[`acme.${ACME_ID}.directory`]
       ? {
           configured: true,
@@ -563,8 +658,8 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
           contact: values[`acme.${ACME_ID}.contact.0`] || null,
           domain: values[`acme.${ACME_ID}.domains.0`] || null,
           zone: values[`acme.${ACME_ID}.origin`] || null,
-          accountId: stored?.accountId ?? null,
-          accountLabel: stored?.accountLabel ?? null,
+          accountId: stored?.accountId ?? delMotor?.id ?? null,
+          accountLabel: stored?.accountLabel ?? delMotor?.label ?? null,
         }
       : { configured: false, provider: null };
 
@@ -731,6 +826,25 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       errors: result.errors.map((e) => e.split(token).join('•••')),
       warnings: result.warnings.map((w) => w.split(token).join('•••')),
     };
+  });
+
+  /**
+   * ¿Usa el motor el token de esta cuenta de Cloudflare para renovar su
+   * certificado? Lo pregunta el diálogo de eliminar la cuenta: revocar ese
+   * token haría fallar la siguiente renovación. inUse null = no se sabe.
+   */
+  app.get('/api/engine/acme/accounts/:id', async (req) => {
+    requireAdmin(req);
+    rechazarSoloCliente(req.query);
+    const { id } = req.params as { id: string };
+    const fila = db.prepare('SELECT id, client_id FROM cloudflare_accounts WHERE id = ?').get(id) as
+      | { id: string; client_id: string | null }
+      | undefined;
+    if (!fila) throw notFound('Cuenta de Cloudflare no encontrada.', 'cloudflare_account_not_found');
+    // El ACME del motor solo usa cuentas de la instancia.
+    if (fila.client_id !== null) return { inUse: false };
+    const cuenta = await cuentaAcmeDelMotor();
+    return { inUse: cuenta === null ? null : cuenta?.id === id };
   });
 
   /** Recarga los certificados del motor (tras una renovación) y devuelve el estado nuevo. */

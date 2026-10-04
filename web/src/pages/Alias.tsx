@@ -369,8 +369,22 @@ function FormularioAlias({
     ? candidatos.filter((m) => m.email.includes(texto) || m.displayName.toLowerCase().includes(texto))
     : candidatos;
   const email = editando ? editando.email : `${localPart.trim().toLowerCase()}@${dominio?.domain ?? ''}`;
-  const dominiosInstancia = new Set(todosLosDominios.map((d) => d.domain.toLowerCase()));
+  // Un dominio sin la propiedad comprobada no es de la plataforma todavía (ni
+  // existe en el motor): sus direcciones son externas, como en el servidor.
+  const dominiosInstancia = new Set(
+    todosLosDominios.filter((d) => d.ownershipVerifiedAt !== null).map((d) => d.domain.toLowerCase()),
+  );
   const correosCandidatos = new Set(candidatos.map((m) => m.email.toLowerCase()));
+  // Stalwart expande el alias al recibir y cada destino hereda el origen del
+  // mensaje: lo que llega de Internet a un alias de un dominio que recibe aquí
+  // se entrega en el buzón local aunque el dominio del destino reciba todavía
+  // en otro proveedor (lo enviado desde este servidor, en cambio, sale por su
+  // MX). Se avisa para que el reparto no sorprenda.
+  const recibenFuera = new Set(todosLosDominios.filter((d) => d.recepcionExterna).map((d) => d.domain.toLowerCase()));
+  const dominioDelAlias = (editando?.domain ?? dominio?.domain ?? '').toLowerCase();
+  const destinosConRecepcionExterna = recibenFuera.has(dominioDelAlias)
+    ? []
+    : [...internos].filter((correo) => recibenFuera.has(correo.split('@')[1] ?? ''));
 
   const save = useMutation({
     mutationFn: () => {
@@ -557,6 +571,19 @@ function FormularioAlias({
           )}
         </fieldset>
 
+        {destinosConRecepcionExterna.length > 0 && (
+          <BandaAviso>
+            El correo de{' '}
+            <span className="valor break-all">
+              {[...new Set(destinosConRecepcionExterna.map((c) => c.split('@')[1]))].join(', ')}
+            </span>{' '}
+            se recibe hoy en otro proveedor. Lo que llegue de Internet a este alias se entregará en{' '}
+            {destinosConRecepcionExterna.length === 1 ? 'el buzón' : 'los buzones'} de aquí (
+            <span className="valor break-all">{destinosConRecepcionExterna.join(', ')}</span>), no en ese
+            proveedor, hasta que se haga el cambio del MX. Lo que se envíe al alias desde este servidor sí
+            llega al proveedor actual.
+          </BandaAviso>
+        )}
         {error && <BandaError>{error}</BandaError>}
         <Botonera>
           <Button type="button" variant="plano" onClick={onClose}>

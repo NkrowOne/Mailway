@@ -19,6 +19,7 @@ import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
 import { AvisoError, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { DialogoCambioNombre } from './CambioNombreServidor';
 
 /**
  * Servidor de correo: nombre del servidor en el motor, ajustes recomendados
@@ -40,8 +41,10 @@ export function HojaServidorCorreo() {
 
   const refrescar = () => void queryClient.invalidateQueries({ queryKey: ['engine-status'] });
 
+  const [confirmarAplicar, setConfirmarAplicar] = useState(false);
   const aplicar = useMutation({
     mutationFn: () => api.post<RecommendedResult>('/api/engine/recommended'),
+    onSettled: () => setConfirmarAplicar(false),
     onSuccess: (res) => {
       if (res.errors.length > 0) {
         toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
@@ -109,6 +112,11 @@ export function HojaServidorCorreo() {
 
   const tls = data.tls;
   const filas = construirFilas(data);
+  // Si el motor se anuncia con otro nombre, aplicar cambia el MX que se exige
+  // a todos los dominios: se enseña antes lo que arrastra.
+  const cambiaNombre = Boolean(
+    data.hostname.expected && data.hostname.running && data.hostname.running !== data.hostname.expected,
+  );
 
   return (
     <Hoja
@@ -139,7 +147,7 @@ export function HojaServidorCorreo() {
             variant="perfil"
             busy={aplicar.isPending}
             disabled={!data.hostname.expected}
-            onClick={() => aplicar.mutate()}
+            onClick={() => (cambiaNombre ? setConfirmarAplicar(true) : aplicar.mutate())}
           >
             Aplicar ajustes recomendados
           </Button>
@@ -163,6 +171,16 @@ export function HojaServidorCorreo() {
           estado={data}
           tlsOk={tls.ok}
           onEmitido={refrescar}
+        />
+      )}
+      {cambiaNombre && (
+        <DialogoCambioNombre
+          open={confirmarAplicar}
+          nombre={data.hostname.expected!}
+          accion="aplicar"
+          confirmando={aplicar.isPending}
+          onConfirmar={() => aplicar.mutate()}
+          onClose={() => setConfirmarAplicar(false)}
         />
       )}
     </Hoja>

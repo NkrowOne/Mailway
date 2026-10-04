@@ -107,6 +107,7 @@ const ETIQUETAS: Record<string, string> = {
   'setup.instance_configured': 'Identidad configurada',
   'setup.completed': 'Puesta en marcha completada',
   'settings.instance_updated': 'Ajustes de identidad actualizados',
+  'settings.instance_env_adopted': 'Identidad del servidor actualizada con la del instalador',
   'settings.engine_updated': 'Ajustes del motor actualizados',
   // Motor de correo
   'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',
@@ -130,6 +131,7 @@ const ETIQUETAS: Record<string, string> = {
   'domain.created': 'Dominio dado de alta',
   'domain.verified': 'Verificación de DNS',
   'domain.ownership_verified': 'Propiedad del dominio comprobada',
+  'domain.ownership_simulated': 'Propiedad del dominio simulada (demostración)',
   'domain.dkim_regenerated': 'DKIM regenerado',
   'domain.zonefile_downloaded': 'Fichero de zona descargado',
   'domain.deleted': 'Dominio eliminado',

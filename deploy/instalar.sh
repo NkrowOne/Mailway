@@ -24,7 +24,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-VERSION_INSTALADOR="1.2.0"
+VERSION_INSTALADOR="1.3.0"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$RAIZ/deploy"
 ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"
@@ -59,6 +59,11 @@ RESUMEN_PTR="sin comprobar"
 RESUMEN_P25="sin comprobar"
 RESUMEN_DNS="sin comprobar"
 RESUMEN_SKYWAY="no se ha desplegado el panel"
+# Solo con --actualizar (ver descargar_imagenes); vacío = no se ha intentado.
+RESUMEN_IMAGENES=""
+# Identidad del servidor en el panel tras un cambio de nombres o de IP
+# confirmado (ver adoptar_identidad_en_panel); vacío = no hacía falta.
+RESUMEN_IDENTIDAD=""
 MIGRAR_CONTENEDORES=0
 ENV_COPIADO=0
 CERT_CONFIGURADO=0
@@ -108,6 +113,16 @@ ENV_TMP=""
 ERR_TMP=""
 # ¿Escribió avisos la última herramienta de terminal? (ver mostrar_errores_herramienta)
 HERRAMIENTA_CON_AVISOS=0
+# Cambio de los nombres o de la IP de la plataforma confirmado por quien
+# instala (ver confirmar_cambio_de_nombres y elegir_ip): lo que el panel debe
+# adoptar aunque se cambiara a mano («servidor,webmail,panel,ip»), y el nombre
+# anterior del servidor de correo. Lo que el panel aún no ha adoptado queda en
+# deploy/.env (MAILWAY_ADOPCION_PENDIENTE) y se retoma en cada ejecución.
+ADOPTAR_EN_PANEL=""
+COMENTARIO_ADOPCION="# Cambio de nombres o de IP confirmado que el panel aún no ha adoptado: el instalador lo retoma en cada ejecución."
+MAIL_HOSTNAME_ANTERIOR=""
+# IP con la que el servidor sale a Internet (vacía si no se ha detectado).
+IP_DETECTADA=""
 
 # ------------------------------------------------------------------ salida --
 
@@ -141,9 +156,11 @@ Opciones:
                     motor y, con Skyway, actualiza las variables y redespliega el panel.
                     Mantiene el modo de la instalación (junto a Skyway o autónoma).
                     Ejecuta antes «git pull» en la carpeta de Mailway.
-  --comprobar       Diagnóstico de solo lectura: contenedores, ajustes y certificado del
-                    motor (993 y 465), conexión IMAP y SMTP desde el webmail y extractor
-                    del certificado. No cambia nada. Código de salida 1 si algo falla.
+  --comprobar       Diagnóstico de solo lectura: contenedores (también el del panel), ajustes
+                    y certificado del motor (993 y 465), conexión IMAP y SMTP desde el webmail,
+                    enlace del webmail con el panel, extractor del certificado, rutas de
+                    Traefik (junto a Skyway), DNS público de los tres nombres, DNS inverso
+                    (PTR) y puerto 25 de salida. No cambia nada. Código de salida 1 si algo falla.
   --probar-acceso   Pide la dirección y la contraseña de un buzón (sin mostrarla ni
                     guardarla) e inicia sesión desde el webmail: un único intento, porque
                     cada contraseña incorrecta cuenta para el bloqueo automático del motor.
@@ -176,7 +193,12 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_MAIL_HOST         Nombre del servidor de correo (por defecto mail.<dominio>).
   MAILWAY_WEBMAIL_HOST      Nombre del webmail (por defecto webmail.<dominio>).
   MAILWAY_PANEL_HOST        Nombre del panel (por defecto panel.<dominio>).
-  MAILWAY_IP                IPv4 pública del servidor (se detecta si falta).
+  MAILWAY_IP                IPv4 pública del servidor. Sin ella se detecta y se compara con la de
+                            deploy/.env: si no coinciden (mudanza, IP nueva del proveedor), con terminal
+                            se propone la detectada y sin terminal el instalador se detiene.
+  MAILWAY_CAMBIAR_NOMBRES   1 = sin terminal, confirma que cambian los nombres de la plataforma
+                            (otro dominio base o MAILWAY_*_HOST distintos de los de deploy/.env).
+                            Sin ella, una ejecución desatendida que los cambiaría se detiene sin tocar nada.
   MAILWAY_MARCA             Nombre del servicio en el webmail (por defecto «Webmail»).
   LETSENCRYPT_EMAIL         Correo de contacto para Let's Encrypt.
   CLOUDFLARE_API_TOKEN      Token de Cloudflare (Zona: Lectura y DNS: Edición). Vacío = sin Cloudflare.
@@ -209,6 +231,9 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_COMPOSE_EXTRA     Fichero de Compose adicional que se aplica sobre el del instalador
                             (ajustes locales; lo usa la prueba de la pila en la CI).
   MAILWAY_CLOUDFLARE_API    Base de la API de Cloudflare (solo para pruebas).
+  MAILWAY_COMPROBAR_SOLO_MOTOR
+                            1 = --comprobar revisa solo el motor, el webmail y el extractor, sin el
+                            panel, Traefik ni las comprobaciones desde Internet (prueba de la pila de la CI).
 
 Los nombres del servidor de correo, del webmail y del panel cuelgan directamente
 del dominio base (un solo nivel: correo.miempresa.com, no a.b.miempresa.com).
@@ -542,16 +567,28 @@ esperar_sano() {
 # ¿Resuelve el nombre a la IP en los resolutores públicos? (DNS sobre HTTPS)
 # Un resolutor que no contesta (red filtrada) no cuenta; los que contestan
 # deben dar todos la IP esperada, y al menos uno tiene que contestar.
+# Devuelve 0 si es así, 1 si uno da otra cosa (sus IP quedan en DNS_LEIDAS) y
+# 2 si no contesta ninguno.
+DNS_LEIDAS=""
 resuelve_a() {
   local nombre=$1 ip=$2 servidor respuesta contestados=0
+  DNS_LEIDAS=""
   for servidor in "https://cloudflare-dns.com/dns-query" "https://dns.google/resolve"; do
     respuesta=$(curl -fsS --max-time 8 -H 'accept: application/dns-json' "$servidor?name=$nombre&type=A" 2>/dev/null) ||
       continue
     contestados=$((contestados + 1))
-    printf '%s' "$respuesta" | grep -Fq "\"data\":\"$ip\"" || return 1
+    if ! printf '%s' "$respuesta" | grep -Fq "\"data\":\"$ip\""; then
+      DNS_LEIDAS=$(printf '%s' "$respuesta" | grep -o '"data":"[0-9.]*"' | sed 's/^"data":"//; s/"$//' | tr '\n' ' ' || true)
+      DNS_LEIDAS=${DNS_LEIDAS% }
+      return 1
+    fi
   done
-  [ "$contestados" -gt 0 ]
+  [ "$contestados" -gt 0 ] || return 2
 }
+
+# ¿Sale el servidor a Internet por el puerto 25? (Muchos proveedores lo
+# bloquean por defecto, y sin él no se entrega correo a otros servidores.)
+puerto25_abierto() { timeout 6 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25' 2>/dev/null; }
 
 # Compose da prioridad al entorno sobre --env-file: sin quitarla, una
 # LETSENCRYPT_EMAIL exportada para responder al instalador ganaría al valor
@@ -631,7 +668,7 @@ comprobaciones_previas() {
   fi
   if tiene ss; then ok "Puertos 25, 465, 587, 993 y 4190 libres."; else aviso "Sin «ss» no se pueden comprobar los puertos."; fi
 
-  if timeout 6 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25' 2>/dev/null; then
+  if puerto25_abierto; then
     RESUMEN_P25="abierto"
     ok "Puerto 25 de salida abierto."
   else
@@ -672,6 +709,8 @@ recoger_datos() {
     fallo "No existe $ENV_FILE: no hay nada que actualizar. Ejecuta el instalador sin --actualizar."
   fi
 
+  retomar_adopcion_pendiente
+
   local mail_prev dominio_def
   mail_prev=$(leer_env MAIL_HOSTNAME)
   # Sin deploy/.env (panel creado a mano en Skyway), los nombres que ya usa.
@@ -703,6 +742,7 @@ recoger_datos() {
   info "Servidor de correo: $MAIL_HOSTNAME"
   info "Webmail:            $WEBMAIL_HOSTNAME"
   info "Panel:              $PANEL_HOSTNAME"
+  confirmar_cambio_de_nombres "$mail_prev" "$webmail_prev" "$panel_prev"
 
   local marca_def
   marca_def=${MAILWAY_MARCA:-$(leer_env MAILWAY_BRAND)}
@@ -722,18 +762,7 @@ recoger_datos() {
   esac
   if [ "$CON_SKYWAY" = 1 ]; then elegir_correo_admin "$LE_EMAIL"; fi
 
-  local ip_def
-  ip_def=${MAILWAY_IP:-$(leer_env MAILWAY_PUBLIC_IP)}
-  ip_def=${ip_def:-$(valor_panel MAILWAY_PUBLIC_IP)}
-  if [ -z "$ip_def" ]; then ip_def=$(detectar_ip); fi
-  preguntar IP_PUBLICA "IPv4 pública del servidor" "$ip_def"
-  ipv4_valida "$IP_PUBLICA" || fallo "IPv4 no válida: «$IP_PUBLICA» (variable MAILWAY_IP)."
-  if ip_en_cidr "$IP_PUBLICA" 10.0.0.0/8 || ip_en_cidr "$IP_PUBLICA" 172.16.0.0/12 ||
-    ip_en_cidr "$IP_PUBLICA" 192.168.0.0/16 || ip_en_cidr "$IP_PUBLICA" 100.64.0.0/10 ||
-    ip_en_cidr "$IP_PUBLICA" 127.0.0.0/8; then
-    aviso "$IP_PUBLICA es una IP privada: el DNS, el SPF y el PTR necesitan la IP pública con la que el servidor sale a Internet."
-  fi
-  ok "IP pública: $IP_PUBLICA"
+  elegir_ip
 
   INTERNAL_SUBNET=${MAILWAY_INTERNAL_SUBNET:-$(leer_env MAILWAY_INTERNAL_SUBNET)}
   INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
@@ -752,6 +781,165 @@ recoger_datos() {
     TRAEFIK_ACME_VOLUME=""
     SKYWAY_DIR=""
   fi
+}
+
+# Añade un campo a lo que el panel debe adoptar del entorno (identidad.js).
+anadir_adopcion() {
+  case ",$ADOPTAR_EN_PANEL," in
+    *",$1,"*) ;;
+    *) ADOPTAR_EN_PANEL="${ADOPTAR_EN_PANEL:+$ADOPTAR_EN_PANEL,}$1" ;;
+  esac
+}
+
+# Un cambio de nombres o de IP confirmado en una ejecución anterior que el
+# panel no llegó a adoptar (falló algo después de escribir deploy/.env, el
+# despliegue del panel no terminó…). deploy/.env ya tiene los valores nuevos,
+# así que esta ejecución no vería ningún cambio: sin esto, el panel se
+# quedaba con los anteriores y el emparejado devolvía el motor al nombre viejo.
+retomar_adopcion_pendiente() {
+  local pendiente parte partes=()
+  pendiente=$(leer_env MAILWAY_ADOPCION_PENDIENTE)
+  [ -n "$pendiente" ] || return 0
+  IFS=, read -ra partes <<<"$pendiente"
+  for parte in "${partes[@]}"; do
+    case "$parte" in servidor | webmail | panel | ip) anadir_adopcion "$parte" ;; esac
+  done
+  if [ -n "$ADOPTAR_EN_PANEL" ]; then
+    info "Pendiente de una ejecución anterior: que el panel adopte los valores nuevos ($ADOPTAR_EN_PANEL)."
+  fi
+}
+
+# El panel ya ha adoptado los valores nuevos: se borra lo pendiente de
+# deploy/.env sin tocar nada más (también con --emparejar, que no lo vuelve a
+# escribir entero). Mismo cuidado que escribir_env: copia con permisos 600 y
+# sustitución atómica.
+olvidar_adopcion_pendiente() {
+  local tmp linea umask_previa
+  ADOPTAR_EN_PANEL=""
+  if [ ! -f "$ENV_FILE" ] || ! grep -q '^MAILWAY_ADOPCION_PENDIENTE=' "$ENV_FILE"; then return 0; fi
+  umask_previa=$(umask)
+  umask 077
+  tmp=$(mktemp "$(dirname "$ENV_FILE")/.env.XXXXXX")
+  ENV_TMP=$tmp
+  while IFS= read -r linea || [ -n "$linea" ]; do
+    case "$linea" in
+      MAILWAY_ADOPCION_PENDIENTE=* | "$COMENTARIO_ADOPCION") ;;
+      *) printf '%s\n' "$linea" ;;
+    esac
+  done <"$ENV_FILE" >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ENV_FILE"
+  ENV_TMP=""
+  umask "$umask_previa"
+}
+
+# Los nombres de la plataforma cambian respecto a los de la ejecución
+# anterior (deploy/.env o, sin él, el panel que ya despliega Skyway): otro
+# dominio base o MAILWAY_*_HOST distintos. Es una operación con consecuencias
+# para todos los clientes, así que se resume y se pide confirmación expresa:
+# con terminal se pregunta (por defecto, no) y sin terminal hace falta
+# MAILWAY_CAMBIAR_NOMBRES=1. Se pregunta antes de escribir nada.
+#   confirmar_cambio_de_nombres <correo anterior> <webmail anterior> <panel anterior>
+confirmar_cambio_de_nombres() {
+  local mail_prev webmail_prev panel_prev cambia_mail=0 cambia_webmail=0 cambia_panel=0
+  # Las variables de un panel creado a mano pueden llevar mayúsculas.
+  mail_prev=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  webmail_prev=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  panel_prev=$(printf '%s' "$3" | tr '[:upper:]' '[:lower:]')
+  if [ -n "$mail_prev" ] && [ "$mail_prev" != "$MAIL_HOSTNAME" ]; then cambia_mail=1; fi
+  if [ -n "$webmail_prev" ] && [ "$webmail_prev" != "$WEBMAIL_HOSTNAME" ]; then cambia_webmail=1; fi
+  if [ -n "$panel_prev" ] && [ "$panel_prev" != "$PANEL_HOSTNAME" ]; then cambia_panel=1; fi
+  if [ "$((cambia_mail + cambia_webmail + cambia_panel))" = 0 ]; then return 0; fi
+
+  titulo "Cambio de los nombres de la plataforma"
+  if [ "$cambia_mail" = 1 ]; then info "Servidor de correo: $mail_prev → $MAIL_HOSTNAME"; fi
+  if [ "$cambia_webmail" = 1 ]; then info "Webmail:            $webmail_prev → $WEBMAIL_HOSTNAME"; fi
+  if [ "$cambia_panel" = 1 ]; then info "Panel:              $panel_prev → $PANEL_HOSTNAME"; fi
+  info "Lo que supone:"
+  if [ "$cambia_mail" = 1 ]; then
+    info "  - El motor pasa a anunciarse como $MAIL_HOSTNAME y su certificado de IMAP y SMTP, a ese nombre."
+    info "  - Los dominios de correo de todos los clientes tendrán que apuntar su MX (y su autoconfiguración)"
+    info "    a $MAIL_HOSTNAME: el panel los mostrará pendientes de DNS hasta que se cambien."
+    info "  - Los programas de correo configurados con $mail_prev dejarán de aceptar el certificado: hay que"
+    info "    volver a configurarlos (los enlaces de configuración del panel ya llevarán el nombre nuevo)."
+    info "  - El DNS inverso (PTR) de la IP debe pasar a $MAIL_HOSTNAME (panel del proveedor del servidor)."
+  fi
+  if [ "$cambia_webmail" = 1 ]; then
+    info "  - El webmail pasa a $WEBMAIL_HOSTNAME y $webmail_prev deja de responder."
+  fi
+  if [ "$cambia_panel" = 1 ]; then
+    if [ "$CON_SKYWAY" = 1 ]; then
+      info "  - El panel se publica también en $PANEL_HOSTNAME ($panel_prev se conserva en Skyway)."
+    else
+      info "  - El panel pasa a $PANEL_HOSTNAME y $panel_prev deja de responder."
+    fi
+  fi
+  info "  - Los nombres nuevos necesitan su registro A hacia la IP del servidor (con Cloudflare, se crea solo)."
+  info "  - Ajustes del panel adopta los nombres nuevos, también si se cambiaron a mano."
+  if [ "$INTERACTIVO" = 1 ]; then
+    confirmar "¿Cambiar los nombres de la plataforma?" n ||
+      fallo "No se ha cambiado nada. Para conservar los nombres actuales, vuelve a ejecutar el instalador y acepta el dominio propuesto."
+  elif [ "${MAILWAY_CAMBIAR_NOMBRES:-0}" != 1 ]; then
+    fallo "Los nombres de la plataforma cambiarían (detalle arriba) y no se ha cambiado nada. Si es lo que quieres, repite con MAILWAY_CAMBIAR_NOMBRES=1; si no, sin MAILWAY_DOMINIO ni MAILWAY_*_HOST."
+  fi
+  if [ "$cambia_mail" = 1 ]; then
+    MAIL_HOSTNAME_ANTERIOR=$mail_prev
+    anadir_adopcion servidor
+  fi
+  if [ "$cambia_webmail" = 1 ]; then anadir_adopcion webmail; fi
+  if [ "$cambia_panel" = 1 ]; then anadir_adopcion panel; fi
+  ok "Se cambian los nombres de la plataforma."
+}
+
+# ¿Tiene el servidor esa IP en alguna de sus interfaces? (Varias IP: puede
+# salir a Internet por otra y la guardada seguir siendo suya.)
+ip_local() {
+  tiene ip || return 1
+  ip -4 -o addr show 2>/dev/null | awk -v ip="$1" '{ split($4, a, "/"); if (a[1] == ip) hay = 1 } END { exit !hay }'
+}
+
+# IPv4 pública. La guardada (deploy/.env o, sin él, la del panel) se compara
+# con la detectada: tras una mudanza o si el proveedor cambia la IP, reutilizar
+# la guardada en silencio dejaba el DNS, el PTR y el panel con la de otro
+# servidor. Con terminal se propone la detectada; sin terminal el instalador
+# se detiene, salvo que MAILWAY_IP la indique. Una IP guardada que sigue
+# siendo de una interfaz del servidor no se cambia (solo se avisa).
+elegir_ip() {
+  local guardada def
+  guardada=$(leer_env MAILWAY_PUBLIC_IP)
+  guardada=${guardada:-$(valor_panel MAILWAY_PUBLIC_IP)}
+  if [ -n "${MAILWAY_IP:-}" ]; then
+    def=$MAILWAY_IP
+  else
+    IP_DETECTADA=$(detectar_ip)
+    def=${guardada:-$IP_DETECTADA}
+    if [ -z "$IP_DETECTADA" ]; then
+      if [ -n "$guardada" ]; then info "No se ha podido detectar la IP pública: se usa la guardada ($guardada)."; fi
+    elif [ -n "$guardada" ] && [ "$guardada" != "$IP_DETECTADA" ]; then
+      if ip_local "$guardada"; then
+        aviso "El servidor sale a Internet con $IP_DETECTADA, no con $guardada (que sigue siendo suya): el PTR y el SPF deben ser los de la IP de salida."
+      elif [ "$INTERACTIVO" = 1 ]; then
+        aviso "La IP guardada ($guardada) no es la de este servidor, que sale a Internet con $IP_DETECTADA."
+        info "Si el servidor ha cambiado de IP (mudanza, IP nueva del proveedor), usa la detectada."
+        def=$IP_DETECTADA
+      else
+        fallo "La IP guardada ($guardada) no es la de este servidor, que sale a Internet con $IP_DETECTADA. No se ha cambiado nada: si el servidor ha cambiado de IP, repite con MAILWAY_IP=$IP_DETECTADA; si sale a Internet por otra IP y $guardada es la correcta, con MAILWAY_IP=$guardada."
+      fi
+    fi
+  fi
+  preguntar IP_PUBLICA "IPv4 pública del servidor" "$def"
+  ipv4_valida "$IP_PUBLICA" || fallo "IPv4 no válida: «$IP_PUBLICA» (variable MAILWAY_IP)."
+  if ip_en_cidr "$IP_PUBLICA" 10.0.0.0/8 || ip_en_cidr "$IP_PUBLICA" 172.16.0.0/12 ||
+    ip_en_cidr "$IP_PUBLICA" 192.168.0.0/16 || ip_en_cidr "$IP_PUBLICA" 100.64.0.0/10 ||
+    ip_en_cidr "$IP_PUBLICA" 127.0.0.0/8; then
+    aviso "$IP_PUBLICA es una IP privada: el DNS, el SPF y el PTR necesitan la IP pública con la que el servidor sale a Internet."
+  fi
+  if [ -n "$guardada" ] && [ "$IP_PUBLICA" != "$guardada" ]; then
+    info "La IP cambia de $guardada a $IP_PUBLICA: el panel la adopta y los registros A pasan a ella (con Cloudflare,"
+    info "confirmándolo). Revisa el PTR de la IP nueva y el SPF de los dominios que incluyan la anterior de forma explícita."
+    anadir_adopcion ip
+  fi
+  ok "IP pública: $IP_PUBLICA"
 }
 
 # Correo de la cuenta de administración del panel que crea el emparejado con
@@ -1092,6 +1280,10 @@ escribir_env() {
     if [ -n "$MAILWAY_MAIL_VOLUME" ]; then linea_env MAILWAY_MAIL_VOLUME "$MAILWAY_MAIL_VOLUME"; fi
     if [ -n "$MAILWAY_WEBMAIL_DB_VOLUME" ]; then linea_env MAILWAY_WEBMAIL_DB_VOLUME "$MAILWAY_WEBMAIL_DB_VOLUME"; fi
     if [ -n "$MAILWAY_PANEL_VOLUME" ]; then linea_env MAILWAY_PANEL_VOLUME "$MAILWAY_PANEL_VOLUME"; fi
+    if [ -n "$ADOPTAR_EN_PANEL" ]; then
+      printf '\n%s\n' "$COMENTARIO_ADOPCION"
+      linea_env MAILWAY_ADOPCION_PENDIENTE "$ADOPTAR_EN_PANEL"
+    fi
   } >"$tmp"
 
   # Las claves añadidas a mano se conservan.
@@ -1099,7 +1291,8 @@ escribir_env() {
   claves+=" MAILWAY_ADMIN_EMAIL"
   claves+=" STALWART_ADMIN_PASSWORD ROUNDCUBE_DES_KEY MAILWAY_PANEL_URL MAILWAY_WEBMAIL_URL MAILWAY_PANEL_INTERNAL_URL"
   claves+=" MAILWAY_SECRET MAILWAY_SETUP_TOKEN MAILWAY_TRAEFIK_TOKEN MAILWAY_WEBMAIL_TOKEN MAILWAY_INTERNAL_SUBNET"
-  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME "
+  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME"
+  claves+=" MAILWAY_ADOPCION_PENDIENTE "
   if [ -f "$ENV_FILE" ]; then
     local extra=""
     while IFS= read -r linea || [ -n "$linea" ]; do
@@ -1273,7 +1466,14 @@ cf_registro() {
   # MAILWAY_DNS_REEMPLAZAR solo abre los A de la plataforma («s»), nunca los
   # CNAME de autoconfiguración, tampoco cuando solo cambiaría su proxy.
   local que="apunta a $actual" pregunta="¿Cambiarlo a $contenido (sin proxy)?" def_desatendida=$cambiar_def
-  if [ "$actual" = "$contenido" ]; then
+  if [ "$tipo" = A ] && [ -n "$IP_DETECTADA" ] && [ "$actual" = "$IP_DETECTADA" ] && [ "$contenido" != "$IP_DETECTADA" ]; then
+    # Ya apunta a la IP con la que sale este servidor: devolverlo a otra (la
+    # guardada de una instalación anterior) nunca se propone por defecto ni
+    # se hace sin terminal, tampoco con MAILWAY_DNS_REEMPLAZAR=1.
+    que="apunta a $actual, la IP con la que este servidor sale a Internet"
+    cambiar_def=n
+    def_desatendida=n
+  elif [ "$actual" = "$contenido" ]; then
     que="tiene el proxy de Cloudflare activado, que impide el correo y la validación del certificado"
     pregunta="¿Desactivar el proxy («Solo DNS»)?"
     # Con el mismo destino, quitar el proxy es lo único que se haría: con
@@ -1288,7 +1488,10 @@ cf_registro() {
   elif [ "${MAILWAY_DNS_REEMPLAZAR:-0}" != 1 ] || [ "$def_desatendida" != s ]; then
     # Sin nadie a quien preguntar, un registro existente es un conflicto: se
     # informa y no se toca.
-    aviso "$nombre $que: no se modifica sin confirmación. Cámbialo en Cloudflare o repite la instalación con terminal (o con MAILWAY_DNS_REEMPLAZAR=1)."
+    local pista="Cámbialo en Cloudflare o repite la instalación con terminal"
+    # MAILWAY_DNS_REEMPLAZAR solo sirve para lo que cambiaría por defecto.
+    if [ "$def_desatendida" = s ]; then pista+=" (o con MAILWAY_DNS_REEMPLAZAR=1)"; fi
+    aviso "$nombre $que: no se modifica sin confirmación. $pista."
     return 0
   fi
   cf_api PUT "/zones/$CF_ZONA_ID/dns_records/$id" "$cuerpo"
@@ -1326,16 +1529,37 @@ esperar_dns() {
   aviso "Sin propagar:$pendientes. Se continúa; Traefik reintentará los certificados cuando el DNS esté listo."
 }
 
+# DNS inverso (PTR) de una IP por DNS sobre HTTPS, en dos resolutores: si uno
+# no responde (DoH filtrado) se prueba el otro. Deja en PTR_LEIDOS los nombres
+# en minúsculas y sin el punto final, y devuelve 1 si ninguno ha respondido:
+# no poder consultarlo no es lo mismo que no tenerlo.
+PTR_LEIDOS=""
+consultar_ptr() {
+  local inverso servidor respuesta estado
+  PTR_LEIDOS=""
+  inverso=$(printf '%s' "$1" | awk -F. '{print $4"."$3"."$2"."$1".in-addr.arpa"}')
+  for servidor in "https://cloudflare-dns.com/dns-query" "https://dns.google/resolve"; do
+    respuesta=$(curl -fsS --max-time 8 -H 'accept: application/dns-json' "$servidor?name=$inverso&type=PTR" 2>/dev/null) ||
+      continue
+    # 0: respuesta, con o sin PTR; 3: el nombre no existe (sin PTR). Lo demás
+    # (SERVFAIL, REFUSED…) no dice nada del PTR: se prueba el otro resolutor.
+    estado=$(printf '%s' "$respuesta" | jqr -r '.Status // empty' 2>/dev/null || true)
+    case "$estado" in 0 | 3) ;; *) continue ;; esac
+    # Solo los PTR (tipo 12): una delegación sin clases (RFC 2317) trae antes un CNAME.
+    PTR_LEIDOS=$(printf '%s' "$respuesta" |
+      jqr -r '[(.Answer // [])[] | select(.type == 12) | .data | ascii_downcase | rtrimstr(".")] | join(" ")' 2>/dev/null || true)
+    return 0
+  done
+  return 1
+}
+
 comprobar_ptr() {
-  local inverso ptr
-  inverso=$(printf '%s' "$IP_PUBLICA" | awk -F. '{print $4"."$3"."$2"."$1".in-addr.arpa"}')
-  ptr=$(curl -fsS --max-time 8 -H 'accept: application/dns-json' \
-    "https://cloudflare-dns.com/dns-query?name=$inverso&type=PTR" 2>/dev/null |
-    grep -o '"data":"[^"]*"' | head -n 1 | sed 's/"data":"//; s/"$//; s/\.$//' || true)
-  if [ "$ptr" = "$MAIL_HOSTNAME" ]; then
-    RESUMEN_PTR="correcto ($IP_PUBLICA → $ptr)"
-  elif [ -n "$ptr" ]; then
-    RESUMEN_PTR="INCORRECTO: $IP_PUBLICA → $ptr (debe ser $MAIL_HOSTNAME; se cambia en el panel del proveedor del servidor)"
+  if ! consultar_ptr "$IP_PUBLICA"; then
+    RESUMEN_PTR="sin comprobar: ningún resolutor ha respondido (compruébalo con «dig -x $IP_PUBLICA»: debe dar $MAIL_HOSTNAME)"
+  elif [[ " $PTR_LEIDOS " == *" $MAIL_HOSTNAME "* ]]; then
+    RESUMEN_PTR="correcto ($IP_PUBLICA → $MAIL_HOSTNAME)"
+  elif [ -n "$PTR_LEIDOS" ]; then
+    RESUMEN_PTR="INCORRECTO: $IP_PUBLICA → ${PTR_LEIDOS// /, } (debe ser $MAIL_HOSTNAME; se cambia en el panel del proveedor del servidor)"
   else
     RESUMEN_PTR="SIN CONFIGURAR: pide al proveedor del servidor el DNS inverso $IP_PUBLICA → $MAIL_HOSTNAME"
   fi
@@ -1349,10 +1573,7 @@ levantar_servicios() {
   local perfiles=()
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 1 ]; then perfiles+=(--profile proxy); fi
 
-  if [ "$ACTUALIZAR" = 1 ]; then
-    info "Descargando imágenes…"
-    compose ${perfiles[@]+"${perfiles[@]}"} pull --quiet --ignore-buildable 2>/dev/null || compose ${perfiles[@]+"${perfiles[@]}"} pull --quiet || true
-  fi
+  if [ "$ACTUALIZAR" = 1 ]; then descargar_imagenes ${perfiles[@]+"${perfiles[@]}"}; fi
   if [ "$CON_SKYWAY" = 0 ]; then
     info "Compilando el panel (la primera vez tarda unos minutos)…"
     compose_q ${perfiles[@]+"${perfiles[@]}"} build mailway-panel
@@ -1383,6 +1604,22 @@ levantar_servicios() {
   fi
 }
 
+# Descarga las imágenes nuevas (--actualizar). Si no se puede (límite de
+# descargas de Docker Hub, sin conexión), el motor y el webmail siguen con
+# las anteriores, que pueden no tener los últimos parches de seguridad (la del
+# webmail es una etiqueta que los recibe): se avisa y queda en el resumen.
+#   descargar_imagenes [perfiles de compose]
+descargar_imagenes() {
+  info "Descargando imágenes…"
+  if compose "$@" pull --quiet --ignore-buildable 2>/dev/null || compose "$@" pull --quiet; then
+    RESUMEN_IMAGENES="descargadas las últimas versiones"
+    return 0
+  fi
+  RESUMEN_IMAGENES="NO DESCARGADAS: el motor y el webmail siguen con las imágenes anteriores"
+  aviso "No se han podido descargar las imágenes nuevas: el motor y el webmail siguen con las anteriores, que pueden no tener los últimos parches de seguridad."
+  aviso "El motivo está arriba (límite de descargas de Docker Hub, sin conexión…). Cuando se resuelva, repite con --actualizar."
+}
+
 configurar_motor() {
   titulo "Ajustes del motor"
   docker image inspect "$IMAGEN_CURL" >/dev/null 2>&1 || docker pull -q "$IMAGEN_CURL" >/dev/null
@@ -1397,17 +1634,26 @@ configurar_motor() {
     aviso "No se pudieron aplicar todos los ajustes; el panel permite repetirlo en Ajustes → Servidor de correo."
   fi
 
-  # Lo ya configurado (por el panel o por una ejecución anterior) se respeta.
-  local existentes con_volcado=0 volcado_antiguo=0
-  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,certificate.mailway.cert,certificate.mailway.subjects.0,certificate.default.cert,certificate.default.private-key' 2>/dev/null || true)
+  # Lo ya configurado (por el panel o por una ejecución anterior) se respeta,
+  # salvo el nombre al que se emite si ha cambiado. Sin acme.mailway.secret:
+  # es el token de Cloudflare y no debe pasar por aquí.
+  local existentes con_volcado=0 volcado_antiguo=0 anterior="" acme=0
+  existentes=$(motor_api GET '/api/settings/keys?keys=acme.mailway.directory,acme.mailway.domains.0,acme.mailway.origin,certificate.mailway.cert,certificate.mailway.private-key,certificate.mailway.subjects.0,certificate.default.cert,certificate.default.private-key' 2>/dev/null || true)
   if printf '%s' "$existentes" | grep -q '"certificate.mailway.cert"'; then con_volcado=1; fi
   if certificado_del_volcado_antiguo "$existentes"; then volcado_antiguo=1; fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"acme.mailway.directory"'; then
-    CERT_CONFIGURADO=1
-    RESUMEN_CERT="Let's Encrypt emitido por el propio motor (configurado antes)"
-    ok "El motor ya emite su certificado con Let's Encrypt."
+    acme_al_nombre_actual "$existentes" || acme=$?
+    if [ "$acme" = 0 ]; then
+      CERT_CONFIGURADO=1
+      RESUMEN_CERT="Let's Encrypt emitido por el propio motor (configurado antes)"
+      ok "El motor ya emite su certificado con Let's Encrypt."
+    elif [ "$acme" = 2 ]; then
+      CERT_CONFIGURADO=1
+      RESUMEN_CERT="Let's Encrypt emitido por el propio motor, ahora para $MAIL_HOSTNAME (tarda unos minutos)"
+    fi
     if [ "$volcado_antiguo" = 1 ]; then retirar_certificado_antiguo; fi
     extractor_con_acme "$con_volcado" "$volcado_antiguo"
+    certificado_mailway_al_nombre_actual "$con_volcado" "$existentes"
     return 0
   fi
   if [ -z "$CF_TOKEN" ] && [ "$volcado_antiguo" = 1 ]; then
@@ -1418,9 +1664,16 @@ configurar_motor() {
     CERT_CONFIGURADO=1
     RESUMEN_CERT="certificado propio configurado a mano en el motor"
     ok "El motor ya tiene un certificado configurado a mano; no se modifica."
+    if [ -n "$MAIL_HOSTNAME_ANTERIOR" ]; then
+      RESUMEN_CERT+=" (comprueba que cubre $MAIL_HOSTNAME)"
+      aviso "Con el nombre nuevo, comprueba que ese certificado cubre $MAIL_HOSTNAME: Ajustes → Servidor de correo o deploy/instalar.sh --comprobar."
+    fi
     return 0
   fi
   if [ -z "$CF_TOKEN" ] && [ "$con_volcado" = 1 ]; then
+    anterior=$(certificado_de_otro_nombre "$existentes")
+  fi
+  if [ -z "$CF_TOKEN" ] && [ "$con_volcado" = 1 ] && [ -z "$anterior" ]; then
     # Instalación que ya usa el certificado de Traefik: mismas rutas, ahora
     # con el extractor. El nombre del servidor como sujeto explícito hace que
     # el motor lo sustituya al recargar aunque el certificado nuevo sea un
@@ -1432,6 +1685,12 @@ configurar_motor() {
     CERT_CONFIGURADO=1
     aplicar_extractor
     return 0
+  fi
+  if [ -n "$anterior" ]; then
+    # MAIL_HOSTNAME ha cambiado: el motor sigue con el par del nombre anterior
+    # (el extractor ya no lo retira mientras el motor lo use) y pasa al nuevo
+    # más abajo, en una sola operación, en cuanto el extractor lo tenga.
+    info "El motor usa el certificado de $anterior: pasa al de $MAIL_HOSTNAME en cuanto el extractor lo tenga, y mientras tanto conserva el anterior."
   fi
 
   if [ -n "$CF_TOKEN" ] && [ -n "$CF_ZONA_NOMBRE" ]; then
@@ -1460,6 +1719,7 @@ configurar_motor() {
         ok "Retirado certificate.default, el certificado de la instalación anterior: el motor pasa a usar el de Let's Encrypt."
       fi
       extractor_con_acme "$con_volcado" "$volcado_antiguo"
+      certificado_mailway_al_nombre_actual "$con_volcado" "$existentes"
     else
       aviso "No se pudo configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
     fi
@@ -1481,14 +1741,12 @@ configurar_motor() {
     aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
     return 0
   fi
-  local t=0 ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
-  while [ "$t" -lt 180 ]; do
-    if docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null; then break; fi
-    sleep 5
-    t=$((t + 5))
-  done
-  if ! docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null; then
+  local ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
+  if ! esperar_par_del_extractor; then
     RESUMEN_CERT="pendiente: Traefik aún no tiene el certificado de $MAIL_HOSTNAME (vuelve a ejecutar con --actualizar)"
+    if [ -n "$anterior" ]; then
+      RESUMEN_CERT="pendiente: el motor sigue con el certificado de $anterior; Traefik aún no tiene el de $MAIL_HOSTNAME (vuelve a ejecutar con --actualizar)"
+    fi
     aviso "Traefik aún no tiene el certificado de $MAIL_HOSTNAME. Cuando el DNS apunte aquí, ejecuta de nuevo con --actualizar."
     return 0
   fi
@@ -1503,6 +1761,107 @@ configurar_motor() {
   else
     aviso "No se pudo configurar el certificado de Traefik en el motor; revisa Ajustes → Servidor de correo."
   fi
+}
+
+# Espera (hasta 3 minutos) a que el extractor deje en el volumen del motor el
+# par de MAIL_HOSTNAME: Traefik puede tardar en obtenerlo.
+esperar_par_del_extractor() {
+  local t=0 ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
+  while [ "$t" -lt 180 ]; do
+    if docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null; then return 0; fi
+    sleep 5
+    t=$((t + 5))
+  done
+  docker exec mailway-mail test -s "$ruta/cert.pem" 2>/dev/null
+}
+
+# Con el ACME del motor, certificate.mailway puede seguir apuntando al par del
+# extractor de OTRO nombre: el de antes de cambiar MAIL_HOSTNAME, en una
+# instalación que empezó con el extractor y añadió después un token de
+# Cloudflare. El extractor solo mantiene el par del nombre actual, así que
+# ese par caducaría sin que nada lo avisara (y suele ser el certificado por
+# defecto). Pasa al del nombre actual en cuanto el extractor lo tiene, con el
+# certificado, la clave y el sujeto en una sola operación; hasta entonces se
+# conserva el anterior, y cada --actualizar lo vuelve a intentar.
+#   certificado_mailway_al_nombre_actual <con certificate.mailway: 0|1> <respuesta de /api/settings/keys>
+certificado_mailway_al_nombre_actual() {
+  local anterior ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
+  [ "$1" = 1 ] || return 0
+  anterior=$(certificado_de_otro_nombre "$2")
+  [ -n "$anterior" ] || return 0
+  if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
+    aviso "certificate.mailway usa el certificado de $anterior, que nadie renueva, y sin el volumen de certificados de Traefik no hay extractor que lo pase a $MAIL_HOSTNAME: bórralo en la web del motor (Settings → TLS → Certificates)."
+    return 0
+  fi
+  info "certificate.mailway usa el certificado de $anterior, que ya nadie renueva: pasa al de $MAIL_HOSTNAME en cuanto el extractor lo tenga."
+  if ! esperar_par_del_extractor; then
+    RESUMEN_CERT+="; certificate.mailway sigue con el de $anterior hasta que Traefik tenga el de $MAIL_HOSTNAME (vuelve a ejecutar con --actualizar)"
+    aviso "Traefik aún no tiene el certificado de $MAIL_HOSTNAME: certificate.mailway sigue con el de $anterior. Cuando el DNS apunte aquí, ejecuta de nuevo con --actualizar."
+    return 0
+  fi
+  if ! motor_ajustes \
+    certificate.mailway.cert "%{file:$ruta/cert.pem}%" \
+    certificate.mailway.private-key "%{file:$ruta/key.pem}%" \
+    certificate.mailway.subjects.0 "$MAIL_HOSTNAME"; then
+    RESUMEN_CERT+="; certificate.mailway sigue con el de $anterior, que nadie renueva (vuelve a ejecutar con --actualizar)"
+    aviso "No se pudo pasar certificate.mailway al certificado de $MAIL_HOSTNAME: sigue con el de $anterior, que nadie renueva. Repite con --actualizar."
+    return 0
+  fi
+  motor_api GET /api/reload/certificate >/dev/null || true
+  # Con el ACME de otra zona, el motor sigue emitiendo para el nombre
+  # anterior, pero ya tiene un certificado válido para el nuevo: este.
+  CERT_CONFIGURADO=1
+  RESUMEN_CERT+="; certificate.mailway, con el de Traefik para $MAIL_HOSTNAME que mantiene el extractor"
+  ok "certificate.mailway pasa del certificado de $anterior al de $MAIL_HOSTNAME, que mantiene el extractor."
+}
+
+# Valor de un ajuste en la respuesta de /api/settings/keys, sin espacios
+# alrededor (la web del motor los deja al editar) y en minúsculas.
+#   valor_ajuste <respuesta> <clave>
+valor_ajuste() {
+  printf '%s' "$1" | jqr -r --arg k "$2" '.data[$k] // "" | gsub("^\\s+|\\s+$"; "") | ascii_downcase' 2>/dev/null || true
+}
+
+# Nombre al que apunta certificate.mailway si son las rutas del extractor de
+# OTRO nombre (/opt/stalwart/certs/<nombre>/cert.pem y key.pem): el de antes
+# de cambiar MAIL_HOSTNAME. Nada si es el actual o si son otras rutas.
+certificado_de_otro_nombre() {
+  local cert clave re='^%\{file:/opt/stalwart/certs/([^/{}%]+)/(cert|key)\.pem\}%$' nombre
+  cert=$(valor_ajuste "$1" certificate.mailway.cert)
+  clave=$(valor_ajuste "$1" certificate.mailway.private-key)
+  [[ $cert =~ $re ]] && [ "${BASH_REMATCH[2]}" = cert ] || return 0
+  nombre=${BASH_REMATCH[1]}
+  [[ $clave =~ $re ]] && [ "${BASH_REMATCH[1]}" = "$nombre" ] && [ "${BASH_REMATCH[2]}" = key ] || return 0
+  if [ "$nombre" != "$MAIL_HOSTNAME" ] && host_valido "$nombre"; then printf '%s' "$nombre"; fi
+}
+
+# El ACME del motor ya configurado emite para acme.mailway.domains.0. Si el
+# nombre del servidor ha cambiado, pasa al nuevo con el token que ya guarda
+# el motor, siempre que el nombre nuevo esté en la misma zona de Cloudflare
+# (acme.mailway.origin): de otra zona, ese token puede no tener acceso y el
+# motor se quedaría sin poder renovar. Devuelve 0 si ya emite para el nombre
+# actual, 2 si se acaba de pasar a él y 1 si sigue con el anterior.
+acme_al_nombre_actual() {
+  local dominio zona
+  dominio=$(valor_ajuste "$1" acme.mailway.domains.0)
+  zona=$(valor_ajuste "$1" acme.mailway.origin)
+  zona=${zona%.}
+  if [ -z "$dominio" ] || [ "$dominio" = "$MAIL_HOSTNAME" ]; then return 0; fi
+  if [ -n "$zona" ] && [ "$MAIL_HOSTNAME" != "$zona" ] && [ "${MAIL_HOSTNAME%".$zona"}" = "$MAIL_HOSTNAME" ]; then
+    CERT_CONFIGURADO=0
+    RESUMEN_CERT="PENDIENTE: el motor sigue emitiendo para $dominio; $MAIL_HOSTNAME no está en la zona $zona de su token de Cloudflare"
+    aviso "El motor emite su certificado para $dominio en la zona $zona de Cloudflare, y $MAIL_HOSTNAME no está en ella: su token puede no tener acceso a la zona nueva."
+    aviso "Repite con CLOUDFLARE_API_TOKEN (Zona: Lectura y DNS: Edición en la zona de $MAIL_HOSTNAME) o emítelo en Ajustes → Servidor de correo → certificado automático."
+    return 1
+  fi
+  if motor_ajustes acme.mailway.domains.0 "$MAIL_HOSTNAME"; then
+    ok "El motor pasa a emitir su certificado para $MAIL_HOSTNAME (antes, $dominio) con el token de Cloudflare que ya tenía; tarda unos minutos."
+    return 2
+  fi
+  CERT_CONFIGURADO=0
+  RESUMEN_CERT="PENDIENTE: no se pudo pasar el certificado del motor de $dominio a $MAIL_HOSTNAME"
+  aviso "No se pudo pasar el certificado del motor de $dominio a $MAIL_HOSTNAME: emítelo en Ajustes → Servidor de correo → certificado automático."
+  return 1
 }
 
 # Extractor del certificado de Traefik (servicio certs-dumper, perfil «tls»;
@@ -2484,6 +2843,90 @@ conectar_cloudflare_en_skyway() {
   ok "Token de Cloudflare guardado en Skyway."
 }
 
+# ¿Arranca ya el panel con los valores que debe adoptar? Tras un despliegue
+# fallido, cancelado o aún en curso sigue en marcha el contenedor anterior,
+# con el entorno anterior: identidad.js no vería nada que cambiar (y el
+# resumen diría que ya los tenía) y el emparejado devolvería el motor al
+# nombre viejo. Se lee con bash: el entorno lleva secretos y no pasa por
+# ningún otro programa.
+#   panel_con_entorno_nuevo <contenedor del panel>
+panel_con_entorno_nuevo() {
+  local linea correo="" webmail="" panel="" ip=""
+  while IFS= read -r linea; do
+    case "$linea" in
+      MAILWAY_MAIL_HOSTNAME=*) correo=${linea#*=} ;;
+      MAILWAY_WEBMAIL_URL=*) webmail=${linea#*=} ;;
+      MAILWAY_PANEL_URL=*) panel=${linea#*=} ;;
+      MAILWAY_PUBLIC_IP=*) ip=${linea#*=} ;;
+    esac
+  done <<<"$(entorno_contenedor "$1")"
+  case ",$ADOPTAR_EN_PANEL," in *,servidor,*) [ "${correo,,}" = "$MAIL_HOSTNAME" ] || return 1 ;; esac
+  case ",$ADOPTAR_EN_PANEL," in *,webmail,*) [ "$(host_de_url "$webmail")" = "$WEBMAIL_HOSTNAME" ] || return 1 ;; esac
+  case ",$ADOPTAR_EN_PANEL," in *,panel,*) [ "$(host_de_url "$panel")" = "$PANEL_HOSTNAME" ] || return 1 ;; esac
+  case ",$ADOPTAR_EN_PANEL," in *,ip,*) [ "$ip" = "$IP_PUBLICA" ] || return 1 ;; esac
+  return 0
+}
+
+# ¿Queda pendiente que el panel adopte la identidad nueva? Mientras tanto no
+# se empareja: el emparejado aplica en el motor los ajustes recomendados con
+# la identidad que tenga el panel, que aún es la anterior.
+identidad_pendiente() { [ "${RESUMEN_IDENTIDAD%%:*}" = pendiente ]; }
+
+# Tras un cambio de nombres o de IP confirmado: el panel adopta los valores
+# nuevos de su entorno aunque se hubieran cambiado a mano (o sea anterior al
+# registro con el que los adopta solo), y con el nombre nuevo fija los ajustes
+# recomendados en el motor. Sin esto, el emparejado devolvía el motor al
+# nombre anterior y el panel seguía publicando los nombres viejos. Lo que no
+# se logra queda pendiente en deploy/.env para la siguiente ejecución. Nunca
+# interrumpe la instalación.
+#   adoptar_identidad_en_panel <contenedor del panel>
+adoptar_identidad_en_panel() {
+  local contenedor=$1 salida="" cambios
+  [ -n "$ADOPTAR_EN_PANEL" ] || return 0
+  titulo "Identidad del servidor en el panel"
+  local a_mano="revísala en el panel, en Ajustes → Identidad del servidor (y aplica los ajustes recomendados en Ajustes → Servidor de correo)."
+  local repetir="se retoma al repetir sudo bash deploy/instalar.sh --actualizar"
+  if [ -z "$contenedor" ]; then
+    RESUMEN_IDENTIDAD="pendiente: no se ha localizado el panel; $repetir, o $a_mano"
+    aviso "No se ha localizado el panel: $a_mano"
+    return 0
+  fi
+  if ! esperar_sano "$contenedor" 180; then
+    RESUMEN_IDENTIDAD="pendiente: el panel no está sano; $repetir"
+    aviso "El panel ($contenedor) no está sano: la identidad nueva se adopta al repetir sudo bash deploy/instalar.sh --actualizar. Revisa: docker logs $contenedor"
+    return 0
+  fi
+  if ! panel_con_entorno_nuevo "$contenedor"; then
+    RESUMEN_IDENTIDAD="pendiente: el panel en marcha ($contenedor) aún arranca con los valores anteriores (¿despliegue fallido o en curso?); $repetir cuando arranque con los nuevos"
+    aviso "El panel en marcha ($contenedor) aún arranca con los valores anteriores (¿el despliegue ha fallado o sigue en curso?): no adopta nada ni se empareja con él. Cuando arranque con los nuevos, repite: sudo bash deploy/instalar.sh --actualizar"
+    return 0
+  fi
+  if ! docker exec "$contenedor" test -f server/dist/tools/identidad.js 2>/dev/null; then
+    RESUMEN_IDENTIDAD="pendiente: el panel desplegado no adopta la identidad desde el servidor; despliega la versión actual de Mailway y $repetir, o $a_mano"
+    aviso "El panel desplegado no adopta la identidad del servidor desde la terminal: despliega la versión actual de Mailway y repite --actualizar, o $a_mano"
+    return 0
+  fi
+  # Como el usuario del panel («node»): lo que toque en /data debe seguir siendo suyo.
+  preparar_errores_herramienta
+  if ! salida=$(docker exec -u node "$contenedor" node server/dist/tools/identidad.js \
+    --adoptar "$ADOPTAR_EN_PANEL" </dev/null 2>"$ERR_TMP"); then
+    mostrar_errores_herramienta
+    RESUMEN_IDENTIDAD="pendiente: el panel no ha podido adoptarla; $repetir, o $a_mano"
+    aviso "El panel no ha podido adoptar la identidad nueva: $a_mano"
+    return 0
+  fi
+  mostrar_errores_herramienta
+  olvidar_adopcion_pendiente
+  # Nombres, URL e IP: la salida no lleva secretos.
+  cambios=$(printf '%s' "$salida" | jqr -r '[(.cambios // [])[] | "\(.antes) → \(.despues)"] | join("; ")' 2>/dev/null | tr -d '[:cntrl:]' || true)
+  if [ -n "$cambios" ]; then
+    RESUMEN_IDENTIDAD="adoptada en Ajustes del panel ($cambios)"
+  else
+    RESUMEN_IDENTIDAD="Ajustes del panel ya tenía los valores nuevos"
+  fi
+  ok "Identidad del servidor: $RESUMEN_IDENTIDAD."
+}
+
 # Empareja el panel con Skyway: la herramienta del panel crea (si falta) el
 # administrador, completa la puesta en marcha y emite el token de gestión
 # «Skyway», que pasa por la entrada estándar a la herramienta de Skyway. Nunca
@@ -2582,8 +3025,17 @@ emparejar_con_skyway() {
 # desplegado y Skyway no está conectado con otro panel de Mailway.
 emparejar_al_terminar() {
   if [ -z "$PANEL_CONTENEDOR" ]; then return 0; fi
+  if identidad_pendiente; then
+    aviso_identidad_sin_emparejar
+    return 0
+  fi
   if skyway_con_otro_panel; then return 0; fi
   emparejar_con_skyway
+}
+
+aviso_identidad_sin_emparejar() {
+  RESUMEN_EMPAREJADO="sin emparejar: el panel aún no ha adoptado la identidad nueva"
+  aviso "No se empareja Skyway con el panel hasta que adopte la identidad nueva: el emparejado aplica en el motor los ajustes del panel, que aún tiene la anterior. Se retoma al repetir el instalador (--actualizar o --emparejar)."
 }
 
 # --emparejar: repite solo el emparejado con la configuración de deploy/.env.
@@ -2612,10 +3064,24 @@ emparejar_solo() {
     fallo "El contenedor $PANEL_CONTENEDOR no lo gestiona Skyway (le faltan sus etiquetas skyway.service y skyway.project)."
   fi
   info "Panel: $PANEL_CONTENEDOR (https://$PANEL_HOSTNAME)"
-  emparejar_con_skyway
+  # Un cambio de nombres o de IP que el panel no llegó a adoptar va antes:
+  # emparejar con la identidad anterior devolvería el motor al nombre viejo.
+  retomar_adopcion_pendiente
+  if [ -n "$ADOPTAR_EN_PANEL" ]; then
+    MAIL_HOSTNAME=$(leer_env MAIL_HOSTNAME)
+    WEBMAIL_HOSTNAME=$(leer_env WEBMAIL_HOSTNAME)
+    IP_PUBLICA=$(leer_env MAILWAY_PUBLIC_IP)
+    adoptar_identidad_en_panel "$PANEL_CONTENEDOR"
+  fi
+  if identidad_pendiente; then
+    aviso_identidad_sin_emparejar
+  else
+    emparejar_con_skyway
+  fi
   conectar_cloudflare_junto_a_skyway
   titulo "Resumen"
   printf '\n'
+  if [ -n "$RESUMEN_IDENTIDAD" ]; then info "Identidad en el panel: $RESUMEN_IDENTIDAD"; fi
   info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
   if [ -n "$RESUMEN_CF_PANEL" ]; then info "Cloudflare (panel): $RESUMEN_CF_PANEL"; fi
   resumen_administrador
@@ -2831,6 +3297,8 @@ resumen() {
   info "DNS inverso (PTR):   $RESUMEN_PTR"
   info "Puerto 25 de salida: $RESUMEN_P25"
   info "Certificado IMAP/SMTP: $RESUMEN_CERT"
+  if [ -n "$RESUMEN_IMAGENES" ]; then info "Imágenes:            $RESUMEN_IMAGENES"; fi
+  if [ -n "$RESUMEN_IDENTIDAD" ]; then info "Identidad en el panel: $RESUMEN_IDENTIDAD"; fi
   printf '\n'
   if [ "$CERT_CONFIGURADO" = 0 ]; then
     info "Mientras el motor no tenga un certificado válido para $MAIL_HOSTNAME, la API de envío del panel"
@@ -2865,7 +3333,26 @@ resumen() {
     esac
   fi
   info "  $((paso += 1)). En Ajustes → Servidor de correo, comprueba el certificado y el nombre del servidor."
-  if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ]; then
+  if [ "$RESUMEN_P25" = BLOQUEADO ]; then
+    info "  $((paso += 1)). Pide al proveedor del servidor que desbloquee el puerto 25 de salida: sin él no se entrega"
+    info "     correo a otros servidores (muchos lo bloquean por defecto; OVH, Hetzner y AWS, entre ellos)."
+  fi
+  if [ -n "$MAIL_HOSTNAME_ANTERIOR" ]; then
+    info "  $((paso += 1)). Cambia a $MAIL_HOSTNAME el MX (y la autoconfiguración) de los dominios de los clientes: la ficha"
+    info "     de cada dominio en el panel muestra los registros nuevos o los aplica en Cloudflare."
+    info "  $((paso += 1)). Vuelve a configurar los programas de correo que usaban $MAIL_HOSTNAME_ANTERIOR (los enlaces de"
+    info "     configuración del panel ya llevan $MAIL_HOSTNAME)."
+  fi
+  if [ "${RESUMEN_IMAGENES%%:*}" = "NO DESCARGADAS" ]; then
+    info "  $((paso += 1)). Repite sudo bash deploy/instalar.sh --actualizar cuando haya conexión con Docker Hub."
+  fi
+  if identidad_pendiente; then
+    local y_emparejado=""
+    if [ "$CON_SKYWAY" = 1 ]; then y_emparejado=" y se empareja con Skyway"; fi
+    info "  $((paso += 1)). Cuando el panel esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar: el panel"
+    info "     adopta los nombres y la IP nuevos$y_emparejado. Mientras, compruébalos en Ajustes → Identidad del servidor."
+  fi
+  if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ] && ! identidad_pendiente; then
     info "  $((paso += 1)). Empareja Skyway con el panel: sudo bash deploy/instalar.sh --emparejar"
     info "     (o a mano, en Skyway → Ajustes → Correo (Mailway): sección 4.1 de docs/DESPLIEGUE-SKYWAY.md)."
   fi
@@ -2887,6 +3374,104 @@ preparar_diagnostico() {
   STALWART_ADMIN_PASSWORD=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
   INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
   INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
+  WEBMAIL_HOSTNAME=$(leer_env WEBMAIL_HOSTNAME)
+  PANEL_HOSTNAME=$(leer_env PANEL_HOSTNAME)
+  IP_PUBLICA=$(leer_env MAILWAY_PUBLIC_IP)
+  PANEL_INTERNAL_URL=$(leer_env MAILWAY_PANEL_INTERNAL_URL)
+  if [ "$CON_SKYWAY" = 0 ]; then PANEL_INTERNAL_URL=${PANEL_INTERNAL_URL:-http://mailway-panel:4100}; fi
+  if ! coincide "$PANEL_INTERNAL_URL" '^http://[a-z0-9][a-z0-9_.-]*:[0-9]{1,5}$'; then PANEL_INTERNAL_URL=""; fi
+}
+
+# Contenedor del panel, según la dirección por la que lo llama el webmail
+# (MAILWAY_PANEL_INTERNAL_URL): con Skyway, skyway-<proyecto>-<servicio>.
+contenedor_del_panel() {
+  local re='^http://([a-z0-9][a-z0-9_.-]*):[0-9]{1,5}$'
+  if [[ $PANEL_INTERNAL_URL =~ $re ]] && [ "${BASH_REMATCH[1]}" != panel-pendiente.invalid ]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# El webmail llama al panel por dentro para cambiar contraseñas: se comprueba
+# desde el propio webmail, con la misma dirección, y se muestra la versión.
+comprobar_enlace_panel() {
+  local salida version="" re='"version":"([0-9A-Za-z.+-]{1,40})"'
+  if [ -z "$PANEL_INTERNAL_URL" ]; then
+    aviso "deploy/.env no indica cómo llega el webmail al panel (MAILWAY_PANEL_INTERNAL_URL): el cambio de contraseña desde el webmail no funciona. Repite: sudo bash deploy/instalar.sh --actualizar"
+    return 1
+  fi
+  if ! salida=$(docker exec mailway-webmail curl -fsS --max-time 8 "$PANEL_INTERNAL_URL/api/health" 2>/dev/null); then
+    aviso "El webmail no llega al panel en $PANEL_INTERNAL_URL: el cambio de contraseña desde el webmail falla. Revisa el contenedor del panel (docker logs) o repite: sudo bash deploy/instalar.sh --actualizar"
+    return 1
+  fi
+  if [[ $salida =~ $re ]]; then version=${BASH_REMATCH[1]}; fi
+  ok "El webmail llega al panel ($PANEL_INTERNAL_URL): Mailway ${version:-de versión desconocida}."
+}
+
+# Junto a Skyway: ¿lee su Traefik las rutas de Mailway (webmail de marca
+# blanca y autoconfiguración de los dominios de los clientes)? Solo lectura:
+# los parámetros con los que corre.
+comprobar_traefik() {
+  local argumentos
+  if [ "$(estado_contenedor skyway-traefik)" = ausente ]; then
+    aviso "No existe el Traefik de Skyway (skyway-traefik): ni el panel ni el webmail se publican. Arranca Skyway."
+    return 1
+  fi
+  argumentos=$(argumentos_traefik)
+  if printf '%s' "$argumentos" | grep -q 'api/traefik/mailway'; then
+    ok "Traefik lee las rutas de Mailway a través de Skyway (dominios de los clientes)."
+  elif printf '%s' "$argumentos" | grep -q 'providers.http.endpoint'; then
+    ok "Traefik consulta un proveedor HTTP de rutas (Skyway anterior a la 0.34)."
+  else
+    aviso "El Traefik de Skyway no lee las rutas de Mailway: el webmail de marca blanca y la autoconfiguración de los dominios de los clientes no se publican. Repite: sudo bash deploy/instalar.sh --actualizar"
+    return 1
+  fi
+}
+
+# DNS público de los tres nombres, PTR y puerto 25 de salida: las causas
+# habituales de que no salga o no llegue el correo en un servidor nuevo. Lo
+# que no se puede consultar (resolutores filtrados) se dice, pero no cuenta
+# como incidencia. Deja el número de incidencias en INCIDENCIAS_INTERNET.
+INCIDENCIAS_INTERNET=0
+comprobar_desde_internet() {
+  local nombre r incidencias=0
+  if ! ipv4_valida "$IP_PUBLICA"; then
+    aviso "deploy/.env no guarda la IP pública (MAILWAY_PUBLIC_IP): no se comprueban el DNS ni el PTR. Repite el instalador."
+    incidencias=$((incidencias + 1))
+  else
+    for nombre in "$MAIL_HOSTNAME" "$WEBMAIL_HOSTNAME" "$PANEL_HOSTNAME"; do
+      host_valido "$nombre" || continue
+      r=0
+      resuelve_a "$nombre" "$IP_PUBLICA" || r=$?
+      case "$r" in
+        0) ok "$nombre → $IP_PUBLICA." ;;
+        1)
+          if [ -n "$DNS_LEIDAS" ]; then
+            aviso "$nombre apunta a $DNS_LEIDAS, no a $IP_PUBLICA (la IP de deploy/.env): corrige su registro A (sin proxy)."
+          else
+            aviso "$nombre no tiene registro A: créalo hacia $IP_PUBLICA (sin proxy)."
+          fi
+          incidencias=$((incidencias + 1))
+          ;;
+        *) info "$nombre: ningún resolutor público ha respondido; no se ha podido comprobar su DNS." ;;
+      esac
+    done
+    comprobar_ptr
+    case "$RESUMEN_PTR" in
+      correcto*) ok "DNS inverso (PTR) $RESUMEN_PTR." ;;
+      "sin comprobar"*) info "DNS inverso (PTR) $RESUMEN_PTR." ;;
+      *)
+        aviso "DNS inverso (PTR) $RESUMEN_PTR."
+        incidencias=$((incidencias + 1))
+        ;;
+    esac
+  fi
+  if puerto25_abierto; then
+    ok "Puerto 25 de salida abierto."
+  else
+    aviso "El puerto 25 de salida parece bloqueado: sin él no se entrega correo a otros servidores. Pide al proveedor del servidor que lo desbloquee."
+    incidencias=$((incidencias + 1))
+  fi
+  INCIDENCIAS_INTERNET=$incidencias
 }
 
 # Muestra la salida de una comprobación hecha dentro de un contenedor con el
@@ -2915,10 +3500,18 @@ ejecutar_comprobacion() {
 # autenticada a la API del motor: cada contraseña incorrecta cuenta para su
 # bloqueo automático.
 comprobar_instalacion() {
-  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-webmail)
-  if [ "$CON_SKYWAY" = 0 ]; then contenedores+=(mailway-panel); fi
+  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-webmail) panel="" solo_motor=0
+  if [ "${MAILWAY_COMPROBAR_SOLO_MOTOR:-0}" = 1 ]; then solo_motor=1; fi
+  if [ "$solo_motor" = 0 ]; then
+    if [ "$CON_SKYWAY" = 0 ]; then panel=mailway-panel; else panel=$(contenedor_del_panel); fi
+    if [ -n "$panel" ]; then contenedores+=("$panel"); fi
+  fi
 
   titulo "Contenedores"
+  if [ "$solo_motor" = 0 ] && [ -z "$panel" ]; then
+    aviso "deploy/.env no indica el contenedor del panel (MAILWAY_PANEL_INTERNAL_URL). Repite: sudo bash deploy/instalar.sh --actualizar"
+    fallos=$((fallos + 1))
+  fi
   for c in "${contenedores[@]}"; do
     estado=$(estado_contenedor "$c")
     case "$estado" in
@@ -2987,6 +3580,10 @@ comprobar_instalacion() {
     ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" conexion ||
       fallos=$((fallos + 1))
     info "Inicio de sesión real con un buzón: sudo bash deploy/instalar.sh --probar-acceso"
+    if [ "$solo_motor" = 0 ]; then
+      titulo "Panel"
+      comprobar_enlace_panel || fallos=$((fallos + 1))
+    fi
   else
     info "Se comprueba desde el webmail, que no está en marcha."
   fi
@@ -2997,12 +3594,35 @@ comprobar_instalacion() {
       fallos=$((fallos + 1))
   fi
 
+  if [ "$solo_motor" = 0 ] && [ -n "$(leer_env MAILWAY_ADOPCION_PENDIENTE)" ]; then
+    titulo "Identidad del servidor"
+    aviso "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env (MAILWAY_ADOPCION_PENDIENTE): cuando esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar."
+    fallos=$((fallos + 1))
+  fi
+  if [ "$solo_motor" = 0 ]; then
+    if [ "$CON_SKYWAY" = 1 ]; then
+      titulo "Traefik de Skyway"
+      comprobar_traefik || fallos=$((fallos + 1))
+    fi
+    titulo "DNS público, PTR y puerto 25 de salida"
+    comprobar_desde_internet
+    fallos=$((fallos + INCIDENCIAS_INTERNET))
+  fi
+
   titulo "Resultado"
   if [ "$fallos" = 0 ]; then
-    ok "Todo correcto. Quedan fuera el DNS público, el PTR, los puertos vistos desde Internet y la entrega a otros servidores (sección 12.1 de docs/DESPLIEGUE-SKYWAY.md)."
+    if [ "$solo_motor" = 1 ]; then
+      ok "Todo correcto en el motor, el webmail y el extractor (MAILWAY_COMPROBAR_SOLO_MOTOR=1: sin el panel, Traefik ni las comprobaciones desde Internet)."
+    else
+      ok "Todo correcto. Quedan fuera los puertos de entrada vistos desde Internet, las listas negras y la entrega a otros servidores (sección 12.1 de docs/DESPLIEGUE-SKYWAY.md)."
+    fi
     return 0
   fi
-  aviso "$fallos comprobaciones con incidencias (detalle arriba)."
+  if [ "$fallos" = 1 ]; then
+    aviso "1 comprobación con incidencias (detalle arriba)."
+  else
+    aviso "$fallos comprobaciones con incidencias (detalle arriba)."
+  fi
   return 1
 }
 
@@ -3108,7 +3728,10 @@ main() {
   comprobar_ptr
   levantar_servicios
   configurar_motor
-  if [ "$CON_SKYWAY" = 0 ]; then conectar_cloudflare_autonoma; fi
+  if [ "$CON_SKYWAY" = 0 ]; then
+    adoptar_identidad_en_panel mailway-panel
+    conectar_cloudflare_autonoma
+  fi
 
   if [ "$CON_SKYWAY" = 1 ]; then
     desplegar_en_skyway
@@ -3120,6 +3743,9 @@ main() {
       ok "Webmail enlazado con el panel ($PANEL_INTERNAL_URL)."
     fi
     configurar_proveedor_traefik
+    # Antes del emparejado: aplica en el motor los ajustes recomendados con
+    # el nombre que tenga el panel, que debe ser ya el nuevo.
+    adoptar_identidad_en_panel "$PANEL_CONTENEDOR"
     # Lo último que puede fallar: así la contraseña del administrador que
     # crea el emparejado llega al resumen sin que nada la interrumpa.
     emparejar_al_terminar

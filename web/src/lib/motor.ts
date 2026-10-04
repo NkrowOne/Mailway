@@ -150,3 +150,16 @@ export const textoDns: Record<PlatformDnsRecord['status'], string> = {
   mismatch: 'Otra IP',
   unknown: 'Sin dato',
 };
+
+/** GET /api/settings/mail-hostname/impact: lo que arrastra cambiar el nombre del servidor. */
+export interface ImpactoCambioNombre {
+  /** Nombre con el que se anuncia hoy el motor (o el de Ajustes). */
+  actual: string;
+  nuevo: string;
+  dominios: { total: number; conMxAlActual: number };
+  registroA: { ips: string[] | null; ip: string; apuntaAqui: boolean | null };
+  ptr: { ip: string; nombres: string[] | null; coincide: boolean | null } | null;
+  certificado: { cubre: boolean | null; detalle: string };
+  comando: string;
+  cambiaDominioBase: boolean;
+}

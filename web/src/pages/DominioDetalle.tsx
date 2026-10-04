@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type CheckStatus, type DnsCheck, type User } from '../lib/api';
+import { api, ApiError, type CheckStatus, type DnsCheck, type SetupStatus, type User } from '../lib/api';
 import {
   invalidarTrasAltaOBaja,
   lecturaDominio,
@@ -129,8 +129,26 @@ export default function DominioDetalle() {
 
   const conflicto = useConflicto(id);
 
+  // En una instancia de demostración no hay DNS que medir: la propiedad se
+  // puede simular para recorrer buzones, alias y el portal.
+  const instancia = useQuery({
+    queryKey: ['setup'],
+    queryFn: () => api.get<SetupStatus>('/api/setup/status'),
+  });
+  const simular = useMutation({
+    mutationFn: () => api.post<{ domain: DominioCorreo }>(`/api/demo/domains/${id}/ownership`),
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], data);
+      await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      toast('ok', 'Propiedad simulada: ya puedes crear buzones y alias en este dominio de demostración.');
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido simular la propiedad.'),
+  });
+
   const verify = useMutation({
-    mutationFn: (_origen: OrigenMedicion) => api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`),
+    mutationFn: (_origen: OrigenMedicion) =>
+      api.post<{ domain: DominioCorreo; ownershipCheck?: boolean | null }>(`/api/domains/${id}/verify`),
     onSuccess: async (data, origen) => {
       const antes = queryClient.getQueryData<{ domain: DominioCorreo }>(['domain', id])?.domain;
       queryClient.setQueryData(['domain', id], data);
@@ -144,6 +162,8 @@ export default function DominioDetalle() {
       const propiedadNueva = antes ? propiedadPendiente(antes) && !propiedadPendiente(d) : false;
       // El aviso dice qué ha pasado: un DNS que no se pudo leer no es una
       // medición completada, y la propiedad recién comprobada se anuncia.
+      // «No se pudo consultar el DNS» va antes que «no se encuentra el TXT»:
+      // si no, quien ya lo creó bien lo revisaría o lo volvería a crear.
       if (report.allRequiredOk) {
         toast('ok', 'Dominio verificado. Ya puede enviar y recibir correo.');
       } else if (propiedadNueva) {
@@ -151,7 +171,12 @@ export default function DominioDetalle() {
           'ok',
           'Propiedad del dominio comprobada: ya puedes crear buzones y alias. Para enviar y recibir correo, completa los registros obligatorios.',
         );
-      } else if (origen === 'propiedad' && propiedadPendiente(d)) {
+      } else if (origen === 'propiedad' && propiedadPendiente(d) && data.ownershipCheck === null) {
+        toast(
+          'error',
+          'No se ha podido consultar el DNS para comprobar la propiedad del dominio. Vuelve a verificar en unos minutos.',
+        );
+      } else if (origen === 'propiedad' && propiedadPendiente(d) && data.ownershipCheck === false) {
         toast(
           'error',
           'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acabas de crearlo, espera unos minutos y vuelve a verificar.',
@@ -387,11 +412,27 @@ export default function DominioDetalle() {
           </div>
         )}
 
+        {record.recepcionExterna && (
+          <BloqueRecepcionExterna dominio={visible} mx={conflicto.data?.mxActuales ?? []} />
+        )}
+
+        {conflicto.data?.avisoMtaSts && (
+          <div role="alert" className="rounded-lg border border-[rgb(var(--vigilar)/0.4)] bg-vigilar-fondo px-4 py-3">
+            <p className="rotulo text-vigilar">Política MTA-STS del proveedor actual</p>
+            <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.avisoMtaSts}</p>
+          </div>
+        )}
+
         {pendientePropiedad && record.ownershipRecord && (
           <BloquePropiedad
             registro={record.ownershipRecord}
             midiendo={verify.isPending}
             onVerificar={() => verify.mutate('propiedad')}
+            demo={
+              instancia.data?.demoMode
+                ? { simulando: simular.isPending, onSimular: () => simular.mutate() }
+                : undefined
+            }
           />
         )}
 
@@ -466,8 +507,8 @@ export default function DominioDetalle() {
         <Hoja title="Eliminar el dominio" flush>
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
             <p className="min-w-0 max-w-[75ch] flex-1 basis-60 text-sm text-tinta-3">
-              Se eliminan el dominio, sus buzones con su correo y sus alias. Los registros DNS no se
-              modifican.
+              Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca
+              blanca que cuelgan de él. Los registros DNS no se modifican.
             </p>
             <Button variant="peligro" onClick={abrirEliminar}>
               Eliminar el dominio
@@ -481,9 +522,10 @@ export default function DominioDetalle() {
           <p className="text-base text-tinta-2">
             Se eliminarán el dominio, <strong className="text-tinta">todos sus buzones con su
             correo</strong> y sus alias, tanto de Mailway como del servidor de correo. Las claves de
-            API que envían desde estos buzones dejarán de funcionar, y los alias de otros dominios
-            que reenvían a ellos dejarán de hacerlo. Esta acción no se puede deshacer. Los registros
-            DNS no se modifican.
+            API que envían desde estos buzones dejarán de funcionar, los alias de otros dominios
+            que reenvían a ellos dejarán de hacerlo y los dominios de marca blanca que cuelgan de él
+            (por ejemplo, webmail.{visible}) dejarán de publicarse. Esta acción no se puede deshacer.
+            Los registros DNS no se modifican.
           </p>
           <Input
             label={`Escribe ${visible} para confirmar`}
@@ -524,27 +566,46 @@ function BloquePropiedad({
   registro,
   midiendo,
   onVerificar,
+  demo,
 }: {
   registro: RegistroPropiedad;
   midiendo: boolean;
   onVerificar: () => void;
+  /** Solo en una instancia de demostración (MAILWAY_DEMO=1). */
+  demo?: { simulando: boolean; onSimular: () => void };
 }) {
   return (
     <Hoja
       title="Comprobar la propiedad sin cambiar el MX"
       meta="Propiedad pendiente"
       actions={
-        <Button variant="perfil" busy={midiendo} onClick={onVerificar}>
-          Verificar
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {demo && (
+            <Button variant="perfil" busy={demo.simulando} onClick={demo.onSimular}>
+              Simular verificación
+            </Button>
+          )}
+          <Button variant="perfil" busy={midiendo} onClick={onVerificar}>
+            Verificar
+          </Button>
+        </div>
       }
     >
       <div className="flex flex-col gap-3">
+        {demo && (
+          <p className="max-w-[75ch] rounded-lg border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta-2">
+            Instancia de demostración: «Simular verificación» da por comprobada la propiedad sin
+            consultar el DNS, para poder crear buzones y alias. Al arrancar el panel sin el modo
+            demostración, la propiedad simulada vuelve a quedar pendiente.
+          </p>
+        )}
         <p className="max-w-[75ch] text-base text-tinta-2">
           Antes de crear buzones o alias es necesario comprobar que el dominio es tuyo. Queda
           comprobado en cuanto el registro MX apunta a este servidor. Si el correo del dominio
           todavía llega a otro proveedor (por ejemplo, para preparar los buzones antes del
-          traslado), crea este registro TXT, que no afecta al correo actual, y pulsa «Verificar».
+          traslado), crea este registro TXT y pulsa «Verificar». El TXT no cambia dónde se recibe
+          el correo: mientras el MX apunte al proveedor actual, todo el correo del dominio, también
+          el que se envíe desde este servidor, sigue llegando allí.
         </p>
         <Muestra rotulo="Registro TXT de verificación" copiar={registro.content}>
           <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
@@ -559,6 +620,39 @@ function BloquePropiedad({
         <p className="max-w-[75ch] text-sm text-tinta-3">
           Si el DNS del dominio está en Cloudflare, «Revisar cambios» en la configuración automática
           lo crea junto con el resto de registros. Mailway comprueba la propiedad en cada medición.
+        </p>
+      </div>
+    </Hoja>
+  );
+}
+
+/**
+ * El MX apunta a otro proveedor: el servidor entrega allí lo que se envía a
+ * este dominio, igual que el resto de Internet. Explica por qué los buzones
+ * de aquí no reciben nada todavía y qué pasa al hacer el cambio.
+ */
+function BloqueRecepcionExterna({ dominio, mx }: { dominio: string; mx: string[] }) {
+  return (
+    <Hoja title="El correo se recibe en otro proveedor" meta="Recepción externa">
+      <div className="flex flex-col gap-3">
+        <p className="max-w-[75ch] text-base text-tinta-2">
+          El registro MX de <span className="valor break-all">{dominio}</span> apunta a{' '}
+          {mx.length > 0 ? <span className="valor break-all">{mx.join(', ')}</span> : 'otro servidor'}, así
+          que su correo se recibe allí. Mientras sea así, lo que se envíe desde este servidor a
+          direcciones de este dominio (buzones de otros clientes, la web, la API de envío o los
+          formularios) también se entrega en ese proveedor, igual que el correo que llega de
+          Internet, y los buzones y alias creados aquí no lo reciben. Las respuestas a los mensajes
+          que se envíen desde aquí también llegan al proveedor actual.
+        </p>
+        <p className="max-w-[75ch] text-sm text-tinta-2">
+          Hay una excepción: el correo que llega de Internet a un alias de otro dominio de este
+          servidor que reenvía a un buzón de este dominio se entrega en el buzón de aquí, no en el
+          proveedor actual. Hasta hacer el cambio, revisa esos reenvíos.
+        </p>
+        <p className="max-w-[75ch] text-sm text-tinta-3">
+          Cuando el MX apunte a este servidor, Mailway lo detecta en la siguiente comprobación y el
+          correo empieza a entregarse en los buzones de aquí. Para adelantarlo, pulsa «Comprobar el
+          DNS ahora».
         </p>
       </div>
     </Hoja>
@@ -601,12 +695,18 @@ function RegistroMedido({
           <span className="text-sm text-tinta-3">pendiente de generar en el servidor de correo</span>
         </p>
       ) : (
-        <Muestra rotulo="Valor que hay que crear" copiar={check.expected} className="mt-2.5">
+        // Con un registro que ya existe y solo hay que completar (el SPF), se
+        // copia el valor completo con el que sustituirlo, no el del servidor.
+        <Muestra
+          rotulo={check.suggested ? 'Sustituye el registro actual por' : 'Valor que hay que crear'}
+          copiar={check.suggested ?? check.expected}
+          className="mt-2.5"
+        >
           <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
             <dt className="rotulo sm:pt-px">Nombre</dt>
             <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.name}</dd>
             <dt className="rotulo mt-1 sm:mt-0 sm:pt-px">Valor</dt>
-            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.expected}</dd>
+            <dd className={`valor min-w-0 text-sm text-tinta ${partible}`}>{check.suggested ?? check.expected}</dd>
           </dl>
         </Muestra>
       )}

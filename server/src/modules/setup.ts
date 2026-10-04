@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { lookupA, lookupPtr } from '../core/dns';
 import { db, now } from '../core/db';
+import { detectarIpPublica } from '../core/ippublica';
 import { badRequest, forbidden, tooMany } from '../core/errors';
 import { isValidHostname } from '../core/hostnames';
 import { buildEngine, engineConfigured } from '../engine';
@@ -20,6 +21,10 @@ import {
 import { ensureDefaultPlans } from './clients';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { applyRecommendedEngineSettings } from './engineops';
+import { alCambiarIpGuardada } from './ipservidor';
+// Dependencia circular a propósito (entorno.ts usa el esquema y los ajustes
+// recomendados de aquí): solo se usa dentro de una ruta, nunca al cargar.
+import { revisarIdentidadConEntorno } from './entorno';
 import {
   type InstanceSettings,
   getEngineSettings,
@@ -90,7 +95,7 @@ function httpUrl(message: string) {
     .refine((value) => /^https?:\/\//i.test(value), message);
 }
 
-const instanceSchema = z.object({
+export const instanceSchema = z.object({
   brandName: z.string().trim().min(1).max(60).optional(),
   // Se escribe tal cual en la configuración del motor y en los registros MX:
   // el mismo validador que usan la comprobación DNS y el fichero de zona.
@@ -275,6 +280,23 @@ export async function connectEngine(settings: EngineSettings): Promise<Recommend
 }
 
 /**
+ * Con Stalwart, el nombre del servidor de correo es obligatorio: sin él, los
+ * datos de conexión de los buzones, el portal y los perfiles salen sin
+ * servidor y el motor no recibe sus ajustes recomendados. Un campo vacío vale
+ * si el entorno lo define (MAILWAY_MAIL_HOSTNAME), porque entonces es el que
+ * se usa. Solo se mira si la petición trae el campo.
+ */
+function exigirNombreDelServidor(body: InstanceInput): void {
+  if (body.mailHostname === undefined || body.mailHostname.trim()) return;
+  if (config.mailHostnameDefault.trim()) return;
+  if (getEngineSettings()?.kind !== 'stalwart') return;
+  throw badRequest(
+    'Indica el nombre del servidor de correo (FQDN), por ejemplo mail.miempresa.com: sin él, los datos de conexión de los buzones no incluyen el servidor.',
+    'mail_hostname_required',
+  );
+}
+
+/**
  * Paso 3: guarda la identidad del servidor y, con el nombre ya conocido, se
  * lo fija al motor: sin él, Stalwart anuncia el identificador del contenedor
  * en su DNS.
@@ -282,13 +304,14 @@ export async function connectEngine(settings: EngineSettings): Promise<Recommend
 export async function saveInstanceIdentity(
   body: InstanceInput,
 ): Promise<{ instance: InstanceSettings; recommended: RecommendedOutcome | null }> {
+  exigirNombreDelServidor(body);
   const instance = setInstanceSettings(body);
   const recommended = await applyRecommendedQuietly(getEngineSettings());
   return { instance, recommended };
 }
 
 /** Campos de la identidad que el instalador define en el entorno del panel. */
-const INSTANCE_FROM_ENV = [
+export const INSTANCE_FROM_ENV = [
   ['mailHostname', 'MAILWAY_MAIL_HOSTNAME', () => config.mailHostnameDefault],
   ['publicIp', 'MAILWAY_PUBLIC_IP', () => config.publicIpDefault],
   ['webmailUrl', 'MAILWAY_WEBMAIL_URL', () => config.webmailUrlDefault],
@@ -299,8 +322,9 @@ const INSTANCE_FROM_ENV = [
  * Lo que setInstanceSettings rechazaría aunque pase el esquema: la URL del
  * panel no admite credenciales, parámetros ni fragmentos. Se comprueba aquí
  * para descartar solo ese valor, en lugar de hacer fallar el guardado entero.
+ * Qué se hace con cada valor del entorno lo decide modules/entorno.ts.
  */
-function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string): boolean {
+export function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string): boolean {
   if (field !== 'panelUrl') return true;
   try {
     normalizePanelUrl(value);
@@ -308,30 +332,6 @@ function guardable(field: (typeof INSTANCE_FROM_ENV)[number][0], value: string):
   } catch {
     return false;
   }
-}
-
-/**
- * Identidad del servidor que trae el entorno (`MAILWAY_MAIL_HOSTNAME`,
- * `MAILWAY_PUBLIC_IP`, `MAILWAY_WEBMAIL_URL`, `MAILWAY_PANEL_URL`), solo para
- * los campos que aún no se han guardado: lo que la administración cambió en
- * el panel no se pisa. Cada valor pasa por la misma validación que el
- * asistente; uno no válido se descarta con un aviso, sin repetir el valor.
- */
-export function instanceFromEnv(): { patch: InstanceInput; warnings: string[] } {
-  const stored = getJsonSetting<Partial<InstanceSettings>>('instance') || {};
-  const patch: InstanceInput = {};
-  const warnings: string[] = [];
-  for (const [field, variable, read] of INSTANCE_FROM_ENV) {
-    const value = read().trim();
-    if (!value || (stored[field] ?? '').trim()) continue;
-    const parsed = instanceSchema.shape[field].safeParse(value);
-    if (parsed.success && parsed.data && guardable(field, parsed.data)) {
-      patch[field] = parsed.data;
-    } else {
-      warnings.push(`El valor de ${variable} del entorno del panel no es válido y no se ha guardado.`);
-    }
-  }
-  return { patch, warnings };
 }
 
 type DnsVerdict = 'ok' | 'missing' | 'mismatch' | 'unknown';
@@ -360,6 +360,9 @@ export function registerSetupRoutes(app: FastifyInstance): void {
         hasAdmin: countUsers() > 0,
         requiresSetupToken: Boolean(config.setupToken),
         instance: { brandName: getInstanceSettings().brandName },
+        // Con sesión, el cliente sabe si la instancia es de demostración: la
+        // ficha del dominio le ofrece entonces simular la propiedad.
+        ...(req.user ? { demoMode: config.demoMode } : {}),
       };
     }
     const fromEnv = engineFromEnv();
@@ -367,6 +370,11 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       setupComplete,
       hasAdmin: countUsers() > 0,
       engineConfigured: engineConfigured(),
+      // Qué motor quedó conectado (el asistente exige el nombre del servidor
+      // solo con Stalwart) y si la identidad ya se guardó: al recargar en la
+      // comprobación final no se vuelve al paso de la identidad.
+      engineKind: getEngineSettings()?.kind ?? null,
+      instanceSaved: getJsonSetting('instance') !== null,
       demoMode: config.demoMode,
       // El instalador fija un token para que el primer visitante de un panel
       // recién publicado no pueda quedarse con la instancia.
@@ -468,26 +476,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
   /** Autodetección de la IP pública del servidor. */
   app.get('/api/setup/detect-ip', async (req) => {
     requireAdmin(req);
-    // Dos servicios independientes: si uno falla o está bloqueado, el otro.
-    const sources = [
-      async () => {
-        const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(6000) });
-        return ((await res.json()) as { ip?: string }).ip || '';
-      },
-      async () => {
-        const res = await fetch('https://ipv4.icanhazip.com', { signal: AbortSignal.timeout(6000) });
-        return (await res.text()).trim();
-      },
-    ];
-    for (const source of sources) {
-      try {
-        const ip = await source();
-        if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) return { ip };
-      } catch {
-        // Se prueba el siguiente.
-      }
-    }
-    return { ip: '' };
+    return { ip: await detectarIpPublica() };
   });
 
   /**
@@ -559,10 +548,18 @@ export function registerSetupRoutes(app: FastifyInstance): void {
   app.put('/api/settings/instance', async (req) => {
     requireAdmin(req);
     const body = instanceSchema.parse(req.body);
+    exigirNombreDelServidor(body);
+    const ipAnterior = getInstanceSettings().publicIp.trim();
     const instance = setInstanceSettings(body);
+    // Si ahora coincide (o deja de coincidir) con lo que fijó el instalador,
+    // el aviso de la diferencia se abre o se cierra ya, no al reiniciar.
+    revisarIdentidadConEntorno();
     // Un cambio de nombre o de IP cambia qué hosts de autoconfiguración se
     // pueden publicar: se recalcula ya, sin esperar a la vuelta del vigilante.
     void refreshAutoconfigHosts().catch(() => undefined);
+    // El aviso de IP cambiada pide justo esto: no puede seguir abierto hasta
+    // la comprobación del día siguiente.
+    if (instance.publicIp.trim() !== ipAnterior) alCambiarIpGuardada();
     audit(req, 'settings.instance_updated', {});
     return { instance };
   });

@@ -78,6 +78,26 @@ export interface MailEngine {
 
   /** Resumen de la cola de salida, para el panel de administración. */
   getQueueSummary(): Promise<QueueSummary>;
+
+  /**
+   * Dominios con buzones aquí que reciben su correo en otro servidor (su MX
+   * público apunta a otro proveedor): lo que se envía desde este servidor a
+   * sus direcciones debe salir por ese MX y no entregarse en local. Recibe
+   * la lista completa y deja el motor exactamente así (lista vacía = sin
+   * reglas). `reload` fuerza la recarga aunque no haya cambios (la anterior
+   * falló). Nunca sobrescribe una configuración personalizada del motor.
+   */
+  syncRemoteDomains(domains: string[], opts?: { reload?: boolean }): Promise<RemoteDomainsResult>;
+}
+
+export interface RemoteDomainsResult {
+  /** Se han escrito reglas nuevas en el motor. */
+  changed: boolean;
+  /** El motor tiene esas claves personalizadas: no se ha tocado nada. */
+  customized: boolean;
+  /** Errores y avisos de la recarga (con errores, el motor no aplica nada nuevo). */
+  errors: string[];
+  warnings: string[];
 }
 
 export interface EngineHealth {

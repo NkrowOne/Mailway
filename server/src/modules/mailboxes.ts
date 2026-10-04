@@ -8,7 +8,7 @@ import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertClientActive, assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
-import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
+import { asegurarDominioEnMotor, assertDomainOwnership, getDomain, type DomainRecord } from './domains';
 import { alCambiarContrasenaBuzon } from './portal';
 
 export interface Mailbox {
@@ -296,6 +296,9 @@ async function createMailboxRecord(input: {
   const password = input.password || generateMailboxPassword();
 
   const engine = getEngine();
+  // El dominio solo existe en el motor desde su primer buzón o alias (con
+  // la propiedad ya comprobada): véase el alta de dominios.
+  await asegurarDominioEnMotor(domain.domain);
   await engine.createMailbox({
     email,
     password,
@@ -378,6 +381,12 @@ function isInstanceMailbox(email: string): boolean {
  * - externos: direcciones de dominios que esta instancia no gestiona.
  * Una dirección de un dominio gestionado aquí que no es un buzón (otro alias,
  * una errata) se rechaza en lugar de salir a Internet como «externa».
+ *
+ * Solo cuenta como gestionado aquí un dominio con la propiedad comprobada:
+ * cualquiera puede dar de alta gmail.com (o el dominio de otro) sin probar
+ * nada, y eso no puede impedir a los demás clientes reenviar a esas
+ * direcciones. Mientras tanto el dominio tampoco existe en el motor, así que
+ * el correo sale a Internet, como cualquier destino externo.
  */
 function classifyDestinations(
   clientId: string,
@@ -390,9 +399,9 @@ function classifyDestinations(
   for (const dest of all) {
     if (dest === aliasEmail) throw badRequest('Un alias no puede reenviarse a sí mismo.', 'alias_loop');
     const { local, domain } = splitEmail(dest);
-    const domainRow = db.prepare('SELECT id, client_id FROM domains WHERE domain = ?').get(domain) as
-      | { id: string; client_id: string }
-      | undefined;
+    const domainRow = db
+      .prepare('SELECT id, client_id FROM domains WHERE domain = ? AND owner_verified_at IS NOT NULL')
+      .get(domain) as { id: string; client_id: string } | undefined;
     if (!domainRow) {
       external.push(dest);
       continue;
@@ -786,6 +795,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     if (aliasExists(domain.id, localPart)) throw aliasExistsError(email);
 
     const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
+    await asegurarDominioEnMotor(domain.domain);
     await getEngine().upsertAlias(email, internal, external);
 
     const id = randomId('als');

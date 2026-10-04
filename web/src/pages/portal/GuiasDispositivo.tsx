@@ -357,6 +357,10 @@ export function DatosManuales({
   compacto?: boolean;
 }) {
   const fila = { compacto };
+  // Sin nombre del servidor en Ajustes, una fila con solo el puerto parece un
+  // dato completo: se dice que falta y quién lo configura.
+  const sinServidor =
+    'Sin configurar: falta el nombre del servidor de correo en la configuración del servicio (Ajustes → Identidad del servidor).';
   return (
     <div className="border border-regla bg-hoja-2">
       <FilaDato {...fila} rotulo="Usuario" valor={email} copiar={email} nota="La dirección de correo completa." />
@@ -364,16 +368,16 @@ export function DatosManuales({
       <FilaDato
         {...fila}
         rotulo="Servidor de entrada (IMAP)"
-        valor={conexion.imap.host}
-        copiar={conexion.imap.host}
-        nota={`Puerto ${conexion.imap.port} · Seguridad ${conexion.imap.security}`}
+        valor={conexion.imap.host || undefined}
+        copiar={conexion.imap.host || undefined}
+        nota={`${conexion.imap.host ? '' : `${sinServidor} `}Puerto ${conexion.imap.port} · Seguridad ${conexion.imap.security}`}
       />
       <FilaDato
         {...fila}
         rotulo="Servidor de salida (SMTP)"
-        valor={conexion.smtp.host}
-        copiar={conexion.smtp.host}
-        nota={`Puerto ${conexion.smtp.port} · Seguridad ${conexion.smtp.security} · Requiere autenticación con el mismo usuario y contraseña`}
+        valor={conexion.smtp.host || undefined}
+        copiar={conexion.smtp.host || undefined}
+        nota={`${conexion.smtp.host ? '' : `${sinServidor} `}Puerto ${conexion.smtp.port} · Seguridad ${conexion.smtp.security} · Requiere autenticación con el mismo usuario y contraseña`}
       />
       <FilaDato
         {...fila}

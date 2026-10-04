@@ -133,7 +133,45 @@ test('SPF: +mx y mx:dominio valen; «mx» detrás de «all» no, y la ficha dice
   assert.match(detras.help, /detrás de «all»/);
   const sinMx = await spf('v=spf1 include:_spf.google.com ~all');
   assert.equal(sinMx.status, 'mismatch');
-  assert.match(sinMx.help, /Añade «mx» delante de «all»/);
+  assert.match(sinMx.help, /Sustitúyelo por el valor indicado, que añade «a:mail\.servidor\.es» delante de «all»/);
+  // Lo que se copia es el SPF actual con lo que falta, no el del servidor (T6).
+  assert.equal(sinMx.suggested, 'v=spf1 include:_spf.google.com a:mail.servidor.es ~all');
+});
+
+test('SPF: «a:<servidor>» autoriza a este servidor esté donde esté el MX; «mx» solo con el MX aquí (T14)', async (t) => {
+  const medir = async (valor: string, mx: { priority: number; exchange: string }[]) => {
+    let resultado: DnsCheck | undefined;
+    await t.test(`${valor} · MX ${mx.map((m) => m.exchange).join(',')}`, async (st) => {
+      instalarDnsFalso(st, { ...publicado, mx: { [D]: mx }, txt: { ...publicado.txt, [D]: [valor] } });
+      resultado = medida(await checkDomainDns(D, delMotor), `spf:${D}`);
+    });
+    return resultado!;
+  };
+  const google = [{ priority: 1, exchange: 'aspmx.l.google.com' }];
+  assert.equal((await medir(`v=spf1 a:${SERVIDOR} -all`, google)).status, 'ok');
+  assert.equal((await medir(`v=spf1 include:_spf.google.com a:${SERVIDOR} ~all`, google)).status, 'ok');
+  assert.equal((await medir(`v=spf1 a:${SERVIDOR.toUpperCase()}/24 ~all`, google)).status, 'ok');
+  const mxAjeno = await medir('v=spf1 mx -all', google);
+  assert.equal(mxAjeno.status, 'mismatch', 'con el MX en Google, «mx» autoriza a Google, no a este servidor');
+  assert.match(mxAjeno.help, /«mx» no basta mientras el MX del dominio apunte a otro proveedor/);
+  assert.equal(mxAjeno.suggested, `v=spf1 mx a:${SERVIDOR} -all`);
+  assert.equal((await medir('v=spf1 mx -all', [{ priority: 10, exchange: SERVIDOR }])).status, 'ok');
+});
+
+test('SPF: si añadir el servidor pasa de 10 consultas DNS, no se propone la fusión (T15)', async (t) => {
+  // Seis include, cada uno con dos más anidados: ya son 18 consultas.
+  const proveedores = ['_spf.google.com', 'spf.protection.outlook.com', 'servers.mcsv.net', 'sendgrid.net', '_spf.elasticemail.com', 'mail.zendesk.com'];
+  const txt: Record<string, string[]> = { ...publicado.txt };
+  for (const p of proveedores) txt[p] = [`v=spf1 include:a.${p} include:b.${p} ~all`];
+  for (const p of proveedores) for (const sub of ['a', 'b']) txt[`${sub}.${p}`] = ['v=spf1 ip4:192.0.2.0/24 ~all'];
+  const actual = `v=spf1 ${proveedores.map((p) => `include:${p}`).join(' ')} ~all`;
+  txt[D] = [actual];
+  instalarDnsFalso(t, { ...publicado, txt });
+  const spf = medida(await checkDomainDns(D, delMotor), `spf:${D}`);
+  assert.equal(spf.status, 'mismatch');
+  assert.equal(spf.suggested, undefined, 'una fusión que rompe el SPF no se ofrece');
+  assert.match(spf.help, /demasiadas consultas DNS/);
+  assert.match(spf.help, /ip4:203\.0\.113\.10/);
 });
 
 test('dos SPF en el mismo nombre son un error aunque uno sea correcto', async (t) => {
