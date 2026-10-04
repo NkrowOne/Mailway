@@ -5,6 +5,7 @@ import { avisoCaa, caaPermiteLetsEncrypt, lookupA, lookupCname } from '../core/d
 import { conflict, notFound } from '../core/errors';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
+import { loginDe, resolverBuzon, type FilaUsuario } from './direcciones';
 import {
   AUTOCONFIG_CONTENT_TYPE,
   AUTOCONFIG_HOSTS_SETTING,
@@ -473,6 +474,30 @@ function autodiscoverUrlFor(domain: string): string {
   return `https://${host}/autodiscover/autodiscover.xml`;
 }
 
+/**
+ * Usuario del motor de una dirección cuando NO coincide con ella: un buzón en
+ * un cambio de dominio cuyo titular aún no ha actualizado sus dispositivos, o
+ * la dirección del dominio pareja. En cualquier otro caso, undefined, y el
+ * documento es el de siempre (%EMAILADDRESS% en Thunderbird, la dirección en
+ * Autodiscover): así no se revela si una dirección normal existe. Lo único que
+ * se deduce es el usuario de una dirección en cambio, que el SMTP del motor ya
+ * acepta como remitente de ese buzón. Ver docs/SEGURIDAD.md.
+ */
+function usuarioSiDistinto(direccion: string): string | undefined {
+  const pedida = direccion.trim().toLowerCase();
+  const resuelto = resolverBuzon(pedida);
+  if (!resuelto) return undefined;
+  const fila = db
+    .prepare(
+      `SELECT m.usuario_motor, m.local_part, d.domain
+       FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.id = ?`,
+    )
+    .get(resuelto.mailboxId) as FilaUsuario | undefined;
+  if (!fila) return undefined;
+  const login = loginDe(fila).toLowerCase();
+  return login !== pedida ? login : undefined;
+}
+
 async function thunderbirdHandler(req: FastifyRequest, reply: FastifyReply): Promise<string> {
   const query = req.query as Record<string, unknown>;
   const emailParam = typeof query.emailaddress === 'string' ? query.emailaddress.trim() : '';
@@ -486,7 +511,9 @@ async function thunderbirdHandler(req: FastifyRequest, reply: FastifyReply): Pro
     // ejemplo, autoconfig.<instancia> tras la búsqueda por MX).
     const domain = domainOf(emailParam);
     if (domain && clientOfMailDomain(domain)) {
-      xml = thunderbirdAutoconfigXml(domain, getConnectionSettings(domain));
+      xml = thunderbirdAutoconfigXml(domain, getConnectionSettings(domain), {
+        usuario: usuarioSiDistinto(emailParam),
+      });
     }
   } else if (hostDomain && clientOfMailDomain(hostDomain)) {
     xml = thunderbirdAutoconfigXml(hostDomain, getConnectionSettings(hostDomain));
@@ -506,7 +533,7 @@ function autodiscoverPoxResponse(body: unknown): string {
     const email = autodiscoverRequestEmail(text);
     const domain = email ? domainOf(email) : null;
     if (email && domain && clientOfMailDomain(domain)) {
-      return autodiscoverXml(email, getConnectionSettings(domain));
+      return autodiscoverXml(email, getConnectionSettings(domain), usuarioSiDistinto(email) ?? email);
     }
   } catch {
     // Cualquier fallo se contesta con el error de Autodiscover, nunca con 401/500.
@@ -547,21 +574,20 @@ function autodiscoverV2(req: FastifyRequest, reply: FastifyReply, emailFromPath?
   return reply.status(200).send({ Protocol: 'AutodiscoverV1', Url: autodiscoverUrlFor(domain) });
 }
 
-function mailboxRow(id: string): {
+interface FilaBuzonPerfil extends FilaUsuario {
   id: string;
-  local_part: string;
   display_name: string;
-  domain: string;
   client_id: string;
-} {
+  semilla_perfil: string | null;
+}
+
+function mailboxRow(id: string): FilaBuzonPerfil {
   const row = db
     .prepare(
-      `SELECT m.id, m.local_part, m.display_name, d.domain, d.client_id
+      `SELECT m.id, m.local_part, m.display_name, m.usuario_motor, m.semilla_perfil, d.domain, d.client_id
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.id = ?`,
     )
-    .get(id) as
-    | { id: string; local_part: string; display_name: string; domain: string; client_id: string }
-    | undefined;
+    .get(id) as FilaBuzonPerfil | undefined;
   if (!row) throw notFound('Buzón no encontrado.');
   return row;
 }
@@ -647,7 +673,16 @@ export function registerAutoconfigRoutes(app: FastifyInstance): void {
       .type(MOBILECONFIG_CONTENT_TYPE)
       .header('Content-Disposition', `attachment; filename="${mobileconfigFilename(email)}"`)
       .header('Cache-Control', 'no-store');
-    return mobileconfigPlist({ email, displayName: row.display_name || undefined, settings });
+    return mobileconfigPlist({
+      email,
+      // El usuario del motor (el anterior, si aún no se han actualizado los
+      // dispositivos) y la semilla del primer perfil: instalarlo de nuevo
+      // sustituye al anterior en vez de añadir otra cuenta.
+      usuario: loginDe(row),
+      semilla: row.semilla_perfil ?? email,
+      displayName: row.display_name || undefined,
+      settings,
+    });
   });
 
   /**
