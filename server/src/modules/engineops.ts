@@ -249,6 +249,34 @@ export async function probeEngineTls(
   return { ...inside, publicError: direct.error };
 }
 
+/**
+ * ¿Recibiría un certificado válido un programa de correo que entrase con otro
+ * nombre? Para avisar antes de cambiar el nombre del servidor. Se conecta por
+ * dentro (el DNS del nombre nuevo puede no apuntar aún aquí) con ese nombre
+ * como SNI: el motor presenta el certificado que tenga para él o, si no
+ * tiene ninguno, el que use por defecto. null en `cubre`: no se pudo medir.
+ */
+export async function certificadoParaNombre(
+  nombre: string,
+  settings: EngineSettings | null = getEngineSettings(),
+): Promise<{ cubre: boolean | null; detalle: string }> {
+  if (settings?.kind !== 'stalwart') {
+    return { cubre: null, detalle: 'No hay un servidor de correo real cuyo certificado comprobar.' };
+  }
+  const host = internalHostOf(settings) || normalizeHostname(getInstanceSettings().mailHostname);
+  if (!host) return { cubre: null, detalle: 'No se conoce la dirección del servidor de correo.' };
+  const estado = await probeTls(host, normalizeHostname(nombre), 'interno');
+  if (estado.error) {
+    return { cubre: null, detalle: `No se ha podido leer el certificado del servidor de correo (${estado.error}).` };
+  }
+  return estado.hostnameMatches
+    ? { cubre: true, detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) ya cubre ${nombre}.` }
+    : {
+        cubre: false,
+        detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) no cubre ${nombre}: los programas de correo rechazarían la conexión hasta emitir uno nuevo.`,
+      };
+}
+
 /* ------------------------------ Avisos TLS -------------------------------- */
 
 const ALERT_WARNING = 'engine_tls_warning';
@@ -386,6 +414,17 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
   const clave = `${ALERT_HOSTNAME}:${actual}>${esperado}`;
   // Un aviso de otra pareja de nombres ya no describe la situación.
   resolveAlertsOfType(ALERT_HOSTNAME, { except: clave });
+  // Aplicar el nombre nuevo cambia el MX que se exige a TODOS los dominios:
+  // se dice cuántos antes de que alguien pulse el botón.
+  const dominios = (db.prepare('SELECT COUNT(*) AS c FROM domains').get() as { c: number }).c;
+  const consecuencia =
+    dominios === 0
+      ? ''
+      : ` Al aplicar ${esperado} en el motor, ${
+          dominios === 1 ? 'el dominio de correo pasará' : `los ${dominios} dominios de correo pasarán`
+        } a exigir el MX hacia ${esperado} y ${dominios === 1 ? 'figurará' : 'figurarán'} como pendiente${
+          dominios === 1 ? '' : 's'
+        } de DNS hasta que se cambie; el nombre ${esperado} necesita además su registro A, el PTR de la IP y un certificado que lo cubra.`;
   fireAlert({
     severity: 'warning',
     type: ALERT_HOSTNAME,
@@ -393,9 +432,10 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
     title: `El servidor de correo se anuncia como ${actual}, no como ${esperado}`,
     message:
       `El motor genera los registros DNS de los dominios (MX, SRV y autoconfiguración) con el nombre ${actual}, pero en Ajustes figura ${esperado}. ` +
-      'La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.',
+      `La comprobación de cada dominio pide esos registros: el MX apuntaría a un nombre distinto del que usan los titulares en sus datos de conexión.${consecuencia}`,
     remedy:
-      'En Ajustes → Servidor de correo, pulsa «Aplicar ajustes recomendados». Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
+      `Si el nombre correcto es ${esperado}, en Ajustes → Servidor de correo pulsa «Aplicar ajustes recomendados» (antes muestra lo que cambia). Si el correcto es ${actual}, corrígelo en Ajustes → Identidad del servidor. ` +
+      'Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
       'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
   });

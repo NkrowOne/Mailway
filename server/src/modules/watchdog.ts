@@ -1,13 +1,17 @@
 import { config } from '../config';
 import { db, now } from '../core/db';
-import { checkDnsbl } from '../core/dns';
+import { checkDnsbl, lookupA } from '../core/dns';
+import { detectarIpPublica } from '../core/ippublica';
+import { comprobarPuerto25, type ResultadoPuerto25 } from '../core/puerto25';
 import { engineConfigured, getEngine } from '../engine';
-import { fireAlert, resolveAlert } from './alerts';
+import type { QueueSummary } from '../engine/types';
+import { alertaAbierta, fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
-import { getInstanceSettings } from './settings';
+import { getEngineSettings, getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
+import { tokensConCaducidadCercana } from './tokens';
 import { listClientDomains, refreshClientDomain, type ClientDomain } from './whitelabel';
 
 /**
@@ -71,27 +75,220 @@ async function checkEngine(): Promise<void> {
 
 const QUEUE_ALERT_THRESHOLD = 50;
 
+/**
+ * Antigüedad del mensaje más viejo de la cola a partir de la que se avisa
+ * aunque sean pocos: un servidor pequeño con el puerto 25 bloqueado nunca
+ * llega a 50 mensajes, y sus primeros envíos se quedaban días en la cola sin
+ * ningún aviso. Una hora deja margen a los reintentos normales (listas
+ * grises, un destino con una caída breve).
+ */
+export const QUEUE_AGE_THRESHOLD_S = 3600;
+
+/** Solo Stalwart sale a Internet: en demostración no hay nada que medir. */
+function motorReal(): boolean {
+  return engineConfigured() && getEngineSettings()?.kind === 'stalwart';
+}
+
+/**
+ * Abre o cierra el aviso de la cola según su estado. Con el aviso abierto se
+ * dice si el puerto 25 está bloqueado, que es la causa más habitual y la
+ * única que se arregla en el proveedor del servidor.
+ */
+export function evaluarCola(summary: QueueSummary, puerto25: ResultadoPuerto25 | null): void {
+  const porVolumen = summary.pending >= QUEUE_ALERT_THRESHOLD;
+  const porAntiguedad = summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S;
+  if (!porVolumen && !porAntiguedad) {
+    resolveAlert('queue_backed_up', { notify: true, what: 'cola de salida retenida' });
+    return;
+  }
+  const retenidos =
+    summary.pending === 1 ? 'Hay 1 mensaje retenido' : `Hay ${summary.pending} mensajes retenidos`;
+  const bloqueado = puerto25?.estado === 'bloqueado';
+  fireAlert({
+    severity: 'warning',
+    type: 'queue_backed_up',
+    dedupeKey: 'queue_backed_up',
+    title: porVolumen
+      ? `${retenidos} en la cola de salida`
+      : `${retenidos} en la cola de salida desde hace más de una hora`,
+    message: bloqueado
+      ? 'El puerto 25 de salida está bloqueado: el servidor no puede entregar correo a otros servidores y los mensajes se acumulan en la cola.'
+      : `Los mensajes no se están pudiendo entregar. ${
+          puerto25?.estado === 'abierto'
+            ? 'El puerto 25 de salida está abierto, así que lo más probable es que un destino esté rechazando o aplazando los envíos.'
+            : 'Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.'
+        } El motor sigue reintentándolo y, si no lo consigue, devuelve el mensaje al remitente.`,
+    remedy: bloqueado
+      ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
+      : 'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
+  });
+}
+
 async function checkQueue(): Promise<void> {
   if (!engineConfigured()) return;
+  let summary: QueueSummary;
   try {
-    const summary = await getEngine().getQueueSummary();
-    if (summary.pending >= QUEUE_ALERT_THRESHOLD) {
-      fireAlert({
-        severity: 'warning',
-        type: 'queue_backed_up',
-        dedupeKey: 'queue_backed_up',
-        title: `Hay ${summary.pending} mensajes retenidos en la cola de salida`,
-        message:
-          'Los mensajes se están acumulando sin poder entregarse. Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.',
-        remedy:
-          'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
-      });
-    } else {
-      resolveAlert('queue_backed_up', { notify: true, what: 'cola de salida retenida' });
-    }
+    summary = await getEngine().getQueueSummary();
   } catch {
     // Si el motor no responde ya lo cubre checkEngine; aquí no se insiste.
+    return;
   }
+  const retenida =
+    summary.pending >= QUEUE_ALERT_THRESHOLD ||
+    (summary.oldestSeconds !== null && summary.oldestSeconds >= QUEUE_AGE_THRESHOLD_S);
+  // El puerto solo se mide si hay algo retenido (y la medición se reutiliza
+  // durante unos minutos): no hay que salir a Internet en cada vuelta.
+  const puerto25 = retenida && motorReal() && !alertaAbierta('queue_backed_up') ? await comprobarPuerto25() : null;
+  evaluarCola(summary, puerto25);
+}
+
+/* ------------------------ Puerto 25 de salida (diario) -------------------- */
+
+const ALERTA_PUERTO25 = 'smtp_port_blocked';
+
+export function evaluarPuerto25(resultado: ResultadoPuerto25): void {
+  if (resultado.estado === 'abierto') {
+    resolveAlert(ALERTA_PUERTO25, { notify: true, what: 'puerto 25 de salida bloqueado' });
+    return;
+  }
+  // Sin DNS no se sabe nada del puerto: ni se abre ni se cierra el aviso.
+  if (resultado.estado !== 'bloqueado') return;
+  fireAlert({
+    severity: 'critical',
+    type: ALERTA_PUERTO25,
+    dedupeKey: ALERTA_PUERTO25,
+    title: 'El puerto 25 de salida está bloqueado',
+    message: `${resultado.detalle} Sin él no se entrega correo a otros servidores: los mensajes se quedan en la cola hasta que caducan.`,
+    remedy:
+      'Solicita al proveedor del servidor la apertura del puerto 25 de salida: OVH, Hetzner y AWS, entre otros, lo bloquean por defecto. Mientras el aviso siga abierto se vuelve a medir cada hora y se cierra solo en cuanto el puerto responda.',
+  });
+}
+
+async function checkPuerto25(): Promise<void> {
+  if (!motorReal()) return;
+  // Una vez al día; cada hora mientras está bloqueado, para cerrar el aviso
+  // poco después de que el proveedor lo abra.
+  if (!due('smtp_port', alertaAbierta(ALERTA_PUERTO25) ? HOUR : DAY)) return;
+  markRun('smtp_port');
+  evaluarPuerto25(await comprobarPuerto25({ sinCache: true }));
+}
+
+/* ------------------------- IP pública (diario) ---------------------------- */
+
+const ALERTA_IP = 'public_ip_mismatch';
+
+/**
+ * Compara la IP de salida con la de Ajustes. Solo avisa si el nombre del
+ * servidor de correo ya no resuelve a la IP guardada: así no molesta a un
+ * servidor con varias IP que sale por una distinta de la que publica, y sí
+ * detecta una mudanza (el DNS ya apunta a la IP nueva y Ajustes sigue con la
+ * anterior). `registroA` es el A del nombre del servidor (null: sin dato).
+ */
+export function evaluarIpPublica(detectada: string, registroA: string[] | null): void {
+  const { publicIp, mailHostname } = getInstanceSettings();
+  const guardada = publicIp.trim();
+  if (!detectada || !guardada) return;
+  if (detectada === guardada) {
+    resolveAlertsOfType(ALERTA_IP, { notify: true, what: 'IP pública del servidor' });
+    return;
+  }
+  if (mailHostname && (registroA === null || registroA.includes(guardada))) return;
+  const clave = `${ALERTA_IP}:${detectada}`;
+  resolveAlertsOfType(ALERTA_IP, { except: clave });
+  fireAlert({
+    severity: 'warning',
+    type: ALERTA_IP,
+    dedupeKey: clave,
+    title: 'La IP pública del servidor ha cambiado',
+    message: `El servidor sale a Internet con la IP ${detectada}${
+      mailHostname && registroA && registroA.length > 0 ? ` y ${mailHostname} apunta a ${registroA.join(', ')}` : ''
+    }, pero en Ajustes figura ${guardada}. Mientras no se corrija, Entregabilidad comprueba el registro inverso (PTR) y las listas negras de ${guardada}, y «DNS de la plataforma» propone registros A hacia ella.`,
+    remedy:
+      'Abre Ajustes → Identidad del servidor, pulsa «Usar esta IP» y guarda los cambios. Los dominios de webmail de marca blanca apuntados con CNAME al servidor de correo siguen funcionando mientras tanto.',
+  });
+}
+
+async function checkIpPublica(): Promise<void> {
+  if (!due('public_ip', DAY)) return;
+  const { publicIp, mailHostname } = getInstanceSettings();
+  if (!publicIp.trim()) return;
+  markRun('public_ip');
+  const detectada = await detectarIpPublica();
+  if (!detectada) return;
+  const registroA = mailHostname ? await lookupA(mailHostname) : [];
+  evaluarIpPublica(detectada, registroA);
+}
+
+/* ------------------ Caducidad de los tokens de gestión -------------------- */
+
+/** Antelación del aviso: la misma con la que la lista los marca «Caduca pronto». */
+const AVISO_TOKEN_MS = 14 * DAY;
+/** Tras caducar, el aviso sigue abierto una semana; después se cierra solo. */
+const TRAS_CADUCAR_MS = 7 * DAY;
+
+function fechaLarga(ms: number): string {
+  return new Date(ms).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/**
+ * Avisa de los tokens de gestión en uso que caducan en menos de 14 días o
+ * acaban de caducar: al caducar, la integración que lo usa (Skyway, un
+ * script) empieza a recibir 401 y nadie lo nota hasta que algo falla. Los de
+ * un cliente se le muestran en su panel, sin enviarse a los canales de la
+ * administración.
+ */
+export function revisarCaducidadTokens(ahora = now()): void {
+  const vigentes = new Set<string>();
+  for (const token of tokensConCaducidadCercana(ahora, AVISO_TOKEN_MS, TRAS_CADUCAR_MS)) {
+    const caducado = token.expiresAt! <= ahora;
+    const clave = `${caducado ? 'token_expired' : 'token_expiring'}:${token.id}`;
+    vigentes.add(clave);
+    const deAdministracion = token.ownerRole === 'admin';
+    const remedy = deAdministracion
+      ? 'Crea un token nuevo en Conexiones → Tokens de gestión, sustitúyelo en la integración (en Skyway, Ajustes → Correo) y revoca el anterior. Para Skyway, «sudo bash deploy/instalar.sh --emparejar» crea uno sin caducidad y lo configura.'
+      : 'Crea un token nuevo en Conexiones → Tokens de gestión, sustitúyelo en el script o la integración que lo usa y revoca el anterior.';
+    const comun = {
+      dedupeKey: clave,
+      clientId: token.ownerClientId,
+      quiet: !deAdministracion,
+      remedy,
+    };
+    if (caducado) {
+      resolveAlert(`token_expiring:${token.id}`);
+      fireAlert({
+        ...comun,
+        severity: 'critical',
+        type: 'token_expired',
+        title: `El token de gestión «${token.name}» ha caducado`,
+        message: `Caducó el ${fechaLarga(token.expiresAt!)}. Las integraciones que lo usan (Skyway, scripts, procesos de integración continua) reciben un error de autenticación desde entonces.`,
+      });
+    } else {
+      fireAlert({
+        ...comun,
+        severity: 'warning',
+        type: 'token_expiring',
+        title: `El token de gestión «${token.name}» caduca el ${fechaLarga(token.expiresAt!)}`,
+        message: `Las integraciones que lo usan (Skyway, scripts, procesos de integración continua) recibirán un error de autenticación a partir de esa fecha. Se usó por última vez el ${fechaLarga(token.lastUsedAt!)}.`,
+      });
+    }
+  }
+  // Revocado, renovado o caducado hace más de una semana: el aviso ya no
+  // describe nada pendiente y se cierra sin notificar.
+  const abiertas = db
+    .prepare(
+      `SELECT DISTINCT dedupe_key FROM alerts
+       WHERE type IN ('token_expiring', 'token_expired') AND resolved_at IS NULL AND dedupe_key IS NOT NULL`,
+    )
+    .all() as { dedupe_key: string }[];
+  for (const { dedupe_key: clave } of abiertas) {
+    if (!vigentes.has(clave)) resolveAlert(clave);
+  }
+}
+
+async function checkTokens(): Promise<void> {
+  if (!due('tokens', HOUR)) return;
+  markRun('tokens');
+  revisarCaducidadTokens();
 }
 
 /* ----------------------------- El webmail --------------------------------- */
@@ -356,6 +553,9 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('autoconfiguración', checkAutoconfigHosts, log);
     await paso('certificado del motor', checkTlsDelMotor, log);
     await paso('nombre del motor', checkNombreDelMotor, log);
+    await paso('puerto 25 de salida', checkPuerto25, log);
+    await paso('IP pública', checkIpPublica, log);
+    await paso('caducidad de los tokens', checkTokens, log);
     // Limpieza: las alertas resueltas hace más de 30 días no aportan nada.
     await paso('limpieza', async () => {
       db.prepare('DELETE FROM alerts WHERE resolved_at IS NOT NULL AND resolved_at < ?').run(

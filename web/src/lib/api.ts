@@ -290,6 +290,11 @@ export interface SetupStatus {
   /** Hay un motor definido en el entorno que se puede conectar con un clic. */
   engineFromEnv?: boolean;
   engineConfigured?: boolean;
+  /** Motor conectado: el asistente solo exige el nombre del servidor con Stalwart. */
+  engineKind?: 'stalwart' | 'demo' | null;
+  /** La identidad del servidor ya se guardó (el asistente sigue en la comprobación). */
+  instanceSaved?: boolean;
+  /** Instancia de demostración (MAILWAY_DEMO=1); también llega a los clientes con sesión. */
   demoMode?: boolean;
   engineDefaults?: {
     url: string;

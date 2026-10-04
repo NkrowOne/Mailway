@@ -17,7 +17,7 @@ import { Input, Select } from '../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BandaAviso, BandaError, Botonera, Casilla } from '../../components/gestion/comun';
-import { useDireccionPanel } from '../../components/gestion/consultas';
+import { useAltaDesdeEnlace, useDireccionPanel } from '../../components/gestion/consultas';
 
 /**
  * Cartera de clientes: una fila por cliente, con el uso de buzones medido
@@ -26,6 +26,7 @@ import { useDireccionPanel } from '../../components/gestion/consultas';
 export default function Clientes() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  useAltaDesdeEnlace(() => setOpen(true));
 
   const clients = useQuery({
     queryKey: ['clients'],

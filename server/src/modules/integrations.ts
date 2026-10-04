@@ -11,6 +11,7 @@ import { getConnectionSettings, publicBaseUrl } from './connection';
 import { listDomains } from './domains';
 import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
+import { caducidadDelToken } from './tokens';
 import { getTraefikToken } from './whitelabel';
 
 /**
@@ -325,6 +326,9 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // asociada a un dominio nunca se usa en nombre de un cliente.
         cloudflareSoloCrear: true,
       },
+      // Caducidad del token con el que se pregunta (null: sin caducidad o con
+      // sesión): Skyway la muestra para renovarlo antes de recibir un 401.
+      tokenExpiresAt: req.authVia?.kind === 'token' ? caducidadDelToken(req.authVia.tokenId) : null,
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:
         user.role === 'admin' ? { configPath: '/api/traefik/config', token: getTraefikToken() } : null,

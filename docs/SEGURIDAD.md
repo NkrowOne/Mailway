@@ -129,7 +129,16 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   entregaría en local el correo que otros clientes envían a ese dominio. Se
   aplica también a la administración y a los tokens. Una zona de Cloudflare solo
   prueba la propiedad si está activa: cualquiera puede añadir un dominio ajeno
-  a su cuenta de Cloudflare, pero no activarlo.
+  a su cuenta de Cloudflare, pero no activarlo. La única excepción es el modo
+  demostración: solo con `MAILWAY_DEMO=1` (no con el motor «demo» elegido en
+  el asistente, que puede pasar a Stalwart sin reiniciar), quien tiene acceso
+  al cliente puede simular la propiedad; queda anotada y, al arrancar sin
+  `MAILWAY_DEMO`, vuelve a quedar pendiente, así que un motor real nunca
+  hereda un dominio ajeno dado por comprobado.
+- **Marca blanca y cambios de IP**: la comprobación del DNS de un dominio
+  propio acepta un CNAME al servidor de correo o un A a una IP del servidor
+  (la de Ajustes o las del nombre del servidor de correo). Ampliarla no abre
+  nada: quién puede dar de alta un nombre lo decide la regla de propiedad.
 - **Destinos de alias**: solo buzones del mismo cliente o direcciones
   externas; una dirección de un dominio de la instancia que no existe se
   rechaza en lugar de salir a Internet.

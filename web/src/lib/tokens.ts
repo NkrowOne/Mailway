@@ -130,6 +130,7 @@ const ETIQUETAS: Record<string, string> = {
   'domain.created': 'Dominio dado de alta',
   'domain.verified': 'Verificación de DNS',
   'domain.ownership_verified': 'Propiedad del dominio comprobada',
+  'domain.ownership_simulated': 'Propiedad del dominio simulada (demostración)',
   'domain.dkim_regenerated': 'DKIM regenerado',
   'domain.zonefile_downloaded': 'Fichero de zona descargado',
   'domain.deleted': 'Dominio eliminado',

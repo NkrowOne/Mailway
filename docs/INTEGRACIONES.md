@@ -31,7 +31,16 @@ fuera se crea un **token de gestión** en **Conexiones → Tokens de gestión**.
   petición.
 - **Creación**: solo desde una sesión del panel, nunca con otro token (un
   token filtrado no puede perpetuarse creando más). Caducidad opcional de 1 a
-  3650 días. Máximo **25 tokens activos** por usuario.
+  3650 días. Máximo **25 tokens activos** por usuario. El panel propone 365
+  días y, si el nombre incluye «Skyway», **sin caducidad** (como el token que
+  crea el instalador al emparejar): un token de Skyway caducado corta la
+  pestaña Correo de todos los proyectos.
+- **Caducidad**: el vigilante avisa 14 días antes de que caduque un token que
+  se ha usado alguna vez (`token_expiring`, aviso) y, al caducar, durante una
+  semana (`token_expired`, crítico). Los de un usuario de cliente se le
+  muestran en su panel, sin enviarse a los canales de la administración. Los
+  avisos se cierran solos al revocar el token. `GET /api/integrations/info`
+  devuelve `tokenExpiresAt` para que la integración lo muestre.
 - **Revocación**: inmediata. El panel anota el último uso (fecha e IP).
 - **Actividad**: cada acción hecha con un token queda en **Actividad** con
   `via: "token:<nombre>"` en el detalle.
@@ -111,7 +120,7 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, tokenExpiresAt, traefik }`. `tokenExpiresAt` es la caducidad (milisegundos) del token con el que se pregunta; `null` si no caduca o si se pregunta con la sesión del panel. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
@@ -380,10 +389,37 @@ entregabilidad (`GET /api/deliverability/server`), resúmenes
 (`GET /api/dashboard/admin`, `GET /api/dashboard/client`) y ajustes y motor
 (`/api/settings`, `/api/engine/*`, solo administración).
 
+**Modo demostración.** Con `MAILWAY_DEMO=1` (solo con la variable de
+entorno, no con el motor «demo» elegido en el asistente),
+`POST /api/demo/domains/:id/ownership` da por comprobada la propiedad de un
+dominio sin consultar el DNS, para poder recorrer buzones, alias y el portal;
+exige acceso al cliente del dominio y queda en la Actividad
+(`domain.ownership_simulated`). Fuera de la demostración responde
+`404 demo_only`. Al arrancar el panel sin `MAILWAY_DEMO`, la propiedad
+simulada vuelve a quedar pendiente. `GET /api/setup/status` incluye
+`demoMode` para cualquier usuario con sesión.
+
+**Cambio del nombre del servidor de correo.**
+`GET /api/settings/mail-hostname/impact?nombre=` (administración) devuelve lo
+que arrastra cambiarlo, y el panel lo muestra antes de guardarlo en Ajustes y
+antes de «Aplicar ajustes recomendados» cuando el motor se anuncia con otro
+nombre: `actual` (el nombre con el que se anuncia el motor), `nuevo`,
+`dominios: { total, conMxAlActual }`, `registroA: { ips, ip, apuntaAqui }`,
+`ptr: { ip, nombres, coincide }`, `certificado: { cubre, detalle }` (el
+certificado que presenta el motor para ese nombre) y `comando` (la orden del
+instalador, con `MAILWAY_DOMINIO` si cambia el dominio base:
+`cambiaDominioBase`). Guardar el nombre cambia al momento los datos de
+conexión de los titulares; aplicarlo en el motor hace que todos los dominios
+exijan el MX hacia el nombre nuevo. El aviso `engine_hostname` dice cuántos
+dominios pasarán a pendientes.
+
 **Nombre del servidor de correo.** `mailHostname` (`PUT /api/settings/instance`
 y `POST /api/setup/instance`) debe ser un nombre completo: al menos dos
 etiquetas y una última etiqueta no numérica (una IP no vale; los dominios de
-primer nivel `xn--` sí). Si no: `400 validation`. Lo guardado en Ajustes manda:
+primer nivel `xn--` sí). Si no: `400 validation`. Con Stalwart no se puede
+dejar vacío salvo que el entorno lo defina (`MAILWAY_MAIL_HOSTNAME`): sin él,
+los datos de conexión de los buzones saldrían sin servidor
+(`400 mail_hostname_required`). Lo guardado en Ajustes manda:
 el entorno solo da el valor inicial.
 
 **Nombre en ejecución del motor.** `GET /api/engine/status` devuelve en
@@ -408,6 +444,21 @@ configurar su PTR si lo es.
 
 **Webmail.** El vigilante solo da por disponible el webmail con una respuesta
 HTTP 2xx o 3xx; un 404, un 403 o un 5xx abren el aviso `webmail_down`.
+
+**Puerto 25 y cola de salida.** Entregabilidad mide el puerto 25 de salida
+(conexión TCP a los servidores de entrada de Gmail y Outlook; basta con que
+uno acepte) en lugar de recomendarlo siempre: si está bloqueado, la
+recomendación es crítica y resta 30 puntos; si no se pudo medir (sin DNS), es
+informativa; si está abierto, no aparece. El vigilante lo mide a diario (cada
+hora mientras está bloqueado) y abre `smtp_port_blocked`. El aviso de la cola
+(`queue_backed_up`) se abre con 50 mensajes pendientes o con el más antiguo
+retenido más de una hora, y dice si el puerto 25 está bloqueado.
+
+**IP pública.** El vigilante compara a diario la IP con la que el servidor
+sale a Internet con la de Ajustes. Si difieren y el nombre del servidor de
+correo ya no resuelve a la guardada (una mudanza), abre
+`public_ip_mismatch`; con varias IP y el nombre aún en la guardada, no avisa.
+Ajustes → Identidad del servidor propone la IP detectada con «Usar esta IP».
 
 **Motor de correo.** Conectarlo, cambiarlo o probarlo (`POST /api/setup/engine`,
 `PUT /api/settings/engine`, `POST /api/settings/engine/test`) exige la **sesión
@@ -857,13 +908,25 @@ Reglas:
   servidor.
 - No puede empezar por `autoconfig.`, `autodiscover.` ni `mta-sts.`, ni ser
   uno de los nombres de la instancia (`400 reserved_hostname`).
+- No puede repetir delante un dominio de correo del cliente
+  (`webmail.cliente.es.cliente.es`: `400 hostname_repeats_domain`). En el
+  panel, si en «Subdominio» se escribe el nombre completo
+  (`webmail.cliente.es`), se separa y se elige ese dominio; con puntos y sin
+  terminar en un dominio comprobado del cliente, se pide escribir solo el
+  subdominio.
 - Máximo **5 por cliente** (`400 whitelabel_limit`). La administración debe
   indicar el cliente (`400 client_required`).
 - Tipo `webmail` (por defecto) o `panel`; este último requiere conocer el
   contenedor del panel (`400 kind_unavailable`).
 
 Estados: **Esperando DNS** (`pending_dns`) → **Emitiendo certificado**
-(`issuing`) → **En servicio** (`active`), o `error`. Solo se publican en
+(`issuing`) → **En servicio** (`active`), o `error`. El DNS apunta aquí si es
+un CNAME al servidor de correo o si resuelve a la IP de Ajustes o a una de las
+IP que tiene ahora el nombre del servidor de correo: tras un cambio de IP, un
+CNAME (o un A ya movido a la IP nueva) sigue siendo correcto aunque Ajustes
+conserve la anterior, y el webmail de marca blanca no sale de Traefik. Si no
+se pueden consultar las IP del servidor de correo, la comprobación no es
+concluyente y no cambia el estado. Solo se publican en
 Traefik los dominios cuyo DNS ya apunta aquí, y un dominio solo pasa a «En
 servicio» cuando responde por HTTPS con un certificado válido y un código 2xx
 o 3xx (un 404 o un 5xx indican que la ruta o su destino aún no están bien).
@@ -985,7 +1048,9 @@ Reglas del alta:
   (`400 invalid_origin`). Se guardan como los envía el navegador en la
   cabecera `Origin`: `https://www.acme.es/contacto` se queda en
   `https://www.acme.es`, y se puede escribir sin el esquema. `www.acme.es` y
-  `acme.es` son orígenes distintos.
+  `acme.es` son orígenes distintos y el servidor no amplía la lista por su
+  cuenta; el panel propone añadir la otra variante («¿Añadir también
+  https://www.acme.es?») cuando solo figura una.
 - **Turnstile** (opcional): la clave de sitio y la secreta, las dos o
   ninguna (`400 turnstile_incomplete`). El secreto se guarda cifrado.
 - Máximo **20 formularios por cliente** (`409 form_limit`); las altas del
