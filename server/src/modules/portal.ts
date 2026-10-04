@@ -5,10 +5,19 @@ import { config } from '../config';
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret, hashToken, newSessionToken, randomId } from '../core/crypto';
 import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/errors';
+import { buzonLockKey, withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
-import { appsSkywayDe } from './direcciones';
+import {
+  actualizarUsuario,
+  appsSkywayDe,
+  datosWebmail,
+  errorBuzonUsadoPorApp,
+  loginDe,
+  loginParaMotor,
+  resolverBuzon,
+} from './direcciones';
 import { requireAuth, requireClientAccess } from './auth';
 import {
   createAppPassword,
@@ -40,6 +49,12 @@ import {
  * (engine.verifyCredentials): si se le pidiera al motor que autenticase, cada
  * fallo contaría para su baneo automático de IPs y un par de errores
  * tecleando bloquearían la IP del proxy para todos los clientes.
+ *
+ * Cambio de dominio: la dirección del buzón (titular.email) y el usuario con
+ * el que entran sus dispositivos (titular.login) pueden no coincidir hasta
+ * que el titular pulsa «Actualizar mis dispositivos». Se entra con cualquiera
+ * de los dos (y con la dirección del dominio pareja), los datos de conexión
+ * enseñan el usuario y toda llamada al motor usa loginParaMotor().
  */
 
 const COOKIE_BUZON = 'mailway_buzon';
@@ -110,6 +125,9 @@ interface FilaBuzon {
   status: 'active' | 'suspended';
   used_bytes: number | null;
   usage_checked_at: number | null;
+  usuario_motor: string | null;
+  semilla_perfil: string | null;
+  usuario_cambiando_a: string | null;
   domain_id: string;
   domain: string;
   client_id: string;
@@ -129,11 +147,26 @@ interface Titular {
   suspendido: boolean;
   usedBytes: number | null;
   usageCheckedAt: number | null;
+  /** Usuario del motor: con el que entran los dispositivos (usuario_motor ?? dirección). */
+  login: string;
+  /** Pendiente de actualizar dispositivos tras un cambio de dominio. */
+  loginPending: boolean;
+  /** Hay un cambio de usuario a medias (usuario_cambiando_a): lo resuelve el conciliador. */
+  actualizando: boolean;
+  /**
+   * Dirección con la que nació el perfil de Apple (semilla_perfil). Sus UUID
+   * salen de ella: así el perfil nuevo sustituye al instalado antes del
+   * cambio de dominio en vez de añadir una segunda cuenta.
+   */
+  semilla: string | null;
+  /** Contraseñas de aplicación activas de Skyway («skyway:…»): solo Skyway cambia su usuario. */
+  appsSkyway: string[];
 }
 
 const SELECT_BUZON = `
   SELECT m.id, m.local_part, m.display_name, m.quota_mb, m.status, m.used_bytes,
-         m.usage_checked_at, d.id AS domain_id, d.domain, d.client_id,
+         m.usage_checked_at, m.usuario_motor, m.semilla_perfil, m.usuario_cambiando_a,
+         d.id AS domain_id, d.domain, d.client_id,
          c.suspended AS client_suspended
   FROM mailboxes m
   JOIN domains d ON d.id = m.domain_id
@@ -152,6 +185,11 @@ function aTitular(row: FilaBuzon): Titular {
     suspendido,
     usedBytes: row.used_bytes,
     usageCheckedAt: row.usage_checked_at,
+    login: loginDe(row),
+    loginPending: row.usuario_motor !== null,
+    actualizando: row.usuario_cambiando_a !== null,
+    semilla: row.semilla_perfil,
+    appsSkyway: appsSkywayDe(row.id),
   };
 }
 
@@ -160,13 +198,14 @@ function buzonPorId(id: string): Titular | null {
   return row ? aTitular(row) : null;
 }
 
+/**
+ * Buzón por lo que teclea el titular: su dirección, su usuario del motor (la
+ * dirección anterior, mientras no actualiza sus dispositivos) o, durante un
+ * cambio de dominio con la pre-recepción hecha, la dirección del dominio pareja.
+ */
 function buzonPorDireccion(email: string): Titular | null {
-  const at = email.lastIndexOf('@');
-  if (at <= 0) return null;
-  const row = db
-    .prepare(`${SELECT_BUZON} WHERE d.domain = ? AND m.local_part = ?`)
-    .get(email.slice(at + 1), email.slice(0, at)) as FilaBuzon | undefined;
-  return row ? aTitular(row) : null;
+  const resuelto = resolverBuzon(email);
+  return resuelto ? buzonPorId(resuelto.mailboxId) : null;
 }
 
 /** Buzón de una ruta del panel, con el control de acceso de su cliente. */
@@ -196,8 +235,10 @@ function datosConexion(titular: Titular): {
     settings,
     connection: {
       email: titular.email,
-      // El usuario es siempre la dirección completa: es lo que más confunde.
-      username: titular.email,
+      // El usuario es una dirección completa (lo que más confunde): la del
+      // buzón o, tras un cambio de dominio, la anterior hasta que el titular
+      // actualiza sus dispositivos.
+      username: titular.login,
       imap: settings.imap,
       smtp: settings.smtp,
       smtpAlt: settings.smtpAlt,
@@ -250,6 +291,11 @@ function auditTitular(
  * no basta con tumbar el proceso para reiniciar la cuenta) con claves propias.
  * El contador por buzón es el que de verdad protege: tras un proxy la IP
  * viene de X-Forwarded-For y se puede falsear.
+ *
+ * La clave del buzón es su id cuando lo que se teclea lo identifica: durante
+ * un cambio de dominio se entra con la dirección vieja, la nueva o el usuario,
+ * y alternarlas no debe multiplicar los intentos. Lo que no identifica ningún
+ * buzón cuenta por el texto tecleado.
  */
 function contarFallos(clave: string): number {
   return (
@@ -266,9 +312,14 @@ function purgarFallos(): void {
   );
 }
 
-function comprobarLimite(email: string, ip: string | null): void {
+/** Clave del contador por buzón: su id si se conoce; si no, lo tecleado. */
+function claveDeFallos(tecleado: string, titular: Titular | null): string {
+  return titular ? titular.id : tecleado;
+}
+
+function comprobarLimite(clave: string, ip: string | null): void {
   purgarFallos();
-  const porBuzon = contarFallos(`buzon:${email}`);
+  const porBuzon = contarFallos(`buzon:${clave}`);
   const porIp = ip === null ? 0 : contarFallos(`buzon-ip:${ip}`);
   if (porBuzon >= MAX_FALLOS_POR_BUZON || porIp >= MAX_FALLOS_POR_IP) {
     throw tooMany(
@@ -277,9 +328,9 @@ function comprobarLimite(email: string, ip: string | null): void {
   }
 }
 
-function registrarFallo(email: string, ip: string | null): void {
+function registrarFallo(clave: string, ip: string | null): void {
   const stmt = db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)');
-  stmt.run(`buzon:${email}`, now());
+  stmt.run(`buzon:${clave}`, now());
   if (ip !== null) stmt.run(`buzon-ip:${ip}`, now());
 }
 
@@ -317,11 +368,12 @@ async function comprobarContrasenaPrincipal(
   ip: string | null,
   errorSiIncorrecta: () => HttpError,
 ): Promise<void> {
-  comprobarLimite(titular.email, ip);
-  const ok = await getEngine().verifyCredentials(titular.email, password);
+  comprobarLimite(titular.id, ip);
+  // Por el usuario del motor: es el nombre con el que el motor guarda el hash.
+  const ok = await getEngine().verifyCredentials(loginParaMotor(titular.id), password);
   if (ok === null) throw sinComprobacion();
   if (!ok) {
-    registrarFallo(titular.email, ip);
+    registrarFallo(titular.id, ip);
     throw errorSiIncorrecta();
   }
   if (esContrasenaDeAplicacion(titular.id, password)) throw contrasenaDeAplicacion();
@@ -400,6 +452,103 @@ function contrasenaDelEnlace(enlace: FilaEnlace): string | undefined {
   }
 }
 
+/** Enlace recién creado: el token en claro solo existe en `url`. */
+export interface EnlaceCreado {
+  id: string;
+  url: string;
+  expiresAt: number;
+}
+
+/**
+ * Guarda un enlace de configuración del buzón. La contraseña (ya comprobada y
+ * cifrada) solo la pasa la ruta del panel; el token en claro vive únicamente
+ * en la URL devuelta y en la base queda su hash.
+ */
+function guardarEnlace(
+  mailboxId: string,
+  opts: { ttlHours: number; createdBy: string | null; baseUrl: string },
+  passwordEnc: string | null,
+): EnlaceCreado {
+  purgarEnlaces();
+  const token = crypto.randomBytes(32).toString('base64url');
+  const id = randomId('stl');
+  const createdAt = now();
+  const expiresAt = createdAt + opts.ttlHours * 3600_000;
+  db.prepare(
+    `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, hashToken(token), mailboxId, passwordEnc, opts.createdBy, createdAt, expiresAt);
+  return { id, url: `${opts.baseUrl}/conectar/${token}`, expiresAt };
+}
+
+function errorBuzonSuspendidoEnlace(): HttpError {
+  return badRequest(
+    'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
+    'mailbox_suspended',
+  );
+}
+
+/**
+ * Crea un enlace de configuración SIN contraseña (el cuerpo de
+ * POST /api/mailboxes/:id/setup-links). Lo usa también el cambio de dominio
+ * («Mensaje para tu equipo»): cada persona abre el suyo y pulsa «Actualizar
+ * mis dispositivos». No audita: quien llama tiene la petición y lo hace.
+ * 404 si el buzón no existe y 400 mailbox_suspended si está suspendido.
+ */
+export function crearEnlaceConfiguracion(
+  mailboxId: string,
+  opts: { ttlHours: number; createdBy: string | null; baseUrl: string },
+): EnlaceCreado {
+  const titular = buzonPorId(mailboxId);
+  if (!titular) throw notFound('Buzón no encontrado.');
+  if (titular.suspendido) throw errorBuzonSuspendidoEnlace();
+  return guardarEnlace(titular.id, opts, null);
+}
+
+/** Perfil de Apple del titular: con su usuario del motor y la semilla de su primer perfil. */
+function perfilDelTitular(titular: Titular, settings: ConnectionSettings, password?: string): string {
+  return mobileconfigPlist({
+    email: titular.email,
+    usuario: titular.login,
+    semilla: titular.semilla ?? titular.email,
+    displayName: titular.displayName || undefined,
+    settings,
+    password,
+  });
+}
+
+/** Código QR de Thunderbird para Android, con el usuario del motor. */
+function qrDelTitular(titular: Titular, settings: ConnectionSettings): string {
+  return thunderbirdAndroidQrPayload(titular.email, titular.displayName, settings, titular.login);
+}
+
+/**
+ * «Actualizar mis dispositivos» desde el portal o el enlace: el usuario del
+ * motor pasa a ser la dirección vigente. El correo y todas las contraseñas se
+ * conservan; los dispositivos con el usuario anterior dejan de conectar hasta
+ * que se actualizan. Idempotente. Un buzón con el que envía una aplicación de
+ * Skyway solo lo actualiza Skyway (409 mailbox_used_by_app): después cambia
+ * sus variables y la vuelve a desplegar.
+ */
+async function actualizarDispositivos(
+  req: FastifyRequest,
+  titular: Titular,
+  por: 'titular' | 'enlace',
+): Promise<{ ok: true; login: string }> {
+  if (!titular.loginPending && !titular.actualizando) return { ok: true, login: titular.login };
+  if (titular.appsSkyway.length > 0) throw errorBuzonUsadoPorApp(titular.appsSkyway);
+  const cambio = await actualizarUsuario(titular.id);
+  if (cambio) {
+    auditTitular(req, titular.clientId, 'mailbox.login_updated', {
+      id: titular.id,
+      de: cambio.de,
+      a: cambio.a,
+      por,
+    });
+  }
+  return { ok: true, login: buzonPorId(titular.id)?.login ?? titular.email };
+}
+
 function enviarPerfil(reply: FastifyReply, email: string, plist: string): string {
   reply
     .header('Content-Type', MOBILECONFIG_CONTENT_TYPE)
@@ -467,7 +616,8 @@ async function ocupacion(titular: Titular): Promise<{ usedBytes: number | null; 
   const reciente = titular.usageCheckedAt !== null && now() - titular.usageCheckedAt < 15 * 60_000;
   if (reciente) return { usedBytes: titular.usedBytes, checkedAt: titular.usageCheckedAt };
   try {
-    const bytes = (await getEngine().getMailboxUsage()).get(titular.email.toLowerCase());
+    // El motor da la ocupación por nombre del principal: el usuario, no la dirección.
+    const bytes = (await getEngine().getMailboxUsage()).get(titular.login.toLowerCase());
     if (bytes === undefined) return { usedBytes: titular.usedBytes, checkedAt: titular.usageCheckedAt };
     const t = now();
     db.prepare('UPDATE mailboxes SET used_bytes = ?, usage_checked_at = ? WHERE id = ?').run(
@@ -533,6 +683,10 @@ const webmailSchema = z.object({
   newpass: z.string().max(200),
 });
 
+const webmailCuentaSchema = z.object({
+  user: z.string().trim().toLowerCase().min(3).max(320),
+});
+
 /* --------------------------------- Rutas ----------------------------------- */
 
 export function registerPortalRoutes(app: FastifyInstance): void {
@@ -549,12 +703,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const titular = buzonDelPanel(req, id);
     const body = crearEnlaceSchema.parse(req.body ?? {});
-    if (titular.suspendido) {
-      throw badRequest(
-        'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
-        'mailbox_suspended',
-      );
-    }
+    if (titular.suspendido) throw errorBuzonSuspendidoEnlace();
 
     let passwordEnc: string | null = null;
     if (body.includePassword) {
@@ -574,7 +723,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
           'Se han indicado demasiadas contraseñas que no coinciden con la del buzón. Espera 15 minutos o crea el enlace sin la contraseña.',
         );
       }
-      const ok = await getEngine().verifyCredentials(titular.email, body.password);
+      const ok = await getEngine().verifyCredentials(loginParaMotor(titular.id), body.password);
       if (ok === null) {
         // Sin comprobarla no se guarda: podría no ser la del buzón.
         throw new HttpError(
@@ -597,28 +746,24 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       passwordEnc = encryptSecret(body.password);
     }
 
-    purgarEnlaces();
-    const token = crypto.randomBytes(32).toString('base64url');
-    const linkId = randomId('stl');
-    const createdAt = now();
-    const expiresAt = createdAt + body.ttlHours * 3600_000;
-    db.prepare(
-      `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+    const enlace = guardarEnlace(
+      titular.id,
+      { ttlHours: body.ttlHours, createdBy: req.user?.id ?? null, baseUrl: publicBaseUrl(req) },
+      passwordEnc,
+    );
     audit(req, 'mailbox.setup_link_created', {
       mailboxId: titular.id,
       email: titular.email,
-      linkId,
+      linkId: enlace.id,
       hasPassword: passwordEnc !== null,
       ttlHours: body.ttlHours,
     }, titular.clientId);
     // El token en claro solo existe en esta respuesta; en la base, su hash.
     return {
       link: {
-        id: linkId,
-        url: `${publicBaseUrl(req)}/conectar/${token}`,
-        expiresAt,
+        id: enlace.id,
+        url: enlace.url,
+        expiresAt: enlace.expiresAt,
         hasPassword: passwordEnc !== null,
       },
     };
@@ -670,6 +815,10 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     reply.header('Cache-Control', 'no-store');
     return {
       email: titular.email,
+      // Se calcula al abrir: tras «Actualizar mis dispositivos» el mismo
+      // enlace enseña ya el usuario nuevo.
+      login: titular.login,
+      loginPending: titular.loginPending,
       displayName: titular.displayName,
       brandName: settings.brandName,
       connection,
@@ -678,14 +827,10 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       expiresAt: enlace.expires_at,
       portalUrl: `${base}/mi-buzon`,
       appleProfileUrl: `${base}/api/public/setup/${token}/perfil.mobileconfig`,
-      thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
-        titular.email,
-        titular.displayName,
-        settings,
-      ),
+      thunderbirdAndroidQr: qrDelTitular(titular, settings),
       // Un buzón con el que envía una aplicación de Skyway solo lo actualiza
       // Skyway: así la página no ofrece un botón que respondería 409.
-      usadoPorApp: appsSkywayDe(titular.id).length > 0,
+      usadoPorApp: titular.appsSkyway.length > 0,
     };
   });
 
@@ -695,14 +840,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { enlace, titular } = enlacePorToken(token);
     db.prepare('UPDATE setup_links SET last_opened_at = ? WHERE id = ?').run(now(), enlace.id);
     const { settings } = datosConexion(titular);
-    const plist = mobileconfigPlist({
-      email: titular.email,
-      displayName: titular.displayName || undefined,
-      settings,
-      // Solo el enlace de bienvenida lleva la contraseña: así el titular no
-      // tiene que teclearla en el móvil.
-      password: contrasenaDelEnlace(enlace),
-    });
+    // Solo el enlace de bienvenida lleva la contraseña: así el titular no
+    // tiene que teclearla en el móvil.
+    const plist = perfilDelTitular(titular, settings, contrasenaDelEnlace(enlace));
     return enviarPerfil(reply, titular.email, plist);
   });
 
@@ -716,20 +856,39 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
+  /*
+   * «Actualizar y continuar» desde el enlace, sin contraseña. Solo cambia el
+   * usuario del propio buzón a su dirección vigente (lo mismo que hará la baja
+   * del dominio anterior): no da acceso ni revela nada, y quien tiene el
+   * enlace —un secreto de 256 bits que crea quien administra el correo— ya ve
+   * los datos de conexión. Lo peor posible es que unos dispositivos dejen de
+   * conectar antes de tiempo. Ver docs/SEGURIDAD.md.
+   */
+  app.post('/api/public/setup/:token/login-update', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    z.object({}).parse(req.body ?? {});
+    return actualizarDispositivos(req, titular, 'enlace');
+  });
+
   /* ------------------------------ «Mi buzón» ------------------------------ */
 
   app.post('/api/portal/login', async (req, reply) => {
     const body = loginSchema.parse(req.body);
     const ip = req.ip || '';
-    comprobarLimite(body.email, ip);
+    // Dirección, usuario anterior o dirección del dominio pareja: las tres
+    // llevan al mismo buzón y a su mismo contador de fallos.
     const titular = buzonPorDireccion(body.email);
+    const clave = claveDeFallos(body.email, titular);
+    comprobarLimite(clave, ip);
     if (!titular) {
-      registrarFallo(body.email, ip);
+      registrarFallo(clave, ip);
       throw credencialesIncorrectas();
     }
     if (titular.suspendido) {
       // Cuenta como intento: así no sirve para sondear direcciones deprisa.
-      registrarFallo(body.email, ip);
+      registrarFallo(clave, ip);
       throw buzonSuspendido();
     }
     await comprobarContrasenaPrincipal(titular, body.password, ip, credencialesIncorrectas);
@@ -752,6 +911,10 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     reply.header('Cache-Control', 'no-store');
     return {
       email: titular.email,
+      login: titular.login,
+      loginPending: titular.loginPending,
+      // Con una aplicación de Skyway, «Mi buzón» no ofrece actualizar: lo hace Skyway.
+      usadoPorApp: titular.appsSkyway.length > 0,
       displayName: titular.displayName,
       domain: titular.domain,
       quotaMb: titular.quotaMb,
@@ -763,11 +926,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // Relativa a propósito: la cookie del titular es del host desde el que
       // entró, que puede no ser la URL pública configurada del panel.
       appleProfileUrl: `${RUTA_COOKIE}/mobileconfig`,
-      thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
-        titular.email,
-        titular.displayName,
-        settings,
-      ),
+      thunderbirdAndroidQr: qrDelTitular(titular, settings),
     };
   });
 
@@ -777,27 +936,33 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     if (body.next === body.current) {
       throw badRequest('La nueva contraseña debe ser distinta de la actual.', 'same_password');
     }
-    await comprobarContrasenaPrincipal(titular, body.current, req.ip || '', () =>
-      badRequest('La contraseña actual no es correcta.', 'bad_current_password'),
-    );
-    // setMailboxPassword sustituye solo la principal: las contraseñas de
-    // aplicación (otros dispositivos, integraciones) siguen funcionando.
-    await getEngine().setMailboxPassword(titular.email, body.next);
+    // Con el cerrojo del buzón, como el restablecimiento del panel: un cambio
+    // de usuario a la vez dejaría la contraseña en un nombre que ya no existe.
+    await withLock(buzonLockKey(titular.id), async () => {
+      await comprobarContrasenaPrincipal(titular, body.current, req.ip || '', () =>
+        badRequest('La contraseña actual no es correcta.', 'bad_current_password'),
+      );
+      // setMailboxPassword sustituye solo la principal: las contraseñas de
+      // aplicación (otros dispositivos, integraciones) siguen funcionando.
+      await getEngine().setMailboxPassword(loginParaMotor(titular.id), body.next);
+    });
     alCambiarContrasenaBuzon(titular.id, tokenHash);
     auditTitular(req, titular.clientId, 'portal.password_changed', { email: titular.email });
     return { ok: true };
+  });
+
+  app.post('/api/portal/login-update', async (req) => {
+    const { titular } = sesionBuzon(req);
+    z.object({}).parse(req.body ?? {});
+    // La sesión sigue: va por el id del buzón, no por su usuario.
+    return actualizarDispositivos(req, titular, 'titular');
   });
 
   app.get('/api/portal/mobileconfig', async (req, reply) => {
     const { titular } = sesionBuzon(req);
     const { settings } = datosConexion(titular);
     // Sin contraseña: el dispositivo la pide al instalar el perfil.
-    const plist = mobileconfigPlist({
-      email: titular.email,
-      displayName: titular.displayName || undefined,
-      settings,
-    });
-    return enviarPerfil(reply, titular.email, plist);
+    return enviarPerfil(reply, titular.email, perfilDelTitular(titular, settings));
   });
 
   app.get('/api/portal/app-passwords', async (req) => {
@@ -863,31 +1028,64 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       const { user, curpass, newpass } = parsed.data;
       if (newpass.length < MIN_CONTRASENA || newpass === curpass) return responder(400, 'error');
 
+      // «user» es el usuario de la sesión de Roundcube: el del motor, que
+      // durante un cambio de dominio puede ser la dirección anterior.
+      const titular = buzonPorDireccion(user);
+      const clave = claveDeFallos(user, titular);
       // Tras Traefik todas las peticiones llegan con la IP del webmail: solo
       // tiene sentido el límite por buzón.
       try {
-        comprobarLimite(user, null);
+        comprobarLimite(clave, null);
       } catch {
         return responder(429, 'error');
       }
-      const titular = buzonPorDireccion(user);
       if (!titular) {
-        registrarFallo(user, null);
+        registrarFallo(clave, null);
         return responder(403, 'error');
       }
       if (titular.suspendido) return responder(403, 'error');
-      const ok = await getEngine().verifyCredentials(titular.email, curpass);
-      if (ok === null) return responder(503, 'error');
-      if (!ok) {
-        registrarFallo(titular.email, null);
-        return responder(403, 'error');
-      }
-      if (esContrasenaDeAplicacion(titular.id, curpass)) return responder(403, 'error');
 
-      await getEngine().setMailboxPassword(titular.email, newpass);
-      alCambiarContrasenaBuzon(titular.id);
-      auditTitular(req, titular.clientId, 'webmail.password_changed', { email: titular.email });
-      return responder(200, 'ok');
+      return withLock(buzonLockKey(titular.id), async () => {
+        let login: string;
+        try {
+          login = loginParaMotor(titular.id);
+        } catch {
+          // Cambio de usuario a medias: el conciliador lo resuelve en minutos.
+          return responder(409, 'error');
+        }
+        const ok = await getEngine().verifyCredentials(login, curpass);
+        if (ok === null) return responder(503, 'error');
+        if (!ok) {
+          registrarFallo(titular.id, null);
+          return responder(403, 'error');
+        }
+        if (esContrasenaDeAplicacion(titular.id, curpass)) return responder(403, 'error');
+
+        await getEngine().setMailboxPassword(login, newpass);
+        alCambiarContrasenaBuzon(titular.id);
+        auditTitular(req, titular.clientId, 'webmail.password_changed', { email: titular.email });
+        return responder(200, 'ok');
+      });
     });
+  });
+
+  /*
+   * Cuenta del webmail (complemento mailway_cuentas de Roundcube). Al entrar,
+   * Roundcube pregunta qué usuario corresponde a lo que se ha tecleado (la
+   * dirección vieja, la nueva o el usuario) para entrar con el vigente y
+   * llevarse a él los contactos, firmas y preferencias del usuario anterior.
+   * No comprueba contraseñas, así que no cuenta fallos; exige el secreto
+   * compartido del webmail y, sin él configurado, no existe.
+   */
+  app.post('/api/webmail/cuenta', async (req, reply) => {
+    if (!config.webmailToken) throw notFound('Ruta no encontrada.');
+    if (!tokenWebmailValido(req.headers['x-mailway-token'])) {
+      throw unauthorized('El token del webmail no es válido.', 'webmail_token_invalid');
+    }
+    const { user } = webmailCuentaSchema.parse(req.body ?? {});
+    const resuelto = resolverBuzon(user);
+    if (!resuelto) throw notFound('No hay ningún buzón con esa dirección o ese usuario.', 'not_found');
+    reply.header('Cache-Control', 'no-store');
+    return datosWebmail(resuelto.mailboxId);
   });
 }
