@@ -11,6 +11,7 @@ import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
 import { assertClientActive, getClient } from './clients';
 import { publicBaseUrl, xmlEscape } from './connection';
+import { loginParaMotor } from './direcciones';
 import { assertDomainOwnership } from './domains';
 import { getMailbox, type Mailbox } from './mailboxes';
 import { getEngineSettings, getInstanceSettings } from './settings';
@@ -634,6 +635,19 @@ async function entregar(
     campos,
     recibidoEn: now(),
   });
+  // Usuario del motor con el que autentica la credencial del formulario (el
+  // mensaje sale con la dirección vigente). Con un cambio de usuario a medias
+  // no se envía: el visitante puede reintentar en unos segundos.
+  let usuario: string;
+  try {
+    usuario = loginParaMotor(buzon.id);
+  } catch {
+    throw new HttpError(
+      503,
+      'Este formulario no está disponible en este momento. Vuelve a intentarlo en unos minutos.',
+      'form_unavailable',
+    );
+  }
   const engineSettings = getEngineSettings();
   let status: 'sent' | 'failed' = 'sent';
   let error = '';
@@ -647,7 +661,13 @@ async function entregar(
   } else {
     const { mailHostname } = getInstanceSettings();
     try {
-      const transport = getTransport(row.id, buzon.email, credencialSmtp(row).plain, engineSettings, mailHostname);
+      const transport = getTransport(
+        row.id,
+        { usuario, remitente: buzon.email },
+        credencialSmtp(row).plain,
+        engineSettings,
+        mailHostname,
+      );
       const resultado = await transport.sendMail(mensaje);
       smtpMessageId = resultado.messageId || '';
     } catch (err) {
@@ -793,7 +813,9 @@ export function registerFormRoutes(app: FastifyInstance): void {
       const id = randomId('frm');
       const smtpPassword = generateMailboxPassword(24);
       const engine = getEngine();
-      const stored = await engine.addAppPassword(buzon.email, smtpPassword, `mailway-form-${id.slice(4, 12)}`);
+      // Con el usuario del motor, que durante un cambio de dominio no es la dirección.
+      const login = loginParaMotor(buzon.id);
+      const stored = await engine.addAppPassword(login, smtpPassword, `mailway-form-${id.slice(4, 12)}`);
       const publicKey = `mwf_${crypto.randomBytes(16).toString('base64url')}`;
       const t = now();
       try {
@@ -810,7 +832,7 @@ export function registerFormRoutes(app: FastifyInstance): void {
         );
       } catch (err) {
         // Sin fila, la credencial quedaría en el motor sin que nadie pudiera retirarla.
-        await engine.removeAppPassword(buzon.email, stored).catch((rollbackErr: unknown) => {
+        await engine.removeAppPassword(login, stored).catch((rollbackErr: unknown) => {
           req.log.error({ err: rollbackErr }, 'No se pudo retirar la credencial tras fallar el alta del formulario');
         });
         throw err;
@@ -890,13 +912,17 @@ export function registerFormRoutes(app: FastifyInstance): void {
     requireAuth(req);
     const row = filaPorId(id);
     requireClientAccess(req, row.client_id);
+    // El usuario del motor se resuelve ANTES de borrar: con un cambio de
+    // usuario a medias (409) no se toca nada y se puede reintentar. Sin la
+    // fila del formulario ya no habría forma de retirar su credencial.
+    const login = loginParaMotor(row.recipient_mailbox_id);
     db.prepare('DELETE FROM forms WHERE id = ?').run(id);
     forgetTransport(id);
     // La credencial SMTP del formulario se retira del motor: sin formulario,
     // nadie la necesita.
     try {
       const { stored } = credencialSmtp(row);
-      if (stored) await getEngine().removeAppPassword(getMailbox(row.recipient_mailbox_id).email, stored);
+      if (stored) await getEngine().removeAppPassword(login, stored);
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la credencial SMTP al eliminar el formulario');
     }

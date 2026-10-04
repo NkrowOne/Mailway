@@ -21,6 +21,7 @@ import { getEngineSettings, getInstanceSettings } from './settings';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
 import { assertClientActive, getClient, getPlan } from './clients';
+import { loginParaMotor } from './direcciones';
 import { getMailbox, type Mailbox } from './mailboxes';
 import { bloquesClaveApi, publicBaseUrl } from './connection';
 
@@ -330,9 +331,14 @@ function podarTransportes(nowMs: number): void {
   }
 }
 
+/**
+ * Pool SMTP de una credencial (una clave de API o un formulario). `usuario` es
+ * el usuario del motor con el que se autentica y `remitente`, la dirección con
+ * la que sale el correo: durante un cambio de dominio no coinciden.
+ */
 export function getTransport(
   keyId: string,
-  senderEmail: string,
+  cred: { usuario: string; remitente: string },
   smtpPassword: string,
   engineSettings: Pick<EngineSettings, 'smtpHost' | 'smtpPort' | 'smtpSecure'>,
   mailHostname: string,
@@ -341,8 +347,12 @@ export function getTransport(
   const allowSelfSigned = process.env.MAILWAY_SMTP_ALLOW_SELF_SIGNED === '1';
   // La huella incluye host/puerto/seguridad y la credencial: si el admin
   // cambia los ajustes del motor, el pool anterior se cierra y se rehace.
+  // También el usuario y el remitente: tras pasar a otro dominio o actualizar
+  // el usuario, las conexiones abiertas se autenticaron con los datos
+  // anteriores y deben rehacerse.
   const huella = [
-    senderEmail,
+    cred.usuario,
+    cred.remitente,
     hashToken(smtpPassword).slice(0, 12),
     engineSettings.smtpHost,
     engineSettings.smtpPort,
@@ -366,7 +376,7 @@ export function getTransport(
     host: engineSettings.smtpHost,
     port: engineSettings.smtpPort,
     secure: engineSettings.smtpSecure,
-    auth: { user: senderEmail, pass: smtpPassword },
+    auth: { user: cred.usuario, pass: smtpPassword },
     maxConnections: 3,
     tls: smtpTlsOptions(engineSettings.smtpHost, mailHostname, allowSelfSigned),
   });
@@ -469,11 +479,9 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     const engine = getEngine();
     const { key, prefix, hash } = newApiKey();
     const id = randomId('key');
-    const storedSecret = await engine.addAppPassword(
-      mailbox.email,
-      smtpPassword,
-      `mailway-${prefix}`,
-    );
+    // Con el usuario del motor, que durante un cambio de dominio no es la dirección.
+    const login = loginParaMotor(mailbox.id);
+    const storedSecret = await engine.addAppPassword(login, smtpPassword, `mailway-${prefix}`);
     try {
       db.prepare(
         `INSERT INTO api_keys (id, client_id, name, prefix, key_hash, sender_mailbox_id,
@@ -488,7 +496,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
       // Sin fila en la BD, la contraseña de aplicación quedaría en el motor
       // como una credencial SMTP válida que nadie puede ver ni revocar.
       try {
-        await engine.removeAppPassword(mailbox.email, storedSecret);
+        await engine.removeAppPassword(login, storedSecret);
       } catch (rollbackErr) {
         req.log.error(
           { err: rollbackErr, mailbox: mailbox.email },
@@ -517,15 +525,19 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     if (!row) throw notFound('Clave no encontrada.');
     requireClientAccess(req, row.client_id);
     if (row.revoked_at) throw conflict('Esta clave ya estaba revocada.');
+    // El usuario del motor se resuelve ANTES de revocar: con un cambio de
+    // usuario a medias (409) no se toca nada y se puede reintentar. Revocar
+    // primero dejaría la contraseña de aplicación válida en el motor sin una
+    // clave activa desde la que volver a retirarla.
+    const login = loginParaMotor(row.sender_mailbox_id);
     db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(now(), id);
     forgetApiKey(id);
     // Se retira también la contraseña de aplicación del motor.
     try {
       const engine = getEngine();
-      const mailbox = getMailbox(row.sender_mailbox_id);
       const credentials = parseSmtpCredentials(row.smtp_password_enc);
       if (credentials.stored) {
-        await engine.removeAppPassword(mailbox.email, credentials.stored);
+        await engine.removeAppPassword(login, credentials.stored);
       }
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la contraseña de aplicación al revocar la clave');
@@ -1016,6 +1028,9 @@ export function registerSendRoutes(app: FastifyInstance): void {
       );
     }
     const mailbox = resolveSender(keyRow);
+    // Antes de reservar nada: con un cambio de usuario a medias (409, unos
+    // segundos) el envío no gasta cupo y se puede reintentar.
+    const usuario = loginParaMotor(mailbox.id);
     const plan = getPlan(client.planId);
 
     // Se valida el cuerpo ANTES de contar nada: un envío malformado no debe
@@ -1061,7 +1076,7 @@ export function registerSendRoutes(app: FastifyInstance): void {
       }
 
       try {
-        const respuesta = await enviar(req, keyRow, mailbox, body, adjuntos);
+        const respuesta = await enviar(req, keyRow, mailbox, usuario, body, adjuntos);
         reserva?.completar(200, respuesta);
         return respuesta;
       } finally {
@@ -1079,6 +1094,7 @@ async function enviar(
   req: FastifyRequest,
   keyRow: ApiKeyRow,
   mailbox: Mailbox,
+  usuario: string,
   body: z.infer<typeof sendSchema>,
   adjuntos: { adjuntos: AdjuntoPreparado[]; bytes: number },
 ): Promise<{ id: string; status: 'sent' | 'failed'; error?: string; messageId?: string }> {
@@ -1101,9 +1117,11 @@ async function enviar(
   } else {
     const { mailHostname } = getInstanceSettings();
     try {
+      // Autentica con el usuario del motor y el mensaje sale con la dirección
+      // vigente: Stalwart admite como remitente cualquier dirección del buzón.
       const transport = getTransport(
         keyRow.id,
-        mailbox.email,
+        { usuario, remitente: mailbox.email },
         parseSmtpCredentials(keyRow.smtp_password_enc).plain,
         engineSettings,
         mailHostname,
