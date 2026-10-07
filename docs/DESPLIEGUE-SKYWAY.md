@@ -1203,6 +1203,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `MAILWAY_DATA_DIR` | `/data` en la imagen | Base de datos y clave maestra. |
 | `MAILWAY_SECRET` | se genera en `/data/.secret` | Clave maestra: firma sesiones, cifra secretos y deriva los TXT de verificación de propiedad. Mínimo 16 caracteres. **No la cambies** en una instalación en uso ([SEGURIDAD.md](SEGURIDAD.md#6-secretos)). |
 | `MAILWAY_SETUP_TOKEN` | — | Exige este token para crear el primer administrador. |
+| `MAILWAY_ADMIN_EMAIL`, `MAILWAY_ADMIN_PASSWORD`, `MAILWAY_ADMIN_NAME` | —, —, `Administración` | Recuperar el acceso sin terminal. Al arrancar, si ese correo no existe, crea un administrador; si existe y es administrador, fija esa contraseña y cierra sus sesiones (con la misma contraseña no hace nada). Deben ir las dos juntas, la contraseña con 10–200 caracteres. **Quita `MAILWAY_ADMIN_PASSWORD` en cuanto entres**: mientras esté, cada reinicio deshace un cambio de contraseña hecho en el panel. |
 | `STALWART_URL`, `STALWART_ADMIN_USER`, `STALWART_ADMIN_PASSWORD` | —, `admin`, — | Motor que el asistente conecta con «Usar el motor configurado en el servidor», sin que la contraseña pase por el navegador. |
 | `STALWART_SMTP_HOST`, `STALWART_SMTP_PORT` | host de `STALWART_URL`, `587` | SMTP interno de la API de envío. |
 | `MAILWAY_SMTP_ALLOW_SELF_SIGNED` | — | `1` desactiva la verificación TLS del SMTP interno (solo hasta tener certificado). |
@@ -1252,7 +1253,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | El instalador se detiene: «deploy/.env no menciona ese panel» | Se ejecutó sin terminal (`--actualizar` o desatendido) y encontró un panel que no conoce | Repite desde una terminal y confirma, o indica `MAILWAY_PANEL_SERVICIO=<id>` (actualizarlo) o `MAILWAY_PANEL_SERVICIO=ninguno` (no tocarlo). |
 | El instalador se detiene porque Skyway despliega varios paneles de Mailway | Hay más de un servicio con el panel (p. ej. una copia de prueba) | Repite con `MAILWAY_PANEL_SERVICIO=<id>` y el servicio que corresponde (el instalador los lista). |
 | El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
-| Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |
+| Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | Sin terminal: en las variables del servicio del panel pon `MAILWAY_ADMIN_EMAIL` y `MAILWAY_ADMIN_PASSWORD` y reinicia (sección 14); retira la contraseña después. Con terminal: `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
 
 ---

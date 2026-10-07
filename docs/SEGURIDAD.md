@@ -52,6 +52,11 @@ cliente puede usar la API directamente, no solo la interfaz.
   crear el primer administrador exige ese token; así el primer visitante de un
   panel recién publicado no se queda con la instancia. Los intentos con un
   token incorrecto se limitan a 10 por IP cada 15 minutos (`429`).
+- **Administrador desde el entorno**: `MAILWAY_ADMIN_EMAIL` +
+  `MAILWAY_ADMIN_PASSWORD` crean un administrador o fijan su contraseña al
+  arrancar (solo quien controla el entorno del panel). Nunca modifica a un
+  usuario que no sea administrador y la contraseña no se registra ni se anota
+  en la Actividad. Hay que retirarla tras usarla.
 
 ### 3.2 Tokens de gestión
 
