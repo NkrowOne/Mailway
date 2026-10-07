@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { config } from './config';
+import { applyAdminFromEnv } from './modules/adminenv';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -12,6 +13,17 @@ async function main(): Promise<void> {
     app.log.warn(
       `${interrumpidas} envío(s) con Idempotency-Key quedaron a medias en el arranque anterior: el reintento con la misma clave volverá a enviarlos.`,
     );
+  }
+
+  const admin = applyAdminFromEnv({
+    email: process.env.MAILWAY_ADMIN_EMAIL,
+    password: process.env.MAILWAY_ADMIN_PASSWORD,
+    name: process.env.MAILWAY_ADMIN_NAME,
+  });
+  if (admin.action === 'none' && admin.warning) app.log.warn(admin.warning);
+  else if (admin.action === 'created') app.log.info(`Administrador ${admin.email} creado desde el entorno.`);
+  else if (admin.action === 'password_updated') {
+    app.log.info(`Contraseña de ${admin.email} fijada desde el entorno. Quita MAILWAY_ADMIN_PASSWORD cuando ya no la necesites.`);
   }
 
   await app.listen({ port: config.port, host: config.host });
