@@ -337,6 +337,7 @@ guarda en claro.
 | `POST /api/mailboxes/:id/setup-links` | `{ includePassword?, password?, ttlHours? (1–720, 72 por defecto) }` → `{ link: { id, url, expiresAt, hasPassword } }`. `url` = `<panel>/conectar/<token>`. |
 | `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword }] }`. |
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
+| `POST /api/mailboxes/:id/setup-reset` | Reinicia la configuración del buzón (ver abajo). `{ revokeAppPasswords? (true por defecto), includePassword? (true por defecto), ttlHours? (1–720, 72 por defecto) }` → `{ password, link: { id, url, expiresAt, hasPassword }, linksRemoved, appPasswordsRevoked }`. |
 
 - Con `includePassword: true` hay que indicar en `password` la contraseña
   recién generada (`400 password_required`). Se comprueba con el motor antes de
@@ -354,6 +355,18 @@ guarda en claro.
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
   buzón. Los enlaces caducados se eliminan 30 días después.
 - Buzón o cliente suspendido: `400 mailbox_suspended`.
+
+**Reiniciar la configuración** (`setup-reset`) deja el buzón como recién
+creado para entregárselo al titular, normalmente después de haberlo probado:
+genera una contraseña principal nueva, elimina todos los enlaces anteriores,
+cierra las sesiones de «Mi buzón», borra los intentos fallidos registrados del
+buzón y crea un enlace nuevo (con la contraseña cifrada si `includePassword`).
+Con `revokeAppPasswords` revoca en el motor las contraseñas de aplicación
+activas y borra su historial; desmárcalo si alguna la usa una integración que
+debe seguir enviando. El correo del buzón no se modifica. Primero se revocan
+las contraseñas de aplicación y luego se cambia la principal: si el motor no
+responde (`502`), no se ha borrado ningún enlace y el reinicio se puede
+repetir. Queda en la actividad como `mailbox.setup_reset`, sin secretos.
 
 ### 2.8 Actividad
 

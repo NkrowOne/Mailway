@@ -3,8 +3,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
-import { decryptSecret, encryptSecret, hashToken, newSessionToken, randomId } from '../core/crypto';
+import {
+  decryptSecret,
+  encryptSecret,
+  generateMailboxPassword,
+  hashToken,
+  newSessionToken,
+  randomId,
+} from '../core/crypto';
 import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/errors';
+import { withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
@@ -407,6 +415,49 @@ function enviarPerfil(reply: FastifyReply, email: string, plist: string): string
   return plist;
 }
 
+interface EnlaceNuevo {
+  id: string;
+  url: string;
+  expiresAt: number;
+  hasPassword: boolean;
+}
+
+/**
+ * Guarda un enlace de configuración nuevo y devuelve su URL. El token en
+ * claro solo existe en la respuesta que lo crea; en la base, su hash.
+ */
+function insertarEnlace(
+  req: FastifyRequest,
+  titular: Titular,
+  passwordEnc: string | null,
+  ttlHours: number,
+): EnlaceNuevo {
+  purgarEnlaces();
+  const token = crypto.randomBytes(32).toString('base64url');
+  const linkId = randomId('stl');
+  const createdAt = now();
+  const expiresAt = createdAt + ttlHours * 3600_000;
+  db.prepare(
+    `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+  return {
+    id: linkId,
+    url: `${publicBaseUrl(req)}/conectar/${token}`,
+    expiresAt,
+    hasPassword: passwordEnc !== null,
+  };
+}
+
+function exigirBuzonActivo(titular: Titular): void {
+  if (titular.suspendido) {
+    throw badRequest(
+      'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
+      'mailbox_suspended',
+    );
+  }
+}
+
 /* ----------------------------- Sesión «Mi buzón» --------------------------- */
 
 function crearSesionBuzon(req: FastifyRequest, reply: FastifyReply, mailboxId: string): void {
@@ -493,16 +544,26 @@ function tokenWebmailValido(recibido: unknown): boolean {
 
 /* -------------------------------- Esquemas --------------------------------- */
 
+const validezEnlaceSchema = z
+  .number()
+  .int('La validez debe indicarse en horas enteras.')
+  .min(1, 'La validez mínima del enlace es de 1 hora.')
+  .max(720, 'La validez máxima del enlace es de 720 horas (30 días).')
+  .optional()
+  .default(72);
+
 const crearEnlaceSchema = z.object({
   includePassword: z.boolean().optional().default(false),
   password: z.string().min(1).max(200).optional(),
-  ttlHours: z
-    .number()
-    .int('La validez debe indicarse en horas enteras.')
-    .min(1, 'La validez mínima del enlace es de 1 hora.')
-    .max(720, 'La validez máxima del enlace es de 720 horas (30 días).')
-    .optional()
-    .default(72),
+  ttlHours: validezEnlaceSchema,
+});
+
+const reinicioSchema = z.object({
+  /** Retirar los dispositivos y aplicaciones conectados con contraseñas de aplicación. */
+  revokeAppPasswords: z.boolean().optional().default(true),
+  /** Guardar la contraseña nueva en el enlace para que el titular no la teclee. */
+  includePassword: z.boolean().optional().default(true),
+  ttlHours: validezEnlaceSchema,
 });
 
 const loginSchema = z.object({
@@ -548,12 +609,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const titular = buzonDelPanel(req, id);
     const body = crearEnlaceSchema.parse(req.body ?? {});
-    if (titular.suspendido) {
-      throw badRequest(
-        'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
-        'mailbox_suspended',
-      );
-    }
+    exigirBuzonActivo(titular);
 
     let passwordEnc: string | null = null;
     if (body.includePassword) {
@@ -596,31 +652,15 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       passwordEnc = encryptSecret(body.password);
     }
 
-    purgarEnlaces();
-    const token = crypto.randomBytes(32).toString('base64url');
-    const linkId = randomId('stl');
-    const createdAt = now();
-    const expiresAt = createdAt + body.ttlHours * 3600_000;
-    db.prepare(
-      `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+    const link = insertarEnlace(req, titular, passwordEnc, body.ttlHours);
     audit(req, 'mailbox.setup_link_created', {
       mailboxId: titular.id,
       email: titular.email,
-      linkId,
-      hasPassword: passwordEnc !== null,
+      linkId: link.id,
+      hasPassword: link.hasPassword,
       ttlHours: body.ttlHours,
     }, titular.clientId);
-    // El token en claro solo existe en esta respuesta; en la base, su hash.
-    return {
-      link: {
-        id: linkId,
-        url: `${publicBaseUrl(req)}/conectar/${token}`,
-        expiresAt,
-        hasPassword: passwordEnc !== null,
-      },
-    };
+    return { link };
   });
 
   app.get('/api/mailboxes/:id/setup-links', async (req) => {
@@ -654,6 +694,73 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     ).run(now(), linkId);
     audit(req, 'mailbox.setup_link_revoked', { mailboxId: titular.id, email: titular.email, linkId }, titular.clientId);
     return { ok: true };
+  });
+
+  /**
+   * Reinicia la configuración del buzón para empezar de cero, normalmente
+   * tras haberlo probado quien lo administra: contraseña nueva, fuera los
+   * enlaces anteriores, las sesiones de «Mi buzón», los bloqueos por
+   * intentos fallidos y (si se pide) las contraseñas de aplicación, y un
+   * enlace de configuración nuevo listo para entregar al titular. El correo
+   * del buzón no se toca.
+   */
+  app.post('/api/mailboxes/:id/setup-reset', async (req) => {
+    const { id } = req.params as { id: string };
+    const titular = buzonDelPanel(req, id);
+    const body = reinicioSchema.parse(req.body ?? {});
+    exigirBuzonActivo(titular);
+
+    // En la misma cola que las altas de contraseñas de aplicación: una que se
+    // creara a mitad del reinicio sobreviviría a él.
+    return withLock(`contrasenas-app:${titular.id}`, async () => {
+      // Primero lo que depende del motor: si no responde, el buzón queda
+      // como estaba y el reinicio se puede repetir sin más.
+      let appPasswordsRevoked = 0;
+      if (body.revokeAppPasswords) {
+        const activas = db
+          .prepare('SELECT id FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+          .all(titular.id) as { id: string }[];
+        for (const { id: appId } of activas) {
+          await revokeAppPassword(titular.id, appId);
+          appPasswordsRevoked += 1;
+        }
+        // Las ya revocadas solo eran historial de la prueba: desde cero es sin él.
+        db.prepare('DELETE FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NOT NULL').run(titular.id);
+      }
+
+      // Contraseña nueva siempre: quien probó el buzón conoce la anterior (o
+      // la cambió desde «Mi buzón» o el webmail).
+      const password = generateMailboxPassword();
+      await getEngine().setMailboxPassword(titular.email, password);
+      alCambiarContrasenaBuzon(titular.id);
+
+      // Los enlaces anteriores se borran, no solo se revocan: el titular
+      // recibe un único enlace y la lista del panel vuelve a estar vacía. El
+      // registro de actividad conserva su rastro.
+      const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
+      // Los fallos de la prueba no deben bloquear al titular en su primer acceso.
+      db.prepare('DELETE FROM login_attempts WHERE ip IN (?, ?)').run(
+        `buzon:${titular.email}`,
+        `buzon-enlace:${titular.id}`,
+      );
+
+      const link = insertarEnlace(
+        req,
+        titular,
+        body.includePassword ? encryptSecret(password) : null,
+        body.ttlHours,
+      );
+      audit(req, 'mailbox.setup_reset', {
+        mailboxId: titular.id,
+        email: titular.email,
+        linkId: link.id,
+        hasPassword: link.hasPassword,
+        ttlHours: body.ttlHours,
+        linksRemoved,
+        appPasswordsRevoked,
+      }, titular.clientId);
+      return { password, link, linksRemoved, appPasswordsRevoked };
+    });
   });
 
   /* ------------------ Enlaces de configuración (público) ------------------ */

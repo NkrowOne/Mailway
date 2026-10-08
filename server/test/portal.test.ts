@@ -713,3 +713,160 @@ test('el analizador de formularios no se extiende al resto de la API', async () 
   });
   assert.equal(res.statusCode, 415);
 });
+
+/* ------------------------- Reiniciar la configuración ----------------------- */
+
+async function reiniciar(mailboxId: string, payload: Record<string, unknown> = {}, cookie = ctx.adminCookie) {
+  return ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${mailboxId}/setup-reset`,
+    headers: { cookie },
+    payload,
+  });
+}
+
+interface Reinicio {
+  password: string;
+  link: { id: string; url: string; expiresAt: number; hasPassword: boolean };
+  linksRemoved: number;
+  appPasswordsRevoked: number;
+}
+
+test('reiniciar tras una prueba: contraseña y enlace nuevos, sin rastro de la prueba', async () => {
+  const b = await buzonDePrueba();
+  const engine = getEngine();
+
+  // La prueba de quien administra: un enlace abierto y marcado como hecho,
+  // una sesión de «Mi buzón», una contraseña de aplicación (y otra ya
+  // revocada) y un par de fallos al entrar.
+  const enlaceViejo = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+  const tokenViejo = tokenDe((enlaceViejo.json() as { link: { url: string } }).link.url);
+  await ctx.app.inject({ method: 'POST', url: `/api/public/setup/${tokenViejo}/done` });
+  await crearEnlace(b.mailboxId);
+  const cookie = await sesionPortal(b.email, b.password);
+  const app = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/portal/app-passwords',
+    headers: { cookie },
+    payload: { name: 'Móvil de prueba' },
+  });
+  const appPass = (app.json() as { password: string }).password;
+  const revocada = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/portal/app-passwords',
+    headers: { cookie },
+    payload: { name: 'Tableta' },
+  });
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/portal/app-passwords/${(revocada.json() as { appPassword: { id: string } }).appPassword.id}`,
+    headers: { cookie },
+  });
+  assert.equal((await login(b.email, 'no-es-esta-clave')).statusCode, 401);
+  assert.equal((await login(b.email, 'tampoco-es-esta')).statusCode, 401);
+
+  const res = await reiniciar(b.mailboxId, { ttlHours: 168 });
+  assert.equal(res.statusCode, 200, res.body);
+  const r = res.json() as Reinicio;
+  assert.equal(r.linksRemoved, 2);
+  assert.equal(r.appPasswordsRevoked, 1);
+  assert.ok(r.password.length >= 10);
+  assert.notEqual(r.password, b.password);
+  assert.equal(r.link.hasPassword, true);
+  assert.ok(Math.abs(r.link.expiresAt - (Date.now() + 168 * 3600_000)) < 60_000);
+
+  // Credenciales: solo vale la nueva; la de aplicación de la prueba, tampoco.
+  assert.equal(await engine.verifyCredentials(b.email, r.password), true);
+  assert.equal(await engine.verifyCredentials(b.email, b.password), false);
+  assert.equal(await engine.verifyCredentials(b.email, appPass), false);
+  const apps = db.prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ?').get(b.mailboxId) as { c: number };
+  assert.equal(apps.c, 0, 'tampoco queda el historial de contraseñas de aplicación');
+
+  // La sesión de la prueba se cierra y el enlace viejo deja de existir.
+  const me = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie } });
+  assert.equal(me.statusCode, 401);
+  const viejo = await ctx.app.inject({ method: 'GET', url: `/api/public/setup/${tokenViejo}` });
+  assert.equal(viejo.statusCode, 404);
+
+  // Un único enlace, con la contraseña nueva, listo para el titular.
+  const lista = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/mailboxes/${b.mailboxId}/setup-links`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  const links = (lista.json() as { links: { id: string; hasPassword: boolean; lastOpenedAt: number | null }[] }).links;
+  assert.deepEqual(
+    links.map((l) => [l.id, l.hasPassword, l.lastOpenedAt]),
+    [[r.link.id, true, null]],
+  );
+  const pub = await ctx.app.inject({ method: 'GET', url: `/api/public/setup/${tokenDe(r.link.url)}` });
+  assert.equal(pub.statusCode, 200, pub.body);
+  assert.equal(pub.json().password, r.password);
+
+  // Los fallos de la prueba no cuentan para el titular.
+  const fallos = db
+    .prepare('SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ?')
+    .get(`buzon:${b.email}`) as { c: number };
+  assert.equal(fallos.c, 0);
+  assert.equal((await login(b.email, r.password)).statusCode, 200);
+
+  // En la actividad del cliente, sin secretos.
+  const registro = auditoria('mailbox.setup_reset').filter((a) => a.detail.includes(b.email));
+  assert.equal(registro.length, 1);
+  assert.equal(registro[0]!.client_id, b.clientId);
+  assert.ok(!registro[0]!.detail.includes(r.password));
+  assert.ok(!registro[0]!.detail.includes(tokenDe(r.link.url)));
+});
+
+test('reiniciar puede conservar las contraseñas de aplicación y crear el enlace sin contraseña', async () => {
+  const b = await buzonDePrueba();
+  const app = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${b.mailboxId}/app-passwords`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { name: 'Integración de la web' },
+  });
+  assert.equal(app.statusCode, 200, app.body);
+  const appPass = (app.json() as { password: string }).password;
+
+  const res = await reiniciar(b.mailboxId, { revokeAppPasswords: false, includePassword: false });
+  assert.equal(res.statusCode, 200, res.body);
+  const r = res.json() as Reinicio;
+  assert.equal(r.appPasswordsRevoked, 0);
+  assert.equal(r.link.hasPassword, false);
+  assert.equal(await getEngine().verifyCredentials(b.email, appPass), true, 'la integración sigue funcionando');
+  assert.equal(await getEngine().verifyCredentials(b.email, r.password), true);
+  const fila = db.prepare('SELECT password_enc FROM setup_links WHERE id = ?').get(r.link.id) as {
+    password_enc: string | null;
+  };
+  assert.equal(fila.password_enc, null);
+});
+
+test('reiniciar: solo quien gestiona el cliente, y nunca un buzón suspendido', async () => {
+  const propio = await buzonDePrueba({ withUser: true });
+  const ajeno = await createClient(ctx, { withUser: true });
+
+  const anonimo = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/mailboxes/${propio.mailboxId}/setup-reset`,
+    payload: {},
+  });
+  assert.equal(anonimo.statusCode, 401);
+  const deOtroCliente = await reiniciar(propio.mailboxId, {}, ajeno.userCookie!);
+  assert.equal(deOtroCliente.statusCode, 403);
+  assert.equal(await getEngine().verifyCredentials(propio.email, propio.password), true, 'no ha cambiado nada');
+
+  const delCliente = await reiniciar(propio.mailboxId, {}, propio.userCookie!);
+  assert.equal(delCliente.statusCode, 200, delCliente.body);
+
+  const suspender = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/mailboxes/${propio.mailboxId}`,
+    headers: { cookie: ctx.adminCookie },
+    payload: { status: 'suspended' },
+  });
+  assert.equal(suspender.statusCode, 200, suspender.body);
+  const suspendido = await reiniciar(propio.mailboxId);
+  assert.equal(suspendido.statusCode, 400);
+  assert.equal(suspendido.json().code, 'mailbox_suspended');
+});
