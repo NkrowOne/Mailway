@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { hashPassword } from '../src/core/crypto';
 import { db } from '../src/core/db';
 import { applyAdminFromEnv, correoConContrasenaDelEntorno } from '../src/modules/adminenv';
 import { getTestApp } from './helpers';
@@ -119,6 +120,24 @@ test('con la contraseña en el entorno, el panel no deja cambiarla y lo dice en 
   }
   // Sin la variable, la cuenta vuelve a gestionarse desde el panel.
   assert.equal(correoConContrasenaDelEntorno(), null);
+});
+
+test('la de las variables vale al entrar aunque la de la base haya cambiado después del arranque', async () => {
+  const previo = { email: process.env.MAILWAY_ADMIN_EMAIL, password: process.env.MAILWAY_ADMIN_PASSWORD };
+  process.env.MAILWAY_ADMIN_EMAIL = EMAIL;
+  process.env.MAILWAY_ADMIN_PASSWORD = 'clave-solo-variable-7';
+  try {
+    // Como si la herramienta de terminal la hubiera cambiado sin reiniciar.
+    db.prepare('UPDATE users SET password_hash = ? WHERE email = ?').run(hashPassword('cambiada-a-mano-10'), EMAIL);
+    assert.ok(await entra(EMAIL, 'clave-solo-variable-7'), 'vale la de la variable');
+    assert.equal(await entra(EMAIL, 'cambiada-a-mano-10'), false, 'la de la base queda al día con la variable');
+    assert.equal(await entra(EMAIL, 'clave-solo-variable-X'), false, 'otra cualquiera, no');
+  } finally {
+    if (previo.email === undefined) delete process.env.MAILWAY_ADMIN_EMAIL;
+    else process.env.MAILWAY_ADMIN_EMAIL = previo.email;
+    if (previo.password === undefined) delete process.env.MAILWAY_ADMIN_PASSWORD;
+    else process.env.MAILWAY_ADMIN_PASSWORD = previo.password;
+  }
 });
 
 test('solo con la contraseña y varios administradores, pide el correo', () => {

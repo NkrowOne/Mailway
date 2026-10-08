@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { hashPassword, verifyPassword } from '../core/crypto';
 import { db } from '../core/db';
 import { auditSystem } from './audit';
@@ -133,6 +134,30 @@ export function correoConContrasenaDelEntorno(env: AdminEnv = entornoDelProceso(
   if (!destino || 'warning' in destino) return null;
   const user = db.prepare('SELECT role FROM users WHERE email = ?').get(destino.email) as { role: string } | undefined;
   return user?.role === 'admin' ? destino.email : null;
+}
+
+/**
+ * Al iniciar sesión: si el correo es el de la cuenta que fija el entorno y la
+ * contraseña es la de MAILWAY_ADMIN_PASSWORD, vale aunque la de la base sea
+ * otra (la cambió la herramienta de terminal, o una versión anterior, después
+ * del último arranque). La de la base se vuelve a poner al día y la cuenta
+ * se rehabilita, como en el arranque. Así la de las variables vale siempre.
+ */
+export function aceptarContrasenaDelEntorno(email: string, password: string, env: AdminEnv = entornoDelProceso()): boolean {
+  const propia = env.password ?? '';
+  if (correoConContrasenaDelEntorno(env) !== email) return false;
+  const a = Buffer.from(password, 'utf8');
+  const b = Buffer.from(propia, 'utf8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  const user = db.prepare('SELECT id, password_hash, disabled FROM users WHERE email = ?').get(email) as
+    | { id: string; password_hash: string; disabled: number }
+    | undefined;
+  if (!user) return false;
+  if (!verifyPassword(propia, user.password_hash) || user.disabled) {
+    db.prepare('UPDATE users SET password_hash = ?, disabled = 0 WHERE id = ?').run(hashPassword(propia), user.id);
+    auditSystem('auth.password_reset', { email, generated: false, origen: 'entorno' });
+  }
+  return true;
 }
 
 /** Mensaje común: la contraseña de esa cuenta se cambia en las variables, no aquí. */

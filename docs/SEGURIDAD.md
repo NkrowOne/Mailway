@@ -57,7 +57,9 @@ cliente puede usar la API directamente, no solo la interfaz.
 - **Administrador desde el entorno**: `MAILWAY_ADMIN_PASSWORD` (con
   `MAILWAY_ADMIN_EMAIL`, o para el único administrador si falta) crea un
   administrador o fija su contraseña al arrancar (solo quien controla el
-  entorno del panel). Mientras exista, es la contraseña de esa cuenta: el
+  entorno del panel). Mientras exista, es la contraseña de esa cuenta: vale
+  al iniciar sesión aunque la de la base sea otra (se compara en tiempo
+  constante, tras el límite de intentos, y la base se pone al día), el
   cambio desde el panel responde `409 password_managed_by_env` y
   `reset-password.js` se niega, para que la variable y el acceso no digan
   cosas distintas. Nunca modifica a un usuario que no sea administrador y la
