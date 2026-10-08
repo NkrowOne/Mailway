@@ -56,7 +56,9 @@ export default function PuestaCliente({ contexto }: { contexto: ContextoCliente 
             </Button>
             <Button variant="principal" disabled={cliente.suspended} onClick={() => setEnlace(true)}>
               <Send className="h-4 w-4" aria-hidden />
-              Enviar enlace de puesta en marcha
+              {/* En el móvil, el rótulo largo no cabe en la cabecera de la tarjeta. */}
+              <span className="sm:hidden">Enviar enlace</span>
+              <span className="hidden sm:inline">Enviar enlace de puesta en marcha</span>
             </Button>
           </div>
         }

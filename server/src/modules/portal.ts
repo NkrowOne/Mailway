@@ -16,7 +16,8 @@ import { withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
-import { requireAdmin, requireAuth, requireClientAccess } from './auth';
+import { requireAdmin, requireAdminSession, requireAuth, requireClientAccess } from './auth';
+import { getClient, runLimited } from './clients';
 import {
   createAppPassword,
   listAppPasswords,
@@ -524,6 +525,113 @@ function exigirBuzonActivo(titular: Titular): void {
   }
 }
 
+/* ------------------------ Reinicio de la configuración --------------------- */
+
+/** Todos los buzones de un cliente, de cualquiera de sus dominios. */
+function buzonesDelCliente(clientId: string): Titular[] {
+  const rows = db
+    .prepare(`${SELECT_BUZON} WHERE d.client_id = ? ORDER BY d.domain, m.local_part`)
+    .all(clientId) as FilaBuzon[];
+  return rows.map(aTitular);
+}
+
+export interface ReinicioBuzon {
+  /** Contraseña principal nueva, en claro: solo para quien la entrega; no se guarda. */
+  password: string;
+  linksRemoved: number;
+  appPasswordsRevoked: number;
+  photoRemoved: boolean;
+  /** Enlace nuevo, si se ha pedido. */
+  link: EnlaceNuevo | null;
+}
+
+interface OpcionesReinicio {
+  revokeAppPasswords: boolean;
+  /** Crear un enlace nuevo para el titular (el reinicio de un buzón lo hace). */
+  enlace?: { includePassword: boolean; ttlHours: number };
+}
+
+/**
+ * Deja el buzón como recién creado para entregárselo al titular: contraseña
+ * nueva, fuera los enlaces anteriores, los correos de configuración, las
+ * sesiones de «Mi buzón», la foto, los bloqueos por intentos fallidos y (si
+ * se pide) las contraseñas de aplicación, y, si se pide, un enlace nuevo. El
+ * correo del buzón no se toca.
+ *
+ * No comprueba permisos ni el estado del buzón y no anota la actividad: de
+ * eso se ocupa cada ruta (el reinicio de un buzón anota el suyo; el de toda
+ * la puesta en marcha, un resumen).
+ */
+export function reiniciarBuzon(
+  req: FastifyRequest,
+  titular: Titular,
+  opts: OpcionesReinicio & { enlace: NonNullable<OpcionesReinicio['enlace']> },
+): Promise<ReinicioBuzon & { link: EnlaceNuevo }>;
+export function reiniciarBuzon(req: FastifyRequest, titular: Titular, opts: OpcionesReinicio): Promise<ReinicioBuzon>;
+export async function reiniciarBuzon(
+  req: FastifyRequest,
+  titular: Titular,
+  opts: OpcionesReinicio,
+): Promise<ReinicioBuzon> {
+  // En la misma cola que las altas de contraseñas de aplicación y el correo
+  // de configuración: una contraseña de aplicación que se creara a mitad del
+  // reinicio sobreviviría a él, y un correo en espera debe encontrar ya el
+  // enlace nuevo (y reutilizarlo) en vez de cambiar otra vez la contraseña.
+  return withLock(`contrasenas-app:${titular.id}`, async () => {
+    // Primero lo que depende del motor: si no responde, el buzón queda como
+    // estaba (salvo las contraseñas de aplicación ya revocadas) y el reinicio
+    // se puede repetir sin más.
+    let appPasswordsRevoked = 0;
+    if (opts.revokeAppPasswords) {
+      const activas = db
+        .prepare('SELECT id FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+        .all(titular.id) as { id: string }[];
+      for (const { id: appId } of activas) {
+        await revokeAppPassword(titular.id, appId);
+        appPasswordsRevoked += 1;
+      }
+      // Las ya revocadas solo eran historial de la prueba: desde cero es sin él.
+      db.prepare('DELETE FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NOT NULL').run(titular.id);
+    }
+
+    // Contraseña nueva siempre: quien probó el buzón conoce la anterior (o la
+    // cambió desde «Mi buzón» o el webmail).
+    const password = generateMailboxPassword();
+    await getEngine().setMailboxPassword(titular.email, password);
+    alCambiarContrasenaBuzon(titular.id);
+    // Con la contraseña nueva ningún dispositivo entra: vuelve a estar sin
+    // configurar.
+    olvidarBuzonConfigurado(titular.id);
+
+    // Los enlaces anteriores se borran, no solo se revocan: el titular recibe
+    // un único enlace (el de este reinicio o el que se le envíe después) y la
+    // lista del panel vuelve a empezar. El registro de actividad conserva su
+    // rastro.
+    const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
+    // Igual con los correos de configuración enviados: desde cero es sin
+    // «último envío» (también dejan de contar para el límite por hora).
+    db.prepare('DELETE FROM envios_configuracion WHERE mailbox_id = ?').run(titular.id);
+    // La foto es parte del onboarding del titular: la de la prueba se retira.
+    // El nombre visible lo puso quien creó el buzón y se conserva.
+    const photoRemoved = borrarFoto(titular.id);
+    // Los fallos de la prueba no deben bloquear al titular en su primer acceso.
+    db.prepare('DELETE FROM login_attempts WHERE ip IN (?, ?)').run(
+      `buzon:${titular.email}`,
+      `buzon-enlace:${titular.id}`,
+    );
+
+    const link = opts.enlace
+      ? insertarEnlace(
+          req,
+          titular,
+          opts.enlace.includePassword ? encryptSecret(password) : null,
+          opts.enlace.ttlHours,
+        )
+      : null;
+    return { password, linksRemoved, appPasswordsRevoked, photoRemoved, link };
+  });
+}
+
 /* ----------------------------- Sesión «Mi buzón» --------------------------- */
 
 function crearSesionBuzon(req: FastifyRequest, reply: FastifyReply, mailboxId: string): void {
@@ -636,6 +744,18 @@ const reinicioSchema = z.object({
   /** Guardar la contraseña nueva en el enlace para que el titular no la teclee. */
   includePassword: z.boolean().optional().default(true),
   ttlHours: validezEnlaceSchema,
+});
+
+const reinicioClienteSchema = z.object({
+  /**
+   * Retirar también las contraseñas de aplicación de todos los buzones. Por
+   * defecto no: en un cliente entero es fácil que alguna la use una
+   * integración que debe seguir enviando.
+   */
+  revokeAppPasswords: z
+    .boolean({ invalid_type_error: 'Indica si se retiran las contraseñas de aplicación (true o false).' })
+    .optional()
+    .default(false),
 });
 
 const loginSchema = z.object({
@@ -832,67 +952,87 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const body = reinicioSchema.parse(req.body ?? {});
     exigirBuzonActivo(titular);
 
-    // En la misma cola que las altas de contraseñas de aplicación: una que se
-    // creara a mitad del reinicio sobreviviría a él.
-    return withLock(`contrasenas-app:${titular.id}`, async () => {
-      // Primero lo que depende del motor: si no responde, el buzón queda
-      // como estaba y el reinicio se puede repetir sin más.
-      let appPasswordsRevoked = 0;
-      if (body.revokeAppPasswords) {
-        const activas = db
-          .prepare('SELECT id FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
-          .all(titular.id) as { id: string }[];
-        for (const { id: appId } of activas) {
-          await revokeAppPassword(titular.id, appId);
-          appPasswordsRevoked += 1;
-        }
-        // Las ya revocadas solo eran historial de la prueba: desde cero es sin él.
-        db.prepare('DELETE FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NOT NULL').run(titular.id);
-      }
-
-      // Contraseña nueva siempre: quien probó el buzón conoce la anterior (o
-      // la cambió desde «Mi buzón» o el webmail).
-      const password = generateMailboxPassword();
-      await getEngine().setMailboxPassword(titular.email, password);
-      alCambiarContrasenaBuzon(titular.id);
-      // Con la contraseña nueva ningún dispositivo entra: vuelve a estar sin
-      // configurar.
-      olvidarBuzonConfigurado(titular.id);
-
-      // Los enlaces anteriores se borran, no solo se revocan: el titular
-      // recibe un único enlace y la lista del panel vuelve a estar vacía. El
-      // registro de actividad conserva su rastro.
-      const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
-      // Igual con los correos de configuración enviados: desde cero es sin
-      // «último envío» (también dejan de contar para el límite por hora).
-      db.prepare('DELETE FROM envios_configuracion WHERE mailbox_id = ?').run(titular.id);
-      // La foto es parte del onboarding del titular: la de la prueba se
-      // retira. El nombre visible lo puso quien creó el buzón y se conserva.
-      const photoRemoved = borrarFoto(titular.id);
-      // Los fallos de la prueba no deben bloquear al titular en su primer acceso.
-      db.prepare('DELETE FROM login_attempts WHERE ip IN (?, ?)').run(
-        `buzon:${titular.email}`,
-        `buzon-enlace:${titular.id}`,
-      );
-
-      const link = insertarEnlace(
-        req,
-        titular,
-        body.includePassword ? encryptSecret(password) : null,
-        body.ttlHours,
-      );
-      audit(req, 'mailbox.setup_reset', {
-        mailboxId: titular.id,
-        email: titular.email,
-        linkId: link.id,
-        hasPassword: link.hasPassword,
-        ttlHours: body.ttlHours,
-        linksRemoved,
-        appPasswordsRevoked,
-        photoRemoved,
-      }, titular.clientId);
-      return { password, link, linksRemoved, appPasswordsRevoked, photoRemoved };
+    // Lo que el reinicio de toda la puesta en marcha no hace: un enlace nuevo,
+    // listo para entregar a este titular.
+    const { password, link, linksRemoved, appPasswordsRevoked, photoRemoved } = await reiniciarBuzon(req, titular, {
+      revokeAppPasswords: body.revokeAppPasswords,
+      enlace: { includePassword: body.includePassword, ttlHours: body.ttlHours },
     });
+    audit(req, 'mailbox.setup_reset', {
+      mailboxId: titular.id,
+      email: titular.email,
+      linkId: link.id,
+      hasPassword: link.hasPassword,
+      ttlHours: body.ttlHours,
+      linksRemoved,
+      appPasswordsRevoked,
+      photoRemoved,
+    }, titular.clientId);
+    return { password, link, linksRemoved, appPasswordsRevoked, photoRemoved };
+  });
+
+  /**
+   * Reinicia la puesta en marcha de todo un cliente: cada buzón activo queda
+   * como en `setup-reset`, pero sin enlace nuevo. La entrega vuelve a empezar
+   * desde la puesta en marcha del cliente (enlace de bienvenida y, desde ella,
+   * el correo de configuración de cada titular), no buzón a buzón.
+   *
+   * Solo la administración y con sesión del panel: cambia de una vez la
+   * contraseña de todos los buzones de una empresa, y un token de gestión
+   * filtrado no debe bastar para dejar sin correo todos sus dispositivos.
+   */
+  app.post('/api/clients/:id/onboarding-reset', async (req) => {
+    requireAdminSession(req);
+    const { id } = req.params as { id: string };
+    const client = getClient(id);
+    const body = reinicioClienteSchema.parse(req.body ?? {});
+    if (client.suspended) {
+      throw badRequest(
+        'El cliente está suspendido. Reactívalo antes de reiniciar su puesta en marcha.',
+        'client_suspended',
+      );
+    }
+    // Sin motor configurado fallarían todos los buzones por el mismo motivo:
+    // mejor un único error claro antes de tocar nada.
+    getEngine();
+
+    const titulares = buzonesDelCliente(id);
+    const activos = titulares.filter((t) => !t.suspendido);
+    const resultado: { reset: number; skipped: number; failed: { email: string; error: string }[] } = {
+      // Los suspendidos se quedan como están: su titular no puede entrar, y
+      // al reactivarlos conservan su configuración.
+      reset: 0,
+      skipped: titulares.length - activos.length,
+      failed: [],
+    };
+    // Varios a la vez, pero pocos: el motor es un único servidor compartido.
+    // Un buzón que falla no detiene los demás; repetir el reinicio lo reintenta.
+    await runLimited(activos, 5, async (titular) => {
+      try {
+        await reiniciarBuzon(req, titular, { revokeAppPasswords: body.revokeAppPasswords });
+        resultado.reset += 1;
+      } catch (err) {
+        if (!(err instanceof HttpError)) req.log.warn({ err, mailboxId: titular.id }, 'Fallo al reiniciar un buzón');
+        resultado.failed.push({
+          email: titular.email,
+          // Los errores del motor ya vienen redactados para la interfaz; uno
+          // inesperado no se enseña tal cual.
+          error: err instanceof HttpError ? err.message : 'No se ha podido reiniciar este buzón. Vuelve a intentarlo.',
+        });
+      }
+    });
+    resultado.failed.sort((a, b) => a.email.localeCompare(b.email));
+
+    // Una sola anotación para todo el cliente (sin contraseñas ni enlaces):
+    // una por buzón inundaría su Actividad.
+    audit(req, 'client.onboarding_reset', {
+      clientId: id,
+      reset: resultado.reset,
+      skipped: resultado.skipped,
+      failed: resultado.failed.length,
+      revokeAppPasswords: body.revokeAppPasswords,
+    }, id);
+    return resultado;
   });
 
   /* ------------------ Enlaces de configuración (público) ------------------ */

@@ -154,7 +154,8 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | `POST /api/clients/:id/users` | `{ email, name, password? }`. Correo repetido: `409 user_exists`. |
 | `PATCH /api/clients/:id/users/:userId` | `{ name?, password?, generatePassword?, disabled? }`. |
 | `DELETE /api/clients/:id/users/:userId` | Elimina el usuario. |
-| `POST /api/clients/:id/invites` | **Enlace de bienvenida** para la persona de contacto (ver abajo). `{ email, name?, ttlHours? (1–720, 168 por defecto) }` → `{ invite: { id, url, email, name, expiresAt } }`. Correo de un usuario existente: `409 user_exists`; cliente suspendido: `400 client_suspended`. |
+| `POST /api/clients/:id/invites` | **Enlace de bienvenida** para la persona de contacto (ver abajo). `{ email, name?, ttlHours? (1–720, 168 por defecto) }` → `{ invite: { id, url, email, name, expiresAt, existingUser } }`. Correo de un usuario de **este** cliente: se admite (`existingUser: true`; al aceptarlo elige una contraseña nueva). Correo de la administración o de un usuario de otro cliente (sin distinguir mayúsculas): `409 user_exists`; cliente suspendido: `400 client_suspended`. |
+| `POST /api/clients/:id/onboarding-reset` | **Solo administración con sesión del panel** (un token de gestión, también el de administración: `403 session_required`). Reinicia la puesta en marcha del cliente (sección 2.7). `{ revokeAppPasswords? (false por defecto) }` → `{ reset, skipped, failed: [{ email, error }] }`. Cliente suspendido: `400 client_suspended`; sin motor configurado: `400 engine_not_configured`. |
 | `GET /api/clients/:id/invites` | Últimos 50: `{ invites: [{ id, email, name, createdAt, expiresAt, openedAt, acceptedAt, revokedAt, status (pending\|accepted\|expired\|revoked), recoverable }] }`. |
 | `GET /api/clients/:id/invites/:inviteId/url` | Vuelve a dar la URL de un enlace pendiente → `{ invite }`. Usado, revocado o caducado: `404 invite_invalid`; ilegible: `409 invite_not_recoverable`. |
 | `DELETE /api/clients/:id/invites/:inviteId` | Revoca un enlace pendiente. |
@@ -168,12 +169,17 @@ configuración), postmaster y abuse, y sus dispositivos. Solo la
 administración lo crea, lo vuelve a enviar o lo revoca. Sirve una vez y caduca
 (7 días por defecto); uno nuevo para el mismo correo sustituye al pendiente.
 El token se busca por su hash y se guarda además cifrado mientras está
-pendiente. Rutas del enlace (60 peticiones por minuto e IP):
+pendiente. Si el correo ya es de un usuario del mismo cliente (habitual tras
+reiniciar la puesta en marcha), el enlace no crea otro: esa persona elige una
+contraseña nueva para su usuario. Nunca sirve para una cuenta de la
+administración ni de otro cliente; se comprueba al crearlo y otra vez al
+aceptarlo, por si el correo ha cambiado de manos. Rutas del enlace (60
+peticiones por minuto e IP):
 
 | Ruta | Descripción |
 |---|---|
-| `GET /api/invite/:token` | `{ clientName, brandName, email, name, expiresAt }`. No existe, caducó o se revocó: `404 invite_invalid`; ya usado: `409 invite_used`; cliente suspendido: `403 client_suspended`. |
-| `POST /api/invite/:token/accept` | `{ name (2–80), password (10–200) }` → crea el usuario del cliente, abre su sesión del panel y devuelve `{ ok, redirect: '/puesta-en-marcha' }`. Al abrir una sesión, pasa la protección CSRF de las peticiones con cookie (solo desde el propio panel). |
+| `GET /api/invite/:token` | `{ clientName, brandName, email, name, expiresAt, existingUser }`. `existingUser: true` si el correo ya es de un usuario de ese cliente (la página dice «Elige una contraseña nueva» en vez de «Crea tu acceso»). No existe, caducó o se revocó: `404 invite_invalid`; ya usado: `409 invite_used`; cliente suspendido: `403 client_suspended`. |
+| `POST /api/invite/:token/accept` | `{ name (2–80), password (10–200) }` → crea el usuario del cliente, abre su sesión del panel y devuelve `{ ok, redirect: '/puesta-en-marcha' }`. Si el correo ya es de un usuario de ese cliente, `name` es opcional (vacío o ausente conserva el suyo) y, en vez de crear otro usuario, le pone la contraseña elegida, lo habilita si estaba deshabilitado y cierra sus demás sesiones. Si ahora es de la administración o de otro cliente: `409 user_exists` y el enlace sigue pendiente. Queda en la actividad como `client.invite_accepted` con `existing`. Al abrir una sesión, pasa la protección CSRF de las peticiones con cookie (solo desde el propio panel). |
 
 ### 2.4 Dominios
 
@@ -329,8 +335,9 @@ photo_not_found`. Cambios en la actividad: `mailbox.photo_updated`,
   configuración, descargó el perfil de Apple, entró en «Mi buzón» o en el
   webmail; o se marcó a mano. Vuelve a `null` cuando el panel deja sus
   dispositivos sin acceso: contraseña nueva desde el panel
-  (`POST …/password`), reinicio (`POST …/setup-reset`) o el correo de
-  configuración con contraseña nueva (sección 2.7). No cambia cuando el
+  (`POST …/password`), reinicio del buzón (`POST …/setup-reset`) o de la
+  puesta en marcha del cliente (`POST /api/clients/:id/onboarding-reset`), o
+  el correo de configuración con contraseña nueva (sección 2.7). No cambia cuando el
   titular cambia su contraseña desde «Mi buzón» o el webmail.
 - `setup.lastLinkAt` y `setup.lastOpenedAt`: creación del último enlace de
   configuración y última apertura de cualquiera de ellos (de cualquier
@@ -443,6 +450,28 @@ responde (`502`), no se ha borrado ningún enlace y el reinicio se puede
 repetir. Queda en la actividad como `mailbox.setup_reset`, sin secretos. El
 buzón vuelve a estar sin configurar (`configuredAt: null`) y se olvidan sus
 correos de configuración (`setup.lastEmail: null`).
+
+**Reiniciar la puesta en marcha del cliente** (`POST
+/api/clients/:id/onboarding-reset`) hace lo mismo con **todos los buzones
+activos** del cliente, de todos sus dominios, pero **sin crear enlaces**: la
+entrega vuelve a empezar desde la puesta en marcha (el enlace de bienvenida a
+la persona de contacto y, desde ella, el correo de configuración de cada
+titular). Las contraseñas nuevas no se devuelven ni se guardan en ningún
+enlace. `revokeAppPasswords` es `false` por defecto: en un cliente entero es
+fácil que alguna contraseña de aplicación la use una integración que debe
+seguir enviando. Solo la administración con sesión del panel, nunca con un
+token de gestión: cambia de una vez las contraseñas de una empresa entera.
+
+- `reset`: buzones reiniciados. `skipped`: buzones suspendidos, que se quedan
+  como estaban (su titular no puede entrar y conservan su configuración al
+  reactivarlos).
+- `failed`: buzones en los que el motor ha fallado, con el mensaje del error;
+  no detienen los demás y quedan como estaban, salvo las contraseñas de
+  aplicación ya revocadas (mismo orden que en `setup-reset`). Repetir la
+  petición los reintenta.
+- Queda en la actividad del cliente una sola anotación,
+  `client.onboarding_reset`, con `{ clientId, reset, skipped, failed (número),
+  revokeAppPasswords }`, sin contraseñas ni enlaces (no una por buzón).
 
 **Correo de configuración** (`setup-email`): la puesta en marcha del cliente
 envía a cada titular, a la dirección que elija quien gestiona (su correo

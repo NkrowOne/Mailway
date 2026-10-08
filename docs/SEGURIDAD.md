@@ -25,7 +25,7 @@ cliente puede usar la API directamente, no solo la interfaz.
 | Estado de la puesta en marcha (`GET /api/setup/status`) | Cualquiera, sin sesión | Terminada la puesta en marcha, solo la marca y tres indicadores; el detalle, solo para la administración |
 | API de envío (`/v1/send`) | Aplicaciones con clave `mw_` | Clave hasheada, límites del plan por cliente |
 | «Mi buzón» (`/api/portal/*`) | Titulares con la contraseña del buzón | Cookie propia limitada a `/api/portal`, verificación local, límites de fallos |
-| Enlaces de bienvenida (`/api/invite/*`) | Quien tenga el enlace (la persona de contacto del cliente) | Token de 256 bits de un solo uso, caducidad, 60 peticiones por minuto e IP; solo la administración los crea o los vuelve a enviar; aceptar crea un usuario del cliente (nunca de administración) y pasa la protección CSRF |
+| Enlaces de bienvenida (`/api/invite/*`) | Quien tenga el enlace (la persona de contacto del cliente) | Token de 256 bits de un solo uso, caducidad, 60 peticiones por minuto e IP; solo la administración los crea o los vuelve a enviar; aceptar crea un usuario del cliente (nunca de administración) o, si el correo ya es de un usuario de ese mismo cliente, le pone la contraseña elegida; nunca entra en una cuenta de la administración ni de otro cliente (se comprueba al crearlo y al aceptarlo); pasa la protección CSRF |
 | Enlaces de configuración (`/api/public/setup/*`) | Quien tenga el enlace | Token de 256 bits, caducidad, 60 peticiones por minuto e IP. Se busca por su hash; la copia cifrada (para que solo la administración pueda volver a enviarlo) se borra al caducar o revocar |
 | Formularios de contacto (`/forms/*`) | Visitantes de las webs permitidas | `Origin` en la lista del formulario, campo trampa, límites por IP y por formulario (cupo diario propio, separado del de la API), Turnstile opcional; destinatario fijo del cliente |
 | Autoconfiguración (`/mail/…`, `/autodiscover/…`, `/.well-known/…`) | Programas de correo | Solo dominios de la instancia; sin datos de cuentas |
@@ -73,10 +73,11 @@ cliente puede usar la API directamente, no solo la interfaz.
 - Heredan los permisos de su usuario y se comprueban en **cada** petición:
   revocar el token, deshabilitar al usuario o cambiarle el rol surte efecto
   de inmediato.
-- Un token **no puede** crear otros tokens, cambiar la contraseña del panel ni
-  conectar, cambiar o probar el motor de correo (`403 session_required`): un
-  token filtrado no puede perpetuarse, dejar fuera al titular ni desviar los
-  secretos del motor (sección 7).
+- Un token **no puede** crear otros tokens, cambiar la contraseña del panel,
+  conectar, cambiar o probar el motor de correo ni reiniciar la puesta en
+  marcha de un cliente (`403 session_required`): un token filtrado no puede
+  perpetuarse, dejar fuera al titular, desviar los secretos del motor (sección
+  7) ni dejar de golpe sin correo los dispositivos de toda una empresa.
 - Con `Authorization: Bearer` no se lee la cookie: una integración nunca
   actúa con la sesión de un navegador que comparta la petición.
 - Caducidad opcional; máximo 25 activos por usuario; último uso (fecha e IP)
@@ -133,7 +134,8 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 
 - Cada ruta declara su nivel: `requireAuth`, `requireAdmin`,
   `requireClientAccess(clientId)`, `requireSession` o `requireAdminSession`
-  (cambiar la conexión con el motor: sesión de administración, nunca un token). Un usuario de cliente
+  (cambiar la conexión con el motor y reiniciar la puesta en marcha de un
+  cliente: sesión de administración, nunca un token). Un usuario de cliente
   recibe `403` al pedir un recurso de otro cliente, exista o no, sin poder
   enumerar identificadores.
 - **Propiedad de los dominios**: nadie crea buzones ni alias en un dominio sin
@@ -170,6 +172,22 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   no deje al titular sin acceso. La respuesta, el registro de envíos y la
   actividad (`mailbox.setup_email_sent` / `_failed`) nunca llevan la URL, el
   token ni la contraseña; solo la dirección de destino.
+- **Reiniciar la puesta en marcha** (`POST /api/clients/:id/onboarding-reset`):
+  solo la administración con sesión del panel (`requireAdminSession`); ni el
+  propio cliente ni un token de gestión, tampoco el de administración. Recorre
+  solo los buzones de los dominios de ese cliente y salta los suspendidos.
+  Las contraseñas nuevas no se devuelven, no se guardan en ningún enlace y no
+  aparecen en la actividad (`client.onboarding_reset`, una sola anotación con
+  los recuentos). Los errores inesperados del motor no se devuelven tal cual.
+- **Enlace de bienvenida para un usuario que ya existe**: solo si es un
+  usuario (rol `client`) del mismo cliente, comparando el correo sin
+  distinguir mayúsculas; aceptarlo equivale a un restablecimiento de la
+  administración (contraseña nueva, cuenta habilitada, demás sesiones
+  cerradas). El correo de la administración o de otro cliente se rechaza al
+  crear el enlace y, otra vez, al aceptarlo (`409 user_exists`, sin sesión y
+  con el enlace aún pendiente), por si ha cambiado de manos entretanto. No da
+  a la administración nada que no tuviera: ya podía restablecer esa
+  contraseña.
 - **Formularios de contacto**: el buzón destinatario es del mismo cliente y de
   un dominio con la propiedad comprobada (también para la administración); un
   cliente no ve, edita ni elimina los formularios de otro.

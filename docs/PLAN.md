@@ -310,7 +310,7 @@ edita una ya publicada.
 | `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 | `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
-| `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado y revocación). |
+| `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado, o el que ya existía en el cliente, y revocación). |
 | `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
 
 ```
@@ -444,6 +444,14 @@ controles táctiles de 44 px y un paso a la vez.
   `configuration@<dominio>` («Configura tu correo»), una cuenta oculta del
   motor por dominio. La dirección queda reservada; el envío reutiliza el
   enlace vigente, tiene límites por hora y no devuelve nunca la URL.
+- **La configuración se lleva por cliente**: «Reiniciar puesta en marcha»
+  (`POST /api/clients/:id/onboarding-reset`, solo administración con sesión
+  del panel) deja todos los buzones activos del cliente como en el reinicio de
+  un buzón, pero sin enlaces ni contraseñas en la respuesta; salta los
+  suspendidos, informa de los fallos del motor sin detenerse y anota un solo
+  resumen en la actividad. El enlace de bienvenida admite a un usuario que ya
+  existe en el mismo cliente: elige una contraseña nueva en lugar de crear
+  otro acceso (nunca para la administración ni para otro cliente).
 
 ### Límites conocidos
 
