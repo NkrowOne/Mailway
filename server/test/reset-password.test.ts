@@ -21,13 +21,13 @@ before(async () => {
   ctx = await adminContext();
 });
 
-function ejecutar(args: string[], entrada?: string) {
+function ejecutar(args: string[], entrada?: string, entorno: Record<string, string> = {}) {
   return spawnSync(process.execPath, ['--import', 'tsx', 'src/tools/reset-password.ts', ...args], {
     cwd: SERVIDOR,
     encoding: 'utf8',
     timeout: 60_000,
     input: entrada,
-    env: process.env,
+    env: { ...process.env, ...entorno },
   });
 }
 
@@ -118,4 +118,11 @@ test('quita el bloqueo por intentos fallidos de ese correo: se entra en el acto'
   const nueva = /Contraseña nueva de admin@mailway\.test: ([A-Za-z0-9_-]{24})\n/.exec(r.stdout)?.[1];
   assert.ok(nueva, r.stdout);
   assert.ok(await entra(ADMIN, nueva!), 'entra sin esperar a que caduque el bloqueo');
+});
+
+test('no toca la contraseña que fija MAILWAY_ADMIN_PASSWORD y dice dónde cambiarla', async () => {
+  const r = ejecutar([ADMIN], undefined, { MAILWAY_ADMIN_EMAIL: ADMIN, MAILWAY_ADMIN_PASSWORD: 'clave-de-la-variable-1' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /la fija la variable MAILWAY_ADMIN_PASSWORD del panel/);
+  assert.doesNotMatch(r.stdout, /Contraseña nueva/);
 });

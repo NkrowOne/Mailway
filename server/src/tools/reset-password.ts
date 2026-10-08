@@ -17,6 +17,7 @@ import './usuario-del-panel';
 import crypto from 'node:crypto';
 import { hashPassword } from '../core/crypto';
 import { db } from '../core/db';
+import { correoConContrasenaDelEntorno } from '../modules/adminenv';
 import { auditSystem } from '../modules/audit';
 
 const USO =
@@ -63,6 +64,13 @@ export function restablecerContrasena(correo: string, password: string, generada
   }
   return db.transaction(() => {
     const usuario = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: string } | undefined;
+    // Su contraseña la fija la variable del panel: cambiarla aquí duraría
+    // hasta el próximo arranque.
+    if (usuario && correoConContrasenaDelEntorno() === email) {
+      throw new ErrorRestablecer(
+        `La contraseña de ${email} la fija la variable MAILWAY_ADMIN_PASSWORD del panel: es la que vale para entrar. Para cambiarla, edita esa variable (en Skyway, las variables del servicio del panel) y vuelve a desplegarlo.`,
+      );
+    }
     if (!usuario) {
       const admins = correosDeAdministracion();
       throw new ErrorRestablecer(

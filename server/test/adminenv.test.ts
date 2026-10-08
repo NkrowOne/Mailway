@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
-import { applyAdminFromEnv } from '../src/modules/adminenv';
+import { applyAdminFromEnv, correoConContrasenaDelEntorno } from '../src/modules/adminenv';
 import { getTestApp } from './helpers';
 
 /*
@@ -18,11 +18,15 @@ async function entra(email: string, password: string): Promise<boolean> {
   return res.statusCode === 200;
 }
 
-test('sin variables, o con una sola, no cambia nada y avisa', () => {
+test('sin variables no cambia nada; con una sola y sin administradores, avisa', () => {
   assert.deepEqual(applyAdminFromEnv({}), { action: 'none' });
+  // Solo la contraseña: sin ningún administrador no se sabe a quién crear.
   const sola = applyAdminFromEnv({ password: 'una-clave-larga-1' });
   assert.equal(sola.action, 'none');
-  assert.match((sola as { warning?: string }).warning ?? '', /deben definirse juntas/);
+  assert.match((sola as { warning?: string }).warning ?? '', /aún no hay ningún administrador/);
+  // Solo el correo: falta la contraseña.
+  const correo = applyAdminFromEnv({ email: EMAIL });
+  assert.match((correo as { warning?: string }).warning ?? '', /necesita MAILWAY_ADMIN_PASSWORD/);
   assert.equal((db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number }).c, 0);
 });
 
@@ -71,4 +75,55 @@ test('rechaza valores no válidos y a un usuario que no es administrador, sin ca
   db.prepare(`UPDATE users SET role = 'client' WHERE email = ?`).run('segundo@mailway.test');
   const r = applyAdminFromEnv({ email: 'segundo@mailway.test', password: 'otra-clave-valida-6' });
   assert.match((r as { warning: string }).warning, /no es administrador/);
+});
+
+test('solo con MAILWAY_ADMIN_PASSWORD se aplica al único administrador', async () => {
+  // En la prueba anterior «segundo» dejó de ser administrador: queda uno.
+  const r = applyAdminFromEnv({ password: 'clave-solo-variable-7' });
+  assert.deepEqual(r, { action: 'password_updated', email: EMAIL });
+  assert.ok(await entra(EMAIL, 'clave-solo-variable-7'));
+  assert.equal(correoConContrasenaDelEntorno({ password: 'clave-solo-variable-7' }), EMAIL);
+});
+
+test('con la contraseña en el entorno, el panel no deja cambiarla y lo dice en /me', async () => {
+  const app = await getTestApp();
+  const previo = { email: process.env.MAILWAY_ADMIN_EMAIL, password: process.env.MAILWAY_ADMIN_PASSWORD };
+  process.env.MAILWAY_ADMIN_EMAIL = EMAIL;
+  process.env.MAILWAY_ADMIN_PASSWORD = 'clave-solo-variable-7';
+  try {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: EMAIL, password: 'clave-solo-variable-7' },
+    });
+    assert.equal(login.statusCode, 200);
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+
+    const me = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie } });
+    assert.equal((me.json() as { user: { passwordFromEnv: boolean } }).user.passwordFromEnv, true);
+
+    const cambio = await app.inject({
+      method: 'POST',
+      url: '/api/auth/password',
+      headers: { cookie },
+      payload: { currentPassword: 'clave-solo-variable-7', newPassword: 'otra-desde-el-panel-8' },
+    });
+    assert.equal(cambio.statusCode, 409);
+    assert.equal((cambio.json() as { code: string }).code, 'password_managed_by_env');
+    assert.ok(await entra(EMAIL, 'clave-solo-variable-7'), 'sigue valiendo la de la variable');
+  } finally {
+    if (previo.email === undefined) delete process.env.MAILWAY_ADMIN_EMAIL;
+    else process.env.MAILWAY_ADMIN_EMAIL = previo.email;
+    if (previo.password === undefined) delete process.env.MAILWAY_ADMIN_PASSWORD;
+    else process.env.MAILWAY_ADMIN_PASSWORD = previo.password;
+  }
+  // Sin la variable, la cuenta vuelve a gestionarse desde el panel.
+  assert.equal(correoConContrasenaDelEntorno(), null);
+});
+
+test('solo con la contraseña y varios administradores, pide el correo', () => {
+  db.prepare(`UPDATE users SET role = 'admin' WHERE email = ?`).run('segundo@mailway.test');
+  const r = applyAdminFromEnv({ password: 'clave-solo-variable-9' });
+  assert.match((r as { warning: string }).warning, /hay varios administradores/);
+  assert.equal(correoConContrasenaDelEntorno({ password: 'clave-solo-variable-9' }), null);
 });

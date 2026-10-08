@@ -19,10 +19,46 @@ export type AdminEnvResult =
   | { action: 'none'; warning?: string }
   | { action: 'created' | 'password_updated' | 'unchanged'; email: string };
 
+/** Correos de los administradores, del más antiguo al más nuevo. */
+function correosDeAdministracion(): string[] {
+  return (db.prepare(`SELECT email FROM users WHERE role = 'admin' ORDER BY created_at`).all() as { email: string }[]).map(
+    (u) => u.email,
+  );
+}
+
 /**
- * Administrador definido en el entorno del panel (`MAILWAY_ADMIN_EMAIL` y
- * `MAILWAY_ADMIN_PASSWORD`, nombre opcional en `MAILWAY_ADMIN_NAME`). Sirve
- * para entrar de nuevo cuando se ha olvidado el acceso, sin terminal:
+ * Correo de la cuenta cuya contraseña fija el entorno: MAILWAY_ADMIN_EMAIL o,
+ * si solo está MAILWAY_ADMIN_PASSWORD, el único administrador que haya. Así
+ * basta con poner la contraseña en las variables del panel. Con varios
+ * administradores (o ninguno) hace falta el correo para saber cuál.
+ */
+function correoDelEntorno(env: AdminEnv): { email: string } | { warning: string } | null {
+  const email = (env.email ?? '').trim().toLowerCase();
+  const password = env.password ?? '';
+  if (!email && !password) return null;
+  if (!password) {
+    return {
+      warning: 'MAILWAY_ADMIN_EMAIL necesita MAILWAY_ADMIN_PASSWORD; no se ha creado ni cambiado ningún administrador.',
+    };
+  }
+  if (email) return { email };
+  const admins = correosDeAdministracion();
+  if (admins.length === 1) return { email: admins[0]! };
+  return {
+    warning:
+      admins.length === 0
+        ? 'MAILWAY_ADMIN_PASSWORD sin MAILWAY_ADMIN_EMAIL: aún no hay ningún administrador; indica su correo para crearlo.'
+        : 'MAILWAY_ADMIN_PASSWORD sin MAILWAY_ADMIN_EMAIL: hay varios administradores; indica de cuál es con MAILWAY_ADMIN_EMAIL.',
+  };
+}
+
+/**
+ * Administrador definido en el entorno del panel (`MAILWAY_ADMIN_PASSWORD` y,
+ * si hay más de un administrador, `MAILWAY_ADMIN_EMAIL`; nombre opcional en
+ * `MAILWAY_ADMIN_NAME`). Mientras la variable exista, es la contraseña de esa
+ * cuenta: se aplica en cada arranque y el panel no deja cambiarla (ver
+ * correoConContrasenaDelEntorno). Sirve también para recuperar el acceso sin
+ * terminal:
  *
  * - Sin ese correo en la base: lo crea como administrador (el primero, con los
  *   planes iniciales, o uno más).
@@ -35,15 +71,11 @@ export type AdminEnvResult =
  * con un aviso en lugar de impedir el arranque.
  */
 export function applyAdminFromEnv(env: AdminEnv): AdminEnvResult {
-  const email = (env.email ?? '').trim().toLowerCase();
   const password = env.password ?? '';
-  if (!email && !password) return { action: 'none' };
-  if (!email || !password) {
-    return {
-      action: 'none',
-      warning: 'MAILWAY_ADMIN_EMAIL y MAILWAY_ADMIN_PASSWORD deben definirse juntas; no se ha creado ni cambiado ningún administrador.',
-    };
-  }
+  const destino = correoDelEntorno(env);
+  if (!destino) return { action: 'none' };
+  if ('warning' in destino) return { action: 'none', warning: destino.warning };
+  const email = destino.email;
   if (email.length > 254 || !EMAIL.test(email)) {
     return { action: 'none', warning: 'El valor de MAILWAY_ADMIN_EMAIL no es un correo válido; no se ha cambiado nada.' };
   }
@@ -79,3 +111,30 @@ export function applyAdminFromEnv(env: AdminEnv): AdminEnvResult {
     return { action: 'password_updated', email };
   })();
 }
+
+/** El entorno del proceso, leído en cada llamada (las pruebas lo cambian). */
+function entornoDelProceso(): AdminEnv {
+  return { email: process.env.MAILWAY_ADMIN_EMAIL, password: process.env.MAILWAY_ADMIN_PASSWORD };
+}
+
+/**
+ * Correo del administrador cuya contraseña fija el entorno, o null. Solo si
+ * la contraseña es válida (si no, el arranque la descartó y la cuenta se
+ * gestiona como cualquier otra) y la cuenta existe y es de administración.
+ *
+ * Con él, el panel y la herramienta de terminal no cambian esa contraseña:
+ * el siguiente arranque la devolvería a la de la variable y, mientras tanto,
+ * la variable diría una cosa y el acceso otra.
+ */
+export function correoConContrasenaDelEntorno(env: AdminEnv = entornoDelProceso()): string | null {
+  const password = env.password ?? '';
+  if (password.length < MIN || password.length > MAX || /[\u0000-\u001f\u007f]/.test(password)) return null;
+  const destino = correoDelEntorno(env);
+  if (!destino || 'warning' in destino) return null;
+  const user = db.prepare('SELECT role FROM users WHERE email = ?').get(destino.email) as { role: string } | undefined;
+  return user?.role === 'admin' ? destino.email : null;
+}
+
+/** Mensaje común: la contraseña de esa cuenta se cambia en las variables, no aquí. */
+export const MENSAJE_CONTRASENA_DEL_ENTORNO =
+  'La contraseña de esta cuenta la fija la variable MAILWAY_ADMIN_PASSWORD del panel. Para cambiarla, edita esa variable y vuelve a desplegar el panel.';

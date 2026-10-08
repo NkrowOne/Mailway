@@ -23,7 +23,9 @@ async function main(): Promise<void> {
   if (admin.action === 'none' && admin.warning) app.log.warn(admin.warning);
   else if (admin.action === 'created') app.log.info(`Administrador ${admin.email} creado desde el entorno.`);
   else if (admin.action === 'password_updated') {
-    app.log.info(`Contraseña de ${admin.email} fijada desde el entorno. Quita MAILWAY_ADMIN_PASSWORD cuando ya no la necesites.`);
+    app.log.info(
+      `Contraseña de ${admin.email} fijada desde el entorno: mientras exista MAILWAY_ADMIN_PASSWORD, es la de esa cuenta y no se cambia desde el panel.`,
+    );
   }
 
   await app.listen({ port: config.port, host: config.host });

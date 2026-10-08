@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { config } from '../config';
 import { hashPassword, hashToken, newSessionToken, randomId, verifyPassword } from '../core/crypto';
 import { db, now } from '../core/db';
-import { badRequest, forbidden, tooMany, unauthorized } from '../core/errors';
+import { HttpError, badRequest, forbidden, tooMany, unauthorized } from '../core/errors';
+import { MENSAJE_CONTRASENA_DEL_ENTORNO, correoConContrasenaDelEntorno } from './adminenv';
 import { audit } from './audit';
 
 export interface AuthedUser {
@@ -465,7 +466,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       req.authVia?.kind === 'token'
         ? { kind: 'token' as const, tokenId: req.authVia.tokenId, name: req.authVia.name }
         : { kind: 'session' as const };
-    return { user: req.user, via };
+    // La web oculta el cambio de contraseña de la cuenta que fija el entorno.
+    const passwordFromEnv = req.user.role === 'admin' && correoConContrasenaDelEntorno() === req.user.email;
+    return { user: { ...req.user, passwordFromEnv }, via };
   });
 
   app.post('/api/auth/password', async (req) => {
@@ -473,6 +476,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const user = requireSession(req);
     const body = changePasswordSchema.parse(req.body);
     const row = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as UserRow;
+    // La fija el entorno: cambiarla aquí duraría hasta el próximo arranque.
+    if (correoConContrasenaDelEntorno() === row.email) {
+      throw new HttpError(409, MENSAJE_CONTRASENA_DEL_ENTORNO, 'password_managed_by_env');
+    }
     if (!verifyPassword(body.currentPassword, row.password_hash)) {
       throw badRequest('La contraseña actual no es correcta.', 'bad_current_password');
     }

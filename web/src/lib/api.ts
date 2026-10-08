@@ -62,6 +62,8 @@ export interface User {
   name: string;
   role: 'admin' | 'client';
   clientId: string | null;
+  /** Su contraseña la fija MAILWAY_ADMIN_PASSWORD en el entorno del panel (solo en /api/auth/me). */
+  passwordFromEnv?: boolean;
 }
 
 export interface Plan {

@@ -54,11 +54,16 @@ cliente puede usar la API directamente, no solo la interfaz.
   crear el primer administrador exige ese token; así el primer visitante de un
   panel recién publicado no se queda con la instancia. Los intentos con un
   token incorrecto se limitan a 10 por IP cada 15 minutos (`429`).
-- **Administrador desde el entorno**: `MAILWAY_ADMIN_EMAIL` +
-  `MAILWAY_ADMIN_PASSWORD` crean un administrador o fijan su contraseña al
-  arrancar (solo quien controla el entorno del panel). Nunca modifica a un
-  usuario que no sea administrador y la contraseña no se registra ni se anota
-  en la Actividad. Hay que retirarla tras usarla.
+- **Administrador desde el entorno**: `MAILWAY_ADMIN_PASSWORD` (con
+  `MAILWAY_ADMIN_EMAIL`, o para el único administrador si falta) crea un
+  administrador o fija su contraseña al arrancar (solo quien controla el
+  entorno del panel). Mientras exista, es la contraseña de esa cuenta: el
+  cambio desde el panel responde `409 password_managed_by_env` y
+  `reset-password.js` se niega, para que la variable y el acceso no digan
+  cosas distintas. Nunca modifica a un usuario que no sea administrador y la
+  contraseña no se registra ni se anota en la Actividad. Quien la deja en las
+  variables acepta que cualquiera con acceso a ellas (en Skyway, la
+  administración de la plataforma) conoce esa contraseña.
 
 ### 3.2 Tokens de gestión
 
