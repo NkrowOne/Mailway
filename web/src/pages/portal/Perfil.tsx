@@ -102,7 +102,6 @@ export function HojaPerfil({
           <FotoBuzon
             fotoUrl={fotoUrl}
             url={urlFoto}
-            nombre={displayName}
             tactil
             rotulo="Tu foto"
             ayuda="Se recorta en cuadrado. La verán las personas de tu organización en el correo web."

@@ -1,5 +1,4 @@
 import { useRef, useState, type ChangeEvent, type ReactNode } from 'react';
-import { UserRound } from 'lucide-react';
 import { api, type Mailbox } from '../lib/api';
 import { mensajeError } from '../lib/portal';
 import { Button } from '../ui/Button';
@@ -46,31 +45,22 @@ export function urlFotoBuzon(mailbox: Pick<Mailbox, 'id' | 'photoUpdatedAt'>): s
 
 export type TamanoAvatar = 'normal' | 'grande';
 
-const TAMANOS: Record<TamanoAvatar, { caja: string; letra: string; icono: string }> = {
-  normal: { caja: 'h-12 w-12', letra: 'text-md', icono: 'h-6 w-6' },
-  grande: { caja: 'h-[72px] w-[72px]', letra: 'text-2xl', icono: 'h-8 w-8' },
+const TAMANOS: Record<TamanoAvatar, string> = {
+  normal: 'h-12 w-12',
+  grande: 'h-[72px] w-[72px]',
 };
 
-/** Iniciales del nombre visible («Ana García» → «AG»); vacío si no hay nombre. */
-function iniciales(nombre: string): string {
-  const palabras = nombre.trim().split(/\s+/).filter(Boolean);
-  // Array.from separa por caracteres y no por unidades UTF-16 (tildes compuestas, emojis).
-  const letras = palabras.slice(0, 2).map((p) => Array.from(p)[0] ?? '');
-  return letras.join('').toLocaleUpperCase('es-ES');
-}
-
 /**
- * Foto del buzón en un círculo o, si no tiene (o no carga), las iniciales del
- * nombre visible sobre petróleo tenue; sin nombre, el icono de persona.
+ * Foto del buzón en un círculo o, si no tiene (o no carga), la silueta gris
+ * de siempre: es lo que cualquiera reconoce como «sin foto todavía», sin
+ * letras ni colores que parezcan una foto elegida.
  */
 export function AvatarBuzon({
   src,
-  nombre = '',
   tamano = 'normal',
   alt = '',
 }: {
   src: string | null;
-  nombre?: string;
   tamano?: TamanoAvatar;
   /** Vacío cuando el nombre o la dirección ya están al lado (decorativa). */
   alt?: string;
@@ -78,27 +68,29 @@ export function AvatarBuzon({
   // Una URL que falla (foto borrada desde otro sitio, enlace caducado) deja
   // el sustituto en lugar del icono roto del navegador.
   const [fallida, setFallida] = useState<string | null>(null);
-  const t = TAMANOS[tamano];
+  const caja = TAMANOS[tamano];
   if (src && fallida !== src) {
     return (
       <img
         src={src}
         alt={alt}
-        className={`${t.caja} shrink-0 rounded-full border border-regla bg-hoja-3 object-cover`}
+        className={`${caja} shrink-0 rounded-full border border-regla bg-hoja-3 object-cover`}
         onError={() => setFallida(src)}
       />
     );
   }
-  const letras = iniciales(nombre);
   return (
     <span
       role={alt ? 'img' : undefined}
       aria-label={alt || undefined}
       aria-hidden={alt ? undefined : true}
-      className={`${t.caja} flex shrink-0 select-none items-center justify-center rounded-full bg-petroleo-claro
-        font-semibold text-petroleo ${t.letra}`}
+      className={`${caja} block shrink-0 overflow-hidden rounded-full border border-regla bg-hoja-3 text-tinta-3/40`}
     >
-      {letras || <UserRound className={t.icono} strokeWidth={1.75} aria-hidden />}
+      {/* Cabeza y hombros; el círculo recorta los hombros por abajo. */}
+      <svg viewBox="0 0 64 64" className="h-full w-full" fill="currentColor" aria-hidden>
+        <circle cx="32" cy="25" r="12" />
+        <path d="M8 66c0-14.5 10.7-25 24-25s24 10.5 24 25z" />
+      </svg>
     </span>
   );
 }
@@ -195,7 +187,6 @@ export type CambioFoto = 'subida' | 'quitada';
 export function FotoBuzon({
   fotoUrl,
   url,
-  nombre,
   tactil = false,
   rotulo,
   ayuda,
@@ -205,8 +196,6 @@ export function FotoBuzon({
   fotoUrl: string | null;
   /** Ruta para subirla (PUT { photo }) y quitarla (DELETE). */
   url: string;
-  /** Nombre visible, para las iniciales del sustituto. */
-  nombre?: string;
   /** Controles de 44 px en el móvil (portal del titular). */
   tactil?: boolean;
   rotulo?: string;
@@ -275,7 +264,7 @@ export function FotoBuzon({
       {/* En el móvil los dos botones se apilan siempre: en fila no caben junto
           al avatar a 360 px y, al partirse según el ancho, quedaban descolocados. */}
       <div className="flex items-start gap-4 sm:items-center">
-        <AvatarBuzon src={mostrada} nombre={nombre} tamano="grande" />
+        <AvatarBuzon src={mostrada} tamano="grande" />
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex flex-col items-start gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
             <Button
