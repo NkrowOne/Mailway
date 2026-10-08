@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import { VALIDEZ_ENLACE_HORAS, type EnlaceDePersona } from '../../components/EnlacesEquipo';
-import { api } from '../../lib/api';
-import { errorNombreBuzon } from '../../lib/gestion';
+import { api, type Mailbox } from '../../lib/api';
+import { formatDay } from '../../lib/format';
+import { errorNombreBuzon, REMITENTE_CONFIGURACION } from '../../lib/gestion';
 import type { EnlaceCreado } from '../../lib/portal';
+import type { Veredicto } from '../../ui/kit';
 
 /*
   Piezas de la puesta en marcha del cliente que no son vista: los pasos, lo
@@ -170,7 +172,10 @@ export interface FilaPersona {
   local: string;
   /** La dirección la ha escrito la persona: ya no se propone sola. */
   localEditado: boolean;
-  /** Solo para preparar el correo con el enlace; nunca se envía al servidor. */
+  /**
+   * Correo que ya usa la persona, para enviarle su configuración. Solo llega
+   * al servidor al enviarla (queda como destinatario de ese envío).
+   */
   personal: string;
   /** Es quien hace la puesta en marcha. */
   mio: boolean;
@@ -287,4 +292,94 @@ export async function enlaceConContrasenaNueva(mailboxId: string): Promise<Enlac
     password: password || undefined,
   });
   return link;
+}
+
+/* ---------------------- Configuración de cada buzón ------------------------ */
+
+/**
+ * Cómo va la configuración de un buzón, según el servidor:
+ * - configurado: su titular ya entró (terminó el enlace, instaló el perfil,
+ *   entró en «Mi buzón» o en el webmail) o se marcó a mano;
+ * - enviado: tiene la configuración en camino (correo enviado o enlace
+ *   abierto), pero aún no ha terminado;
+ * - sin configurar: nadie le ha hecho llegar nada que haya abierto. Es lo
+ *   que se pinta en rojo: depende de quien hace la puesta en marcha.
+ */
+export type EstadoCuenta = 'configurado' | 'enviado' | 'sin-configurar';
+
+export interface LecturaCuenta {
+  estado: EstadoCuenta;
+  veredicto: Veredicto;
+  rotulo: string;
+  nota: string;
+}
+
+export function lecturaCuenta(b: Mailbox): LecturaCuenta {
+  if (b.configuredAt) {
+    return { estado: 'configurado', veredicto: 'normal', rotulo: 'Configurado', nota: `Configurado el ${formatDay(b.configuredAt)}.` };
+  }
+  const correo = b.setup?.lastEmail ?? null;
+  const abierto = b.setup?.lastOpenedAt ?? null;
+  if (correo?.status === 'sent' && (!abierto || correo.at >= abierto)) {
+    return {
+      estado: 'enviado',
+      veredicto: 'vigilar',
+      rotulo: 'Enviado',
+      nota: `Configuración enviada a ${correo.to} el ${formatDay(correo.at)}. Aún no la ha terminado.`,
+    };
+  }
+  if (abierto) {
+    return {
+      estado: 'enviado',
+      veredicto: 'vigilar',
+      rotulo: 'Enlace abierto',
+      nota: `Abrió su enlace el ${formatDay(abierto)}, pero aún no ha terminado.`,
+    };
+  }
+  if (correo?.status === 'failed') {
+    return {
+      estado: 'sin-configurar',
+      veredicto: 'fuera',
+      rotulo: 'Sin configurar',
+      nota: `No se pudo enviar a ${correo.to}. Vuelve a intentarlo o copia su enlace.`,
+    };
+  }
+  return {
+    estado: 'sin-configurar',
+    veredicto: 'fuera',
+    rotulo: 'Sin configurar',
+    nota: b.setup?.lastLinkAt
+      ? 'Su enlace aún no se ha abierto. Envíale la configuración por correo o copia el enlace y pásaselo.'
+      : 'Aún no ha recibido su configuración.',
+  };
+}
+
+/** Dirección que envía los correos de configuración de un dominio. */
+export function remitenteConfiguracion(dominio: string): string {
+  return `${REMITENTE_CONFIGURACION}@${dominio}`;
+}
+
+export interface EnvioRealizado {
+  sent: { to: string; at: number; status: 'sent' };
+  link: { expiresAt: number; hasPassword: boolean };
+  reused: boolean;
+}
+
+/**
+ * Envía al titular su enlace de configuración desde configuration@ de su
+ * dominio. Con contraseña (buzón sin configurar), el servidor reutiliza el
+ * enlace vigente si lo hay y, si no, genera una contraseña nueva. Sin ella
+ * (buzón ya configurado), no se toca la que usa.
+ */
+export function enviarConfiguracion(mailboxId: string, to: string, includePassword: boolean): Promise<EnvioRealizado> {
+  return api.post<EnvioRealizado>(`/api/mailboxes/${mailboxId}/setup-email`, {
+    to: to.trim(),
+    includePassword,
+    ttlHours: VALIDEZ_ENLACE_HORAS,
+  });
+}
+
+/** Marca (o desmarca) a mano un buzón como configurado. */
+export function marcarConfigurado(mailboxId: string, configured: boolean): Promise<{ configuredAt: number | null }> {
+  return api.post<{ configuredAt: number | null }>(`/api/mailboxes/${mailboxId}/configured`, { configured });
 }

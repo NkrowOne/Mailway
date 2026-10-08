@@ -1,17 +1,10 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { CircleDashed, ClipboardPaste, Globe, Plus, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type ConEnlace, type Mailbox } from '../../lib/api';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type ConEnlace } from '../../lib/api';
 import { propiedadPendiente, type DominioCorreo } from '../../lib/cloudflare';
 import { plural } from '../../lib/format';
 import { mensajeDe, type BulkEntryResult, type BulkPreview, type BulkResponse } from '../../lib/gestion';
-import {
-  BotonCopiarTexto,
-  FilaEnlace,
-  NotaEnlaces,
-  textoEnlaces,
-} from '../../components/EnlacesEquipo';
 import { Button } from '../../ui/Button';
 import { Textarea } from '../../ui/Field';
 import { AvisoError, Escala, Hoja, Vacio } from '../../ui/kit';
@@ -19,13 +12,13 @@ import { useToast } from '../../ui/toast';
 import {
   clave,
   direccionesRepetidas,
-  enlaceConContrasenaNueva,
   errorFila,
   FORMATOS,
   filaNueva,
   filaVacia,
   interpretarLista,
   invalidarCorreo,
+  lecturaCuenta,
   limpiarDireccion,
   proponerDireccion,
   useRecordado,
@@ -34,14 +27,8 @@ import {
   type FilaPersona,
   type Formato,
 } from './comun';
-import { CabeceraPaso, PieDePaso, type ContextoPuesta } from './marco';
-
-/** Distintivo de la fila de quien hace la puesta en marcha. */
-export function MarcaTu() {
-  return (
-    <span className="rounded-full bg-petroleo-claro px-2 py-px text-sm font-semibold text-petroleo">Tú</span>
-  );
-}
+import { CuentasEquipo, EnviarConfiguracion } from './CuentasEquipo';
+import { CabeceraPaso, MarcaTu, PieDePaso, type ContextoPuesta } from './marco';
 
 export function PasoEquipo({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<HTMLHeadingElement> }) {
   const { dominio } = ctx;
@@ -144,6 +131,13 @@ function Equipo({
   const [fase, setFase] = useState<'revisando' | 'creando' | null>(null);
   const [pegando, setPegando] = useState(false);
   const [textoPegado, setTextoPegado] = useState('');
+  // El alta está abierta si no hay buzones, si hay una lista a medias o si se
+  // ha pedido («Añadir buzones»); si no, manda la lista de buzones.
+  const [anadiendo, setAnadiendo] = useState(() => ctx.buzones.length === 0 || filas.length > 0 || ctx.anadir);
+  const altaRef = useRef<HTMLDivElement>(null);
+  // Envío por correo: los buzones marcados al abrirlo y una clave para que
+  // cada apertura empiece de cero.
+  const [envio, setEnvio] = useState<{ ids: string[]; vez: number } | null>(null);
 
   const usadas = useMemo(() => filas.filter((f) => !filaVacia(f)), [filas]);
   const repetidas = useMemo(() => direccionesRepetidas(usadas), [usadas]);
@@ -205,6 +199,31 @@ function Equipo({
     setFilas((prev) => [...prev, nueva]);
     enfocarFila(nueva.id, 'nombre');
   }
+
+  /**
+   * Cierra el alta y quita ?anadir=1 de la dirección: así el próximo «Añadir
+   * buzones» de la cabecera vuelve a abrirla.
+   */
+  function cerrarAlta() {
+    setAnadiendo(false);
+    if (ctx.anadir) ctx.irA('equipo');
+  }
+
+  /** «Añadir buzones»: abre el alta con una fila lista para escribir. */
+  function abrirAlta() {
+    setAnadiendo(true);
+    if (filas.length === 0) anadirPersona();
+    else enfocarFila(filas[filas.length - 1]!.id, 'nombre');
+    window.requestAnimationFrame(() => altaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
+
+  // «Añadir buzones» desde la cabecera con el paso ya abierto: la dirección
+  // cambia (?anadir=1) pero el paso no se vuelve a montar.
+  useEffect(() => {
+    if (ctx.anadir && !anadiendo) abrirAlta();
+    // Solo al pedirlo; abrirAlta cambia en cada render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.anadir]);
 
   function anadirLista() {
     const personas = interpretarLista(textoPegado);
@@ -284,7 +303,9 @@ function Equipo({
         }
       }
       ctx.setEnlaces((prev) => [...nuevos, ...prev.filter((p) => !nuevos.some((n) => n.mailboxId === p.mailboxId))]);
+      for (const n of nuevos) if (n.correoPersonal) ctx.setPersonal(n.mailboxId, n.correoPersonal);
       setFilas((prev) => prev.filter((f) => !creadas.has(f.id) && !filaVacia(f)));
+      if (usadas.every((f) => creadas.has(f.id))) cerrarAlta();
       setErroresCreacion(fallos);
       setIntentado(false);
       setTocadas(new Set());
@@ -296,12 +317,18 @@ function Equipo({
           `${res.created === 1 ? 'Se ha creado 1 buzón' : `Se han creado ${res.created} buzones`}; ${fallos.size === 1 ? '1 no se ha podido crear' : `${fallos.size} no se han podido crear`}. Revisa la lista.`,
         );
       } else {
-        toast('ok', res.created === 1 ? 'Buzón creado con su enlace.' : `${res.created} buzones creados, cada uno con su enlace.`);
+        toast('ok', res.created === 1 ? 'Buzón creado.' : `${res.created} buzones creados.`);
       }
-      window.requestAnimationFrame(() => {
-        resultadosRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        resultadosRef.current?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
-      });
+      // Lo siguiente es hacerles llegar su configuración: con los correos
+      // personales ya escritos, el envío se abre listo para confirmar.
+      const conCorreo = nuevos.filter((n) => !n.mio && n.correoPersonal).map((n) => n.mailboxId);
+      if (conCorreo.length > 0) {
+        setEnvio({ ids: conCorreo, vez: Date.now() });
+      } else {
+        window.requestAnimationFrame(() => {
+          resultadosRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
     } catch (err) {
       setErrorGeneral(mensajeDe(err, 'No se han podido crear los buzones. Vuelve a intentarlo.'));
     } finally {
@@ -309,10 +336,9 @@ function Equipo({
     }
   }
 
-  const sinEnlace = ctx.buzones.filter((b) => !ctx.enlaces.some((e) => e.mailboxId === b.id));
-  const enlacesDelDominio = ctx.enlaces.filter((e) => e.email.endsWith(`@${dominio.domain}`));
-  const formularioAbierto = filas.length > 0 || ctx.buzones.length === 0;
+  const formularioAbierto = anadiendo || ctx.buzones.length === 0;
   const ejemplo = usadas.find((f) => f.nombre.trim())?.nombre ?? 'Ana García';
+  const sinConfigurar = ctx.buzones.filter((b) => lecturaCuenta(b).estado === 'sin-configurar').length;
 
   const principal =
     usadas.length > 0 ? (
@@ -342,23 +368,47 @@ function Equipo({
 
   return (
     <>
-      <CabeceraPaso ref={tituloRef} titulo="¿Quién va a tener correo?">
-        Crea de una vez un buzón para cada persona. Cada una recibirá un enlace para configurar su correo en el
-        móvil y el ordenador sin ayuda.
-      </CabeceraPaso>
+      {ctx.buzones.length === 0 ? (
+        <CabeceraPaso ref={tituloRef} titulo="¿Quién va a tener correo?">
+          Crea de una vez un buzón para cada persona. Después le enviarás su configuración para que tenga el correo en
+          el móvil y el ordenador sin ayuda.
+        </CabeceraPaso>
+      ) : (
+        <CabeceraPaso ref={tituloRef} titulo="Tu equipo">
+          Cada persona necesita su configuración para usar el correo. Las que aún no la tienen salen en rojo:
+          envíasela por correo o copia su enlace.
+        </CabeceraPaso>
+      )}
 
-      {enlacesDelDominio.length > 0 && (
+      {ctx.buzones.length > 0 && (
         <div ref={resultadosRef} className="scroll-mt-6">
-          <EnlacesCreados ctx={ctx} enlaces={enlacesDelDominio} />
+          <CuentasEquipo
+            ctx={ctx}
+            dominio={dominio}
+            onAnadir={formularioAbierto ? undefined : abrirAlta}
+            onEnviar={(ids) => setEnvio({ ids, vez: Date.now() })}
+          />
         </div>
       )}
 
-      {sinEnlace.length > 0 && <YaEnElEquipo ctx={ctx} buzones={sinEnlace} />}
-
-      {formularioAbierto ? (
+      {formularioAbierto && (
+        <div ref={altaRef} className="scroll-mt-6">
         <Hoja
-          title={ctx.buzones.length > 0 ? 'Añadir personas' : 'Tu equipo'}
+          title={ctx.buzones.length > 0 ? 'Añadir buzones' : 'Tu equipo'}
           meta={`${plural(plazas, 'buzón libre', 'buzones libres')} en tu plan`}
+          actions={
+            ctx.buzones.length > 0 && usadas.length === 0 ? (
+              <Button
+                variant="plano"
+                onClick={() => {
+                  setFilas([]);
+                  cerrarAlta();
+                }}
+              >
+                Cerrar
+              </Button>
+            ) : undefined
+          }
           flush
         >
           <div className="flex flex-col gap-4 px-4 pb-4 pt-3.5">
@@ -449,37 +499,24 @@ function Equipo({
               </div>
             )}
             <p className="max-w-[68ch] text-sm text-tinta-3">
-              Las contraseñas se generan solas y van dentro del enlace de cada persona. El correo personal solo se usa
-              en este navegador para preparar el mensaje con su enlace: no se guarda en el servidor.
+              Las contraseñas se generan solas y van dentro del enlace de cada persona. Con su correo personal, al crear
+              los buzones podrás enviarle su configuración por correo.
             </p>
             {errorGeneral && <AvisoError>{errorGeneral}</AvisoError>}
           </div>
         </Hoja>
-      ) : (
-        <Hoja>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="min-w-0 max-w-[60ch] flex-1 basis-60 text-base text-tinta-2">
-              {plazas === 0 ? (
-                <>
-                  Tu plan ya no admite más buzones ({plan.maxMailboxes}). Para añadir a más personas, pide a tu
-                  proveedor que lo amplíe.
-                </>
-              ) : (
-                <>
-                  ¿Falta alguien? Añádelo ahora o más adelante desde{' '}
-                  <Link to="/buzones" className="text-petroleo underline underline-offset-2 hover:text-tinta">
-                    Buzones
-                  </Link>
-                  .
-                </>
-              )}
-            </p>
-            <Button variant="perfil" onClick={anadirPersona} disabled={plazas === 0 || ctx.suspendido}>
-              <Plus className="h-4 w-4" aria-hidden />
-              Añadir personas
-            </Button>
-          </div>
-        </Hoja>
+        </div>
+      )}
+
+      {envio && (
+        <EnviarConfiguracion
+          key={envio.vez}
+          open
+          onClose={() => setEnvio(null)}
+          ctx={ctx}
+          dominio={dominio}
+          marcadosIniciales={envio.ids}
+        />
       )}
 
       <PieDePaso
@@ -496,9 +533,11 @@ function Equipo({
         nota={
           usadas.length === 0 && ctx.buzones.length === 0
             ? 'Añade al menos a una persona para crear su buzón.'
-            : usadas.length > 0 && enlacesDelDominio.length === 0
-              ? `Cada enlace incluirá la contraseña de su buzón y caducará a los ${VALIDEZ_ENLACE_HORAS / 24} días.`
-              : undefined
+            : usadas.length > 0
+              ? `Cada buzón tendrá su enlace con la contraseña incluida, válido ${VALIDEZ_ENLACE_HORAS / 24} días.`
+              : sinConfigurar > 0
+                ? `${sinConfigurar === 1 ? 'Queda 1 buzón' : `Quedan ${sinConfigurar} buzones`} sin configurar. Puedes seguir y enviar la configuración más tarde.`
+                : undefined
         }
       />
     </>
@@ -666,153 +705,3 @@ const ListaPersonas = forwardRef<HTMLUListElement, PropsLista>(function ListaPer
     </div>
   );
 });
-
-/* ------------------------------ Resultados --------------------------------- */
-
-function EnlacesCreados({ ctx, enlaces }: { ctx: ContextoPuesta; enlaces: EnlaceGuardado[] }) {
-  const [confirmando, setConfirmando] = useState(false);
-  const caducan = Math.min(...enlaces.map((e) => e.expiresAt));
-  const otros = enlaces.filter((e) => !e.mio);
-  return (
-    <Hoja
-      title={
-        <h2 tabIndex={-1} className="text-md font-semibold text-tinta focus:outline-none">
-          Enlaces para tu equipo
-        </h2>
-      }
-      meta={plural(enlaces.length, 'enlace listo', 'enlaces listos')}
-      actions={<BotonCopiarTexto texto={textoEnlaces(enlaces)} rotulo="Copiar todos" />}
-      flush
-    >
-      <div className="regla-fila px-4 py-3">
-        <NotaEnlaces
-          expiresAt={caducan}
-          conContrasena={enlaces.some((e) => e.hasPassword)}
-          conservacion="Se conservan en esta pestaña hasta que la cierres."
-        />
-      </div>
-      <ul>
-        {enlaces.map((e) => (
-          <FilaEnlace
-            key={e.mailboxId}
-            persona={e}
-            firma={ctx.usuario.name}
-            marca={e.mio ? <MarcaTu /> : undefined}
-            nota={e.mio ? 'Es tu buzón: lo configurarás en tus dispositivos en el paso 4.' : undefined}
-          />
-        ))}
-      </ul>
-      {otros.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla px-4 py-3">
-          {confirmando ? (
-            <>
-              <p className="min-w-0 flex-1 basis-60 text-sm text-tinta-2">
-                Los enlaces de tu equipo dejarán de verse aquí y no se podrán recuperar. El tuyo se queda para el paso 4.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="plano" onClick={() => setConfirmando(false)}>
-                  Cancelar
-                </Button>
-                <Button variant="perfil" onClick={() => ctx.setEnlaces((prev) => prev.filter((p) => p.mio))}>
-                  Quitar de la vista
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="min-w-0 flex-1 basis-60 text-sm text-tinta-3">
-                ¿Ya los has enviado todos? Puedes quitarlos de esta pantalla.
-              </p>
-              <Button variant="plano" onClick={() => setConfirmando(true)}>
-                Ya los he enviado
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-    </Hoja>
-  );
-}
-
-/**
- * Buzones que ya existen y no tienen enlace en esta pestaña (se crearon antes,
- * o se cerró la pestaña con los enlaces). Su enlace se puede volver a crear,
- * con una contraseña nueva.
- */
-function YaEnElEquipo({ ctx, buzones }: { ctx: ContextoPuesta; buzones: Mailbox[] }) {
-  return (
-    <Hoja title="Ya en tu equipo" meta={plural(buzones.length, 'buzón', 'buzones')} flush>
-      <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
-        Si alguien necesita su enlace de configuración, créalo aquí. Para cambiar nombres, cuotas o contraseñas,
-        ve a{' '}
-        <Link to="/buzones" className="text-petroleo underline underline-offset-2 hover:text-tinta">
-          Buzones
-        </Link>
-        .
-      </p>
-      <ul>
-        {buzones.map((b) => (
-          <FilaSinEnlace key={b.id} ctx={ctx} buzon={b} />
-        ))}
-      </ul>
-    </Hoja>
-  );
-}
-
-function FilaSinEnlace({ ctx, buzon }: { ctx: ContextoPuesta; buzon: Mailbox }) {
-  const [confirmando, setConfirmando] = useState(false);
-  const crear = useMutation({
-    mutationFn: () => enlaceConContrasenaNueva(buzon.id),
-    onSuccess: (link) => {
-      ctx.setEnlaces((prev) => [
-        {
-          mailboxId: buzon.id,
-          nombre: buzon.displayName,
-          email: buzon.email,
-          url: link.url,
-          expiresAt: link.expiresAt,
-          hasPassword: link.hasPassword,
-          mio: buzon.id === ctx.mioId,
-        },
-        ...prev.filter((p) => p.mailboxId !== buzon.id),
-      ]);
-    },
-  });
-  const mio = buzon.id === ctx.mioId;
-  return (
-    <li className="regla-fila px-4 py-3 last:border-b-0">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="min-w-0 grow basis-full sm:basis-0">
-          <p className="flex flex-wrap items-baseline gap-x-2 text-base font-medium text-tinta [overflow-wrap:anywhere]">
-            {buzon.displayName || buzon.email}
-            {mio && <MarcaTu />}
-          </p>
-          {buzon.displayName && <p className="break-all text-sm text-tinta-2">{buzon.email}</p>}
-        </div>
-        {!confirmando && (
-          <Button variant="perfil" onClick={() => setConfirmando(true)} disabled={buzon.status !== 'active'}>
-            {mio ? 'Crear mi enlace' : 'Crear su enlace'}
-          </Button>
-        )}
-      </div>
-      {confirmando && (
-        <div className="revelar mt-2.5 flex flex-col gap-2.5 rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
-          <p className="max-w-[68ch] text-sm text-tinta">
-            Se generará una contraseña nueva para <span className="break-all font-medium">{buzon.email}</span> y un
-            enlace que la incluye. Si ya usa este buzón en algún dispositivo, tendrá que volver a configurarlo con el
-            enlace.
-          </p>
-          {crear.isError && <AvisoError>{mensajeDe(crear.error, 'No se ha podido crear el enlace.')}</AvisoError>}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="perfil" busy={crear.isPending} onClick={() => crear.mutate()}>
-              Generar contraseña y enlace
-            </Button>
-            <Button variant="plano" onClick={() => setConfirmando(false)}>
-              Cancelar
-            </Button>
-          </div>
-        </div>
-      )}
-    </li>
-  );
-}

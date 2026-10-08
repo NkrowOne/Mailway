@@ -120,12 +120,12 @@ export default function InicioCliente() {
       key: 'dispositivos',
       label: 'Conectar los dispositivos',
       done: null,
-      to: '/puesta-en-marcha?paso=dispositivos',
+      to: '/puesta-en-marcha?paso=equipo',
       hint: (
         <>
-          Envía a cada persona el enlace de configuración de su buzón desde «Buzones», o indícale
-          que acceda a <span className="valor text-sm text-tinta">{portal}</span> con su dirección
-          y contraseña: el móvil y el ordenador se configuran solos.
+          En la puesta en marcha ves quién tiene ya su correo configurado y envías la
+          configuración por correo a quien le falte. También puede entrar en{' '}
+          <span className="valor text-sm text-tinta">{portal}</span> con su dirección y contraseña.
         </>
       ),
       obligatorio: false,

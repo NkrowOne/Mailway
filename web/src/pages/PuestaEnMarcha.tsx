@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { ListChecks } from 'lucide-react';
+import { ListChecks, Plus } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type ClientDashboard, type Mailbox, type User } from '../lib/api';
 import { propiedadPendiente, type DominioCorreo } from '../lib/cloudflare';
-import { plural } from '../lib/format';
 import { useUsuario } from '../components/gestion/consultas';
 import { useTituloVista } from '../shell/AppShell';
-import { estiloBoton } from '../ui/Button';
+import { Button, estiloBoton } from '../ui/Button';
 import { Select } from '../ui/Field';
 import { AvisoError, Cargando, Hoja, Membrete, Vacio } from '../ui/kit';
 import {
   clave,
   esPaso,
+  lecturaCuenta,
   PASOS,
   useRecordado,
   vigentes,
@@ -28,7 +28,7 @@ import {
 import { PasoDominio } from './puesta/PasoDominio';
 import { PasoEquipo } from './puesta/PasoEquipo';
 import { PasoObligatorias } from './puesta/PasoObligatorias';
-import { PasoDispositivos } from './puesta/PasoDispositivos';
+import { buzonPropio, PasoDispositivos } from './puesta/PasoDispositivos';
 import { PasoListo } from './puesta/PasoListo';
 
 /*
@@ -136,10 +136,10 @@ function Asistente({
   const [enlacesGuardados, setEnlaces] = useRecordado<EnlaceGuardado[]>(clave(clientId, 'enlaces'), () => [], 'sesion');
   const enlaces = useMemo(() => vigentes(enlacesGuardados), [enlacesGuardados]);
   const [mioId, setMioId] = useRecordado<string | null>(clave(clientId, 'mio'), () => null, 'local');
-  const [dispositivosVistos, setDispositivosVistos] = useRecordado<boolean>(
-    clave(clientId, 'dispositivos'),
-    () => false,
-    'local',
+  const [personales, setPersonales] = useRecordado<Record<string, string>>(
+    clave(clientId, 'personales'),
+    () => ({}),
+    'sesion',
   );
 
   // El dominio que se pone en marcha: el elegido o, si no, el primero que se
@@ -154,6 +154,16 @@ function Asistente({
     [buzonesCliente, dominio],
   );
 
+  // El estado de cada buzón lo da el servidor: rojo mientras a alguien no le
+  // haya llegado (ni abierto) su configuración. Mientras quede alguno, «Tu
+  // equipo» no está hecho: así la puesta en marcha vuelve ahí, que es donde
+  // se resuelve, y no a un paso posterior.
+  const lecturas = buzones.map(lecturaCuenta);
+  const sinConfigurar = lecturas.filter((l) => l.estado === 'sin-configurar').length;
+  const configurados = lecturas.filter((l) => l.estado === 'configurado').length;
+  const propio = buzonPropio({ buzones, mioId, usuario });
+  const buzonMio = buzones.find((b) => b.id === propio) ?? null;
+
   const estados: Record<PasoId, EstadoPaso> = {
     dominio: !dominio
       ? { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' }
@@ -163,15 +173,21 @@ function Asistente({
           ? { hecho: true, detalle: 'Listo', veredicto: 'normal' }
           : { hecho: true, detalle: 'DNS pendiente', veredicto: 'vigilar' },
     equipo:
-      buzones.length > 0
-        ? { hecho: true, detalle: plural(buzones.length, 'buzón', 'buzones'), veredicto: 'normal' }
-        : { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' },
+      buzones.length === 0
+        ? { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' }
+        : sinConfigurar > 0
+          ? { hecho: false, detalle: `${sinConfigurar} sin configurar`, veredicto: 'fuera' }
+          : configurados === buzones.length
+            ? { hecho: true, detalle: buzones.length === 1 ? '1 buzón configurado' : `${buzones.length} buzones configurados`, veredicto: 'normal' }
+            : { hecho: true, detalle: `${configurados} de ${buzones.length} configurados`, veredicto: 'vigilar' },
     obligatorias: panel.onboarding.hasEssentialAddresses
       ? { hecho: true, detalle: 'Creadas', veredicto: 'normal' }
       : { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' },
-    dispositivos: dispositivosVistos
-      ? { hecho: true, detalle: 'Configurados', veredicto: 'normal' }
-      : { hecho: false, detalle: 'Recomendado', veredicto: 'sin-dato' },
+    dispositivos: !buzonMio
+      ? { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' }
+      : buzonMio.configuredAt
+        ? { hecho: true, detalle: 'Configurados', veredicto: 'normal' }
+        : { hecho: false, detalle: 'Tu buzón sin configurar', veredicto: 'fuera' },
     listo: { hecho: false, detalle: '', veredicto: 'sin-dato' },
   };
   const pendiente = PASOS.find((p) => p.id !== 'listo' && !estados[p.id].hecho);
@@ -210,6 +226,18 @@ function Asistente({
     setParams((prev) => {
       const n = new URLSearchParams(prev);
       n.set('paso', destino);
+      n.delete('anadir');
+      return n;
+    });
+  }
+
+  // Añadir buzones lleva siempre a «Tu equipo» con el alta abierta, esté
+  // donde esté la puesta en marcha.
+  function anadirBuzones() {
+    setParams((prev) => {
+      const n = new URLSearchParams(prev);
+      n.set('paso', 'equipo');
+      n.set('anadir', '1');
       return n;
     });
   }
@@ -225,10 +253,14 @@ function Asistente({
     setEnlaces: (fn) => setEnlaces((prev) => fn(vigentes(prev))),
     mioId,
     setMioId,
-    setDispositivosVistos,
+    personales,
+    setPersonal: (mailboxId, correo) => setPersonales((prev) => ({ ...prev, [mailboxId]: correo })),
+    anadir: params.get('anadir') === '1',
     irA,
+    anadirBuzones,
     suspendido: panel.client.suspended,
   };
+  const puedeAnadir = Boolean(dominio && !propiedadPendiente(dominio)) && !ctx.suspendido;
 
   return (
     <>
@@ -236,7 +268,15 @@ function Asistente({
         title="Puesta en marcha"
         meta={`Todo lo necesario para que ${panel.client.name} tenga su correo funcionando, paso a paso.`}
         actions={
-          propios.length > 1 ? (
+          propios.length > 1 || puedeAnadir ? (
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
+              {puedeAnadir && (
+                <Button variant="perfil" onClick={anadirBuzones} className="sm:order-2">
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Añadir buzones
+                </Button>
+              )}
+              {propios.length > 1 && (
             <div className="w-full min-w-0 sm:w-72">
               <Select
                 label="Dominio"
@@ -255,6 +295,8 @@ function Asistente({
                   </option>
                 ))}
               </Select>
+            </div>
+              )}
             </div>
           ) : undefined
         }

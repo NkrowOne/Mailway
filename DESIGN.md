@@ -442,6 +442,12 @@ cliente: lista de pasos a la izquierda desde 1280 px (arriba, una barra
 compacta «Paso N de 5» con círculos) y, a la derecha, un paso cada vez con su
 porqué en una frase, una acción principal y «Saltar por ahora» donde el paso
 es opcional. El estado sale del servidor: se retoma donde se dejó.
+«Tu equipo» es también la lista de buzones con el estado de su configuración:
+en rojo los que aún no la han recibido ni abierto (y el paso, en el índice),
+en ámbar los enviados sin terminar y en verde los configurados. Desde cada
+fila se envía la configuración por correo (diálogo con un correo de destino
+por persona), se copia el enlace o se marca a mano; «Añadir buzones», en la
+cabecera, lleva siempre a ese paso con el alta abierta.
 
 ### Webmail
 

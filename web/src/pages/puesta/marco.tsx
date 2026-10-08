@@ -27,9 +27,26 @@ export interface ContextoPuesta {
   /** Buzón de quien hace la puesta en marcha, si se sabe. */
   mioId: string | null;
   setMioId: (id: string | null) => void;
-  setDispositivosVistos: (visto: boolean) => void;
+  /**
+   * Correo personal de cada titular (por id de buzón), escrito al crear el
+   * equipo o al enviar la configuración. Solo en esta pestaña: sirve para
+   * proponerlo al volver a enviar.
+   */
+  personales: Record<string, string>;
+  setPersonal: (mailboxId: string, correo: string) => void;
+  /** Se ha pedido abrir directamente el alta de buzones (?anadir=1). */
+  anadir: boolean;
   irA: (paso: PasoId) => void;
+  /** Lleva a «Tu equipo» con el alta de buzones abierta. */
+  anadirBuzones: () => void;
   suspendido: boolean;
+}
+
+/** Distintivo del buzón de quien hace la puesta en marcha. */
+export function MarcaTu() {
+  return (
+    <span className="rounded-full bg-petroleo-claro px-2 py-px text-sm font-semibold text-petroleo">Tú</span>
+  );
 }
 
 /** Resumen de un paso para el índice. */
@@ -138,16 +155,25 @@ export function FilaEstado({
   );
 }
 
-/** Círculo numerado de un paso: actual en petróleo, hecho con su marca, pendiente en gris. */
-function Numero({ i, actual, hecho }: { i: number; actual: boolean; hecho: boolean }) {
+/**
+ * Círculo numerado de un paso: actual en petróleo, hecho con su marca,
+ * pendiente en gris y, si necesita atención (un buzón sin configurar), en rojo.
+ */
+function Numero({ i, actual, hecho, atencion = false }: { i: number; actual: boolean; hecho: boolean; atencion?: boolean }) {
   return (
     <span
       aria-hidden
       className={`valor flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
-        actual ? 'bg-petroleo text-white' : hecho ? 'bg-petroleo-claro text-petroleo' : 'bg-hoja-3 text-tinta-3'
+        actual
+          ? 'bg-petroleo text-white'
+          : atencion
+            ? 'bg-fuera-fondo text-fuera ring-1 ring-[rgb(var(--fuera)/0.45)]'
+            : hecho
+              ? 'bg-petroleo-claro text-petroleo'
+              : 'bg-hoja-3 text-tinta-3'
       }`}
     >
-      {hecho && !actual ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : i + 1}
+      {hecho && !actual && !atencion ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : i + 1}
     </span>
   );
 }
@@ -189,7 +215,7 @@ export function IndicePasos({
                   esActual ? 'bg-hoja-2' : ''
                 }`}
               >
-                <Numero i={i} actual={esActual} hecho={estado.hecho} />
+                <Numero i={i} actual={esActual} hecho={estado.hecho} atencion={estado.veredicto === 'fuera'} />
                 <span className="min-w-0 flex-1">
                   <span
                     className={`block text-base ${esActual ? 'font-semibold text-petroleo' : estado.hecho ? 'text-tinta' : 'text-tinta-2'}`}
@@ -199,7 +225,13 @@ export function IndicePasos({
                   {estado.detalle && (
                     <span
                       className={`block text-sm ${
-                        estado.veredicto === 'vigilar' ? 'text-vigilar' : estado.veredicto === 'normal' ? 'text-normal' : 'text-tinta-3'
+                        estado.veredicto === 'fuera'
+                          ? 'font-medium text-fuera'
+                          : estado.veredicto === 'vigilar'
+                            ? 'text-vigilar'
+                            : estado.veredicto === 'normal'
+                              ? 'text-normal'
+                              : 'text-tinta-3'
                       }`}
                     >
                       {estado.detalle}
@@ -256,10 +288,12 @@ export function IndiceCompacto({
                 type="button"
                 onClick={() => onIr(paso.id)}
                 aria-current={esActual ? 'step' : undefined}
-                aria-label={`Paso ${i + 1}: ${paso.rotulo}${estado.hecho ? ' (hecho)' : ''}`}
+                aria-label={`Paso ${i + 1}: ${paso.rotulo}${
+                  estado.veredicto === 'fuera' ? ` (${estado.detalle.toLowerCase()})` : estado.hecho ? ' (hecho)' : ''
+                }`}
                 className="flex h-11 w-9 items-center justify-center rounded-lg"
               >
-                <Numero i={i} actual={esActual} hecho={estado.hecho} />
+                <Numero i={i} actual={esActual} hecho={estado.hecho} atencion={estado.veredicto === 'fuera'} />
               </button>
             </li>
           );

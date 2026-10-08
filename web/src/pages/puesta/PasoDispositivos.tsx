@@ -1,6 +1,6 @@
 import { useState, type Ref } from 'react';
 import { ExternalLink, Inbox, Mail } from 'lucide-react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDireccionPanel } from '../../components/gestion/consultas';
 import { BotonCopiarTexto, mailtoEnlacePersona } from '../../components/EnlacesEquipo';
 import { QR } from '../../components/QR';
@@ -8,8 +8,8 @@ import { mensajeDe } from '../../lib/gestion';
 import { esDispositivoMovil, fechaLarga } from '../../lib/portal';
 import { Button, estiloBoton } from '../../ui/Button';
 import { Select } from '../../ui/Field';
-import { AvisoError, Hoja, Vacio } from '../../ui/kit';
-import { enlaceConContrasenaNueva, type EnlaceGuardado } from './comun';
+import { AvisoError, Hoja, Marca, Vacio } from '../../ui/kit';
+import { enlaceConContrasenaNueva, invalidarCorreo, marcarConfigurado, type EnlaceGuardado } from './comun';
 import { CabeceraPaso, PieDePaso, type ContextoPuesta } from './marco';
 
 /**
@@ -33,6 +33,8 @@ export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; titu
   const buzon = ctx.buzones.find((b) => b.id === elegido) ?? null;
   const enlace = buzon ? ctx.enlaces.find((e) => e.mailboxId === buzon.id) : undefined;
   const webmail = ctx.panel.webmailUrl;
+  const queryClient = useQueryClient();
+  const configurado = Boolean(buzon?.configuredAt);
 
   const preparar = useMutation({
     mutationFn: (id: string) => enlaceConContrasenaNueva(id),
@@ -54,10 +56,18 @@ export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; titu
     },
   });
 
-  function terminar() {
-    ctx.setDispositivosVistos(true);
-    ctx.irA('listo');
-  }
+  // «Ya lo he configurado» lo deja marcado en el servidor: el paso deja de
+  // salir en rojo también en otro navegador. Si lo configuró con el enlace o
+  // entró en el webmail, ya estaba marcado solo.
+  const terminar = useMutation({
+    mutationFn: async () => {
+      if (buzon && !configurado) {
+        await marcarConfigurado(buzon.id, true);
+        await invalidarCorreo(queryClient);
+      }
+    },
+    onSuccess: () => ctx.irA('listo'),
+  });
 
   return (
     <>
@@ -83,6 +93,14 @@ export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; titu
       ) : (
         <>
           <Hoja>
+            {buzon && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                <span className="min-w-0 text-base text-tinta-2">
+                  {configurado ? 'Tu buzón ya está configurado.' : 'Tu buzón aún no está configurado.'}
+                </span>
+                <Marca veredicto={configurado ? 'normal' : 'fuera'}>{configurado ? 'Configurado' : 'Sin configurar'}</Marca>
+              </div>
+            )}
             <Select
               label="¿Cuál es tu buzón?"
               value={elegido ?? ''}
@@ -158,9 +176,14 @@ export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; titu
           </Button>
         }
         principal={
-          <Button variant="principal" onClick={terminar}>
-            Ya lo he configurado
+          <Button variant="principal" busy={terminar.isPending} disabled={!buzon} onClick={() => terminar.mutate()}>
+            {configurado ? 'Continuar' : 'Ya lo he configurado'}
           </Button>
+        }
+        nota={
+          terminar.isError ? (
+            <span className="text-fuera">{mensajeDe(terminar.error, 'No se ha podido guardar. Vuelve a intentarlo.')}</span>
+          ) : undefined
         }
       />
     </>
