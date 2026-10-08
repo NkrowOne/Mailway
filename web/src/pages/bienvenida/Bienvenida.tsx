@@ -257,8 +257,9 @@ function Acogida({
               {datos.name ? `Te damos la bienvenida, ${datos.name}` : 'Te damos la bienvenida'}
             </h1>
             <p className="mt-3 max-w-[60ch] text-base text-tinta-2">
-              {datos.brandName} ha preparado el correo de {datos.clientName}. Crea tu acceso al panel y te
-              guiaremos paso a paso hasta dejarlo funcionando para todo tu equipo.
+              {datos.existingUser
+                ? `${datos.brandName} te invita a la puesta en marcha del correo de ${datos.clientName}. Elige una contraseña nueva y te guiaremos paso a paso hasta dejarlo funcionando para todo tu equipo.`
+                : `${datos.brandName} ha preparado el correo de ${datos.clientName}. Crea tu acceso al panel y te guiaremos paso a paso hasta dejarlo funcionando para todo tu equipo.`}
             </p>
 
             <h2 className="mt-8 text-md font-semibold text-tinta">Lo que vas a hacer</h2>
@@ -292,10 +293,12 @@ function Acogida({
             <form onSubmit={crearAcceso} noValidate className="flex flex-col gap-4 px-5 py-6 sm:px-7 sm:py-7">
               <div>
                 <h2 id="acceso-titulo" className="text-xl font-semibold text-tinta">
-                  Crea tu acceso
+                  {datos.existingUser ? 'Elige una contraseña nueva' : 'Crea tu acceso'}
                 </h2>
                 <p className="mt-1 text-base text-tinta-2">
-                  Con tu correo y esta contraseña entrarás en el panel de {datos.clientName}.
+                  {datos.existingUser
+                    ? `Ya tienes acceso al panel de ${datos.clientName}: desde ahora entrarás con tu correo y esta contraseña.`
+                    : `Con tu correo y esta contraseña entrarás en el panel de ${datos.clientName}.`}
                 </p>
               </div>
 
@@ -366,7 +369,7 @@ function Acogida({
               {error && <AvisoError>{error}</AvisoError>}
 
               <Button type="submit" variant="principal" busy={enviando} className={`w-full ${TACTIL}`}>
-                Crear mi acceso y empezar
+                {datos.existingUser ? 'Guardar y empezar' : 'Crear mi acceso y empezar'}
               </Button>
               <p className="text-center text-sm text-tinta-3">
                 Este enlace es personal y es válido hasta el {fechaLarga(datos.expiresAt)}.

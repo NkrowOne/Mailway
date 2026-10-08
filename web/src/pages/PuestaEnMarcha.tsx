@@ -45,47 +45,59 @@ import { PasoListo } from './puesta/PasoListo';
 export default function PuestaEnMarcha() {
   useTituloVista('Puesta en marcha');
   const usuario = useUsuario();
-  const esCliente = usuario?.role === 'client';
-
-  const panel = useQuery({
-    queryKey: ['client-dashboard'],
-    queryFn: () => api.get<ClientDashboard>('/api/dashboard/client'),
-    enabled: esCliente,
-  });
-  const dominios = useQuery({
-    queryKey: ['domains'],
-    queryFn: () => api.get<{ domains: DominioCorreo[] }>('/api/domains'),
-    enabled: esCliente,
-  });
-  const buzones = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
-    enabled: esCliente,
-  });
 
   if (!usuario) return <Cargando label="Preparando la puesta en marcha…" />;
 
-  if (!esCliente) {
+  if (usuario.role !== 'client') {
     return (
       <>
         <Membrete title="Puesta en marcha" />
         <Hoja>
           <Vacio
             icono={ListChecks}
-            title="Esta guía es para los clientes"
+            title="La puesta en marcha es de cada cliente"
             action={
               <Link to="/clientes" className={estiloBoton('perfil')}>
                 Ir a Clientes
               </Link>
             }
           >
-            Cada cliente pone en marcha su correo desde su propio panel. Para configurar el de un cliente, abre su
-            ficha.
+            Abre la ficha del cliente y su pestaña «Puesta en marcha»: ahí ves lo mismo que ve el cliente, le envías
+            el enlace o la haces por él.
           </Vacio>
         </Hoja>
       </>
     );
   }
+
+  return <CargaPuesta usuario={usuario} />;
+}
+
+/**
+ * La puesta en marcha de un cliente desde su ficha (administración): la misma
+ * guía que ve el cliente, con sus datos, para seguirla, enviarle el enlace o
+ * hacerla por él. Sin cabecera propia: la ficha ya tiene la suya.
+ */
+export function PuestaDelCliente({ clientId, usuario }: { clientId: string; usuario: User }) {
+  return <CargaPuesta usuario={usuario} clientId={clientId} />;
+}
+
+/** Carga lo que necesita la guía: el resumen del cliente, sus dominios y sus buzones. */
+function CargaPuesta({ usuario, clientId }: { usuario: User; clientId?: string }) {
+  const sufijo = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+  const panel = useQuery({
+    queryKey: clientId ? ['client-dashboard', clientId] : ['client-dashboard'],
+    queryFn: () => api.get<ClientDashboard>(`/api/dashboard/client${sufijo}`),
+  });
+  const dominios = useQuery({
+    queryKey: ['domains'],
+    queryFn: () => api.get<{ domains: DominioCorreo[] }>('/api/domains'),
+  });
+  // La misma clave que la pestaña «Buzones» de la ficha: comparten caché.
+  const buzones = useQuery({
+    queryKey: clientId ? ['mailboxes', 'cliente', clientId] : ['mailboxes'],
+    queryFn: () => api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes${sufijo}`),
+  });
 
   if (panel.isPending || dominios.isPending || buzones.isPending) {
     return <Cargando label="Preparando la puesta en marcha…" />;
@@ -93,7 +105,7 @@ export default function PuestaEnMarcha() {
   if (!panel.data || !dominios.data || !buzones.data) {
     return (
       <>
-        <Membrete title="Puesta en marcha" />
+        {!clientId && <Membrete title="Puesta en marcha" />}
         <AvisoError
           onRetry={() => {
             void panel.refetch();
@@ -102,7 +114,9 @@ export default function PuestaEnMarcha() {
           }}
           retrying={panel.isFetching || dominios.isFetching || buzones.isFetching}
         >
-          No se ha podido cargar el estado de tu correo. Comprueba la conexión y vuelve a intentarlo.
+          {clientId
+            ? 'No se ha podido cargar la puesta en marcha del cliente. Comprueba la conexión y vuelve a intentarlo.'
+            : 'No se ha podido cargar el estado de tu correo. Comprueba la conexión y vuelve a intentarlo.'}
         </AvisoError>
       </>
     );
@@ -114,6 +128,7 @@ export default function PuestaEnMarcha() {
       panel={panel.data}
       dominios={dominios.data.domains}
       buzonesCliente={buzones.data.mailboxes}
+      modoAdmin={Boolean(clientId)}
     />
   );
 }
@@ -123,11 +138,14 @@ function Asistente({
   panel,
   dominios,
   buzonesCliente,
+  modoAdmin,
 }: {
   usuario: User;
   panel: ClientDashboard;
   dominios: DominioCorreo[];
   buzonesCliente: Mailbox[];
+  /** Desde la ficha del cliente: el paso de los dispositivos es suyo, no de quien administra. */
+  modoAdmin: boolean;
 }) {
   const clientId = panel.client.id;
   const [params, setParams] = useSearchParams();
@@ -160,7 +178,8 @@ function Asistente({
   // se resuelve, y no a un paso posterior.
   // El buzón propio no cuenta aquí: se configura en el paso 4, que sale en
   // rojo él solo.
-  const propio = buzonPropioSeguro({ buzones, mioId, usuario });
+  // Desde la administración no hay «buzón propio»: es el del cliente.
+  const propio = modoAdmin ? null : buzonPropioSeguro({ buzones, mioId, usuario });
   const buzonMio = buzones.find((b) => b.id === propio) ?? null;
   const sinConfigurar = buzones.filter((b) => b.id !== propio && lecturaCuenta(b).estado === 'sin-configurar').length;
   const configurados = buzones.filter((b) => lecturaCuenta(b).estado === 'configurado').length;
@@ -184,14 +203,18 @@ function Asistente({
     obligatorias: panel.onboarding.hasEssentialAddresses
       ? { hecho: true, detalle: 'Creadas', veredicto: 'normal' }
       : { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' },
-    dispositivos: !buzonMio
+    dispositivos: modoAdmin
+      ? { hecho: false, detalle: 'Lo hace el cliente', veredicto: 'sin-dato' }
+      : !buzonMio
       ? { hecho: false, detalle: buzones.length > 0 ? 'Recomendado' : 'Pendiente', veredicto: 'sin-dato' }
       : buzonMio.configuredAt
         ? { hecho: true, detalle: 'Configurados', veredicto: 'normal' }
         : { hecho: false, detalle: 'Tu buzón sin configurar', veredicto: 'fuera' },
     listo: { hecho: false, detalle: '', veredicto: 'sin-dato' },
   };
-  const pendiente = PASOS.find((p) => p.id !== 'listo' && !estados[p.id].hecho);
+  const pendiente = PASOS.find(
+    (p) => p.id !== 'listo' && !(modoAdmin && p.id === 'dispositivos') && !estados[p.id].hecho,
+  );
   estados.listo = pendiente || dominio?.status !== 'active'
     ? { hecho: false, detalle: '', veredicto: 'sin-dato' }
     : { hecho: true, detalle: 'Todo en marcha', veredicto: 'normal' };
@@ -261,17 +284,13 @@ function Asistente({
     irA,
     anadirBuzones,
     suspendido: panel.client.suspended,
+    modoAdmin,
   };
   // En «Tu equipo» ya está en la lista de buzones: aquí sobraría.
   const puedeAnadir = Boolean(dominio && !propiedadPendiente(dominio)) && !ctx.suspendido && paso !== 'equipo';
 
-  return (
-    <>
-      <Membrete
-        title="Puesta en marcha"
-        meta={`Todo lo necesario para que ${panel.client.name} tenga su correo funcionando, paso a paso.`}
-        actions={
-          propios.length > 1 || puedeAnadir ? (
+  const acciones =
+    propios.length > 1 || puedeAnadir ? (
             <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
               {puedeAnadir && (
                 <Button variant="perfil" onClick={anadirBuzones} className="sm:order-2">
@@ -301,13 +320,26 @@ function Asistente({
             </div>
               )}
             </div>
-          ) : undefined
-        }
-      />
+    ) : undefined;
+
+  return (
+    <>
+      {modoAdmin ? (
+        // En la ficha del cliente: sin otra cabecera, solo lo que se puede elegir.
+        acciones && <div className="mb-4 flex justify-end">{acciones}</div>
+      ) : (
+        <Membrete
+          title="Puesta en marcha"
+          meta={`Todo lo necesario para que ${panel.client.name} tenga su correo funcionando, paso a paso.`}
+          actions={acciones}
+        />
+      )}
 
       {ctx.suspendido && (
         <AvisoError className="mb-4">
-          Tu cuenta está suspendida: no se pueden añadir dominios ni buzones. Ponte en contacto con tu proveedor.
+          {modoAdmin
+            ? 'El cliente está suspendido: no se pueden añadir dominios ni buzones. Se reactiva desde «Resumen».'
+            : 'Tu cuenta está suspendida: no se pueden añadir dominios ni buzones. Ponte en contacto con tu proveedor.'}
         </AvisoError>
       )}
 

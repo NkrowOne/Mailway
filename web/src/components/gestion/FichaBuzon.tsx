@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api, type Alias, type Mailbox } from '../../lib/api';
 import { formatDay } from '../../lib/format';
 import { formatBytes, formatQuota, mensajeDe, veredictoUso } from '../../lib/gestion';
@@ -12,6 +13,8 @@ import { AvatarBuzon, FotoBuzon, urlFotoBuzon } from '../FotoBuzon';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from './comun';
 import { ContrasenasAplicacion } from './ContrasenasAplicacion';
 import { ReiniciarBuzon } from './ReiniciarBuzon';
+import { useUsuario } from './consultas';
+import { lecturaCuenta } from '../../pages/puesta/comun';
 
 export type VistaFicha =
   | 'resumen'
@@ -114,7 +117,7 @@ export function FichaBuzon({
           )}
 
           {vista === 'resumen' && (
-            <Resumen mailbox={mailbox} clienteSuspendido={clienteSuspendido} onVista={setVista} />
+            <Resumen mailbox={mailbox} clienteSuspendido={clienteSuspendido} onVista={setVista} onClose={onClose} />
           )}
           {vista === 'credenciales' && (
             <Credenciales mailbox={mailbox} password={password} onConectar={() => setVista('conectar')} />
@@ -169,13 +172,28 @@ function Resumen({
   mailbox,
   clienteSuspendido,
   onVista,
+  onClose,
 }: {
   mailbox: Mailbox;
   clienteSuspendido?: boolean;
   onVista: (vista: VistaFicha) => void;
+  /** Para salir de la ficha hacia la puesta en marcha del cliente. */
+  onClose: () => void;
 }) {
   const veredicto = veredictoUso(mailbox.usedBytes, mailbox.quotaMb);
   const suspendido = mailbox.status === 'suspended' || clienteSuspendido;
+  const usuario = useUsuario();
+  const navigate = useNavigate();
+  const lectura = lecturaCuenta(mailbox);
+  // La administración va a la pestaña del cliente; el cliente, a su guía.
+  function irAPuesta() {
+    const destino =
+      usuario?.role === 'admin' && mailbox.clientId
+        ? `/clientes/${encodeURIComponent(mailbox.clientId)}/puesta-en-marcha?paso=equipo`
+        : '/puesta-en-marcha?paso=equipo';
+    onClose();
+    navigate(destino);
+  }
   return (
     <>
       <div className="flex items-center gap-3">
@@ -217,17 +235,14 @@ function Resumen({
       )}
 
       <div className="border border-regla">
+        {/* La configuración de los buzones es del cliente: se hace en su
+            puesta en marcha (enviar la configuración, copiar el enlace,
+            reiniciar), con todo su equipo a la vista, no buzón a buzón. */}
         <Accion
-          titulo="Conectar dispositivos"
-          detalle="Datos de conexión, perfiles de configuración y enlace para el titular."
+          titulo={`Configuración del titular · ${lectura.rotulo}`}
+          detalle="Se envía, se copia o se reinicia desde la puesta en marcha del cliente, junto al resto de su equipo."
           boton="Abrir"
-          onClick={() => onVista('conectar')}
-        />
-        <Accion
-          titulo="Reiniciar configuración"
-          detalle="Tras una prueba, empieza de cero: contraseña y enlace de configuración nuevos para el titular."
-          boton="Reiniciar"
-          onClick={() => onVista('reiniciar')}
+          onClick={irAPuesta}
         />
         <Accion
           titulo="Editar"

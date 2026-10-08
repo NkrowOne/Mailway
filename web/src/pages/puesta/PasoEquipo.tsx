@@ -115,11 +115,15 @@ function Equipo({
     () =>
       ctx.buzones.length === 0
         ? [
-            filaNueva(formato, {
-              nombre: ctx.usuario.name,
-              mio: true,
-              personal: ctx.usuario.email.toLowerCase().endsWith(`@${dominio.domain}`) ? '' : ctx.usuario.email,
-            }),
+            // Desde la ficha del cliente, quien administra no es del equipo:
+            // la lista empieza vacía en lugar de con su nombre.
+            ctx.modoAdmin
+              ? filaNueva(formato)
+              : filaNueva(formato, {
+                  nombre: ctx.usuario.name,
+                  mio: true,
+                  personal: ctx.usuario.email.toLowerCase().endsWith(`@${dominio.domain}`) ? '' : ctx.usuario.email,
+                }),
           ]
         : [],
     'sesion',

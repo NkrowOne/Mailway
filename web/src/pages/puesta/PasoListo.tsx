@@ -89,7 +89,7 @@ export function PasoListo({
           accion={!estados.obligatorias.hecho ? revisar('obligatorias', 'Crearlas') : undefined}
         />
         <FilaEstado
-          concepto="Tus dispositivos"
+          concepto={ctx.modoAdmin ? 'Dispositivos del cliente' : 'Tus dispositivos'}
           veredicto={estados.dispositivos.veredicto}
           estado={estados.dispositivos.detalle}
           accion={!estados.dispositivos.hecho ? revisar('dispositivos', 'Configurar') : undefined}
