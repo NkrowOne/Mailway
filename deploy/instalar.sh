@@ -2841,8 +2841,9 @@ resumen() {
   info "puede dejarla incoherente):"
   info "  $copia"
   printf '\n'
-  info "Diagnóstico en cualquier momento (no cambia nada): sudo bash deploy/instalar.sh --comprobar"
-  info "Prueba de acceso a un buzón desde el webmail:      sudo bash deploy/instalar.sh --probar-acceso"
+  info "Actualizar Mailway (git pull y reaplicar):        mailway update -y"
+  info "Diagnóstico en cualquier momento (no cambia nada): mailway comprobar"
+  info "Prueba de acceso a un buzón desde el webmail:      mailway probar-acceso"
   printf '\n'
   if [ -n "$EMPAREJADO_ADMIN_EMAIL" ]; then
     resumen_administrador
@@ -3127,6 +3128,9 @@ main() {
     conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway
   fi
+
+  # Orden «mailway» (update, comprobar…) en el PATH para las próximas veces.
+  bash "$DEPLOY_DIR/mailway.sh" instalar-comando || true
 
   resumen
 }
