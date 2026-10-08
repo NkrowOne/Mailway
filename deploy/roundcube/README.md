@@ -1,7 +1,8 @@
 # Roundcube en Mailway
 
-Dos complementos propios (`mailway_theme` y `mailway_perfil`), la
-configuración (`mailway.php`) y el diagnóstico que usa el instalador.
+Tres complementos propios (`mailway_theme`, `mailway_perfil` y
+`mailway_sesion`), la configuración (`mailway.php`) y el diagnóstico que usa
+el instalador.
 
 ## Apariencia (`mailway_theme`)
 
@@ -82,6 +83,22 @@ navegadores guardan un día los avatares de los remitentes (lo decide
 Roundcube), así que una foto nueva puede tardar en verse en un equipo que ya
 mostró la anterior; la propia se renueva en cada acceso.
 
+## Contraseña cambiada con la sesión abierta (`mailway_sesion`)
+
+Roundcube guarda la contraseña en la sesión y vuelve a entrar en IMAP en cada
+petición. Si la contraseña del buzón cambia por fuera (el titular la
+restablece, la administración reinicia la configuración…), cada refresco
+fallaba con errores de conexión confusos. Con este complemento, cuando IMAP
+rechaza las credenciales de una sesión ya iniciada (respuesta `NO` sin código
+o con `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED` o `EXPIRED`), se cierra la
+sesión y se vuelve a la pantalla de acceso con el aviso «Tu contraseña ha
+cambiado y la sesión se ha cerrado. Vuelve a iniciar sesión con la nueva.»,
+también desde las peticiones AJAX y los marcos (refresco de la bandeja, vista
+previa), por el mismo camino que una sesión caducada; en la redacción,
+Roundcube guarda antes el borrador en el navegador. Un fallo de red, de TLS o
+temporal del servidor (IMAP caído, `UNAVAILABLE`) no cierra la sesión, y el
+acceso normal fallido sigue igual. No depende del panel.
+
 ## Configuración y diagnóstico
 
 `mailway.php` es la configuración de Mailway para Roundcube (servidores,
@@ -113,4 +130,5 @@ valida esta capa PHP/CSS y la prueba requiere una instancia de Roundcube.
 Para volver al aspecto original, retira `mailway_theme` de la variable de
 complementos y recrea solo el servicio; para dejar de usar el nombre y la
 foto del panel, retira `mailway_perfil` (las identidades conservan el nombre
-que ya tuvieran). No hay cambios de esquema ni de datos.
+que ya tuvieran); `mailway_sesion` se retira igual. No hay cambios de
+esquema ni de datos.

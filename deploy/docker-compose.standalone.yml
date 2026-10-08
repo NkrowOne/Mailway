@@ -143,7 +143,7 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_perfil,mailway_theme
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_perfil,mailway_sesion,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Define ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
       MAILWAY_BRAND: ${MAILWAY_BRAND:-Webmail}
@@ -160,6 +160,8 @@ services:
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
       # Nombre visible y foto del buzón desde el panel (ver roundcube/README.md).
       - ./roundcube/mailway_perfil:/var/www/html/plugins/mailway_perfil:ro
+      # Cierre de sesión con aviso si la contraseña cambia por fuera (ver roundcube/README.md).
+      - ./roundcube/mailway_sesion:/var/www/html/plugins/mailway_sesion:ro
       # Diagnóstico de instalar.sh --comprobar y --probar-acceso (fuera de la
       # raíz web y de /var/roundcube/config).
       - ./roundcube/diagnostico:/opt/mailway:ro
