@@ -26,6 +26,7 @@ import { useRefrescarCliente, type ContextoCliente, type RespuestaCliente } from
 */
 const ResumenCliente = lazy(() => import('./cliente/ResumenCliente'));
 const UsuariosCliente = lazy(() => import('./cliente/UsuariosCliente'));
+const PuestaCliente = lazy(() => import('./cliente/PuestaCliente'));
 const Dominios = lazy(() => import('../Dominios'));
 const Buzones = lazy(() => import('../Buzones'));
 const Alias = lazy(() => import('../Alias'));
@@ -36,6 +37,7 @@ const Actividad = lazy(() => import('../Actividad'));
 
 const NOMBRES: Record<SeccionCliente, string> = {
   '': 'Resumen',
+  'puesta-en-marcha': 'Puesta en marcha',
   dominios: 'Dominios',
   buzones: 'Buzones',
   alias: 'Alias',
@@ -49,6 +51,7 @@ const NOMBRES: Record<SeccionCliente, string> = {
 /** Lo que se espera mientras llega el código de la pestaña («Cargando los buzones…»). */
 const CARGANDO: Record<SeccionCliente, string> = {
   '': 'el resumen',
+  'puesta-en-marcha': 'la puesta en marcha',
   dominios: 'los dominios',
   buzones: 'los buzones',
   alias: 'los alias',
@@ -119,6 +122,9 @@ export default function ClienteDetalle({ user }: { user: User }) {
 
   const pestanas: PestanaRuta[] = [
     { to: rutaCliente(id), label: NOMBRES[''] },
+    // Justo después del resumen: es donde se configuran los buzones del
+    // cliente (los que necesite y la configuración de cada persona).
+    { to: rutaCliente(id, 'puesta-en-marcha'), label: NOMBRES['puesta-en-marcha'] },
     { to: rutaCliente(id, 'dominios'), label: NOMBRES.dominios, cuenta: usage?.domains },
     { to: rutaCliente(id, 'buzones'), label: NOMBRES.buzones, cuenta: usage?.mailboxes },
     { to: rutaCliente(id, 'alias'), label: NOMBRES.alias, cuenta: usage?.aliases },
@@ -173,6 +179,7 @@ export default function ClienteDetalle({ user }: { user: User }) {
           <Routes>
             <Route index element={<ResumenCliente contexto={contexto} />} />
             <Route path="dominios" element={<Dominios isAdmin clienteFijo={id} />} />
+            <Route path="puesta-en-marcha" element={<PuestaCliente contexto={contexto} />} />
             <Route path="buzones" element={<Buzones clienteFijo={id} />} />
             <Route path="alias" element={<Alias clienteFijo={id} />} />
             <Route path="usuarios" element={<UsuariosCliente contexto={contexto} />} />

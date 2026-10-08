@@ -40,6 +40,8 @@ export interface ContextoPuesta {
   /** Lleva a «Tu equipo» con el alta de buzones abierta. */
   anadirBuzones: () => void;
   suspendido: boolean;
+  /** Abierta desde la ficha del cliente (administración), no por el propio cliente. */
+  modoAdmin: boolean;
 }
 
 /** Distintivo del buzón de quien hace la puesta en marcha. */

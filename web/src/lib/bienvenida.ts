@@ -39,6 +39,11 @@ export interface InvitacionPublica {
   email: string;
   name: string;
   expiresAt: number;
+  /**
+   * El correo ya tiene acceso al panel del cliente (se le envía para retomar
+   * o reiniciar la puesta en marcha): elige una contraseña nueva.
+   */
+  existingUser?: boolean;
 }
 
 /** Respuesta de POST /api/invite/:token/accept (la sesión llega en la cookie). */

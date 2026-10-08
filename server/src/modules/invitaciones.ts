@@ -2,11 +2,11 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
-import { decryptSecret, encryptSecret, hashToken, randomId } from '../core/crypto';
-import { HttpError, badRequest, forbidden, notFound, tooMany } from '../core/errors';
+import { decryptSecret, encryptSecret, hashPassword, hashToken, randomId } from '../core/crypto';
+import { HttpError, badRequest, conflict, forbidden, notFound, tooMany } from '../core/errors';
 import { audit } from './audit';
 import { createSession, createUser, requireAdmin } from './auth';
-import { assertUserEmailFree, getClient } from './clients';
+import { getClient } from './clients';
 import { publicBaseUrl } from './connection';
 import { getInstanceSettings } from './settings';
 
@@ -18,6 +18,11 @@ import { getInstanceSettings } from './settings';
  * contraseña— y entra directamente en la puesta en marcha: dominio, buzones
  * del equipo, postmaster y abuse, y sus dispositivos. Un enlace sirve una
  * sola vez; después se entra con el correo y la contraseña de siempre.
+ *
+ * Si esa persona ya tiene usuario en el mismo cliente (por ejemplo, tras
+ * reiniciar la puesta en marcha), el enlace no crea otro: le deja elegir una
+ * contraseña nueva. Nunca sirve para entrar en la cuenta de la administración
+ * ni en la de otro cliente.
  */
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
@@ -134,6 +139,39 @@ function invitacionPorToken(token: string): FilaInvitacion {
   return row;
 }
 
+/** Quién tiene ya una cuenta del panel con el correo de un enlace. */
+type CuentaDelCorreo =
+  /** Nadie: aceptar crea el usuario. */
+  | { estado: 'libre' }
+  /** Un usuario de este mismo cliente: aceptar le pone la contraseña nueva. */
+  | { estado: 'propia'; id: string }
+  /** La administración u otro cliente: el enlace nunca sirve para entrar en ella. */
+  | { estado: 'ajena' };
+
+/**
+ * Tras «Reiniciar puesta en marcha» (o simplemente con otra persona de
+ * contacto que ya tenía acceso) se envía el enlace a alguien que ya tiene
+ * usuario en el cliente: con él elige una contraseña nueva en lugar de crear
+ * otro acceso. La comparación no distingue mayúsculas: una cuenta antigua
+ * guardada con otras no debe colarse como «libre».
+ */
+function cuentaDelCorreo(email: string, clientId: string): CuentaDelCorreo {
+  const filas = db
+    .prepare('SELECT id, role, client_id FROM users WHERE lower(email) = lower(?)')
+    .all(email) as { id: string; role: 'admin' | 'client'; client_id: string | null }[];
+  if (filas.length === 0) return { estado: 'libre' };
+  const [fila] = filas;
+  if (filas.length === 1 && fila && fila.role === 'client' && fila.client_id === clientId) {
+    return { estado: 'propia', id: fila.id };
+  }
+  return { estado: 'ajena' };
+}
+
+/** El mismo error que da el alta de un usuario con un correo ocupado. */
+function correoOcupado(): HttpError {
+  return conflict('Ya existe un usuario con ese correo.', 'user_exists');
+}
+
 /** Límite en memoria para las rutas públicas: protegen el servidor, no el token (256 bits). */
 function crearLimitador(max: number, ventanaMs: number): (clave: string) => boolean {
   const cuentas = new Map<string, { desde: number; n: number }>();
@@ -169,16 +207,30 @@ const crearSchema = z.object({
     .default(168),
 });
 
-const aceptarSchema = z.object({
-  name: z
-    .string({ required_error: 'Indica tu nombre.' })
-    .trim()
-    .min(2, 'Tu nombre debe tener al menos 2 caracteres.')
-    .max(80, 'Tu nombre no puede superar los 80 caracteres.'),
-  password: z
-    .string({ required_error: 'Elige una contraseña.' })
-    .min(MIN_CONTRASENA, `La contraseña debe tener al menos ${MIN_CONTRASENA} caracteres.`)
-    .max(200, 'La contraseña no puede superar los 200 caracteres.'),
+const nombreSchema = z
+  .string({ required_error: 'Indica tu nombre.' })
+  .trim()
+  .min(2, 'Tu nombre debe tener al menos 2 caracteres.')
+  .max(80, 'Tu nombre no puede superar los 80 caracteres.');
+
+const contrasenaSchema = z
+  .string({ required_error: 'Elige una contraseña.' })
+  .min(MIN_CONTRASENA, `La contraseña debe tener al menos ${MIN_CONTRASENA} caracteres.`)
+  .max(200, 'La contraseña no puede superar los 200 caracteres.');
+
+/** Crear el acceso: nombre y contraseña, ambos obligatorios. */
+const aceptarSchema = z.object({ name: nombreSchema, password: contrasenaSchema });
+
+/**
+ * Usuario que ya existe: ya tiene nombre, así que solo se cambia si llega uno
+ * (vacío cuenta como no enviado). La contraseña, con las mismas reglas.
+ */
+const aceptarExistenteSchema = z.object({
+  name: z.preprocess(
+    (valor) => (typeof valor === 'string' && valor.trim() === '' ? undefined : valor),
+    nombreSchema.optional(),
+  ),
+  password: contrasenaSchema,
 });
 
 export function registerInviteRoutes(app: FastifyInstance): void {
@@ -199,7 +251,12 @@ export function registerInviteRoutes(app: FastifyInstance): void {
     if (client.suspended) {
       throw badRequest('El cliente está suspendido. Reactívalo antes de enviarle un enlace de bienvenida.', 'client_suspended');
     }
-    assertUserEmailFree(body.email);
+    // Un usuario de este cliente puede recibirlo (elegirá una contraseña
+    // nueva); el correo de la administración o de otro cliente, nunca: el
+    // enlace daría acceso a su cuenta.
+    const cuenta = cuentaDelCorreo(body.email, id);
+    if (cuenta.estado === 'ajena') throw correoOcupado();
+    const existingUser = cuenta.estado === 'propia';
 
     const token = crypto.randomBytes(32).toString('base64url');
     const inviteId = randomId('inv');
@@ -216,9 +273,22 @@ export function registerInviteRoutes(app: FastifyInstance): void {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(inviteId, id, body.email, body.name, hashToken(token), encryptSecret(token), admin.id, t, expiresAt);
     })();
-    audit(req, 'client.invite_created', { clientId: id, inviteId, email: body.email, ttlHours: body.ttlHours }, id);
+    audit(req, 'client.invite_created', {
+      clientId: id,
+      inviteId,
+      email: body.email,
+      ttlHours: body.ttlHours,
+      existingUser,
+    }, id);
     return {
-      invite: { id: inviteId, url: `${baseDelCliente(req, id)}/bienvenida/${token}`, email: body.email, name: body.name, expiresAt },
+      invite: {
+        id: inviteId,
+        url: `${baseDelCliente(req, id)}/bienvenida/${token}`,
+        email: body.email,
+        name: body.name,
+        expiresAt,
+        existingUser,
+      },
     };
   });
 
@@ -289,36 +359,71 @@ export function registerInviteRoutes(app: FastifyInstance): void {
       email: row.email,
       name: row.name,
       expiresAt: row.expires_at,
+      // La página dice «Elige una contraseña nueva» en vez de «Crea tu
+      // acceso». Solo se revela al que tiene el enlace, que es esa persona.
+      existingUser: cuentaDelCorreo(row.email, row.client_id).estado === 'propia',
     };
   });
 
   app.post('/api/invite/:token/accept', async (req, reply) => {
     limitar(req);
     const { token } = req.params as { token: string };
-    const body = aceptarSchema.parse(req.body ?? {});
-    // Comprobación y alta en una transacción: dos clics seguidos no crean dos
-    // usuarios ni dejan el enlace a medias.
+    // La contraseña (y el nombre, si llega) se validan antes de mirar el
+    // enlace, como siempre; el nombre obligatorio solo al crear el usuario.
+    const body = aceptarExistenteSchema.parse(req.body ?? {});
+    // Comprobación y alta (o cambio de contraseña) en una transacción: dos
+    // clics seguidos no crean dos usuarios ni dejan el enlace a medias.
     const user = db.transaction(() => {
       const row = invitacionPorToken(token);
-      assertUserEmailFree(row.email);
-      const created = createUser({
-        email: row.email,
-        name: body.name,
-        password: body.password,
-        role: 'client',
-        clientId: row.client_id,
-      });
+      // Se vuelve a mirar: desde que se creó el enlace, el correo puede haber
+      // pasado a ser de la administración o de otro cliente.
+      const cuenta = cuentaDelCorreo(row.email, row.client_id);
+      if (cuenta.estado === 'ajena') throw correoOcupado();
+      let userId: string;
+      if (cuenta.estado === 'propia') {
+        userId = cuenta.id;
+        // El mismo efecto que un restablecimiento desde la administración:
+        // contraseña nueva, cuenta habilitada y fuera las sesiones abiertas
+        // con la anterior (la de este navegador se abre después).
+        db.prepare('UPDATE users SET password_hash = ?, disabled = 0 WHERE id = ?').run(
+          hashPassword(body.password),
+          userId,
+        );
+        if (body.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(body.name, userId);
+        db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+      } else {
+        const nuevo = aceptarSchema.parse(req.body ?? {});
+        userId = createUser({
+          email: row.email,
+          name: nuevo.name,
+          password: nuevo.password,
+          role: 'client',
+          clientId: row.client_id,
+        }).id;
+      }
       db.prepare(
         'UPDATE client_invites SET accepted_at = ?, accepted_user_id = ?, token_enc = NULL WHERE id = ?',
-      ).run(now(), created.id, row.id);
-      return { ...created, inviteId: row.id };
+      ).run(now(), userId, row.id);
+      return {
+        id: userId,
+        clientId: row.client_id,
+        email: row.email,
+        inviteId: row.id,
+        existing: cuenta.estado === 'propia',
+      };
     })();
     createSession(req, reply, user.id);
     // audit() toma el actor de la sesión de la petición, que aún no existía.
     db.prepare(
       `INSERT INTO audit_log (user_id, client_id, action, detail, ip, created_at)
        VALUES (?, ?, 'client.invite_accepted', ?, ?, ?)`,
-    ).run(user.id, user.clientId, JSON.stringify({ inviteId: user.inviteId, email: user.email }), req.ip || '', now());
+    ).run(
+      user.id,
+      user.clientId,
+      JSON.stringify({ inviteId: user.inviteId, email: user.email, existing: user.existing }),
+      req.ip || '',
+      now(),
+    );
     return { ok: true, redirect: '/puesta-en-marcha' };
   });
 }

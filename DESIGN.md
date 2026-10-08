@@ -430,8 +430,21 @@ finas en `tinta` al 24 %.
 Barra blanca con logotipo, nombre de la instancia y «Cerrar sesión»; debajo,
 título, dirección del buzón y tarjetas en una columna. Selector de
 dispositivo con botones de 8 px de radio; pasos numerados con círculos en
-petróleo tenue. La portada de acceso del portal es igual que la del panel:
-logotipo y nombre centrados y una tarjeta de 16 px de radio.
+petróleo tenue.
+
+Las dos entradas viven en la misma dirección y son a propósito distintas,
+para que nadie las confunda:
+
+- **Panel de gestión** (`/login`): dos columnas en escritorio, el formulario
+  a la izquierda sobre blanco (distintivo «Panel de gestión», «Iniciar
+  sesión») y, a la derecha, un panel de gestión dibujado sobre el degradado
+  petróleo de la marca (`IlustracionPanel`); en el móvil, solo el formulario.
+- **Mi buzón** (`/mi-buzon`): tarjeta centrada de 24 px de radio con un
+  ordenador y un móvil dibujados (`IlustracionBuzon`), distintivo «Tu
+  correo» y «Entrar en mi buzón», sobre un velo aguamarina.
+
+Cada una enlaza a la otra, las dos dejan ver la contraseña y las
+ilustraciones (`components/Portadas.tsx`) son solo formas, sin texto.
 
 ### Bienvenida y puesta en marcha
 
@@ -451,18 +464,16 @@ cabecera, lleva siempre a ese paso con el alta abierta.
 
 ### Webmail
 
-El webmail usa el tema Elastic2022 tal cual (`deploy/roundcube/elastic2022/`)
-con la marca de Mailway encima (`deploy/roundcube/mailway_theme/`): logotipo
-y favicon de Mailway, panel vacío con la tesela del panel (`vacio.html`),
-foto propia en el botón de la cuenta (`elastic2022.css`) y la portada de la
-pantalla de acceso (panel petróleo con la marca y la tarjeta, de
-`mailway.css`).
-
-`mailway.css` e `iconos.css` son además una capa completa sobre Elastic, que
-se aplica si la instalación usa ese tema: lleva los tokens del panel (fondo
-gris verdoso, paneles blancos de 16 px de radio, carpetas en píldora,
-«Redactar» petróleo, iconos de Lucide, no leídos con punto petróleo) y un
-modo oscuro propio. Letra del sistema; nada se carga de fuera.
+`deploy/roundcube/mailway_theme/` (`mailway.css`, `iconos.css`, `vacio.html`)
+traslada a Elastic los tokens del panel: fondo gris verdoso, lista y lectura
+en paneles blancos de 16 px de radio, carpetas y secciones en píldora,
+«Redactar» como botón petróleo, barras de herramientas solo con iconos de
+Lucide (los del panel), no leídos con punto petróleo y foco petróleo. Los
+campos tienen fondo propio y borde visible (también al redactar) y el
+logotipo del menú va en su recuadro, separado de «Redactar». El modo oscuro
+es un gris verdoso suave con el acento apagado: botones principales en un
+petróleo intermedio con texto claro, nunca aguamarina macizo, y el editor
+HTML también en oscuro. Letra del sistema; nada se carga de fuera.
 
 ## Do's and Don'ts
 

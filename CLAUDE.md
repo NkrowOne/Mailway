@@ -60,9 +60,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), `.env.example`, configuración de
-  Roundcube (`roundcube/mailway.php`), su tema (`roundcube/elastic2022`,
-  copia de terceros: no se edita) y sus complementos (`roundcube/mailway_*`),
-  plantilla del override de Traefik y punto de entrada de la imagen.
+  Roundcube (`roundcube/mailway.php`) y sus complementos
+  (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
+  del override de Traefik y punto de entrada de la imagen.
 - `docs/` — documentación consultable.
 
 ## Comandos

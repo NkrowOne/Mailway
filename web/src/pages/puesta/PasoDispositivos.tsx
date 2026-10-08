@@ -37,6 +37,49 @@ export function buzonPropioSeguro(ctx: Pick<ContextoPuesta, 'buzones' | 'mioId' 
 }
 
 export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<HTMLHeadingElement> }) {
+  if (ctx.modoAdmin) return <DispositivosDelCliente ctx={ctx} tituloRef={tituloRef} />;
+  return <DispositivosPropios ctx={ctx} tituloRef={tituloRef} />;
+}
+
+/**
+ * Desde la ficha del cliente: este paso lo hace su persona de contacto en sus
+ * propios dispositivos, así que aquí solo se explica y se lleva a «Tu
+ * equipo», desde donde se le envía la configuración.
+ */
+function DispositivosDelCliente({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<HTMLHeadingElement> }) {
+  return (
+    <>
+      <CabeceraPaso ref={tituloRef} titulo="Los dispositivos del cliente">
+        La persona de contacto configura su buzón en su móvil y su ordenador con el enlace de su buzón. Cada persona
+        del equipo hace lo mismo con el suyo.
+      </CabeceraPaso>
+      <Hoja>
+        <Vacio
+          icono={Inbox}
+          title="Lo hace cada persona en sus dispositivos"
+          action={
+            <Button variant="perfil" onClick={() => ctx.irA('equipo')}>
+              Ir a «Tu equipo»
+            </Button>
+          }
+        >
+          En «Tu equipo» ves quién lo tiene ya configurado y envías la configuración por correo a quien le falte.
+        </Vacio>
+      </Hoja>
+      <PieDePaso
+        atras="Direcciones obligatorias"
+        onAtras={() => ctx.irA('obligatorias')}
+        principal={
+          <Button variant="principal" onClick={() => ctx.irA('listo')}>
+            Continuar
+          </Button>
+        }
+      />
+    </>
+  );
+}
+
+function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<HTMLHeadingElement> }) {
   const panel = useDireccionPanel({ user: ctx.usuario });
   const [elegido, setElegido] = useState<string | null>(() => buzonPropio(ctx));
   const buzon = ctx.buzones.find((b) => b.id === elegido) ?? null;

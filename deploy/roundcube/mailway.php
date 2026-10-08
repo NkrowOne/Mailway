@@ -32,9 +32,10 @@ $config['product_name'] = $mailwayEnv('MAILWAY_BRAND', 'Webmail');
 $config['display_product_info'] = 1;
 // Sin versión en la cabecera User-Agent de los mensajes enviados.
 $config['useragent'] = $config['product_name'];
-// El tema lo elige la instalación (ROUNDCUBEMAIL_SKIN del compose), no cada
-// titular: quien guardó sus preferencias de interfaz con el tema anterior
-// también ve el actual, y el selector de temas no aparece en los ajustes.
+// El tema lo elige la instalación (ROUNDCUBEMAIL_SKIN del compose: Elastic),
+// no cada titular: nadie se queda con un tema que ya no se instala (como
+// Elastic2022, que se usó un tiempo) y el selector de temas no aparece en los
+// ajustes.
 $config['dont_override'] = array_values(array_unique(array_merge(
     (array) ($config['dont_override'] ?? []),
     ['skin']

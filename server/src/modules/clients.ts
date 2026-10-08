@@ -269,8 +269,12 @@ export function planExcess(clientId: string, plan: Plan): string[] {
   return excess;
 }
 
-/** Ejecuta tareas asíncronas con un máximo de `limit` a la vez. */
-async function runLimited<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+/**
+ * Ejecuta tareas asíncronas con un máximo de `limit` a la vez. Exportada para
+ * el reinicio de la puesta en marcha, que también recorre todos los buzones
+ * de un cliente en el motor.
+ */
+export async function runLimited<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {

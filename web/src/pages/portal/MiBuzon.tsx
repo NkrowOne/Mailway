@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Smartphone } from 'lucide-react';
+import { Inbox, Smartphone } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -25,6 +25,8 @@ import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL 
 import { VariablesIntegracion } from '../../components/VariablesIntegracion';
 import { AvatarBuzon } from '../../components/FotoBuzon';
 import { HojaPerfil } from './Perfil';
+import { IlustracionBuzon } from '../../components/Portadas';
+import { CampoContrasena } from '../bienvenida/CampoContrasena';
 
 /**
  * «Mi buzón»: el titular entra con su dirección y la contraseña del buzón
@@ -80,6 +82,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [verContrasena, setVerContrasena] = useState(false);
   const [error, setError] = useState(aviso ?? '');
   const [busy, setBusy] = useState(false);
   // La marca de la instancia, para que el titular reconozca a su proveedor.
@@ -114,16 +117,34 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-mesa px-4 py-10">
-      <div className="w-full max-w-[25rem] animate-aparecer">
-        <div className="mb-6 flex items-center justify-center gap-3">
+    // Entrada de los buzones: tarjeta centrada con un ordenador y un móvil
+    // encima, sobre un fondo con un velo petróleo. Muy distinta de la del
+    // panel (dos columnas), porque viven en la misma dirección.
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-mesa px-4 py-10">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-[26rem]"
+        style={{
+          background:
+            'radial-gradient(55% 100% at 50% 0%, rgb(122 211 200 / 0.26), transparent 72%), radial-gradient(35% 60% at 12% 0%, rgb(13 92 94 / 0.07), transparent 70%)',
+        }}
+      />
+      <div className="relative w-full max-w-[26rem] animate-aparecer">
+        <div className="mb-5 flex items-center justify-center gap-3">
           <Logotipo />
           <span className="min-w-0 break-words text-lg font-semibold text-tinta">{marca}</span>
         </div>
-        <section className="hoja-panel overflow-hidden rounded-2xl border border-regla bg-hoja">
-          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 py-6 sm:px-7 sm:py-7">
-            <div>
-              <h1 className="text-2xl font-semibold text-tinta">Mi buzón</h1>
+        <section className="hoja-panel overflow-hidden rounded-3xl border border-regla bg-hoja">
+          <div className="flex justify-center bg-gradient-to-b from-petroleo-claro to-hoja px-6 pb-2 pt-7">
+            <IlustracionBuzon className="h-auto w-[15rem] max-w-full" />
+          </div>
+          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 pb-7 pt-4 sm:px-8">
+            <div className="text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-petroleo-claro px-2.5 py-1 text-sm font-semibold text-petroleo">
+                <Inbox className="h-4 w-4" aria-hidden />
+                Tu correo
+              </span>
+              <h1 className="mt-3 text-2xl font-semibold text-tinta">Mi buzón</h1>
               <p className="mt-1 text-base text-tinta-2">
                 Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
                 contraseña.
@@ -144,26 +165,34 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
               placeholder="nombre@empresa.com"
               className={TACTIL}
             />
-            <Input
-              label="Contraseña"
-              type="password"
+            <CampoContrasena
+              label="Contraseña del buzón"
               autoComplete="current-password"
               value={password}
+              visible={verContrasena}
+              onAlternar={() => setVerContrasena((v) => !v)}
               onChange={(e) => {
                 setError('');
                 setPassword(e.target.value);
               }}
-              className={TACTIL}
             />
             {error && <AvisoError>{error}</AvisoError>}
             <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
-              Iniciar sesión
+              Entrar en mi buzón
             </Button>
           </form>
         </section>
-        <p className="mt-4 text-center text-sm text-tinta-3">
-          Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.
-        </p>
+        <div className="mt-5 flex flex-col gap-2 text-center text-sm text-tinta-3">
+          <p>Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.</p>
+          {/* Una cuenta del panel (administración o cliente) no entra aquí. */}
+          <p>
+            ¿Gestionas el correo de tu empresa o el servicio?{' '}
+            <a href="/login" className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
+              Entra en el panel de gestión
+            </a>
+            .
+          </p>
+        </div>
       </div>
     </div>
   );

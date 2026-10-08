@@ -36,6 +36,7 @@ export function BandaError({
 /** Secciones de la ficha de un cliente (cada una es una pestaña con su ruta). */
 export type SeccionCliente =
   | ''
+  | 'puesta-en-marcha'
   | 'dominios'
   | 'buzones'
   | 'alias'

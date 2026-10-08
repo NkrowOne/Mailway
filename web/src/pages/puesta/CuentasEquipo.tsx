@@ -1,7 +1,8 @@
 import { useId, useMemo, useState } from 'react';
-import { Check, Plus, QrCode, Send } from 'lucide-react';
+import { Check, Plus, QrCode, RotateCcw, Send } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Mailbox } from '../../lib/api';
+import { api, type Mailbox } from '../../lib/api';
+import type { EnlaceCreado } from '../../lib/portal';
 import type { DominioCorreo } from '../../lib/cloudflare';
 import { plural } from '../../lib/format';
 import { esCorreoValido, mensajeDe } from '../../lib/gestion';
@@ -18,6 +19,7 @@ import {
   lecturaCuenta,
   marcarConfigurado,
   remitenteConfiguracion,
+  VALIDEZ_ENLACE_HORAS,
   type EnlaceGuardado,
 } from './comun';
 import { MarcaTu, type ContextoPuesta } from './marco';
@@ -136,7 +138,7 @@ function FilaCuenta({
   const lectura = lecturaCuenta(buzon);
   const mio = buzon.id === ctx.mioId;
   const activo = buzon.status === 'active' && !ctx.suspendido;
-  const [accion, setAccion] = useState<'enlace' | 'marcar' | null>(null);
+  const [accion, setAccion] = useState<'enlace' | 'marcar' | 'reiniciar' | null>(null);
   const [verQr, setVerQr] = useState(false);
   const idQr = useId();
 
@@ -157,6 +159,34 @@ function FilaCuenta({
       ]);
       setAccion(null);
       void invalidarCorreo(queryClient);
+    },
+  });
+
+  // Reiniciar (tras una prueba): como en la ficha del buzón, pero desde la
+  // puesta en marcha, que es donde se gestiona la configuración del equipo.
+  const reiniciar = useMutation({
+    mutationFn: () =>
+      api.post<{ link: EnlaceCreado }>(`/api/mailboxes/${buzon.id}/setup-reset`, {
+        ttlHours: VALIDEZ_ENLACE_HORAS,
+        includePassword: true,
+        revokeAppPasswords: false,
+      }),
+    onSuccess: async ({ link }) => {
+      ctx.setEnlaces((prev) => [
+        {
+          mailboxId: buzon.id,
+          nombre: buzon.displayName,
+          email: buzon.email,
+          url: link.url,
+          expiresAt: link.expiresAt,
+          hasPassword: link.hasPassword,
+          mio,
+        },
+        ...prev.filter((p) => p.mailboxId !== buzon.id),
+      ]);
+      setAccion(null);
+      await invalidarCorreo(queryClient);
+      toast('ok', `${buzon.displayName || buzon.email} empieza de cero: envíale la configuración o copia su enlace.`);
     },
   });
 
@@ -225,6 +255,12 @@ function FilaCuenta({
               Ya está configurado
             </Button>
           )}
+          {lectura.estado === 'configurado' && accion !== 'reiniciar' && (
+            <Button variant="plano" onClick={() => setAccion('reiniciar')}>
+              <RotateCcw className="h-4 w-4" aria-hidden />
+              Reiniciar
+            </Button>
+          )}
         </div>
       )}
 
@@ -249,6 +285,25 @@ function FilaCuenta({
           <div className="flex flex-wrap gap-2">
             <Button variant="perfil" busy={crearEnlace.isPending} onClick={() => crearEnlace.mutate()}>
               Generar contraseña y enlace
+            </Button>
+            <Button variant="plano" onClick={() => setAccion(null)}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {accion === 'reiniciar' && (
+        <div className="revelar mt-2.5 flex flex-col gap-2.5 rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
+          <p className="max-w-[68ch] text-sm text-tinta">
+            <span className="break-all font-medium">{buzon.email}</span> empezará de cero, como tras una prueba:
+            contraseña nueva, fuera sus enlaces anteriores, las sesiones de «Mi buzón» y la foto, y quedará sin
+            configurar con un enlace nuevo. Su correo no se toca; donde ya esté configurado habrá que volver a hacerlo.
+          </p>
+          {reiniciar.isError && <AvisoError>{mensajeDe(reiniciar.error, 'No se ha podido reiniciar el buzón.')}</AvisoError>}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="perfil" busy={reiniciar.isPending} onClick={() => reiniciar.mutate()}>
+              Reiniciar el buzón
             </Button>
             <Button variant="plano" onClick={() => setAccion(null)}>
               Cancelar

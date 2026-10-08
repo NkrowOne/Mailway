@@ -13,6 +13,7 @@ import { Dialogo, Escala, Hoja, MarcaFondo, Cargando, Vacio } from '../../../ui/
 import { useToast } from '../../../ui/toast';
 import { BandaAviso, BandaError, Botonera, FilaDato, rutaCliente } from '../../../components/gestion/comun';
 import { SiguientePasoBienvenida } from '../../../components/EnlaceBienvenida';
+import { lecturaCuenta } from '../../puesta/comun';
 import { useRefrescarCliente, type ContextoCliente } from './datos';
 
 /** Dominios que se enseñan en el resumen; el resto, en la pestaña «Dominios». */
@@ -87,6 +88,12 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
             }
           />
         </div>
+      )}
+
+      {/* Con acceso ya creado: cómo va la configuración de su equipo, con el
+          camino a su puesta en marcha (donde se resuelve). */}
+      {usuarios.length > 0 && mailboxList.length > 0 && (
+        <EstadoPuesta clientId={id} buzones={mailboxList} />
       )}
 
       {/* Dos columnas independientes: sin huecos entre tarjetas de distinta
@@ -534,5 +541,47 @@ function EliminarCliente({ client, onClose }: { client: Client; onClose: () => v
         </Botonera>
       </div>
     </Dialogo>
+  );
+}
+
+/**
+ * Cómo va la configuración de los buzones del cliente: cuántos están ya
+ * configurados por su titular y cuántos sin configurar (en rojo, porque a
+ * alguien no le ha llegado o no ha abierto su configuración). Se resuelve en
+ * la pestaña «Puesta en marcha».
+ */
+function EstadoPuesta({ clientId, buzones }: { clientId: string; buzones: Mailbox[] }) {
+  const activos = buzones.filter((b) => b.status === 'active');
+  const lecturas = activos.map(lecturaCuenta);
+  const sinConfigurar = lecturas.filter((l) => l.estado === 'sin-configurar').length;
+  const enviados = lecturas.filter((l) => l.estado === 'enviado').length;
+  const configurados = lecturas.filter((l) => l.estado === 'configurado').length;
+  const veredicto = sinConfigurar > 0 ? 'fuera' : enviados > 0 ? 'vigilar' : 'normal';
+  return (
+    <div className="mb-4">
+      <Hoja>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="min-w-0 flex-1 basis-64">
+            <p className="flex flex-wrap items-center gap-2 text-md font-semibold text-tinta">
+              Puesta en marcha
+              <MarcaFondo veredicto={veredicto}>
+                {sinConfigurar > 0
+                  ? `${sinConfigurar} sin configurar`
+                  : enviados > 0
+                    ? `${enviados} pendientes de terminar`
+                    : 'Todo configurado'}
+              </MarcaFondo>
+            </p>
+            <p className="mt-1 max-w-[68ch] text-base text-tinta-2">
+              {configurados} de {plural(activos.length, 'buzón configurado', 'buzones configurados')} por su titular.
+              {sinConfigurar > 0 && ' A quien le falta se le envía la configuración desde la puesta en marcha del cliente.'}
+            </p>
+          </div>
+          <Link to={rutaCliente(clientId, 'puesta-en-marcha')} className={estiloBoton(sinConfigurar > 0 ? 'principal' : 'perfil')}>
+            Abrir la puesta en marcha
+          </Link>
+        </div>
+      </Hoja>
+    </div>
   );
 }

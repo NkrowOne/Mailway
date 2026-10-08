@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, esCredencialIncorrecta, TEXTO_CREDENCIALES_INCORRECTAS, type User } from '../lib/api';
+import { LayoutDashboard } from 'lucide-react';
+import { IlustracionPanel } from '../components/Portadas';
+import { CampoContrasena } from './bienvenida/CampoContrasena';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import { AvisoError, Logotipo } from '../ui/kit';
@@ -43,8 +46,11 @@ function destinoTrasEntrar(search: string, state: unknown, enlaceDeArranque: str
 }
 
 /**
- * Portada de acceso: el logotipo y el nombre de la instancia encima de una
- * tarjeta centrada con el formulario, igual en escritorio y en el móvil.
+ * Entrada del panel de gestión. En escritorio, dos columnas: el formulario a
+ * la izquierda y, a la derecha, un panel de gestión dibujado sobre el
+ * petróleo de la marca; en el móvil, solo el formulario. Es a propósito muy
+ * distinta de «Mi buzón» (tarjeta centrada con un móvil y un ordenador),
+ * porque las dos viven en la misma dirección y se confundían.
  */
 export default function Login({
   brand,
@@ -58,6 +64,7 @@ export default function Login({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [verContrasena, setVerContrasena] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -109,70 +116,85 @@ export default function Login({
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-mesa px-4 py-10 sm:px-8">
-      <main className="w-full max-w-[25rem] animate-aparecer">
-        <div className="mb-6 flex items-center justify-center gap-3">
+    <div className="min-h-screen bg-hoja lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <main className="flex min-h-screen flex-col px-5 py-6 sm:px-10 sm:py-8 lg:px-14 xl:px-20">
+        <div className="flex items-center gap-3">
           <Logotipo />
           <span className="min-w-0 break-words text-lg font-semibold text-tinta">{brand}</span>
         </div>
-        <section className="hoja-panel overflow-hidden rounded-2xl border border-regla bg-hoja">
-          <form onSubmit={submit} noValidate className="flex flex-col gap-5 px-6 py-7 sm:px-8 sm:py-8">
-            <div>
-              <h1 className="text-2xl font-semibold text-tinta">Iniciar sesión</h1>
-              <p className="mt-1 text-base text-tinta-2">Entra con tu correo para gestionar dominios, buzones y envíos.</p>
-            </div>
-            {trasSalir && (
-              <p role="status" className="text-sm text-tinta-2">
-                Has cerrado la sesión.
-              </p>
-            )}
-            <Input
-              label="Correo electrónico"
-              type="email"
-              autoComplete="username"
-              autoFocus
-              value={email}
-              onChange={(e) => {
-                setError('');
-                setEmail(e.target.value);
-              }}
-              placeholder="nombre@empresa.com"
-            />
-            <Input
-              label="Contraseña"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => {
-                setError('');
-                setPassword(e.target.value);
-              }}
-              placeholder="••••••••••"
-            />
-            {error && <AvisoError>{error}</AvisoError>}
-            <Button type="submit" variant="principal" busy={busy} className="w-full">
-              Iniciar sesión
-            </Button>
-          </form>
-        </section>
 
-        <div className="mt-5 flex flex-col gap-2 text-center text-sm text-tinta-3">
-          <p>
-            ¿Eres titular de un buzón?{' '}
-            <Link
-              to="/mi-buzon"
-              className="text-petroleo underline underline-offset-2 hover:text-tinta"
-            >
-              Accede a «Mi buzón»
-            </Link>{' '}
-            para configurar tus dispositivos o cambiar la contraseña.
-          </p>
-          <p>
-            ¿No tienes acceso o has olvidado la contraseña? Ponte en contacto con el administrador de tu
-            proveedor de correo.
-          </p>
+        {/* En el móvil, el formulario arriba (sin un hueco vacío encima); en
+            pantallas mayores, centrado en la columna. */}
+        <div className="flex flex-1 items-start pb-10 pt-12 sm:items-center sm:py-14">
+          <div className="w-full max-w-[24rem] animate-aparecer lg:mx-auto">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-petroleo-claro px-2.5 py-1 text-sm font-semibold text-petroleo">
+              <LayoutDashboard className="h-4 w-4" aria-hidden />
+              Panel de gestión
+            </span>
+            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.015em] text-tinta">Iniciar sesión</h1>
+            <p className="mt-2 text-base text-tinta-2">Dominios, buzones y envíos de tu servicio de correo.</p>
+
+            <form onSubmit={submit} noValidate className="mt-8 flex flex-col gap-5">
+              {trasSalir && (
+                <p role="status" className="text-sm text-tinta-2">
+                  Has cerrado la sesión.
+                </p>
+              )}
+              <Input
+                label="Correo electrónico"
+                type="email"
+                autoComplete="username"
+                autoFocus
+                value={email}
+                onChange={(e) => {
+                  setError('');
+                  setEmail(e.target.value);
+                }}
+                placeholder="nombre@empresa.com"
+                className="min-h-11 sm:min-h-0"
+              />
+              <CampoContrasena
+                label="Contraseña"
+                autoComplete="current-password"
+                value={password}
+                visible={verContrasena}
+                onAlternar={() => setVerContrasena((v) => !v)}
+                onChange={(e) => {
+                  setError('');
+                  setPassword(e.target.value);
+                }}
+              />
+              {error && <AvisoError>{error}</AvisoError>}
+              <Button type="submit" variant="principal" busy={busy} className="mt-1 min-h-11 w-full sm:min-h-0">
+                Iniciar sesión
+              </Button>
+            </form>
+
+            <div className="mt-8 flex flex-col gap-3 border-t border-regla pt-6 text-sm text-tinta-3">
+              <p>
+                ¿Buscas tu buzón de correo?{' '}
+                <Link to="/mi-buzon" className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
+                  Entra en «Mi buzón»
+                </Link>
+                .
+              </p>
+              <p>¿Has olvidado la contraseña? Ponte en contacto con quien administra tu servicio de correo.</p>
+            </div>
+          </div>
         </div>
       </main>
+
+      {/* Solo en escritorio: el formulario manda en el móvil. */}
+      <aside
+        aria-hidden
+        className="relative hidden overflow-hidden lg:flex lg:items-center lg:justify-center"
+        style={{
+          background:
+            'radial-gradient(120% 80% at 85% 0%, rgb(122 211 200 / 0.28), transparent 55%), radial-gradient(90% 70% at 0% 100%, rgb(6 43 41 / 0.55), transparent 60%), linear-gradient(160deg, #0f6a6c, #0d5c5e 45%, #083f41)',
+        }}
+      >
+        <IlustracionPanel className="w-[min(82%,34rem)] drop-shadow-[0_30px_60px_rgb(3_30_29_/_0.45)]" />
+      </aside>
     </div>
   );
 }
