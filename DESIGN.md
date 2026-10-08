@@ -316,6 +316,19 @@ título en `text-sm tinta-3`; elementos de 36 px con icono de línea de 16 px en
 peso 600. El recuento de avisos es una píldora roja. Al pie, avatar con
 iniciales, nombre, rol y «Cerrar sesión».
 
+La administración se organiza alrededor del cliente: grupos «Vista general»,
+«Clientes» (Clientes y Planes), «Todos los clientes» (los mismos listados sin
+filtrar, para buscar en toda la instancia) y «Administración». La ficha del
+cliente (`/clientes/:id/…`) reúne su trabajo en **pestañas que son rutas**
+(`ui/PestanasRuta.tsx`): Resumen, Dominios, Buzones, Alias, Usuarios, Marca
+blanca, API de envío, Formularios y Actividad. Cada pestaña es la vista
+completa de siempre con `clienteFijo`, que oculta el selector y la columna de
+cliente y cambia el `Membrete` por una línea de recuentos con la acción a la
+derecha. Pestañas de 36 px, 8 px de radio; la activa en petróleo tenue con
+texto petróleo y peso 600; recuento en píldora. En el móvil la tira se
+desplaza dentro de su marco, nunca la página. Mientras se está en la ficha,
+«Clientes» sigue activo en la barra lateral.
+
 ### Signature Component — `Tesela` y `Vacio`
 
 `Tesela` es el único adorno del sistema: icono de lucide de 22 px (trazo 1.75)

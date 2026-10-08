@@ -26,13 +26,13 @@ import {
   Dialogo,
   Hoja,
   MarcaFondo,
-  Membrete,
   Cargando,
   Muestra,
   Vacio,
   type Veredicto,
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
 
 const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: string; pista: string }> = {
   pending_dns: {
@@ -98,22 +98,25 @@ function webmailsPrincipales(lista: ClientDomain[]): Set<string> {
  * automático. El registro que hay que crear se entrega como una muestra
  * exacta para copiar; el estado es el veredicto de la última medición.
  */
-export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
+export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean; clienteFijo?: string }) {
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
   });
   // El filtro del administrador vive en la dirección (?cliente=, como en
   // Buzones y Alias): la ficha del cliente enlaza aquí con él ya elegido.
+  // `clienteFijo`: la misma vista en la pestaña «Marca blanca» de la ficha del
+  // cliente, con el filtro fijado y sin selector.
   const [params, setParams] = useSearchParams();
-  const filtro = isAdmin ? (params.get('cliente') ?? '') : '';
+  const filtro = clienteFijo ?? (isAdmin ? (params.get('cliente') ?? '') : '');
+  const elegible = isAdmin && !clienteFijo;
   const [abierto, setAbierto] = useState(false);
   const [nuevo, setNuevo] = useState<{ domain: ClientDomain; instructions: DnsInstruction[] } | null>(null);
 
   const clients = useQuery({
     queryKey: ['clients'],
     queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
-    enabled: isAdmin,
+    enabled: elegible,
   });
   const domains = useQuery({
     queryKey: ['whitelabel-domains', isAdmin ? filtro : 'propio'],
@@ -149,12 +152,15 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Marca blanca"
+        enPestana={Boolean(clienteFijo)}
         meta={
-          isAdmin || !me.isSuccess
-            ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo del cliente con la propiedad comprobada.'
-            : 'Tu webmail en tu propio dominio, con certificado. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
+          clienteFijo
+            ? 'El webmail en el dominio del cliente, con su propio certificado. El nombre debe ser un subdominio de uno de sus dominios de correo con la propiedad comprobada.'
+            : isAdmin || !me.isSuccess
+              ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo del cliente con la propiedad comprobada.'
+              : 'Tu webmail en tu propio dominio, con certificado. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
         }
         actions={
           <Button variant="principal" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
@@ -163,7 +169,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
         }
       />
 
-      {isAdmin && (
+      {elegible && (
         <Hoja className="mb-4">
           <div className="max-w-sm">
             <Select
@@ -234,7 +240,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
               <FichaDominio
                 key={domain.id}
                 domain={domain}
-                cliente={isAdmin ? nombres.get(domain.clientId) ?? '' : ''}
+                cliente={elegible ? nombres.get(domain.clientId) ?? '' : ''}
                 cuentas={cuentas.data?.accounts ?? []}
                 principal={principales.has(domain.id)}
               />
@@ -246,6 +252,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
       <DialogoAlta
         open={abierto}
         isAdmin={isAdmin}
+        clienteFijo={Boolean(clienteFijo)}
         clientes={clients.data?.clients ?? []}
         clienteInicial={filtro}
         clientePropio={me.data?.user?.clientId ?? ''}
@@ -284,6 +291,7 @@ export default function MarcaBlanca({ isAdmin }: { isAdmin: boolean }) {
 function DialogoAlta({
   open,
   isAdmin,
+  clienteFijo,
   clientes,
   clienteInicial,
   clientePropio,
@@ -292,6 +300,8 @@ function DialogoAlta({
 }: {
   open: boolean;
   isAdmin: boolean;
+  /** El cliente ya viene dado (ficha del cliente): no se ofrece elegirlo. */
+  clienteFijo: boolean;
   clientes: Client[];
   clienteInicial: string;
   clientePropio: string;
@@ -353,7 +363,7 @@ function DialogoAlta({
   return (
     <Dialogo open={open} onClose={onClose} title="Añadir dominio propio">
       <form onSubmit={submit} className="flex flex-col gap-4">
-        {isAdmin && (
+        {isAdmin && !clienteFijo && (
           <Select
             label="Cliente"
             required
@@ -391,7 +401,10 @@ function DialogoAlta({
               El dominio propio debe ser un subdominio de un dominio de correo con la propiedad comprobada: así se
               garantiza que {isAdmin ? 'el cliente controla su' : 'controlas tu'} DNS.
             </p>
-            <Link to="/dominios" className="text-sm text-petroleo underline underline-offset-2 hover:text-tinta">
+            <Link
+              to={isAdmin && clientId ? rutaCliente(clientId, 'dominios') : '/dominios'}
+              className="text-sm text-petroleo underline underline-offset-2 hover:text-tinta"
+            >
               Ir a Dominios
             </Link>
           </div>

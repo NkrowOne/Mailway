@@ -18,9 +18,10 @@ import {
 import { formatDate, plural } from '../lib/format';
 import { useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
+import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -32,7 +33,12 @@ import { useToast } from '../ui/toast';
 /** Fuera de rango primero; después, lo que vigilar, sin dato y, al final, lo activo. */
 const ordenVeredicto: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
 
-export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
+/**
+ * `clienteFijo`: la misma vista dentro de la ficha de un cliente (pestaña
+ * «Dominios»): solo sus dominios, el alta ya a su nombre y una cabecera
+ * compacta bajo la del cliente.
+ */
+export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; clienteFijo?: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
@@ -68,10 +74,19 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
     : todas;
   const hayCloudflare = utilizables.length > 0;
 
-  // Límite del plan: un cliente lo ve antes de rellenar nada; el
-  // administrador, al elegir el cliente en el formulario.
-  const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
-  const limitePropio = clientePropio ? clientePropio.usage.domains >= clientePropio.plan.maxDomains : false;
+  // Límite del plan: un cliente (o el administrador en la ficha de uno) lo
+  // ve antes de rellenar nada; en la lista de todos, al elegir el cliente en
+  // el formulario.
+  const clienteContexto = clienteFijo
+    ? clientes.get(clienteFijo)
+    : !isAdmin
+      ? [...clientes.values()][0]
+      : undefined;
+  const limiteContexto = clienteContexto
+    ? clienteContexto.usage.domains >= clienteContexto.plan.maxDomains
+    : false;
+  const altaVetada = limiteContexto || Boolean(clienteContexto?.suspended);
+  const verCliente = isAdmin && !clienteFijo;
   const elegido = isAdmin && clientId ? clientes.get(clientId) : undefined;
   const limiteElegido = elegido ? elegido.usage.domains >= elegido.plan.maxDomains : false;
 
@@ -101,7 +116,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
   function abrir() {
     // Cada alta empieza de cero: un cliente elegido antes no debe arrastrarse.
     setDomainName('');
-    setClientId('');
+    setClientId(clienteFijo ?? '');
     setAutoDns(true);
     setError('');
     create.reset();
@@ -114,37 +129,50 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
     create.mutate();
   }
 
-  const list = [...(domains.data?.domains ?? [])].sort(
-    (a, b) => ordenVeredicto[lecturaDominio(a).veredicto] - ordenVeredicto[lecturaDominio(b).veredicto],
-  );
+  const list = (domains.data?.domains ?? [])
+    .filter((d) => !clienteFijo || d.clientId === clienteFijo)
+    .sort((a, b) => ordenVeredicto[lecturaDominio(a).veredicto] - ordenVeredicto[lecturaDominio(b).veredicto]);
   const activos = list.filter((d) => d.status === 'active').length;
   const nombreCliente = new Map((clients.data?.clients ?? []).map((c) => [c.id, c.name]));
 
+  const recuento =
+    !domains.isPending && (clienteContexto || list.length > 0)
+      ? clienteContexto
+        ? `${clienteContexto.usage.domains} de ${clienteContexto.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
+        : `${activos} de ${list.length} activos`
+      : null;
+
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Dominios"
+        enPestana={Boolean(clienteFijo)}
         meta={
-          <>
-            Un dominio no puede enviar ni recibir correo hasta que sus registros DNS coinciden con los
-            valores que se indican en su ficha.
-            {!domains.isPending && (clientePropio || list.length > 0) && (
-              <span className="valor mt-1 block text-sm text-tinta-3">
-                {clientePropio
-                  ? `${clientePropio.usage.domains} de ${clientePropio.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
-                  : `${activos} de ${list.length} activos`}
+          clienteFijo ? (
+            <>
+              {recuento && <span className="valor block">{recuento}</span>}
+              <span className="block text-sm text-tinta-3">
+                Un dominio envía y recibe correo cuando sus registros DNS coinciden con los de su ficha.
               </span>
-            )}
-          </>
+            </>
+          ) : (
+            <>
+              {isAdmin && 'Dominios de todos los clientes. '}
+              Un dominio no puede enviar ni recibir correo hasta que sus registros DNS coinciden con los
+              valores que se indican en su ficha.
+              {recuento && <span className="valor mt-1 block text-sm text-tinta-3">{recuento}</span>}
+            </>
+          )
         }
         actions={
-          <Button variant="principal" onClick={abrir} disabled={limitePropio || clientePropio?.suspended}>
+          <Button variant="principal" onClick={abrir} disabled={altaVetada}>
             Añadir dominio
           </Button>
         }
       />
 
-      {clientePropio?.suspended && (
+      {/* La administración ya ve la suspensión en la cabecera de la ficha del cliente. */}
+      {!isAdmin && clienteContexto?.suspended && (
         <div className="mb-4">
           <BandaAviso titulo="Servicio suspendido">
             Mientras el servicio esté suspendido no se pueden añadir dominios. Ponte en contacto con el
@@ -153,11 +181,13 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {limitePropio && clientePropio && !clientePropio.suspended && (
+      {limiteContexto && clienteContexto && !clienteContexto.suspended && (
         <div className="mb-4">
           <BandaAviso titulo="Límite del plan">
-            Se ha alcanzado el máximo de dominios del plan ({plural(clientePropio.plan.maxDomains, 'dominio', 'dominios')}).
-            Para añadir otro, elimina alguno o solicita una ampliación del plan.
+            Se ha alcanzado el máximo de dominios del plan ({plural(clienteContexto.plan.maxDomains, 'dominio', 'dominios')}).
+            {isAdmin
+              ? ' Para añadir otro, elimina alguno o cambia el plan del cliente en «Resumen».'
+              : ' Para añadir otro, elimina alguno o solicita una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
@@ -175,13 +205,14 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
           <Vacio icono={Globe}
             title="Todavía no hay dominios"
             action={
-              <Button variant="perfil" onClick={abrir} disabled={limitePropio || clientePropio?.suspended}>
+              <Button variant="perfil" onClick={abrir} disabled={altaVetada}>
                 Añadir el primero
               </Button>
             }
           >
-            Da de alta un dominio (por ejemplo, miempresa.com) para crear buzones con esa
-            dirección.
+            {clienteFijo
+              ? 'Da de alta un dominio del cliente (por ejemplo, suempresa.com) para crear buzones con esa dirección.'
+              : 'Da de alta un dominio (por ejemplo, miempresa.com) para crear buzones con esa dirección.'}
           </Vacio>
         </Hoja>
       ) : (
@@ -189,7 +220,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
           {/* Cabecera de columnas: en móvil cada valor lleva su propio rótulo. */}
           <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
             <span className="rotulo min-w-0 flex-1">Dominio</span>
-            {isAdmin && <span className="rotulo shrink-0 basis-40">Cliente</span>}
+            {verCliente && <span className="rotulo shrink-0 basis-40">Cliente</span>}
             <span className="rotulo shrink-0 basis-24">Obligatorios</span>
             <span className="rotulo shrink-0 basis-32">Comprobado</span>
             <span className="rotulo shrink-0 basis-28 text-right">Veredicto</span>
@@ -224,11 +255,12 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
                     )}
                   </span>
 
-                  {isAdmin && (
+                  {verCliente && (
                     <span className="min-w-0 shrink-0 sm:basis-40">
                       <span className="rotulo mr-1.5 sm:hidden">Cliente</span>
+                      {/* A los dominios de su ficha: se sigue en la misma tarea, con su contexto. */}
                       <Link
-                        to={`/clientes/${domain.clientId}`}
+                        to={rutaCliente(domain.clientId, 'dominios')}
                         className="break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
                       >
                         {nombreCliente.get(domain.clientId) ?? '—'}
@@ -260,7 +292,7 @@ export default function Dominios({ isAdmin }: { isAdmin: boolean }) {
 
       <Dialogo open={open} onClose={() => setOpen(false)} title="Añadir dominio">
         <form onSubmit={submit} className="flex flex-col gap-4">
-          {isAdmin && (
+          {verCliente && (
             <Select
               label="Cliente propietario"
               required

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Search, CircleHelp, ArrowRight } from 'lucide-react';
 import { api, type Client, type DomainRecord, type Mailbox, type User } from '../lib/api';
 import { AvisoError, Dialogo, Cargando } from '../ui/kit';
+import { rutaCliente } from '../components/gestion/comun';
 
 /**
  * Búsqueda y ayuda del panel. La búsqueda usa los mismos recursos (y la misma
@@ -42,7 +43,11 @@ export function PanelTools({ user }: { user: User }) {
       key: `m-${m.id}`,
       label: m.email,
       kind: 'Buzón',
-      to: `/buzones?q=${encodeURIComponent(m.email)}`,
+      // El administrador lo encuentra dentro de la ficha de su cliente, junto
+      // a sus dominios y alias; el usuario de un cliente, en su «Buzones».
+      to: esAdmin && m.clientId
+        ? `${rutaCliente(m.clientId, 'buzones')}?q=${encodeURIComponent(m.email)}`
+        : `/buzones?q=${encodeURIComponent(m.email)}`,
     })),
     ...(esAdmin ? clients.data?.clients ?? [] : []).map((c) => ({
       key: `c-${c.id}`,

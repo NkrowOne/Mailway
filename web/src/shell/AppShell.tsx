@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -65,6 +65,13 @@ interface NavGroup {
 function buildNav(user: User): NavGroup[] {
   const iconClass = 'h-4 w-4';
   if (user.role === 'admin') {
+    /*
+      El cliente es el centro: su ficha reúne dominios, buzones, alias,
+      usuarios, marca blanca, API, formularios y actividad. Los listados de
+      «Todos los clientes» son las mismas vistas sin filtrar, para buscar de
+      un vistazo en toda la instancia; lo que es de la instancia (y la cuenta
+      propia) va aparte, en «Administración».
+    */
     return [
       {
         section: 'Vista general',
@@ -75,30 +82,34 @@ function buildNav(user: User): NavGroup[] {
         ],
       },
       {
-        section: 'Gestión',
+        section: 'Clientes',
         items: [
           { to: '/clientes', label: 'Clientes', icon: <Building2 className={iconClass} /> },
+          { to: '/planes', label: 'Planes', icon: <ClipboardList className={iconClass} /> },
+        ],
+      },
+      {
+        section: 'Todos los clientes',
+        items: [
           { to: '/dominios', label: 'Dominios', icon: <Globe className={iconClass} /> },
           { to: '/buzones', label: 'Buzones', icon: <Inbox className={iconClass} /> },
           { to: '/alias', label: 'Alias', icon: <Split className={iconClass} /> },
           { to: '/marca-blanca', label: 'Marca blanca', icon: <Tag className={iconClass} /> },
-        ],
-      },
-      {
-        section: 'Configuración',
-        items: [
           { to: '/api-envio', label: 'API de envío', icon: <KeyRound className={iconClass} /> },
           { to: '/formularios', label: 'Formularios', icon: <FormInput className={iconClass} /> },
-          { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
-          { to: '/planes', label: 'Planes', icon: <ClipboardList className={iconClass} /> },
-          { to: '/actividad', label: 'Actividad', icon: <Activity className={iconClass} /> },
-          { to: '/ajustes', label: 'Ajustes', icon: <Settings className={iconClass} /> },
         ],
       },
       {
-        // El administrador también tiene contraseña propia que cambiar.
-        section: 'Cuenta',
-        items: [{ to: '/cuenta', label: 'Mi cuenta', icon: <UserRound className={iconClass} /> }],
+        section: 'Administración',
+        items: [
+          { to: '/conexiones', label: 'Conexiones', icon: <Cable className={iconClass} /> },
+          { to: '/actividad', label: 'Actividad', icon: <Activity className={iconClass} /> },
+          { to: '/ajustes', label: 'Ajustes', icon: <Settings className={iconClass} /> },
+          // El administrador también tiene contraseña propia que cambiar. Va
+          // aquí y no en un grupo propio: un grupo menos y el índice cabe
+          // entero en una pantalla de portátil.
+          { to: '/cuenta', label: 'Mi cuenta', icon: <UserRound className={iconClass} /> },
+        ],
       },
     ];
   }
@@ -129,6 +140,30 @@ function buildNav(user: User): NavGroup[] {
       ],
     },
   ];
+}
+
+/**
+ * Clave de la vista para el marco: las secciones de la ficha de un cliente
+ * («/clientes/:id/buzones», «…/alias») son la misma vista. Cambiar de pestaña
+ * no la vuelve a montar ni le quita el foco a la pestaña elegida.
+ */
+function claveVista(pathname: string): string {
+  return /^\/clientes\/[^/]+/.exec(pathname)?.[0] ?? pathname;
+}
+
+/**
+ * Título propio de la vista para la pestaña del navegador, cuando el nombre
+ * del índice no basta («Buzones · Acme» en lugar de «Clientes»).
+ */
+const TituloVista = createContext<(titulo: string | null) => void>(() => {});
+
+/** Fija el título de la pestaña del navegador mientras la vista esté montada. */
+export function useTituloVista(titulo: string | null): void {
+  const fijar = useContext(TituloVista);
+  useEffect(() => {
+    fijar(titulo);
+    return () => fijar(null);
+  }, [fijar, titulo]);
 }
 
 /** Nombre de la vista actual para el título de la pestaña («Buzones · Marca»). */
@@ -166,6 +201,7 @@ export function AppShell({
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [saliendo, setSaliendo] = useState(false);
+  const [tituloPropio, setTituloPropio] = useState<string | null>(null);
   const nav = buildNav(user);
   const esAdmin = user.role === 'admin';
 
@@ -200,7 +236,7 @@ export function AppShell({
     };
   }, []);
 
-  const etiqueta = etiquetaDeRuta(nav, location.pathname);
+  const etiqueta = tituloPropio ?? etiquetaDeRuta(nav, location.pathname);
   useEffect(() => {
     document.title = etiqueta ? `${etiqueta} · ${brand}` : brand;
   }, [etiqueta, brand]);
@@ -208,12 +244,14 @@ export function AppShell({
   // Cambio de vista: arriba del todo (salvo al volver atrás, donde el
   // navegador restaura la posición) y el foco al contenido, para que el lector
   // de pantalla y el teclado empiecen por la página nueva y no por el índice.
+  // Entre pestañas de una misma vista el foco se queda en la pestaña elegida.
   useEffect(() => {
     if (rutaAnterior.current === location.pathname) return;
+    const mismaVista = claveVista(rutaAnterior.current) === claveVista(location.pathname);
     rutaAnterior.current = location.pathname;
     setOpen(false);
     if (tipoNavegacion !== 'POP') window.scrollTo({ top: 0 });
-    mainRef.current?.focus({ preventScroll: true });
+    if (!mismaVista) mainRef.current?.focus({ preventScroll: true });
   }, [location.pathname, tipoNavegacion]);
 
   // Cajón móvil: modal de verdad. Escape cierra, el foco no sale de él, el
@@ -471,8 +509,8 @@ export function AppShell({
               {/* La clave remonta la vista con un fundido corto: la página
                   nueva entra sin saltos en lugar de sustituir a la anterior
                   de golpe. */}
-              <div key={location.pathname} className="vista-entrada">
-                {children}
+              <div key={claveVista(location.pathname)} className="vista-entrada">
+                <TituloVista.Provider value={setTituloPropio}>{children}</TituloVista.Provider>
               </div>
             </main>
           </div>

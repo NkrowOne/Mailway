@@ -163,7 +163,8 @@ function PanelApp() {
               <>
                 <Route path="/" element={<PanelAdmin />} />
                 <Route path="/clientes" element={<Clientes />} />
-                <Route path="/clientes/:id" element={<ClienteDetalle />} />
+                {/* La ficha del cliente lleva sus propias pestañas (dominios, buzones…). */}
+                <Route path="/clientes/:id/*" element={<ClienteDetalle user={user} />} />
                 <Route path="/entregabilidad" element={<Entregabilidad />} />
                 <Route path="/avisos" element={<Avisos />} />
                 <Route path="/planes" element={<Planes />} />

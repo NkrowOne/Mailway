@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { DomainRecord } from '../../lib/api';
 import { propiedadPendiente } from '../../lib/cloudflare';
 import { TEXTO_PROPIEDAD_PENDIENTE } from '../../lib/dominios';
 import { Select } from '../../ui/Field';
-import { AvisoError } from '../../ui/kit';
+import { AvisoError, Membrete } from '../../ui/kit';
 
 /*
   Piezas pequeñas que comparten las vistas de gestión (clientes, planes,
@@ -29,6 +30,65 @@ export function BandaError({
     <AvisoError onRetry={onRetry} retrying={retrying}>
       {children}
     </AvisoError>
+  );
+}
+
+/** Secciones de la ficha de un cliente (cada una es una pestaña con su ruta). */
+export type SeccionCliente =
+  | ''
+  | 'dominios'
+  | 'buzones'
+  | 'alias'
+  | 'usuarios'
+  | 'marca-blanca'
+  | 'api-envio'
+  | 'formularios'
+  | 'actividad';
+
+/** Dirección de una sección de la ficha del cliente: «/clientes/:id/buzones». */
+export function rutaCliente(clientId: string, seccion: SeccionCliente = ''): string {
+  return `/clientes/${encodeURIComponent(clientId)}${seccion ? `/${seccion}` : ''}`;
+}
+
+/**
+ * Cabecera de una vista de gestión. Como página propia es el `Membrete`.
+ * Dentro de la ficha de un cliente (`enPestana`), el título ya lo dan el
+ * nombre del cliente y la pestaña elegida: queda una línea de contexto con
+ * las acciones a la derecha, y el título solo para los lectores de pantalla.
+ */
+export function CabeceraVista({
+  title,
+  meta,
+  actions,
+  enPestana = false,
+}: {
+  title: string;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  enPestana?: boolean;
+}) {
+  if (!enPestana) return <Membrete title={title} meta={meta} actions={actions} />;
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0 max-w-3xl">
+        <h2 className="sr-only">{title}</h2>
+        {meta && <div className="text-base text-tinta-2">{meta}</div>}
+      </div>
+      {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+/** Enlace de vuelta sobre la cabecera de una ficha («← Clientes»). */
+export function EnlaceVolver({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="mb-2 inline-flex max-w-full items-center gap-1.5 text-sm text-tinta-2 hover:text-petroleo"
+    >
+      <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+      <span className="min-w-0 break-words">{children}</span>
+    </Link>
   );
 }
 

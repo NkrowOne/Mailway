@@ -16,12 +16,13 @@ import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
-import { BandaAviso, BandaError, Botonera, Casilla } from '../../components/gestion/comun';
+import { BandaAviso, BandaError, Botonera, Casilla, rutaCliente } from '../../components/gestion/comun';
 import { useDireccionPanel } from '../../components/gestion/consultas';
 
 /**
  * Cartera de clientes: una fila por cliente, con el uso de buzones medido
- * contra el límite de su plan y el veredicto de servicio en el margen.
+ * contra el límite de su plan y el veredicto de servicio en el margen. Cada
+ * fila abre la ficha del cliente, donde se gestiona todo lo suyo.
  */
 export default function Clientes() {
   const [open, setOpen] = useState(false);
@@ -49,7 +50,10 @@ export default function Clientes() {
         title="Clientes"
         meta={
           <>
-            <p>Cada cliente tiene su propio panel, sus dominios y los límites de su plan.</p>
+            <p>
+              Cada cliente tiene su panel, su plan y su ficha, donde se gestionan sus dominios, buzones, alias y
+              usuarios.
+            </p>
             {clients.isSuccess && list.length > 0 && (
               <p className="mt-1 text-sm text-tinta-3">
                 {plural(list.length, 'cliente', 'clientes')} ·{' '}
@@ -115,14 +119,17 @@ export default function Clientes() {
           {filtrados.map((client) => (
             <div
               key={client.id}
-              className="regla-fila flex flex-wrap items-center gap-x-4 gap-y-2.5 px-4 py-3
+              className="regla-fila group relative flex flex-wrap items-center gap-x-4 gap-y-2.5 px-4 py-3
                 transition-colors duration-100 last:border-b-0 hover:bg-hoja-2"
             >
-              {/* El nombre identifica la fila: línea propia en móvil, sin truncar. */}
+              {/* El nombre identifica la fila: línea propia en móvil, sin truncar.
+                  Su enlace cubre la fila entera (no hay otros controles en ella):
+                  se entra en la ficha pulsando en cualquier sitio. */}
               <div className="min-w-0 grow basis-full sm:basis-0">
                 <Link
-                  to={`/clientes/${client.id}`}
-                  className="break-words text-md font-medium text-tinta hover:text-petroleo hover:underline"
+                  to={rutaCliente(client.id)}
+                  className="break-words text-md font-medium text-tinta after:absolute after:inset-0 after:content-['']
+                    hover:text-petroleo group-hover:text-petroleo group-hover:underline"
                 >
                   {client.name}
                 </Link>
@@ -278,7 +285,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
       const dns = data.dominio?.ok && data.dominio.alta.autoDns ? data.dominio.aviso : null;
       if (!data.password && (!data.dominio || data.dominio.ok) && dns?.tono !== 'error') {
         toast('ok', dns ? `Cliente ${data.client.name} dado de alta. ${dns.texto}` : `Cliente ${data.client.name} dado de alta.`);
-        navigate(`/clientes/${data.client.id}`);
+        navigate(rutaCliente(data.client.id));
         return;
       }
       setResultado(data);
@@ -317,7 +324,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
 
   if (resultado) {
     const conContrasena = Boolean(resultado.password && resultado.user);
-    const irAFicha = () => navigate(`/clientes/${resultado.client.id}`);
+    const irAFicha = () => navigate(rutaCliente(resultado.client.id));
     return (
       <Dialogo
         open
@@ -388,7 +395,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             ) : (
               <BandaError>
                 El cliente se ha creado, pero no se ha podido añadir el dominio: {resultado.dominio.error} Puedes
-                añadirlo después desde «Dominios».
+                añadirlo después desde la pestaña «Dominios» de su ficha.
               </BandaError>
             ))}
         </div>
