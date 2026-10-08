@@ -93,6 +93,8 @@ test('rechaza contraseñas cortas, con saltos de línea o de un usuario inexiste
   const nadie = ejecutar(['nadie@mailway.test']);
   assert.equal(nadie.status, 1);
   assert.match(nadie.stderr, /No existe ningún usuario con el correo nadie@mailway\.test/);
+  // Dice con qué correos se puede: quien está en el servidor puede no recordarlo.
+  assert.match(nadie.stderr, /Correos de administración: admin@mailway\.test\./);
   assert.equal(nadie.stdout, '', 'sin usuario no se muestra ninguna contraseña');
 
   const sinCorreo = ejecutar([]);
@@ -100,4 +102,20 @@ test('rechaza contraseñas cortas, con saltos de línea o de un usuario inexiste
   assert.match(sinCorreo.stderr, /Uso:/);
 
   assert.ok(await entra(ADMIN, vigente), 'la contraseña vigente no ha cambiado');
+});
+
+test('quita el bloqueo por intentos fallidos de ese correo: se entra en el acto', async () => {
+  // Diez intentos fallidos bloquean el correo durante diez minutos.
+  for (let i = 0; i < 10; i++) {
+    await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: ADMIN, password: `mala-${i}-clave` } });
+  }
+  const bloqueado = await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: ADMIN, password: 'otra-mala-clave' } });
+  assert.equal(bloqueado.statusCode, 429);
+
+  const r = ejecutar([ADMIN]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /quitado el bloqueo por intentos fallidos/);
+  const nueva = /Contraseña nueva de admin@mailway\.test: ([A-Za-z0-9_-]{24})\n/.exec(r.stdout)?.[1];
+  assert.ok(nueva, r.stdout);
+  assert.ok(await entra(ADMIN, nueva!), 'entra sin esperar a que caduque el bloqueo');
 });
