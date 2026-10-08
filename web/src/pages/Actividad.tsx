@@ -13,7 +13,8 @@ import {
 } from '../lib/tokens';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Field';
-import { AvisoError, Hoja, Membrete, Cargando, Vacio } from '../ui/kit';
+import { AvisoError, Hoja, Cargando, Vacio } from '../ui/kit';
+import { CabeceraVista } from '../components/gestion/comun';
 
 /** Anotaciones por página: suficiente para una jornada sin cargar el registro entero. */
 const POR_PAGINA = 50;
@@ -22,8 +23,14 @@ function mensajeDe(err: unknown, porDefecto: string): string {
   return err instanceof ApiError ? err.message : porDefecto;
 }
 
-/** Registro de auditoría: quién hizo qué, cuándo y, si fue una integración, con qué token. */
-export default function Actividad() {
+/**
+ * Registro de auditoría: quién hizo qué, cuándo y, si fue una integración, con qué token.
+ *
+ * `clienteFijo`: la misma vista dentro de la ficha de un cliente (pestaña
+ * «Actividad»): solo lo que afecta a ese cliente, sin selector ni columna de
+ * cliente y con una cabecera compacta.
+ */
+export default function Actividad({ clienteFijo }: { clienteFijo?: string } = {}) {
   // El usuario ya está en la caché desde el arranque; aquí solo se lee su rol.
   const me = useQuery({
     queryKey: ['me'],
@@ -31,14 +38,15 @@ export default function Actividad() {
   });
   const isAdmin = me.data?.user?.role === 'admin';
   const [clienteFiltro, setClienteFiltro] = useState('');
+  const elegible = isAdmin && !clienteFijo;
 
   const clientes = useQuery({
     queryKey: ['clients'],
     queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
-    enabled: isAdmin,
+    enabled: elegible,
   });
 
-  const filtro = isAdmin ? clienteFiltro : '';
+  const filtro = clienteFijo ?? (isAdmin ? clienteFiltro : '');
   // Clave propia: ['audit'] a secas la usa el parte del administrador con otra forma de datos.
   const registro = useInfiniteQuery({
     queryKey: ['audit', 'actividad', filtro],
@@ -56,23 +64,31 @@ export default function Actividad() {
   // Si falla una página posterior, lo ya leído se conserva y el error va junto a «Cargar más».
   const errorInicial = registro.isError && anotaciones.length === 0;
   const verCliente = isAdmin && !filtro;
+  const cargadas =
+    registro.isSuccess && anotaciones.length > 0
+      ? plural(anotaciones.length, 'anotación cargada', 'anotaciones cargadas')
+      : null;
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Actividad"
+        enPestana={Boolean(clienteFijo)}
         meta={
-          <>
-            <p>
-              Registro de auditoría: cada acción queda anotada con su autor, su fecha y, si la
-              realizó una integración, el token que utilizó.
-            </p>
-            {registro.isSuccess && anotaciones.length > 0 && (
-              <p className="mt-1 text-sm text-tinta-3">
-                {plural(anotaciones.length, 'anotación cargada', 'anotaciones cargadas')}
+          clienteFijo ? (
+            <>
+              Acciones sobre este cliente, con su autor y su fecha.
+              {cargadas && <span className="block text-sm text-tinta-3">{cargadas}</span>}
+            </>
+          ) : (
+            <>
+              <p>
+                Registro de auditoría: cada acción queda anotada con su autor, su fecha y, si la
+                realizó una integración, el token que utilizó.
               </p>
-            )}
-          </>
+              {cargadas && <p className="mt-1 text-sm text-tinta-3">{cargadas}</p>}
+            </>
+          )
         }
       />
 
@@ -80,7 +96,7 @@ export default function Actividad() {
       <Hoja
         title="Registro"
         actions={
-          isAdmin ? (
+          elegible ? (
             <div className="w-full min-w-[14rem] sm:w-72">
               <Select
                 label="Cliente"

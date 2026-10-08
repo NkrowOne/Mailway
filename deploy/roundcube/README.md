@@ -1,15 +1,49 @@
 # Apariencia Mailway para Roundcube
 
-`mailway_theme` añade una capa visual a Elastic 1.7 mediante la API de
-complementos. Los dos ficheros Compose de Mailway montan el complemento en
-solo lectura y lo incluyen en `ROUNDCUBEMAIL_PLUGINS`. No modifica la
-autenticación, el contenido de los mensajes, los atajos ni la estructura
-adaptable de Elastic. El modo oscuro conserva los estilos nativos y no
-sustituye el logotipo de marca blanca configurado.
+`mailway_theme` es una capa visual sobre Elastic 1.7, mediante la API de
+complementos, que acerca el webmail a un cliente de correo actual y al aspecto
+del panel (ver `DESIGN.md`). Los dos ficheros Compose de Mailway montan el
+complemento en solo lectura y lo incluyen en `ROUNDCUBEMAIL_PLUGINS`.
+
+Qué cambia:
+
+- Carril de tareas claro, con «Redactar» como botón relleno y redondeado y la
+  sección activa en una pastilla petróleo tenue; en el móvil, el mismo menú
+  en un cajón blanco y un botón flotante «Redactar».
+- Carpetas y secciones de ajustes en pastillas sobre el fondo gris verdoso;
+  lista y lectura en paneles blancos de esquinas suaves.
+- Iconos de línea (Lucide, los mismos del panel) en barras de botones de
+  icono; las etiquetas siguen ahí para lectores de pantalla y en el `title`.
+- Lista de mensajes con el no leído claro (punto petróleo, negrita y fecha en
+  petróleo), bandera y clip discretos y filas más cómodas en pantallas
+  táctiles.
+- Cabecera del mensaje, adjuntos en fichas, citas con una línea gris y texto
+  plano en la letra normal; búsqueda en un campo redondeado.
+- Redacción con las cabeceras en filas y los destinatarios en fichas;
+  formularios, interruptores, menús, diálogos y avisos con los controles del
+  panel; pantalla de acceso con las etiquetas encima de los campos.
+- Modo oscuro propio y coherente (gris verdoso profundo, petróleo aclarado,
+  contraste AA) en lugar del gris azulado de Elastic.
+- El panel vacío (sin mensaje abierto) muestra la tesela del panel en vez del
+  logotipo de Roundcube, que asomaba aunque hubiera marca blanca.
+
+Ficheros:
+
+- `mailway_theme.php`: incluye las hojas de estilo, marca `<html>` con la
+  clase `mailway` (para que las reglas valgan igual en claro y en oscuro sin
+  `!important`), ajusta `theme-color` y apunta el panel vacío a `vacio.html`.
+- `mailway.css`: el tema, con la paleta clara y la oscura en variables.
+- `iconos.css`: los iconos de Lucide en línea (licencia ISC, aviso incluido).
+- `vacio.html`: el panel vacío, sin texto, válido para cualquier idioma.
+
+No modifica la autenticación, el contenido de los mensajes, los atajos ni la
+estructura adaptable de Elastic (escritorio, tableta y móvil), no carga nada
+de fuera (letra del sistema e iconos en línea) y no sustituye el logotipo de
+marca blanca configurado.
 
 `mailway.php` es la configuración de Mailway para Roundcube (servidores,
-complemento de contraseña, ManageSieve, marca); el compose lo monta en
-`/var/roundcube/config/`.
+complemento de contraseña, ManageSieve, marca, formato de fecha y letra del
+editor); el compose lo monta en `/var/roundcube/config/`.
 
 `diagnostico/comprobar.php` es el diagnóstico de línea de órdenes que usan
 `deploy/instalar.sh --comprobar` y `--probar-acceso`: abre IMAP y SMTP con la

@@ -5,16 +5,18 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alias as AliasType, type DomainRecord, type Mailbox } from '../lib/api';
 import { plural } from '../lib/format';
 import { errorNombreBuzon, esCorreoValido, mensajeDe } from '../lib/gestion';
-import { Button } from '../ui/Button';
+import { Button, estiloBoton } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Dialogo, Hoja, Membrete, Cargando, Vacio } from '../ui/kit';
+import { Dialogo, Hoja, Cargando, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import {
   BandaAviso,
   BandaError,
   Botonera,
+  CabeceraVista,
   Casilla,
   dominioInicialDisponible,
+  rutaCliente,
   SelectorDominio,
   type MotivoBloqueoDominio,
 } from '../components/gestion/comun';
@@ -29,8 +31,12 @@ type Editor = { modo: 'crear' } | { modo: 'editar'; alias: AliasType };
  * Alias: direcciones que solo reciben correo y lo reenvían a buzones del
  * mismo cliente o a direcciones externas. Tabla reglada con la dirección, a
  * quién reenvía y, para el administrador, de qué cliente es.
+ *
+ * `clienteFijo`: la misma vista dentro de la ficha de un cliente (pestaña
+ * «Alias»): solo sus alias, sus dominios y sus buzones, sin columna ni
+ * selector de cliente y con una cabecera compacta.
  */
-export default function Alias() {
+export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const user = useUsuario();
@@ -38,21 +44,25 @@ export default function Alias() {
   const { clientes } = useClientes(user);
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
-  const filtroCliente = isAdmin ? (params.get('cliente') ?? '') : '';
+  const filtroCliente = clienteFijo ?? (isAdmin ? (params.get('cliente') ?? '') : '');
+  const verCliente = isAdmin && !clienteFijo;
+  const sufijo = clienteFijo ? `?clientId=${encodeURIComponent(clienteFijo)}` : '';
   const [editor, setEditor] = useState<Editor | null>(null);
   const [toDelete, setToDelete] = useState<AliasType | null>(null);
 
+  // Todos los dominios visibles, también con el cliente fijado: sirven para
+  // reconocer como internos los destinos que son de esta plataforma.
   const domains = useQuery({
     queryKey: ['domains'],
     queryFn: () => api.get<{ domains: DomainRecord[] }>('/api/domains'),
   });
   const aliases = useQuery({
-    queryKey: ['aliases'],
-    queryFn: () => api.get<{ aliases: AliasType[] }>('/api/aliases'),
+    queryKey: clienteFijo ? ['aliases', 'cliente', clienteFijo] : ['aliases'],
+    queryFn: () => api.get<{ aliases: AliasType[] }>(`/api/aliases${sufijo}`),
   });
   const mailboxes = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
+    queryKey: clienteFijo ? ['mailboxes', 'cliente', clienteFijo] : ['mailboxes'],
+    queryFn: () => api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes${sufijo}`),
   });
 
   const remove = useMutation({
@@ -77,7 +87,11 @@ export default function Alias() {
     setParams(next, { replace: true });
   }
 
-  const domainList = useMemo(() => domains.data?.domains ?? [], [domains.data]);
+  const todosLosDominios = useMemo(() => domains.data?.domains ?? [], [domains.data]);
+  const domainList = useMemo(
+    () => todosLosDominios.filter((d) => !clienteFijo || d.clientId === clienteFijo),
+    [todosLosDominios, clienteFijo],
+  );
   const all = useMemo(() => aliases.data?.aliases ?? [], [aliases.data]);
   const filtrados = useMemo(() => {
     const texto = q.trim().toLowerCase();
@@ -88,34 +102,51 @@ export default function Alias() {
     );
   }, [all, q, filtroCliente]);
 
-  const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
-  const limiteAlcanzado = clientePropio ? clientePropio.usage.aliases >= clientePropio.plan.maxAliases : false;
+  // El cliente cuyo plan y estado mandan: el propio o el fijado en la ficha.
+  const clienteContexto = clienteFijo
+    ? clientes.get(clienteFijo)
+    : !isAdmin
+      ? [...clientes.values()][0]
+      : undefined;
+  const limiteAlcanzado = clienteContexto ? clienteContexto.usage.aliases >= clienteContexto.plan.maxAliases : false;
   const cargando = aliases.isPending || domains.isPending;
   const error = aliases.error ?? domains.error;
+  const recuento =
+    !cargando && (clienteContexto || all.length > 0)
+      ? clienteContexto
+        ? `${clienteContexto.usage.aliases} de ${clienteContexto.plan.maxAliases} alias del plan`
+        : plural(all.length, 'alias', 'alias')
+      : null;
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Alias"
+        enPestana={Boolean(clienteFijo)}
         meta={
-          <>
-            <p>
-              Direcciones que reciben correo y lo reenvían a buzones de la plataforma o a direcciones externas.
-              Los alias solo reciben: para enviar se utiliza un buzón.
-            </p>
-            {!cargando && (clientePropio || all.length > 0) && (
-              <p className="mt-1 text-sm text-tinta-3">
-                {clientePropio
-                  ? `${clientePropio.usage.aliases} de ${clientePropio.plan.maxAliases} alias del plan`
-                  : plural(all.length, 'alias', 'alias')}
+          clienteFijo ? (
+            <>
+              {recuento && <span className="block">{recuento}</span>}
+              <span className="block text-sm text-tinta-3">
+                Reciben correo y lo reenvían a buzones del cliente o a direcciones externas; para enviar se
+                utiliza un buzón.
+              </span>
+            </>
+          ) : (
+            <>
+              <p>
+                {isAdmin ? 'Alias de todos los clientes: direcciones' : 'Direcciones'} que reciben correo y lo
+                reenvían a buzones de la plataforma o a direcciones externas. Los alias solo reciben: para enviar se
+                utiliza un buzón.
               </p>
-            )}
-          </>
+              {recuento && <p className="mt-1 text-sm text-tinta-3">{recuento}</p>}
+            </>
+          )
         }
         actions={
           <Button
             variant="principal"
-            disabled={domainList.length === 0 || limiteAlcanzado || clientePropio?.suspended}
+            disabled={domainList.length === 0 || limiteAlcanzado || clienteContexto?.suspended}
             onClick={() => setEditor({ modo: 'crear' })}
           >
             Crear alias
@@ -123,11 +154,13 @@ export default function Alias() {
         }
       />
 
-      {limiteAlcanzado && (
+      {limiteAlcanzado && clienteContexto && (
         <div className="mb-4">
           <BandaAviso>
-            Se ha alcanzado el máximo de alias del plan ({clientePropio!.plan.maxAliases}). Para crear más,
-            elimina alguno o solicita una ampliación del plan.
+            Se ha alcanzado el máximo de alias del plan ({clienteContexto.plan.maxAliases}). Para crear más,
+            {isAdmin
+              ? ' elimina alguno o cambia el plan del cliente en «Resumen».'
+              : ' elimina alguno o solicita una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
@@ -150,12 +183,17 @@ export default function Alias() {
           <Vacio icono={Globe}
             title="Primero se necesita un dominio"
             action={
-              <Link to="/dominios" className="text-sm text-petroleo underline">
+              <Link
+                to={clienteFijo ? rutaCliente(clienteFijo, 'dominios') : '/dominios'}
+                className={estiloBoton('perfil')}
+              >
                 Ir a Dominios
               </Link>
             }
           >
-            Los alias son direcciones de tus dominios, como ventas@tudominio.com.
+            {clienteFijo
+              ? 'Los alias son direcciones de los dominios del cliente, como ventas@sudominio.com.'
+              : 'Los alias son direcciones de tus dominios, como ventas@tudominio.com.'}
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
@@ -176,7 +214,7 @@ export default function Alias() {
         </Hoja>
       ) : (
         <Hoja title="Registro de alias" meta={filtrados.length !== all.length ? `${filtrados.length} de ${all.length}` : undefined} flush>
-          <div className="regla-fila grid gap-3 px-4 py-3 sm:grid-cols-2">
+          <div className={`regla-fila grid gap-3 px-4 py-3 ${verCliente ? 'sm:grid-cols-2' : ''}`}>
             <Input
               label="Buscar"
               type="search"
@@ -184,7 +222,7 @@ export default function Alias() {
               onChange={(e) => setFiltro('q', e.target.value)}
               placeholder="Alias o destino"
             />
-            {isAdmin && (
+            {verCliente && (
               <Select label="Cliente" value={filtroCliente} onChange={(e) => setFiltro('cliente', e.target.value)}>
                 <option value="">Todos los clientes</option>
                 {[...clientes.values()]
@@ -211,7 +249,7 @@ export default function Alias() {
             <>
               <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 lg:flex">
                 <span className="rotulo min-w-0 grow basis-0">Alias</span>
-                {isAdmin && <span className="rotulo w-32 shrink-0">Cliente</span>}
+                {verCliente && <span className="rotulo w-32 shrink-0">Cliente</span>}
                 <span className="rotulo min-w-0 grow-[1.4] basis-0">Reenvía a</span>
                 <span className="rotulo w-40 shrink-0 text-right">Acciones</span>
               </div>
@@ -229,12 +267,13 @@ export default function Alias() {
                       {alias.email}
                     </p>
 
-                    {isAdmin && (
+                    {verCliente && (
                       <div className="flex min-w-0 shrink-0 items-baseline gap-1.5 lg:w-32">
                         <span className="rotulo lg:hidden">Cliente</span>
                         {alias.clientId ? (
+                          // A los alias de su ficha: se sigue en la misma tarea, con su contexto.
                           <Link
-                            to={`/clientes/${alias.clientId}`}
+                            to={rutaCliente(alias.clientId, 'alias')}
                             className="min-w-0 break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
                           >
                             {alias.clientName}
@@ -278,11 +317,11 @@ export default function Alias() {
           key={editor.modo === 'editar' ? editor.alias.id : 'nuevo'}
           editor={editor}
           domains={filtroCliente ? domainList.filter((d) => d.clientId === filtroCliente) : domainList}
-          todosLosDominios={domainList}
+          todosLosDominios={todosLosDominios}
           mailboxes={mailboxes.data?.mailboxes ?? []}
           mailboxesError={mailboxes.isError}
           etiquetaDominio={(d) => {
-            const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
+            const cliente = verCliente ? clientes.get(d.clientId)?.name : undefined;
             return cliente ? `${d.domain} · ${cliente}` : d.domain;
           }}
           motivoBloqueo={(d) => bloqueoAlias(clientes.get(d.clientId))}

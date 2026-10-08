@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type CheckStatus, type DnsCheck, type User } from '../lib/api';
+import { api, ApiError, type CheckStatus, type Client, type DnsCheck, type User } from '../lib/api';
 import {
   invalidarTrasAltaOBaja,
   lecturaDominio,
@@ -14,6 +14,7 @@ import {
 } from '../lib/cloudflare';
 import type { ConflictoDominio } from '../lib/dominios';
 import { BloqueCloudflare } from '../components/cloudflare/BloqueCloudflare';
+import { EnlaceVolver, rutaCliente } from '../components/gestion/comun';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
@@ -121,10 +122,18 @@ export default function DominioDetalle() {
     queryKey: ['me'],
     queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
   });
+  const isAdmin = me.data?.user?.role === 'admin';
 
   const domain = useQuery({
     queryKey: ['domain', id],
     queryFn: () => api.get<{ domain: DominioCorreo }>(`/api/domains/${id}`),
+  });
+  // La administración vuelve a la ficha del cliente dueño del dominio, con
+  // su nombre: así se sabe de quién es y se sigue trabajando en su contexto.
+  const clients = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
+    enabled: isAdmin,
   });
 
   const conflicto = useConflicto(id);
@@ -194,6 +203,8 @@ export default function DominioDetalle() {
   });
 
   const clientId = domain.data?.domain.clientId;
+  const nombreCliente = clients.data?.clients.find((c) => c.id === clientId)?.name;
+  const volverA = isAdmin && clientId ? rutaCliente(clientId, 'dominios') : '/dominios';
   const invalidarTodo = () =>
     Promise.all([
       invalidarTrasAltaOBaja(queryClient, clientId),
@@ -224,7 +235,7 @@ export default function DominioDetalle() {
           ? `Dominio eliminado. ${claves === 1 ? 'Se ha revocado 1 clave de API' : `Se han revocado ${claves} claves de API`} que enviaba${claves === 1 ? '' : 'n'} desde sus buzones.`
           : 'Dominio eliminado.',
       );
-      navigate('/dominios');
+      navigate(volverA);
     },
     onError: async (err) => {
       // Un borrado parcial ya ha retirado parte de los buzones: las listas
@@ -244,9 +255,12 @@ export default function DominioDetalle() {
 
   if (domain.isPending) {
     return (
-      <Hoja>
-        <Cargando label="Cargando la ficha del dominio…" />
-      </Hoja>
+      <>
+        <EnlaceVolver to="/dominios">Dominios</EnlaceVolver>
+        <Hoja>
+          <Cargando label="Cargando la ficha del dominio…" />
+        </Hoja>
+      </>
     );
   }
   if (domain.isError || !domain.data) {
@@ -270,7 +284,6 @@ export default function DominioDetalle() {
   }
 
   const record = domain.data.domain;
-  const isAdmin = me.data?.user?.role === 'admin';
   const checks = record.dnsStatus.checks ?? [];
   const required = checks.filter((c) => c.required);
   const optional = checks.filter((c) => !c.required && !esEndurecimiento(c));
@@ -304,6 +317,9 @@ export default function DominioDetalle() {
 
   return (
     <>
+      <EnlaceVolver to={volverA}>
+        {isAdmin ? (nombreCliente ? `Dominios de ${nombreCliente}` : 'Dominios del cliente') : 'Dominios'}
+      </EnlaceVolver>
       <Membrete
         title={
           <span className="break-all">

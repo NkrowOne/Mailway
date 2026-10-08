@@ -6,9 +6,9 @@ import { api, ApiError, type Client, type FormInfo, type Mailbox, type User } fr
 import { formatDate, plural } from '../lib/format';
 import { Button, estiloBoton } from '../ui/Button';
 import { Input, Select, Textarea } from '../ui/Field';
-import { AvisoError, Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../ui/kit';
+import { AvisoError, Dialogo, Hoja, MarcaFondo, Cargando, Muestra, Vacio } from '../ui/kit';
 import { useToast } from '../ui/toast';
-import { Botonera, Casilla } from '../components/gestion/comun';
+import { Botonera, CabeceraVista, Casilla, rutaCliente } from '../components/gestion/comun';
 
 /*
   Formularios de contacto para webs estáticas: el cliente elige el buzón que
@@ -58,10 +58,17 @@ function listaOrigenes(texto: string): string[] {
     .filter(Boolean);
 }
 
-export default function Formularios({ user }: { user: User }) {
+/**
+ * `clienteFijo`: la misma vista en la pestaña «Formularios» de la ficha de un
+ * cliente: sus formularios y sus buzones, y el formulario nuevo ya a su nombre.
+ */
+export default function Formularios({ user, clienteFijo }: { user: User; clienteFijo?: string }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const isAdmin = user.role === 'admin';
+  // El selector de cliente (y su nombre en cada formulario) solo en la lista de todos.
+  const elegible = isAdmin && !clienteFijo;
+  const sufijo = clienteFijo ? `?clientId=${encodeURIComponent(clienteFijo)}` : '';
 
   const [editando, setEditando] = useState<FormInfo | 'nuevo' | null>(null);
   const [borrador, setBorrador] = useState<Borrador>(BORRADOR_VACIO);
@@ -70,25 +77,26 @@ export default function Formularios({ user }: { user: User }) {
   const [aEliminar, setAEliminar] = useState<FormInfo | null>(null);
 
   const forms = useQuery({
-    queryKey: ['forms'],
-    queryFn: () => api.get<{ forms: FormInfo[] }>('/api/forms'),
+    queryKey: clienteFijo ? ['forms', 'cliente', clienteFijo] : ['forms'],
+    queryFn: () => api.get<{ forms: FormInfo[] }>(`/api/forms${sufijo}`),
   });
   const mailboxes = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
+    queryKey: clienteFijo ? ['mailboxes', 'cliente', clienteFijo] : ['mailboxes'],
+    queryFn: () => api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes${sufijo}`),
   });
   const clients = useQuery({
     queryKey: ['clients'],
     queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
-    enabled: isAdmin,
+    enabled: elegible,
   });
   // El administrador ve los buzones de todos: en el diálogo solo se ofrecen
-  // los del cliente elegido (el servidor rechaza los demás).
+  // los del cliente elegido (el servidor rechaza los demás). Con el cliente
+  // fijado ya son solo los suyos.
   const buzonesCliente = useQuery({
     queryKey: ['mailboxes', { clientId: borrador.clientId }],
     queryFn: () =>
       api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes?clientId=${encodeURIComponent(borrador.clientId)}`),
-    enabled: isAdmin && editando === 'nuevo' && borrador.clientId !== '',
+    enabled: elegible && editando === 'nuevo' && borrador.clientId !== '',
   });
 
   const lista = forms.data?.forms ?? [];
@@ -96,7 +104,7 @@ export default function Formularios({ user }: { user: User }) {
   const activos = todosLosBuzones.filter((m) => m.status === 'active');
   const clientList = clients.data?.clients ?? [];
   const nombreCliente = new Map(clientList.map((c) => [c.id, c.name]));
-  const candidatos = isAdmin
+  const candidatos = elegible
     ? borrador.clientId
       ? (buzonesCliente.data?.mailboxes ?? []).filter((m) => m.status === 'active')
       : []
@@ -174,7 +182,10 @@ export default function Formularios({ user }: { user: User }) {
 
   function abrirNuevo() {
     setError('');
-    setBorrador({ ...BORRADOR_VACIO, clientId: isAdmin && clientList.length === 1 ? clientList[0]!.id : '' });
+    setBorrador({
+      ...BORRADOR_VACIO,
+      clientId: clienteFijo ?? (isAdmin && clientList.length === 1 ? clientList[0]!.id : ''),
+    });
     setEditando('nuevo');
   }
 
@@ -215,9 +226,14 @@ export default function Formularios({ user }: { user: User }) {
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Formularios"
-        meta="Formularios de contacto para webs estáticas: los mensajes llegan a tu buzón sin claves secretas en la web."
+        enPestana={Boolean(clienteFijo)}
+        meta={
+          clienteFijo
+            ? 'Formularios de contacto para las webs del cliente: los mensajes llegan a su buzón sin claves secretas en la web.'
+            : 'Formularios de contacto para webs estáticas: los mensajes llegan a tu buzón sin claves secretas en la web.'
+        }
         actions={
           <Button variant="principal" disabled={activos.length === 0} onClick={abrirNuevo}>
             Nuevo formulario
@@ -246,7 +262,10 @@ export default function Formularios({ user }: { user: User }) {
               title="Sin formularios"
               action={
                 activos.length === 0 ? (
-                  <Link to="/buzones" className={estiloBoton('perfil')}>
+                  <Link
+                    to={clienteFijo ? rutaCliente(clienteFijo, 'buzones') : '/buzones'}
+                    className={estiloBoton('perfil')}
+                  >
                     Crear un buzón
                   </Link>
                 ) : (
@@ -287,7 +306,7 @@ export default function Formularios({ user }: { user: User }) {
                       <span className="codigo text-tinta-2">{form.publicKey}</span>
                       {' · llega a '}
                       <span className="valor text-tinta-2">{form.recipientEmail}</span>
-                      {isAdmin && nombreCliente.get(form.clientId) && <> · {nombreCliente.get(form.clientId)}</>}
+                      {elegible && nombreCliente.get(form.clientId) && <> · {nombreCliente.get(form.clientId)}</>}
                     </p>
                   </div>
                   <div className="min-w-0 basis-full md:basis-0 md:grow">
@@ -366,7 +385,7 @@ export default function Formularios({ user }: { user: User }) {
         ancho="amplio"
       >
         <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
-          {isAdmin && editando === 'nuevo' && (
+          {elegible && editando === 'nuevo' && (
             <Select
               label="Cliente propietario"
               value={borrador.clientId}
@@ -400,9 +419,9 @@ export default function Formularios({ user }: { user: User }) {
               disabled={candidatos.length === 0}
               onChange={(e) => cambiar({ recipientMailboxId: e.target.value })}
               help={
-                isAdmin && !borrador.clientId
+                elegible && !borrador.clientId
                   ? 'Selecciona primero el cliente: solo se ofrecen sus buzones.'
-                  : isAdmin && buzonesCliente.isPending
+                  : elegible && buzonesCliente.isPending
                     ? 'Leyendo los buzones del cliente…'
                     : candidatos.length === 0
                       ? 'No hay buzones activos. Crea uno en «Buzones».'
@@ -474,7 +493,7 @@ export default function Formularios({ user }: { user: User }) {
             )}
           </fieldset>
 
-          {isAdmin && editando === 'nuevo' && buzonesCliente.isError && (
+          {elegible && editando === 'nuevo' && buzonesCliente.isError && (
             <AvisoError onRetry={() => void buzonesCliente.refetch()} retrying={buzonesCliente.isFetching}>
               No se han podido leer los buzones del cliente.
             </AvisoError>

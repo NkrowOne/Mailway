@@ -4,7 +4,9 @@
 > los titulares de los buzones. Antes de enviarla, sustituye
 > `mail.miempresa.com`, `webmail.miempresa.com` y `panel.miempresa.com` por los
 > nombres de tu servidor, y adjunta a cada persona su **enlace de
-> configuración** (Buzones → el buzón → Conectar dispositivos).
+> configuración** (Buzones → el buzón → Conectar dispositivos). Si has probado
+> el buzón antes de entregarlo, usa **Reiniciar configuración** en su ficha:
+> genera una contraseña y un enlace nuevos y retira lo que dejó la prueba.
 
 ---
 

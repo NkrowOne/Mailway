@@ -428,6 +428,21 @@ const migrations: { id: string; sql: string }[] = [
           AND (d.cloudflare_account_id IS NULL OR a.client_id IS NULL);
     `,
   },
+  {
+    id: '009-perfil-de-buzones',
+    sql: `
+      -- Foto del buzón: la pone el titular en el onboarding o en «Mi buzón»
+      -- (o quien administra) y el webmail la muestra como avatar del
+      -- remitente. Tabla aparte para que los listados de buzones no carguen
+      -- las imágenes; solo leen updated_at para invalidar la caché.
+      CREATE TABLE mailbox_photos (
+        mailbox_id TEXT PRIMARY KEY REFERENCES mailboxes(id) ON DELETE CASCADE,
+        mime TEXT NOT NULL,
+        data BLOB NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 function runMigrations(): void {

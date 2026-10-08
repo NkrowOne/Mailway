@@ -29,8 +29,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
     `clients` (planes, clientes, usuarios, `assertWithinLimit`), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
-    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `portal`
-    (enlaces de configuración, «Mi buzón», `/api/webmail/password`),
+    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `perfil`
+    (nombre visible y foto del buzón), `portal` (enlaces de configuración y
+    su reinicio, «Mi buzón», rutas `/api/webmail/*` de Roundcube),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
     (marca blanca y `/api/traefik/config`), `transactional` (claves y
@@ -46,7 +47,8 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     una línea JSON por la salida estándar), que usa el instalador. Los pasos
     del asistente que comparte viven en `modules/setup.ts`.
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
-  `src/pages/admin/`), portal del titular en `src/pages/portal/`, kit de UI
+  `src/pages/admin/`; la ficha del cliente, con sus pestañas, en
+  `ClienteDetalle.tsx` y `src/pages/admin/cliente/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
 - `deploy/` — `instalar.sh` (instalador idempotente), compose del motor y el

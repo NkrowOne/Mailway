@@ -13,16 +13,18 @@ import {
   veredictoUso,
   type BulkResponse,
 } from '../lib/gestion';
-import { Button } from '../ui/Button';
+import { Button, estiloBoton } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Dialogo, Hoja, MarcaFondo, Membrete, Cargando, Vacio } from '../ui/kit';
+import { Dialogo, Hoja, MarcaFondo, Cargando, Vacio } from '../ui/kit';
 import { AltaMasiva } from '../components/gestion/AltaMasiva';
 import {
   BandaAviso,
   BandaError,
   Botonera,
+  CabeceraVista,
   dominioInicialDisponible,
   Opcion,
+  rutaCliente,
   SelectorDominio,
   type MotivoBloqueoDominio,
 } from '../components/gestion/comun';
@@ -43,28 +45,37 @@ interface FichaAbierta {
  * Registro de buzones: tabla reglada agrupada por dominio, con búsqueda y
  * filtros (cliente y dominio, en la URL para poder enlazarlos), ocupación
  * medida contra la cuota y una ficha por buzón con todas sus acciones.
+ *
+ * `clienteFijo`: la misma vista dentro de la ficha de un cliente (pestaña
+ * «Buzones»). Solo sus buzones y sus dominios, sin selector ni columna de
+ * cliente, y con una cabecera compacta bajo la del cliente.
  */
-export default function Buzones() {
+export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) {
   const queryClient = useQueryClient();
   const user = useUsuario();
   const isAdmin = user?.role === 'admin';
   const { clientes } = useClientes(user);
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
-  const filtroCliente = isAdmin ? (params.get('cliente') ?? '') : '';
+  const filtroCliente = clienteFijo ?? (isAdmin ? (params.get('cliente') ?? '') : '');
   const filtroDominio = params.get('dominio') ?? '';
+  // Con el cliente fijado, su columna y su selector sobran.
+  const verCliente = isAdmin && !clienteFijo;
+  const sufijo = clienteFijo ? `?clientId=${encodeURIComponent(clienteFijo)}` : '';
 
+  // Los dominios, de la lista común (es corta y la comparten las demás
+  // vistas); buzones y alias, solo los del cliente cuando está fijado.
   const domains = useQuery({
     queryKey: ['domains'],
     queryFn: () => api.get<{ domains: DomainRecord[] }>('/api/domains'),
   });
   const mailboxes = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
+    queryKey: clienteFijo ? ['mailboxes', 'cliente', clienteFijo] : ['mailboxes'],
+    queryFn: () => api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes${sufijo}`),
   });
   const aliases = useQuery({
-    queryKey: ['aliases'],
-    queryFn: () => api.get<{ aliases: Alias[] }>('/api/aliases'),
+    queryKey: clienteFijo ? ['aliases', 'cliente', clienteFijo] : ['aliases'],
+    queryFn: () => api.get<{ aliases: Alias[] }>(`/api/aliases${sufijo}`),
   });
 
   const [ficha, setFicha] = useState<FichaAbierta | null>(null);
@@ -85,7 +96,10 @@ export default function Buzones() {
     setFicha((prev) => ({ id: mailbox.id, vista, password, mailbox, n: (prev?.n ?? 0) + 1 }));
   }
 
-  const domainList = useMemo(() => domains.data?.domains ?? [], [domains.data]);
+  const domainList = useMemo(
+    () => (domains.data?.domains ?? []).filter((d) => !clienteFijo || d.clientId === clienteFijo),
+    [domains.data, clienteFijo],
+  );
   const all = useMemo(() => mailboxes.data?.mailboxes ?? [], [mailboxes.data]);
 
   const dominiosVisibles = useMemo(
@@ -122,7 +136,7 @@ export default function Buzones() {
   }, [filtrados]);
 
   const etiquetaDominio = (d: DomainRecord) => {
-    const cliente = isAdmin ? clientes.get(d.clientId)?.name : undefined;
+    const cliente = verCliente ? clientes.get(d.clientId)?.name : undefined;
     return cliente ? `${d.domain} · ${cliente}` : d.domain;
   };
   // Un dominio de un cliente suspendido o sin plazas no admite buzones: se
@@ -131,29 +145,51 @@ export default function Buzones() {
 
   const fichaMailbox = ficha ? (all.find((m) => m.id === ficha.id) ?? ficha.mailbox) : null;
   const fichaCliente = fichaMailbox?.clientId ? clientes.get(fichaMailbox.clientId) : undefined;
-  const clientePropio = !isAdmin ? [...clientes.values()][0] : undefined;
-  const limiteAlcanzado = clientePropio ? clientePropio.usage.mailboxes >= clientePropio.plan.maxMailboxes : false;
+  // El cliente cuyo plan y estado mandan: el propio (usuario de cliente) o
+  // el fijado (pestaña de la ficha). En la lista de todos, ninguno.
+  const clienteContexto = clienteFijo
+    ? clientes.get(clienteFijo)
+    : !isAdmin
+      ? [...clientes.values()][0]
+      : undefined;
+  const limiteAlcanzado = clienteContexto
+    ? clienteContexto.usage.mailboxes >= clienteContexto.plan.maxMailboxes
+    : false;
   // Crear está vetado con el plan lleno o la cuenta suspendida: el botón lo
   // dice antes de rellenar el formulario, no el servidor al enviarlo.
-  const altaBloqueada = domainList.length === 0 || limiteAlcanzado || Boolean(clientePropio?.suspended);
-  const hayFiltros = Boolean(q || filtroCliente || filtroDominio);
+  const altaBloqueada = domainList.length === 0 || limiteAlcanzado || Boolean(clienteContexto?.suspended);
+  const hayFiltros = Boolean(q || (filtroCliente && !clienteFijo) || filtroDominio);
   const cargando = mailboxes.isPending || domains.isPending;
+  const recuento =
+    !cargando && all.length > 0 ? (
+      <>
+        {plural(all.length, 'buzón', 'buzones')}
+        {clienteContexto && ` de ${clienteContexto.plan.maxMailboxes} del plan`} ·{' '}
+        {plural(new Set(all.map((m) => m.domainId)).size, 'dominio', 'dominios')}
+      </>
+    ) : null;
+  const irADominios = clienteFijo ? rutaCliente(clienteFijo, 'dominios') : '/dominios';
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="Buzones"
+        enPestana={Boolean(clienteFijo)}
         meta={
-          <>
-            <p>Cuentas de correo con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.</p>
-            {!cargando && all.length > 0 && (
-              <p className="mt-1 text-sm text-tinta-3">
-                {plural(all.length, 'buzón', 'buzones')}
-                {clientePropio && ` de ${clientePropio.plan.maxMailboxes} del plan`} ·{' '}
-                {plural(new Set(all.map((m) => m.domainId)).size, 'dominio', 'dominios')}
+          clienteFijo ? (
+            (recuento ?? 'Cuentas de correo del cliente, cada una con su contraseña y su cuota.')
+          ) : (
+            <>
+              {/* Para la administración es el listado de toda la instancia: se dice, para
+                  no confundirlo con la pestaña «Buzones» de la ficha de un cliente. */}
+              <p>
+                {isAdmin
+                  ? 'Cuentas de correo de todos los clientes, con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.'
+                  : 'Cuentas de correo con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.'}
               </p>
-            )}
-          </>
+              {recuento && <p className="mt-1 text-sm text-tinta-3">{recuento}</p>}
+            </>
+          )
         }
         actions={
           <Button variant="principal" onClick={() => setCreateOpen(true)} disabled={altaBloqueada}>
@@ -172,15 +208,18 @@ export default function Buzones() {
           </BandaAviso>
         </div>
       )}
-      {limiteAlcanzado && !clientePropio?.suspended && (
+      {limiteAlcanzado && clienteContexto && !clienteContexto.suspended && (
         <div className="mb-4">
           <BandaAviso>
-            Se ha alcanzado el máximo de buzones del plan ({clientePropio!.plan.maxMailboxes}). Para crear más,
-            elimina alguno o solicita una ampliación del plan.
+            Se ha alcanzado el máximo de buzones del plan ({clienteContexto.plan.maxMailboxes}). Para crear más,
+            {isAdmin
+              ? ' elimina alguno o cambia el plan del cliente en «Resumen».'
+              : ' elimina alguno o solicita una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
-      {clientePropio?.suspended && (
+      {/* La administración ya ve la suspensión en la cabecera de la ficha del cliente. */}
+      {!isAdmin && clienteContexto?.suspended && (
         <div className="mb-4">
           <BandaError>
             La cuenta está suspendida: sus buzones no pueden iniciar sesión y no es posible crear buzones
@@ -208,12 +247,14 @@ export default function Buzones() {
           <Vacio icono={Globe}
             title="Primero se necesita un dominio"
             action={
-              <Link to="/dominios" className="text-sm text-petroleo underline">
+              <Link to={irADominios} className={estiloBoton('perfil')}>
                 Ir a Dominios
               </Link>
             }
           >
-            Da de alta un dominio en «Dominios»; después podrás crear buzones como nombre@tudominio.com.
+            {clienteFijo
+              ? 'Da de alta un dominio del cliente en «Dominios»; después podrás crear buzones como nombre@sudominio.com.'
+              : 'Da de alta un dominio en «Dominios»; después podrás crear buzones como nombre@tudominio.com.'}
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
@@ -246,7 +287,9 @@ export default function Buzones() {
           }
           flush
         >
-          <div className="regla-fila grid gap-3 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            className={`regla-fila grid gap-3 px-4 py-3 sm:grid-cols-2 ${verCliente ? 'lg:grid-cols-3' : ''}`}
+          >
             <Input
               label="Buscar"
               type="search"
@@ -254,7 +297,7 @@ export default function Buzones() {
               onChange={(e) => setFiltro('q', e.target.value)}
               placeholder="Dirección o nombre visible"
             />
-            {isAdmin && (
+            {verCliente && (
               <Select label="Cliente" value={filtroCliente} onChange={(e) => setFiltro('cliente', e.target.value)}>
                 <option value="">Todos los clientes</option>
                 {[...clientes.values()]
@@ -290,7 +333,7 @@ export default function Buzones() {
               {/* Cabecera de columnas: en pantalla estrecha cada dato lleva su rótulo. */}
               <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 lg:flex">
                 <span className="rotulo min-w-0 grow basis-0">Buzón</span>
-                {isAdmin && <span className="rotulo w-28 shrink-0">Cliente</span>}
+                {verCliente && <span className="rotulo w-28 shrink-0">Cliente</span>}
                 <span className="rotulo w-32 shrink-0">Ocupación</span>
                 <span className="rotulo w-32 shrink-0">Estado</span>
                 <span className="rotulo w-44 shrink-0 text-right">Acciones</span>
@@ -306,7 +349,7 @@ export default function Buzones() {
                     <FilaBuzon
                       key={mailbox.id}
                       mailbox={mailbox}
-                      isAdmin={isAdmin}
+                      verCliente={verCliente}
                       clienteSuspendido={mailbox.clientId ? clientes.get(mailbox.clientId)?.suspended : undefined}
                       onAbrir={(vista) => abrirFicha(mailbox, vista)}
                     />
@@ -384,12 +427,12 @@ const rellenoUso = {
 
 function FilaBuzon({
   mailbox,
-  isAdmin,
+  verCliente,
   clienteSuspendido,
   onAbrir,
 }: {
   mailbox: Mailbox;
-  isAdmin: boolean;
+  verCliente: boolean;
   clienteSuspendido?: boolean;
   onAbrir: (vista: VistaFicha) => void;
 }) {
@@ -414,12 +457,13 @@ function FilaBuzon({
         <p className="text-sm text-tinta-3">{mailbox.displayName || 'Sin nombre visible'}</p>
       </div>
 
-      {isAdmin && (
+      {verCliente && (
         <div className="flex min-w-0 shrink-0 items-baseline gap-1.5 lg:w-28">
           <span className="rotulo lg:hidden">Cliente</span>
           {mailbox.clientId ? (
+            // A los buzones de su ficha: se sigue en la misma tarea, con su contexto.
             <Link
-              to={`/clientes/${mailbox.clientId}`}
+              to={rutaCliente(mailbox.clientId, 'buzones')}
               className="min-w-0 break-words text-sm text-tinta-2 hover:text-petroleo hover:underline"
             >
               {mailbox.clientName}

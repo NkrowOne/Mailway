@@ -10,11 +10,13 @@ import { useToast } from '../../ui/toast';
 import { ConectarBuzon } from '../ConectarBuzon';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from './comun';
 import { ContrasenasAplicacion } from './ContrasenasAplicacion';
+import { ReiniciarBuzon } from './ReiniciarBuzon';
 
 export type VistaFicha =
   | 'resumen'
   | 'credenciales'
   | 'conectar'
+  | 'reiniciar'
   | 'editar'
   | 'contrasena'
   | 'aplicaciones'
@@ -26,6 +28,7 @@ const titulos: Record<VistaFicha, string> = {
   resumen: 'Buzón',
   credenciales: 'Credenciales del buzón',
   conectar: 'Conectar dispositivos',
+  reiniciar: 'Reiniciar configuración',
   editar: 'Editar buzón',
   contrasena: 'Restablecer contraseña',
   aplicaciones: 'Contraseñas de aplicación',
@@ -64,6 +67,8 @@ export function FichaBuzon({
   const [password, setPassword] = useState<string | undefined>(passwordInicial);
   // Contraseña de aplicación recién creada y aún sin confirmar.
   const [appPendiente, setAppPendiente] = useState(false);
+  // Enlace del reinicio en pantalla y aún sin confirmar que se ha copiado.
+  const [reinicioPendiente, setReinicioPendiente] = useState(false);
 
   const volver = () => setVista('resumen');
   // Mientras la contraseña recién generada no se confirme como guardada, la
@@ -73,7 +78,9 @@ export function FichaBuzon({
     ? { pregunta: '¿Has guardado la contraseña?', detalle: 'No se podrá volver a ver.' }
     : appPendiente && vista === 'aplicaciones'
       ? { pregunta: '¿Has introducido la contraseña de aplicación?', detalle: 'No se podrá volver a ver.' }
-      : null;
+      : reinicioPendiente && vista === 'reiniciar'
+        ? { pregunta: '¿Has copiado el enlace de configuración?', detalle: 'No se podrá volver a ver.' }
+        : null;
   const titulo = vista === 'resumen' && mailbox ? mailbox.email : titulos[vista];
 
   const pie =
@@ -93,7 +100,7 @@ export function FichaBuzon({
     <Dialogo open={mailbox !== null} onClose={onClose} title={titulo} confirmarCierre={confirmarCierre} pie={pie}>
       {mailbox && (
         <div className="flex flex-col gap-4">
-          {vista !== 'resumen' && vista !== 'credenciales' && (
+          {vista !== 'resumen' && vista !== 'credenciales' && !(vista === 'reiniciar' && reinicioPendiente) && (
             <button
               type="button"
               onClick={() => (contrasenaPendiente && vista === 'conectar' ? setVista('credenciales') : volver())}
@@ -112,7 +119,22 @@ export function FichaBuzon({
             <Credenciales mailbox={mailbox} password={password} onConectar={() => setVista('conectar')} />
           )}
           {vista === 'conectar' && (
-            <ConectarBuzon mailboxId={mailbox.id} email={mailbox.email} passwordRecienGenerada={password} />
+            <ConectarBuzon
+              mailboxId={mailbox.id}
+              email={mailbox.email}
+              passwordRecienGenerada={password}
+              // Con una contraseña recién generada sin confirmar, el reinicio
+              // la sustituiría por otra: no se ofrece hasta guardarla.
+              onReiniciar={contrasenaPendiente ? undefined : () => setVista('reiniciar')}
+            />
+          )}
+          {vista === 'reiniciar' && (
+            <ReiniciarBuzon
+              mailbox={mailbox}
+              clienteSuspendido={clienteSuspendido}
+              onCancelar={volver}
+              onPendiente={setReinicioPendiente}
+            />
           )}
           {vista === 'editar' && <Editar mailbox={mailbox} planQuotaMb={planQuotaMb} onHecho={volver} />}
           {vista === 'contrasena' && (
@@ -196,6 +218,12 @@ function Resumen({
           detalle="Datos de conexión, perfiles de configuración y enlace para el titular."
           boton="Abrir"
           onClick={() => onVista('conectar')}
+        />
+        <Accion
+          titulo="Reiniciar configuración"
+          detalle="Tras una prueba, empieza de cero: contraseña y enlace de configuración nuevos para el titular."
+          boton="Reiniciar"
+          onClick={() => onVista('reiniciar')}
         />
         <Accion titulo="Editar" detalle="Nombre visible y cuota." boton="Editar" onClick={() => onVista('editar')} />
         <Accion

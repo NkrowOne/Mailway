@@ -255,7 +255,7 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato). |
+| `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato) y `photoUpdatedAt` (`null` = sin foto). |
 | `POST /api/mailboxes` | `{ domainId, localPart, displayName?, password? (10–200), quotaMb? }` → `{ mailbox, password? }` (`password` solo si se generó). La cuota se acota a la del plan. |
 | `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ dryRun, capacity, valid, exceedsPlan, ownershipPending, ownershipError, results }`; con la propiedad del dominio pendiente, cada línea sale con su error y no se responde `409`. Si no, exige la propiedad (`409 domain_ownership_pending`), comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. |
 | `PATCH /api/mailboxes/:id` | `{ displayName?, quotaMb?, status?: active\|suspended }`. Reactivar con el cliente suspendido: `409 client_suspended`. |
@@ -263,6 +263,7 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 | `DELETE /api/mailboxes/:id` | → `{ ok, aliasesUpdated, aliasesDeleted }`: antes de borrar, quita el buzón de los alias que reenvían a él (y borra los que se quedan sin destinos). Remitente de una clave activa: `409 mailbox_in_use`. |
 | `GET /api/mailboxes/:id/connection` | Datos de conexión (sección 5.3). |
 | `GET /api/mailboxes/:id/mobileconfig` | Perfil de Apple del buzón, sin contraseña. Sin nombre de servidor configurado: `409 mail_hostname_missing`. |
+| `GET\|PUT\|DELETE /api/mailboxes/:id/photo` | Foto del buzón (ver «Perfil del buzón», abajo). `PUT { photo }` → `{ photoUpdatedAt }`. |
 | `GET /api/aliases?clientId=&domainId=` | `{ aliases }`, cada uno con `destinations` y `externalDestinations`. |
 | `POST /api/aliases` | `{ domainId, localPart, destinations (1–20) }`. |
 | `PATCH /api/aliases/:id` | `{ destinations }`: sustituye los destinos. |
@@ -271,6 +272,19 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 Los destinos de un alias pueden ser buzones del **mismo cliente** o direcciones
 externas (reenvío a otro proveedor). Una dirección de un dominio de esta
 instancia que no es un buzón existente se rechaza en lugar de salir a Internet.
+
+**Perfil del buzón.** El nombre visible y la foto los puede poner quien
+administra (aquí), el titular en el onboarding (sección 6.1) o en «Mi buzón»
+(6.2); el webmail los usa (6.3). La foto viaja como data URL en JSON
+(`{ "photo": "data:image/jpeg;base64,…" }`): solo JPEG, PNG o WebP
+**comprobados por su firma**, hasta 512 KB (`400 invalid_photo`, `400
+photo_too_large`). La web la recorta y la reduce a 256×256 JPEG antes de
+subirla, lo que además quita los metadatos. Se sirve con su tipo real,
+`nosniff`, `Content-Security-Policy: default-src 'none'` y caché privada de 5
+minutos; las URL llevan `?v=<photoUpdatedAt>`. Sin foto: `404
+photo_not_found`. Cambios en la actividad: `mailbox.photo_updated`,
+`mailbox.photo_removed` y, desde el titular, `portal.profile_updated`,
+`portal.photo_updated` y `portal.photo_removed`.
 
 Errores frecuentes de altas:
 
@@ -337,6 +351,7 @@ guarda en claro.
 | `POST /api/mailboxes/:id/setup-links` | `{ includePassword?, password?, ttlHours? (1–720, 72 por defecto) }` → `{ link: { id, url, expiresAt, hasPassword } }`. `url` = `<panel>/conectar/<token>`. |
 | `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword }] }`. |
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
+| `POST /api/mailboxes/:id/setup-reset` | Reinicia la configuración del buzón (ver abajo). `{ revokeAppPasswords? (true por defecto), includePassword? (true por defecto), ttlHours? (1–720, 72 por defecto) }` → `{ password, link: { id, url, expiresAt, hasPassword }, linksRemoved, appPasswordsRevoked, photoRemoved }`. |
 
 - Con `includePassword: true` hay que indicar en `password` la contraseña
   recién generada (`400 password_required`). Se comprueba con el motor antes de
@@ -354,6 +369,20 @@ guarda en claro.
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
   buzón. Los enlaces caducados se eliminan 30 días después.
 - Buzón o cliente suspendido: `400 mailbox_suspended`.
+
+**Reiniciar la configuración** (`setup-reset`) deja el buzón como recién
+creado para entregárselo al titular, normalmente después de haberlo probado:
+genera una contraseña principal nueva, elimina todos los enlaces anteriores,
+cierra las sesiones de «Mi buzón», borra los intentos fallidos registrados del
+buzón, quita la foto (parte del onboarding del titular; el nombre visible se
+conserva) y crea un enlace nuevo (con la contraseña cifrada si
+`includePassword`).
+Con `revokeAppPasswords` revoca en el motor las contraseñas de aplicación
+activas y borra su historial; desmárcalo si alguna la usa una integración que
+debe seguir enviando. El correo del buzón no se modifica. Primero se revocan
+las contraseñas de aplicación y luego se cambia la principal: si el motor no
+responde (`502`), no se ha borrado ningún enlace y el reinicio se puede
+repetir. Queda en la actividad como `mailbox.setup_reset`, sin secretos.
 
 ### 2.8 Actividad
 
@@ -778,16 +807,20 @@ Desde **Buzones → (buzón) → Conectar dispositivos** se genera un enlace
 (`/conectar/<token>`) con su código QR. Al abrirlo, el titular ve los pasos
 para su dispositivo (iPhone o iPad, Mac, Android, Outlook, Thunderbird, otros),
 con el perfil de Apple, el QR de importación de Thunderbird para Android, los
-datos manuales, el webmail y el acceso a «Mi buzón». Si el enlace se crea al
-dar de alta el buzón, puede incluir la contraseña inicial.
+datos manuales, el webmail y el acceso a «Mi buzón». Antes de los
+dispositivos puede poner su **nombre visible y su foto** (el nombre va en el
+perfil de Apple y en el QR de Thunderbird). Si el enlace se crea al dar de alta
+el buzón, puede incluir la contraseña inicial.
 
 Rutas públicas (60 peticiones por minuto e IP, sin caché):
 
 | Ruta | Descripción |
 |---|---|
-| `GET /api/public/setup/:token` | `{ email, displayName, brandName, connection, password?, hasPassword, expiresAt, portalUrl, appleProfileUrl, thunderbirdAndroidQr }`. |
+| `GET /api/public/setup/:token` | `{ email, displayName, brandName, connection, password?, hasPassword, expiresAt, portalUrl, photoUrl, appleProfileUrl, thunderbirdAndroidQr }`. `photoUrl` es relativa o `null`. |
 | `GET /api/public/setup/:token/perfil.mobileconfig` | Perfil de Apple (con la contraseña si el enlace la lleva). |
 | `POST /api/public/setup/:token/done` | «Ya lo he configurado»: borra la contraseña del enlace. |
+| `PATCH /api/public/setup/:token/profile` | `{ displayName (≤ 80) }` → `{ displayName }`. Cambia también el motor. |
+| `GET\|PUT\|DELETE /api/public/setup/:token/photo` | Foto del buzón (sección 2.5). `PUT { photo }` → `{ photoUrl, photoUpdatedAt }`. |
 
 Enlace inexistente, caducado o revocado: `404 setup_link_invalid`. Buzón o
 cliente suspendido: `403 mailbox_suspended`.
@@ -802,7 +835,9 @@ aplicación.
 | Método y ruta | Descripción |
 |---|---|
 | `POST /api/portal/login` | `{ email, password }` → `{ ok, email }`. Cookie `mailway_buzon` (httpOnly, `SameSite=Lax`, `Path=/api/portal`, 12 horas). |
-| `GET /api/portal/me` | Datos del buzón, conexión, ocupación y webmail. |
+| `GET /api/portal/me` | Datos del buzón, conexión, ocupación, webmail y `photoUrl` (relativa o `null`). |
+| `PATCH /api/portal/profile` | `{ displayName (≤ 80) }` → `{ displayName }`. |
+| `GET\|PUT\|DELETE /api/portal/photo` | Foto del buzón (sección 2.5). `PUT { photo }` → `{ photoUrl, photoUpdatedAt }`. |
 | `POST /api/portal/logout` | Cierra la sesión. |
 | `POST /api/portal/password` | `{ current, next (≥ 10) }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. |
 | `GET /api/portal/mobileconfig` | Perfil de Apple sin contraseña. |
@@ -838,6 +873,16 @@ El cambio de contraseña llama al panel por la red interna:
 cabecera `X-Mailway-Token` = `MAILWAY_WEBMAIL_TOKEN`) → `200 ok`, o `error`
 con `400`, `401`, `403`, `429` o `503`. Sin `MAILWAY_WEBMAIL_TOKEN` la ruta no
 existe (`404`) y el webmail oculta la pestaña.
+
+El complemento `mailway_perfil` usa otras dos rutas con el mismo secreto (JSON
+o formulario; sin secreto configurado, `404`; secreto incorrecto, `401`):
+
+- `POST /api/webmail/profile` `{ user }` → `{ name, photo }`: el nombre visible
+  con el que se crea y se mantiene la identidad del remitente y si hay foto.
+  Buzón inexistente: `404`.
+- `POST /api/webmail/photo` `{ user, email }` → la imagen, **solo si `email`
+  es un buzón del mismo cliente que `user`**; si no, `404`. La foto de un
+  empleado nunca se muestra a otra empresa alojada en la misma instancia.
 
 ---
 

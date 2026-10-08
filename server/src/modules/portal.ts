@@ -3,8 +3,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
-import { decryptSecret, encryptSecret, hashToken, newSessionToken, randomId } from '../core/crypto';
+import {
+  decryptSecret,
+  encryptSecret,
+  generateMailboxPassword,
+  hashToken,
+  newSessionToken,
+  randomId,
+} from '../core/crypto';
 import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/errors';
+import { withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
@@ -24,6 +32,16 @@ import {
   thunderbirdAndroidQrPayload,
   type ConnectionSettings,
 } from './connection';
+import {
+  borrarFoto,
+  cambiarNombreVisible,
+  enviarFoto,
+  fechaFoto,
+  fotoSchema,
+  guardarFoto,
+  leerFoto,
+  nombreSchema,
+} from './perfil';
 
 /**
  * Portal del titular del buzón y enlaces de configuración de dispositivos.
@@ -407,6 +425,49 @@ function enviarPerfil(reply: FastifyReply, email: string, plist: string): string
   return plist;
 }
 
+interface EnlaceNuevo {
+  id: string;
+  url: string;
+  expiresAt: number;
+  hasPassword: boolean;
+}
+
+/**
+ * Guarda un enlace de configuración nuevo y devuelve su URL. El token en
+ * claro solo existe en la respuesta que lo crea; en la base, su hash.
+ */
+function insertarEnlace(
+  req: FastifyRequest,
+  titular: Titular,
+  passwordEnc: string | null,
+  ttlHours: number,
+): EnlaceNuevo {
+  purgarEnlaces();
+  const token = crypto.randomBytes(32).toString('base64url');
+  const linkId = randomId('stl');
+  const createdAt = now();
+  const expiresAt = createdAt + ttlHours * 3600_000;
+  db.prepare(
+    `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+  return {
+    id: linkId,
+    url: `${publicBaseUrl(req)}/conectar/${token}`,
+    expiresAt,
+    hasPassword: passwordEnc !== null,
+  };
+}
+
+function exigirBuzonActivo(titular: Titular): void {
+  if (titular.suspendido) {
+    throw badRequest(
+      'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
+      'mailbox_suspended',
+    );
+  }
+}
+
 /* ----------------------------- Sesión «Mi buzón» --------------------------- */
 
 function crearSesionBuzon(req: FastifyRequest, reply: FastifyReply, mailboxId: string): void {
@@ -481,6 +542,12 @@ async function ocupacion(titular: Titular): Promise<{ usedBytes: number | null; 
   }
 }
 
+/** URL de la foto con su fecha (o null si no hay): cambia al cambiar la foto. */
+function urlFoto(ruta: string, mailboxId: string): string | null {
+  const fecha = fechaFoto(mailboxId);
+  return fecha === null ? null : `${ruta}?v=${fecha}`;
+}
+
 /* ------------------------------ Webmail ------------------------------------ */
 
 /** Comparación en tiempo constante (también en longitud, gracias al hash). */
@@ -493,16 +560,26 @@ function tokenWebmailValido(recibido: unknown): boolean {
 
 /* -------------------------------- Esquemas --------------------------------- */
 
+const validezEnlaceSchema = z
+  .number()
+  .int('La validez debe indicarse en horas enteras.')
+  .min(1, 'La validez mínima del enlace es de 1 hora.')
+  .max(720, 'La validez máxima del enlace es de 720 horas (30 días).')
+  .optional()
+  .default(72);
+
 const crearEnlaceSchema = z.object({
   includePassword: z.boolean().optional().default(false),
   password: z.string().min(1).max(200).optional(),
-  ttlHours: z
-    .number()
-    .int('La validez debe indicarse en horas enteras.')
-    .min(1, 'La validez mínima del enlace es de 1 hora.')
-    .max(720, 'La validez máxima del enlace es de 720 horas (30 días).')
-    .optional()
-    .default(72),
+  ttlHours: validezEnlaceSchema,
+});
+
+const reinicioSchema = z.object({
+  /** Retirar los dispositivos y aplicaciones conectados con contraseñas de aplicación. */
+  revokeAppPasswords: z.boolean().optional().default(true),
+  /** Guardar la contraseña nueva en el enlace para que el titular no la teclee. */
+  includePassword: z.boolean().optional().default(true),
+  ttlHours: validezEnlaceSchema,
 });
 
 const loginSchema = z.object({
@@ -524,6 +601,13 @@ const appPasswordSchema = z.object({
     .trim()
     .min(1, 'Indica un nombre que identifique el dispositivo, por ejemplo «Móvil».')
     .max(60, 'El nombre no puede superar los 60 caracteres.'),
+});
+
+const webmailPerfilSchema = z.object({ user: z.string().trim().toLowerCase().min(3).max(320) });
+
+const webmailFotoSchema = z.object({
+  user: z.string().trim().toLowerCase().min(3).max(320),
+  email: z.string().trim().toLowerCase().min(3).max(320),
 });
 
 const webmailSchema = z.object({
@@ -548,12 +632,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const titular = buzonDelPanel(req, id);
     const body = crearEnlaceSchema.parse(req.body ?? {});
-    if (titular.suspendido) {
-      throw badRequest(
-        'El buzón o su cliente están suspendidos. Reactívalos antes de crear un enlace de configuración.',
-        'mailbox_suspended',
-      );
-    }
+    exigirBuzonActivo(titular);
 
     let passwordEnc: string | null = null;
     if (body.includePassword) {
@@ -596,31 +675,15 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       passwordEnc = encryptSecret(body.password);
     }
 
-    purgarEnlaces();
-    const token = crypto.randomBytes(32).toString('base64url');
-    const linkId = randomId('stl');
-    const createdAt = now();
-    const expiresAt = createdAt + body.ttlHours * 3600_000;
-    db.prepare(
-      `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+    const link = insertarEnlace(req, titular, passwordEnc, body.ttlHours);
     audit(req, 'mailbox.setup_link_created', {
       mailboxId: titular.id,
       email: titular.email,
-      linkId,
-      hasPassword: passwordEnc !== null,
+      linkId: link.id,
+      hasPassword: link.hasPassword,
       ttlHours: body.ttlHours,
     }, titular.clientId);
-    // El token en claro solo existe en esta respuesta; en la base, su hash.
-    return {
-      link: {
-        id: linkId,
-        url: `${publicBaseUrl(req)}/conectar/${token}`,
-        expiresAt,
-        hasPassword: passwordEnc !== null,
-      },
-    };
+    return { link };
   });
 
   app.get('/api/mailboxes/:id/setup-links', async (req) => {
@@ -656,6 +719,77 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
+  /**
+   * Reinicia la configuración del buzón para empezar de cero, normalmente
+   * tras haberlo probado quien lo administra: contraseña nueva, fuera los
+   * enlaces anteriores, las sesiones de «Mi buzón», los bloqueos por
+   * intentos fallidos y (si se pide) las contraseñas de aplicación, y un
+   * enlace de configuración nuevo listo para entregar al titular. El correo
+   * del buzón no se toca.
+   */
+  app.post('/api/mailboxes/:id/setup-reset', async (req) => {
+    const { id } = req.params as { id: string };
+    const titular = buzonDelPanel(req, id);
+    const body = reinicioSchema.parse(req.body ?? {});
+    exigirBuzonActivo(titular);
+
+    // En la misma cola que las altas de contraseñas de aplicación: una que se
+    // creara a mitad del reinicio sobreviviría a él.
+    return withLock(`contrasenas-app:${titular.id}`, async () => {
+      // Primero lo que depende del motor: si no responde, el buzón queda
+      // como estaba y el reinicio se puede repetir sin más.
+      let appPasswordsRevoked = 0;
+      if (body.revokeAppPasswords) {
+        const activas = db
+          .prepare('SELECT id FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+          .all(titular.id) as { id: string }[];
+        for (const { id: appId } of activas) {
+          await revokeAppPassword(titular.id, appId);
+          appPasswordsRevoked += 1;
+        }
+        // Las ya revocadas solo eran historial de la prueba: desde cero es sin él.
+        db.prepare('DELETE FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NOT NULL').run(titular.id);
+      }
+
+      // Contraseña nueva siempre: quien probó el buzón conoce la anterior (o
+      // la cambió desde «Mi buzón» o el webmail).
+      const password = generateMailboxPassword();
+      await getEngine().setMailboxPassword(titular.email, password);
+      alCambiarContrasenaBuzon(titular.id);
+
+      // Los enlaces anteriores se borran, no solo se revocan: el titular
+      // recibe un único enlace y la lista del panel vuelve a estar vacía. El
+      // registro de actividad conserva su rastro.
+      const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
+      // La foto es parte del onboarding del titular: la de la prueba se
+      // retira. El nombre visible lo puso quien creó el buzón y se conserva.
+      const photoRemoved = borrarFoto(titular.id);
+      // Los fallos de la prueba no deben bloquear al titular en su primer acceso.
+      db.prepare('DELETE FROM login_attempts WHERE ip IN (?, ?)').run(
+        `buzon:${titular.email}`,
+        `buzon-enlace:${titular.id}`,
+      );
+
+      const link = insertarEnlace(
+        req,
+        titular,
+        body.includePassword ? encryptSecret(password) : null,
+        body.ttlHours,
+      );
+      audit(req, 'mailbox.setup_reset', {
+        mailboxId: titular.id,
+        email: titular.email,
+        linkId: link.id,
+        hasPassword: link.hasPassword,
+        ttlHours: body.ttlHours,
+        linksRemoved,
+        appPasswordsRevoked,
+        photoRemoved,
+      }, titular.clientId);
+      return { password, link, linksRemoved, appPasswordsRevoked, photoRemoved };
+    });
+  });
+
   /* ------------------ Enlaces de configuración (público) ------------------ */
 
   app.get('/api/public/setup/:token', async (req, reply) => {
@@ -676,6 +810,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       hasPassword: password !== undefined,
       expiresAt: enlace.expires_at,
       portalUrl: `${base}/mi-buzon`,
+      // Relativa, como la de «Mi buzón»: la imagen se pide al mismo host que
+      // sirvió la página.
+      photoUrl: urlFoto(`/api/public/setup/${token}/photo`, titular.id),
       appleProfileUrl: `${base}/api/public/setup/${token}/perfil.mobileconfig`,
       thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
         titular.email,
@@ -709,6 +846,47 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     // El enlace sigue sirviendo de guía para otros dispositivos, pero ya no
     // tiene por qué guardar la contraseña.
     db.prepare('UPDATE setup_links SET password_enc = NULL WHERE id = ?').run(enlace.id);
+    return { ok: true };
+  });
+
+  // Perfil desde el onboarding: quien tiene el enlace es el titular, así que
+  // puede poner su nombre y su foto antes de configurar los dispositivos (el
+  // nombre va en el perfil de Apple y en el QR de Thunderbird).
+  app.patch('/api/public/setup/:token/profile', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    const body = nombreSchema.parse(req.body ?? {});
+    if (await cambiarNombreVisible(titular, body.displayName)) {
+      auditTitular(req, titular.clientId, 'portal.profile_updated', { email: titular.email, via: 'setup_link' });
+    }
+    return { displayName: body.displayName };
+  });
+
+  app.get('/api/public/setup/:token/photo', async (req, reply) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    return enviarFoto(reply, leerFoto(titular.id));
+  });
+
+  app.put('/api/public/setup/:token/photo', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    const body = fotoSchema.parse(req.body ?? {});
+    const photoUpdatedAt = guardarFoto(titular.id, body.photo);
+    auditTitular(req, titular.clientId, 'portal.photo_updated', { email: titular.email, via: 'setup_link' });
+    return { photoUrl: urlFoto(`/api/public/setup/${token}/photo`, titular.id), photoUpdatedAt };
+  });
+
+  app.delete('/api/public/setup/:token/photo', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    if (borrarFoto(titular.id)) {
+      auditTitular(req, titular.clientId, 'portal.photo_removed', { email: titular.email, via: 'setup_link' });
+    }
     return { ok: true };
   });
 
@@ -759,6 +937,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // Relativa a propósito: la cookie del titular es del host desde el que
       // entró, que puede no ser la URL pública configurada del panel.
       appleProfileUrl: `${RUTA_COOKIE}/mobileconfig`,
+      photoUrl: urlFoto(`${RUTA_COOKIE}/photo`, titular.id),
       thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
         titular.email,
         titular.displayName,
@@ -794,6 +973,36 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       settings,
     });
     return enviarPerfil(reply, titular.email, plist);
+  });
+
+  app.patch('/api/portal/profile', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const body = nombreSchema.parse(req.body ?? {});
+    if (await cambiarNombreVisible(titular, body.displayName)) {
+      auditTitular(req, titular.clientId, 'portal.profile_updated', { email: titular.email, via: 'portal' });
+    }
+    return { displayName: body.displayName };
+  });
+
+  app.get('/api/portal/photo', async (req, reply) => {
+    const { titular } = sesionBuzon(req);
+    return enviarFoto(reply, leerFoto(titular.id));
+  });
+
+  app.put('/api/portal/photo', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const body = fotoSchema.parse(req.body ?? {});
+    const photoUpdatedAt = guardarFoto(titular.id, body.photo);
+    auditTitular(req, titular.clientId, 'portal.photo_updated', { email: titular.email, via: 'portal' });
+    return { photoUrl: urlFoto(`${RUTA_COOKIE}/photo`, titular.id), photoUpdatedAt };
+  });
+
+  app.delete('/api/portal/photo', async (req) => {
+    const { titular } = sesionBuzon(req);
+    if (borrarFoto(titular.id)) {
+      auditTitular(req, titular.clientId, 'portal.photo_removed', { email: titular.email, via: 'portal' });
+    }
+    return { ok: true };
   });
 
   app.get('/api/portal/app-passwords', async (req) => {
@@ -884,6 +1093,40 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       alCambiarContrasenaBuzon(titular.id);
       auditTitular(req, titular.clientId, 'webmail.password_changed', { email: titular.email });
       return responder(200, 'ok');
+    });
+
+    /*
+     * Perfil para el complemento mailway_perfil de Roundcube: el nombre con
+     * el que crea (y mantiene) la identidad del remitente y si hay foto. Solo
+     * con el secreto compartido, como el cambio de contraseña.
+     */
+    scope.post('/api/webmail/profile', async (req, reply) => {
+      if (!config.webmailToken) throw notFound('Ruta no encontrada.');
+      if (!tokenWebmailValido(req.headers['x-mailway-token'])) throw unauthorized();
+      const parsed = webmailPerfilSchema.safeParse(req.body);
+      if (!parsed.success) throw badRequest('Petición no válida.');
+      const titular = buzonPorDireccion(parsed.data.user);
+      if (!titular) throw notFound('Buzón no encontrado.');
+      reply.header('Cache-Control', 'no-store');
+      return { name: titular.displayName, photo: fechaFoto(titular.id) !== null };
+    });
+
+    /*
+     * Avatar del remitente en el webmail. Solo entre buzones del mismo
+     * cliente: la foto de un empleado no se enseña a quien recibe su correo
+     * en otra empresa alojada en la misma instancia.
+     */
+    scope.post('/api/webmail/photo', async (req, reply) => {
+      if (!config.webmailToken) throw notFound('Ruta no encontrada.');
+      if (!tokenWebmailValido(req.headers['x-mailway-token'])) throw unauthorized();
+      const parsed = webmailFotoSchema.safeParse(req.body);
+      if (!parsed.success) throw badRequest('Petición no válida.');
+      const quienMira = buzonPorDireccion(parsed.data.user);
+      const remitente = buzonPorDireccion(parsed.data.email);
+      if (!quienMira || !remitente || quienMira.clientId !== remitente.clientId) {
+        throw notFound('Este buzón no tiene foto.', 'photo_not_found');
+      }
+      return enviarFoto(reply, leerFoto(remitente.id));
     });
   });
 }

@@ -141,7 +141,7 @@ services:
       - mailway-webmail-db:/var/roundcube/db
       # El entrypoint de la imagen incluye todo /var/roundcube/config/*.php.
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
-      # Capa visual de Mailway sobre Elastic (solo CSS; ver roundcube/README.md).
+      # Capa visual de Mailway sobre Elastic (solo aspecto; ver roundcube/README.md).
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
       # Diagnóstico de instalar.sh --comprobar y --probar-acceso (solo línea
       # de órdenes). Fuera de la raíz web y de /var/roundcube/config, cuyos

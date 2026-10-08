@@ -316,6 +316,19 @@ título en `text-sm tinta-3`; elementos de 36 px con icono de línea de 16 px en
 peso 600. El recuento de avisos es una píldora roja. Al pie, avatar con
 iniciales, nombre, rol y «Cerrar sesión».
 
+La administración se organiza alrededor del cliente: grupos «Vista general»,
+«Clientes» (Clientes y Planes), «Todos los clientes» (los mismos listados sin
+filtrar, para buscar en toda la instancia) y «Administración». La ficha del
+cliente (`/clientes/:id/…`) reúne su trabajo en **pestañas que son rutas**
+(`ui/PestanasRuta.tsx`): Resumen, Dominios, Buzones, Alias, Usuarios, Marca
+blanca, API de envío, Formularios y Actividad. Cada pestaña es la vista
+completa de siempre con `clienteFijo`, que oculta el selector y la columna de
+cliente y cambia el `Membrete` por una línea de recuentos con la acción a la
+derecha. Pestañas de 36 px, 8 px de radio; la activa en petróleo tenue con
+texto petróleo y peso 600; recuento en píldora. En el móvil la tira se
+desplaza dentro de su marco, nunca la página. Mientras se está en la ficha,
+«Clientes» sigue activo en la barra lateral.
+
 ### Signature Component — `Tesela` y `Vacio`
 
 `Tesela` es el único adorno del sistema: icono de lucide de 22 px (trazo 1.75)
@@ -416,9 +429,13 @@ logotipo y nombre centrados y una tarjeta de 16 px de radio.
 
 ### Webmail
 
-`deploy/roundcube/mailway_theme/mailway.css` traslada a Elastic los mismos
-colores (petróleo, fondo y bordes), radios de 8 y 16 px y el foco petróleo,
-sin tocar su modo oscuro.
+`deploy/roundcube/mailway_theme/` (`mailway.css`, `iconos.css`, `vacio.html`)
+traslada a Elastic los tokens del panel: fondo gris verdoso, lista y lectura
+en paneles blancos de 16 px de radio, carpetas y secciones en píldora,
+«Redactar» como botón petróleo, barras de herramientas solo con iconos de
+Lucide (los del panel), no leídos con punto petróleo y foco petróleo. El modo
+oscuro tiene su propia paleta equivalente. Letra del sistema; nada se carga
+de fuera.
 
 ## Do's and Don'ts
 

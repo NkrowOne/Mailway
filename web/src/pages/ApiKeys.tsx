@@ -20,7 +20,6 @@ import {
   Escala,
   Hoja,
   MarcaFondo,
-  Membrete,
   Cargando,
   Muestra,
   Vacio,
@@ -30,6 +29,7 @@ import { useToast } from '../ui/toast';
 import { VariablesIntegracion } from '../components/VariablesIntegracion';
 import { formatDate } from '../lib/format';
 import { useDireccionPanel } from '../components/gestion/consultas';
+import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
 
 /** Documentación completa de la API (solo se enlaza para el administrador). */
 const DOCS_API = 'https://github.com/NkrowOne/Mailway/blob/main/docs/API.md';
@@ -155,14 +155,24 @@ const RESPUESTAS: { codigo: string; nota: string }[] = [
   },
 ];
 
-/** Claves de API + historial de envíos + guía de integración (OTP y avisos). */
-export default function ApiKeys({ user }: { user: User }) {
+/**
+ * Claves de API + historial de envíos + guía de integración (OTP y avisos).
+ *
+ * `clienteFijo`: la misma vista en la pestaña «API de envío» de la ficha de
+ * un cliente: sus claves, sus buzones y sus envíos, y la clave nueva ya a su
+ * nombre.
+ */
+export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo?: string }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const isAdmin = user.role === 'admin';
+  // El selector de cliente (y su nombre en cada clave) solo en la lista de todos.
+  const elegible = isAdmin && !clienteFijo;
+  const sufijo = clienteFijo ? `clientId=${encodeURIComponent(clienteFijo)}` : '';
   // Los ejemplos se copian a otras máquinas: la dirección pública del panel,
-  // no la IP o la URL interna por la que se esté entrando ahora.
-  const base = useDireccionPanel({ user });
+  // no la IP o la URL interna por la que se esté entrando ahora. En la ficha
+  // de un cliente, la misma que vería él en su panel.
+  const base = useDireccionPanel(clienteFijo ? { clientId: clienteFijo } : { user });
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -175,29 +185,30 @@ export default function ApiKeys({ user }: { user: User }) {
   const [lenguaje, setLenguaje] = useState<Lenguaje>('curl');
 
   const keys = useQuery({
-    queryKey: ['apikeys'],
-    queryFn: () => api.get<{ keys: ApiKeyInfo[] }>('/api/apikeys'),
+    queryKey: clienteFijo ? ['apikeys', 'cliente', clienteFijo] : ['apikeys'],
+    queryFn: () => api.get<{ keys: ApiKeyInfo[] }>(`/api/apikeys${sufijo ? `?${sufijo}` : ''}`),
   });
   const mailboxes = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => api.get<{ mailboxes: Mailbox[] }>('/api/mailboxes'),
+    queryKey: clienteFijo ? ['mailboxes', 'cliente', clienteFijo] : ['mailboxes'],
+    queryFn: () => api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes${sufijo ? `?${sufijo}` : ''}`),
   });
   const clients = useQuery({
     queryKey: ['clients'],
     queryFn: () => api.get<{ clients: Client[] }>('/api/clients'),
-    enabled: isAdmin,
+    enabled: elegible,
   });
   // El administrador ve los buzones de todos los clientes: en el diálogo solo
-  // se ofrecen los del cliente elegido (el servidor rechaza los demás).
+  // se ofrecen los del cliente elegido (el servidor rechaza los demás). Con
+  // el cliente fijado ya son solo los suyos.
   const buzonesCliente = useQuery({
     queryKey: ['mailboxes', { clientId }],
     queryFn: () =>
       api.get<{ mailboxes: Mailbox[] }>(`/api/mailboxes?clientId=${encodeURIComponent(clientId)}`),
-    enabled: isAdmin && open && clientId !== '',
+    enabled: elegible && open && clientId !== '',
   });
   const messages = useQuery({
-    queryKey: ['messages'],
-    queryFn: () => api.get<{ messages: Message[] }>('/api/messages?limit=50'),
+    queryKey: clienteFijo ? ['messages', 'cliente', clienteFijo] : ['messages'],
+    queryFn: () => api.get<{ messages: Message[] }>(`/api/messages?limit=50${sufijo ? `&${sufijo}` : ''}`),
     refetchInterval: 30_000,
   });
 
@@ -212,9 +223,10 @@ export default function ApiKeys({ user }: { user: User }) {
     onSuccess: async (data) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['apikeys'] }),
-        // La puesta en marcha del cliente y el parte cuentan las claves.
+        // La puesta en marcha del cliente, el parte y la ficha del cliente cuentan las claves.
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       setOpen(false);
       setName('');
@@ -233,6 +245,7 @@ export default function ApiKeys({ user }: { user: User }) {
         queryClient.invalidateQueries({ queryKey: ['apikeys'] }),
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['client'] }),
       ]);
       setToRevoke(null);
       toast('ok', 'Clave revocada. Los envíos con ella se rechazarán.');
@@ -252,7 +265,7 @@ export default function ApiKeys({ user }: { user: User }) {
   const clientList = clients.data?.clients ?? [];
   const nombreCliente = new Map(clientList.map((c) => [c.id, c.name]));
 
-  const candidatos = isAdmin ? (clientId ? buzonesCliente.data?.mailboxes ?? [] : []) : mailboxList;
+  const candidatos = elegible ? (clientId ? buzonesCliente.data?.mailboxes ?? [] : []) : mailboxList;
   // Un buzón suspendido no puede enviar: no se ofrece como remitente.
   const senderOptions = candidatos.filter((m) => m.status === 'active');
   const remitente = senderOptions.some((m) => m.id === senderMailboxId)
@@ -267,7 +280,7 @@ export default function ApiKeys({ user }: { user: User }) {
     setName('');
     setLimite('');
     setSenderMailboxId('');
-    if (isAdmin) setClientId(clientList.length === 1 ? clientList[0]!.id : '');
+    if (isAdmin) setClientId(clienteFijo ?? (clientList.length === 1 ? clientList[0]!.id : ''));
     setOpen(true);
   }
 
@@ -288,9 +301,14 @@ export default function ApiKeys({ user }: { user: User }) {
 
   return (
     <>
-      <Membrete
+      <CabeceraVista
         title="API de envío"
-        meta="Envíos automatizados desde tus aplicaciones: códigos de acceso, avisos, facturas."
+        enPestana={Boolean(clienteFijo)}
+        meta={
+          clienteFijo
+            ? 'Envíos automatizados desde las aplicaciones del cliente: códigos de acceso, avisos, facturas.'
+            : 'Envíos automatizados desde tus aplicaciones: códigos de acceso, avisos, facturas.'
+        }
         actions={
           <Button variant="principal" disabled={activos.length === 0} onClick={abrir}>
             Nueva clave
@@ -319,7 +337,10 @@ export default function ApiKeys({ user }: { user: User }) {
               title="Sin claves de API"
               action={
                 activos.length === 0 ? (
-                  <Link to="/buzones" className={estiloBoton('perfil')}>
+                  <Link
+                    to={clienteFijo ? rutaCliente(clienteFijo, 'buzones') : '/buzones'}
+                    className={estiloBoton('perfil')}
+                  >
                     Crear un buzón
                   </Link>
                 ) : (
@@ -359,7 +380,7 @@ export default function ApiKeys({ user }: { user: User }) {
                       <span className="codigo text-tinta-2">mw_{key.prefix}_••••</span>
                       {' · remite '}
                       <span className="valor text-tinta-2">{key.senderEmail}</span>
-                      {isAdmin && nombreCliente.get(key.clientId) && (
+                      {elegible && nombreCliente.get(key.clientId) && (
                         <> · {nombreCliente.get(key.clientId)}</>
                       )}
                     </p>
@@ -563,7 +584,7 @@ export default function ApiKeys({ user }: { user: User }) {
       {/* Crear clave */}
       <Dialogo open={open} onClose={() => setOpen(false)} title="Nueva clave de API">
         <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-          {isAdmin && (
+          {elegible && (
             <Select
               label="Cliente propietario"
               value={clientId}
@@ -601,9 +622,9 @@ export default function ApiKeys({ user }: { user: User }) {
               setSenderMailboxId(e.target.value);
             }}
             help={
-              isAdmin && !clientId
+              elegible && !clientId
                 ? 'Selecciona primero el cliente: solo se ofrecen sus buzones.'
-                : isAdmin && buzonesCliente.isPending
+                : elegible && buzonesCliente.isPending
                   ? 'Leyendo los buzones del cliente…'
                   : senderOptions.length === 0
                     ? 'Este cliente no tiene buzones activos. Crea uno en «Buzones».'
@@ -631,7 +652,7 @@ export default function ApiKeys({ user }: { user: User }) {
             error={limiteInvalido ? 'Indica un número entero mayor que cero.' : undefined}
             help="Los límites del plan (diario y por minuto) se aplican al total del cliente, sumando todas sus claves. Este límite, opcional, restringe además solo esta clave y no puede superar el del plan."
           />
-          {isAdmin && buzonesCliente.isError && (
+          {elegible && buzonesCliente.isError && (
             <AvisoError
               onRetry={() => void buzonesCliente.refetch()}
               retrying={buzonesCliente.isFetching}

@@ -30,6 +30,8 @@ export interface ConectarBuzonProps {
   email: string;
   /** Contraseña recién generada (solo tras crear o restablecer el buzón). */
   passwordRecienGenerada?: string;
+  /** Abre «Reiniciar configuración» (desde la ficha del buzón). */
+  onReiniciar?: () => void;
 }
 
 const VALIDECES = [
@@ -39,7 +41,7 @@ const VALIDECES = [
   { horas: 720, texto: '30 días' },
 ];
 
-export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: ConectarBuzonProps) {
+export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onReiniciar }: ConectarBuzonProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [validez, setValidez] = useState('72');
@@ -113,32 +115,11 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
         </p>
 
         {creado ? (
-          <div className="revelar flex flex-col gap-3">
-            <Muestra rotulo="Enlace de configuración" copiar={creado.url}>
-              <p className="valor break-all text-sm text-tinta">{creado.url}</p>
-            </Muestra>
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <QR texto={creado.url} tamano={148} etiqueta={`Código QR del enlace de configuración de ${email}`} />
-              <div className="flex flex-col gap-1.5 text-sm text-tinta-2">
-                <p>El titular puede escanear este código con la cámara del móvil.</p>
-                <p>Válido hasta el {fechaLarga(creado.expiresAt)}.</p>
-                {creado.hasPassword && (
-                  <p>
-                    Incluye la contraseña del buzón: envíalo solo al titular, preferiblemente por un canal privado.
-                  </p>
-                )}
-                <p>El enlace solo se muestra ahora; si lo pierdes, crea otro.</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <a href={mailtoEnlace({ email, ...creado })} className={claseEnlaceBoton('perfil', 'panel')}>
-                Enviar por correo
-              </a>
-              <Button variant="plano" onClick={() => setCreado(null)}>
-                Crear otro enlace
-              </Button>
-            </div>
-          </div>
+          <EnlaceListo email={email} enlace={creado}>
+            <Button variant="plano" onClick={() => setCreado(null)}>
+              Crear otro enlace
+            </Button>
+          </EnlaceListo>
         ) : (
           <form onSubmit={enviar} className="flex flex-col gap-3">
             <Select label="Validez del enlace" value={validez} onChange={(e) => setValidez(e.target.value)}>
@@ -180,6 +161,18 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
               Crear enlace de configuración
             </Button>
           </form>
+        )}
+        {onReiniciar && (
+          // Lo habitual es probar el buzón antes de entregarlo: se recuerda
+          // aquí, donde se crea el enlace, que se puede empezar de cero.
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla pt-3">
+            <p className="min-w-0 flex-1 basis-56 text-sm text-tinta-2">
+              ¿Has probado el buzón antes de entregarlo? Reinícialo para que el titular empiece de cero.
+            </p>
+            <Button variant="perfil" onClick={onReiniciar}>
+              Reiniciar configuración
+            </Button>
+          </div>
         )}
       </Seccion>
 
@@ -287,6 +280,47 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada }: Cone
           </div>
         )}
       </Seccion>
+    </div>
+  );
+}
+
+/**
+ * Enlace de configuración recién creado, listo para entregar: URL para
+ * copiar, QR para el móvil y correo preparado. Solo existe en la respuesta
+ * que lo crea, así que se avisa de que no se podrá volver a ver.
+ */
+export function EnlaceListo({
+  email,
+  enlace,
+  children,
+}: {
+  email: string;
+  enlace: EnlaceCreado;
+  /** Acciones adicionales junto a «Enviar por correo». */
+  children?: ReactNode;
+}) {
+  return (
+    <div className="revelar flex flex-col gap-3">
+      <Muestra rotulo="Enlace de configuración" copiar={enlace.url}>
+        <p className="valor break-all text-sm text-tinta">{enlace.url}</p>
+      </Muestra>
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+        <QR texto={enlace.url} tamano={148} etiqueta={`Código QR del enlace de configuración de ${email}`} />
+        <div className="flex flex-col gap-1.5 text-sm text-tinta-2">
+          <p>El titular puede escanear este código con la cámara del móvil.</p>
+          <p>Válido hasta el {fechaLarga(enlace.expiresAt)}.</p>
+          {enlace.hasPassword && (
+            <p>Incluye la contraseña del buzón: envíalo solo al titular, preferiblemente por un canal privado.</p>
+          )}
+          <p>El enlace solo se muestra ahora; si lo pierdes, crea otro.</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <a href={mailtoEnlace({ email, ...enlace })} className={claseEnlaceBoton('perfil', 'panel')}>
+          Enviar por correo
+        </a>
+        {children}
+      </div>
     </div>
   );
 }

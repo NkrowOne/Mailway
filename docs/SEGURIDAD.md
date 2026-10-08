@@ -28,7 +28,8 @@ cliente puede usar la API directamente, no solo la interfaz.
 | Enlaces de configuración (`/api/public/setup/*`) | Quien tenga el enlace | Token de 256 bits, caducidad, 60 peticiones por minuto e IP |
 | Formularios de contacto (`/forms/*`) | Visitantes de las webs permitidas | `Origin` en la lista del formulario, campo trampa, límites por IP y por formulario (cupo diario propio, separado del de la API), Turnstile opcional; destinatario fijo del cliente |
 | Autoconfiguración (`/mail/…`, `/autodiscover/…`, `/.well-known/…`) | Programas de correo | Solo dominios de la instancia; sin datos de cuentas |
-| Cambio de contraseña del webmail (`/api/webmail/password`) | Roundcube, por la red interna | Secreto compartido `MAILWAY_WEBMAIL_TOKEN`; sin él la ruta no existe |
+| Cambio de contraseña y perfil del webmail (`/api/webmail/*`) | Roundcube, por la red interna | Secreto compartido `MAILWAY_WEBMAIL_TOKEN`; sin él las rutas no existen. Las fotos solo entre buzones del mismo cliente |
+| Fotos de buzones (`…/photo`) | Las mismas guardas que la ruta que las sirve | Solo JPEG, PNG o WebP comprobados por su firma (nunca SVG ni HTML), máximo 512 KB, servidas con `nosniff` y `Content-Security-Policy: default-src 'none'` |
 | Rutas de Traefik (`/api/traefik/config`) | Traefik o el puente de Skyway | `X-Mailway-Token` comparado en tiempo constante |
 | Motor (`mailway-mail`) | El panel y el webmail por red interna; programas de correo por 25/465/587/993/4190 | Contraseña de administración del motor, bloqueo automático de IPs, TLS |
 
