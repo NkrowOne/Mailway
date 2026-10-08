@@ -3379,14 +3379,14 @@ html.mailway.dark-mode body.mailway-portada #login-form {
   html.mailway #mailway-portada,
   html.mailway.dark-mode #mailway-portada {
     flex: 0 0 auto;
-    padding: 28px 20px 92px;
+    padding: 56px 20px 96px;
   }
 
   html.mailway body.mailway-portada #layout-content,
   html.mailway.dark-mode body.mailway-portada #layout-content {
     justify-content: flex-start;
     min-height: 0;
-    margin-top: -56px;
+    margin-top: -40px;
     padding: 0 16px 32px;
     overflow: visible;
     background-color: transparent;
