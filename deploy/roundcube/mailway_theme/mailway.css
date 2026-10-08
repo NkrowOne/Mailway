@@ -3102,6 +3102,234 @@ html.mailway #login-footer > div {
 }
 
 /* ------------------------------------------------------------------ */
+/* Portada del acceso: panel de marca + tarjeta                         */
+/* ------------------------------------------------------------------ */
+
+/* Con la portada (solo con el logotipo de Mailway) el logotipo suelto y el
+   nombre sobre la tarjeta sobran: están en el panel. */
+html.mailway body.mailway-portada #logo,
+html.mailway body.mailway-portada #mailway-marca {
+  display: none;
+}
+
+html.mailway body.mailway-portada #layout {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  min-height: 100%;
+}
+
+html.mailway #mailway-portada {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 min(46%, 600px);
+  gap: 40px;
+  padding: 48px 56px;
+  overflow: hidden;
+  color: #e6f2ef;
+  /* Petróleo con algo de profundidad y, abajo a la derecha, sobres de línea
+     muy tenues: presencia de marca sin ruido. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cg opacity='.09'%3E%3Crect x='150' y='170' width='220' height='160' rx='24'/%3E%3Cpath d='m162 186 92 68a24 24 0 0 0 28 0l92-68'/%3E%3C/g%3E%3Cg opacity='.06'%3E%3Crect x='40' y='260' width='150' height='110' rx='18'/%3E%3Cpath d='m48 272 63 46a16 16 0 0 0 19 0l63-46'/%3E%3C/g%3E%3Cg opacity='.05'%3E%3Crect x='250' y='30' width='120' height='88' rx='14'/%3E%3Cpath d='m256 40 51 37a13 13 0 0 0 15 0l51-37'/%3E%3C/g%3E%3C/svg%3E") right -40px bottom -40px / min(520px, 90%) no-repeat,
+    radial-gradient(120% 80% at 0% 0%, rgb(255 255 255 / 0.10), transparent 60%),
+    linear-gradient(160deg, #0f6a6c 0%, #0d5c5e 45%, #083f41 100%);
+}
+
+html.mailway.dark-mode #mailway-portada {
+  color: #dcebe7;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cg opacity='.07'%3E%3Crect x='150' y='170' width='220' height='160' rx='24'/%3E%3Cpath d='m162 186 92 68a24 24 0 0 0 28 0l92-68'/%3E%3C/g%3E%3Cg opacity='.05'%3E%3Crect x='40' y='260' width='150' height='110' rx='18'/%3E%3Cpath d='m48 272 63 46a16 16 0 0 0 19 0l63-46'/%3E%3C/g%3E%3C/svg%3E") right -40px bottom -40px / min(520px, 90%) no-repeat,
+    linear-gradient(160deg, #0b4b4d 0%, #083a3c 50%, #052728 100%);
+}
+
+html.mailway .mw-portada-marca {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+/* La tesela petróleo sobre petróleo: un filo claro la separa del fondo. */
+html.mailway .mw-portada-marca img {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22), 0 6px 16px rgb(0 0 0 / 0.18);
+}
+
+html.mailway .mw-portada-cuerpo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  max-width: 440px;
+}
+
+html.mailway .mw-portada-titular {
+  margin: 0 0 14px;
+  color: #ffffff;
+  font-size: clamp(28px, 2.6vw, 38px);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+html.mailway .mw-portada-texto {
+  margin: 0 0 32px;
+  color: rgb(230 242 239 / 0.86);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+html.mailway .mw-portada-ventajas {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+html.mailway .mw-portada-ventajas li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  color: rgb(230 242 239 / 0.82);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+html.mailway .mw-portada-ventajas strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+html.mailway .mw-portada-icono {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background-color: rgb(255 255 255 / 0.10);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  color: #ffffff;
+}
+
+html.mailway .mw-portada-icono svg {
+  width: 18px;
+  height: 18px;
+}
+
+html.mailway .mw-portada-pie {
+  margin: 0;
+  color: rgb(230 242 239 / 0.6);
+  font-size: 13px;
+}
+
+/* Lado de la tarjeta: ocupa el resto y la centra. */
+html.mailway body.mailway-portada #layout-content {
+  flex: 1;
+  min-width: 0;
+}
+
+html.mailway body.mailway-portada #login-form {
+  max-width: 420px;
+  padding: 36px 36px 28px;
+  box-shadow: 0 1px 2px rgb(23 31 30 / 0.04), 0 12px 32px rgb(23 31 30 / 0.08);
+}
+
+html.mailway.dark-mode body.mailway-portada #login-form {
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+}
+
+html.mailway #mailway-saludo {
+  margin-bottom: 24px;
+}
+
+html.mailway #mailway-saludo h2 {
+  margin: 0 0 6px;
+  color: var(--mw-tinta);
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+html.mailway #mailway-saludo p {
+  margin: 0;
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Hasta tableta: el panel pasa a ser una franja de cabecera con la marca y
+   el titular; la tarjeta sube sobre ella. */
+@media screen and (max-width: 960px) {
+  html.mailway body.mailway-portada #layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+
+  html.mailway #mailway-portada {
+    flex: 0 0 auto;
+    gap: 20px;
+    padding: 24px 20px 72px;
+    background-size: 300px auto, auto, auto;
+    background-position: right -30px bottom -60px, 0 0, 0 0;
+  }
+
+  html.mailway .mw-portada-titular {
+    margin-bottom: 6px;
+    font-size: 24px;
+  }
+
+  html.mailway .mw-portada-texto {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  html.mailway .mw-portada-ventajas,
+  html.mailway .mw-portada-pie {
+    display: none;
+  }
+
+  html.mailway body.mailway-portada #layout-content,
+  html.mailway.dark-mode body.mailway-portada #layout-content {
+    justify-content: flex-start;
+    min-height: 0;
+    margin-top: -48px;
+    padding: 0 16px 32px;
+    overflow: visible;
+    background-color: transparent;
+  }
+
+  html.mailway body.mailway-portada {
+    background-color: var(--mw-mesa);
+  }
+}
+
+@media screen and (max-width: 480px) {
+  html.mailway body.mailway-portada #login-form {
+    padding: 24px 20px 20px;
+  }
+
+  html.mailway #mailway-saludo h2 {
+    font-size: 21px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Móvil y tableta pequeña                                             */
 /* ------------------------------------------------------------------ */
 

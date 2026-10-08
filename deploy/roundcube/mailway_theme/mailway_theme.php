@@ -65,6 +65,12 @@ class mailway_theme extends rcube_plugin
         // La fecha del fichero va a mano: Roundcube no la añade a las rutas
         // de skin_logo y, sin ella, un logotipo nuevo tardaría en verse.
         $this->logo_propio = $this->sin_logo_del_operador($rcmail);
+
+        // En el acceso, el usuario es la dirección completa: la etiqueta lo
+        // dice en lugar de «Nombre de usuario», que hace dudar a la gente.
+        if ($this->logo_propio && $rcmail->task === 'login') {
+            $rcmail->load_language(null, [], ['username' => 'Dirección de correo']);
+        }
         if ($this->logo_propio) {
             $logo = $rcmail->config->get('skin_logo');
             $logo = is_array($logo) ? $logo : [];
@@ -142,47 +148,85 @@ class mailway_theme extends rcube_plugin
     }
 
     /**
-     * Nombre del servicio bajo el logotipo de la pantalla de acceso.
+     * Portada de la pantalla de acceso: panel de marca a la izquierda (logo,
+     * nombre del servicio, titular y tres ventajas) y la tarjeta a la
+     * derecha con «Inicia sesión»; en el móvil, el panel queda como franja
+     * de cabecera. Solo con el logotipo de Mailway: un operador con marca
+     * propia conserva el acceso sencillo con su logotipo.
      *
-     * Como en el acceso del panel: la tesela sola no dice dónde se entra. El
-     * nombre (product_name, que viene de MAILWAY_BRAND) sale escapado y oculto
-     * a los lectores de pantalla, que ya lo oyen en el título invisible de
-     * Elastic («<nombre> Iniciar sesión»); por eso el logotipo pasa a ser
-     * decorativo. Al estar arriba, se quita del pie, que de otro modo diría
-     * «<nombre> • Obtener soporte» justo debajo del mismo nombre.
+     * El nombre (product_name, de MAILWAY_BRAND) sale escapado. Al estar en
+     * el panel, se quita del pie, que si no diría «<nombre> • Obtener
+     * soporte» bajo la tarjeta.
      */
     private function marca_en_acceso(string $html, rcmail $rcmail): string
     {
-        $nombre = trim((string) $rcmail->config->get('product_name', ''));
-        if ($nombre === '') {
+        $nombre = html::quote(trim((string) $rcmail->config->get('product_name', '')) ?: 'Webmail');
+        // La misma URL que Roundcube dio al logotipo (pasa por static.php y
+        // lleva la fecha del fichero): una ruta escrita aquí no se reescribe.
+        $logo = preg_match('/<img\b[^>]*\bid="logo"[^>]*\bsrc="([^"]+)"/i', $html, $m)
+            || preg_match('/<img\b[^>]*\bsrc="([^"]+)"[^>]*\bid="logo"/i', $html, $m)
+            ? $m[1]
+            : $this->urlbase . 'logo.svg';
+
+        $ventaja = static function (string $icono, string $titulo, string $texto): string {
+            return '<li><span class="mw-portada-icono" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+                . $icono . '</svg></span><span><strong>' . $titulo . '</strong>' . $texto . '</span></li>';
+        };
+        $portada = "
+" . '<aside id="mailway-portada" aria-hidden="true">'
+            . '<div class="mw-portada-marca"><img src="' . $logo . '" alt=""><span>' . $nombre . '</span></div>'
+            . '<div class="mw-portada-cuerpo">'
+            . '<p class="mw-portada-titular">Tu correo, siempre a mano</p>'
+            . '<p class="mw-portada-texto">Entra desde cualquier navegador. Lo que hagas aquí se sincroniza con tu móvil y tu ordenador.</p>'
+            . '<ul class="mw-portada-ventajas">'
+            . $ventaja(
+                '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+                'Conexión segura',
+                'Cifrado en cada acceso y filtro de correo no deseado.'
+            )
+            . $ventaja(
+                '<path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8"/><path d="M10 19v-3.96 3.15"/><path d="M7 19h5"/><rect width="6" height="10" x="16" y="12" rx="2"/>',
+                'En todos tus dispositivos',
+                'Móvil, ordenador y navegador, siempre al día.'
+            )
+            . $ventaja(
+                '<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>',
+                'Tu bandeja en orden',
+                'Carpetas, filtros y respuesta automática cuando no estés.'
+            )
+            . '</ul></div>'
+            . '<p class="mw-portada-pie">' . $nombre . '</p>'
+            . '</aside>';
+
+        // La portada abre el contenedor de la página; la clase en <body>
+        // activa la disposición en dos columnas y oculta el logotipo suelto.
+        $html = preg_replace('/<div id="layout">/', '<div id="layout">' . $portada, $html, 1, $hechos);
+        if (!$hechos) {
             return $html;
         }
-        $nombre = html::quote($nombre);
+        $html = preg_replace('/<body class="task-login/', '<body class="mailway-portada task-login', $html, 1);
 
-        $html = preg_replace_callback('/<img\b[^>]*\bid="logo"[^>]*>/i', static function (array $m) use ($nombre): string {
-            $logo = preg_replace('/\balt="[^"]*"/i', 'alt=""', $m[0], 1);
+        // Encabezado de la tarjeta (la etiqueta «Dirección de correo» se pone
+        // en init(): el formulario aún no está en la página en este punto).
+        $saludo = '<div id="mailway-saludo"><h2>Inicia sesión</h2><p>Con tu dirección de correo completa y tu contraseña.</p></div>';
+        $html = preg_replace('/(<form id="login-form"[^>]*>)/', '$1' . $saludo, $html, 1);
 
-            return $logo . "\n\t" . '<div id="mailway-marca" aria-hidden="true">' . $nombre . '</div>';
-        }, $html, 1, $hechos);
-
-        if ($hechos) {
-            $html = preg_replace(
-                '/(<div id="login-footer"[^>]*>\s*)' . preg_quote($nombre, '/') . '\s*(?:&nbsp;&bull;&nbsp;\s*)?/',
-                '$1',
-                $html,
-                1
-            );
-            // Sin enlace de soporte (no hay URL del panel), el pie se queda
-            // vacío: se marca para que su margen no deje un hueco en la
-            // tarjeta. No se quita, porque otros complementos pueden escribir
-            // en él desde JavaScript (contenedor «loginfooter»).
-            $html = preg_replace(
-                '/<div id="login-footer"([^>]*)>\s*<\/div>/',
-                '<div id="login-footer"$1 class="mailway-vacio"></div>',
-                $html,
-                1
-            );
-        }
+        $html = preg_replace(
+            '/(<div id="login-footer"[^>]*>\s*)' . preg_quote($nombre, '/') . '\s*(?:&nbsp;&bull;&nbsp;\s*)?/',
+            '$1',
+            $html,
+            1
+        );
+        // Sin enlace de soporte (no hay URL del panel), el pie se queda
+        // vacío: se marca para que su margen no deje un hueco en la tarjeta.
+        // No se quita, porque otros complementos pueden escribir en él desde
+        // JavaScript (contenedor «loginfooter»).
+        $html = preg_replace(
+            '/<div id="login-footer"([^>]*)>\s*<\/div>/',
+            '<div id="login-footer"$1 class="mailway-vacio"></div>',
+            $html,
+            1
+        );
 
         return $html;
     }
