@@ -434,9 +434,8 @@ controles táctiles de 44 px y un paso a la vez.
 - El cliente como centro del panel de administración: su ficha agrupa en
   pestañas dominios, buzones, alias, usuarios, marca blanca, API de envío,
   formularios y actividad.
-- Webmail con el tema Elastic2022 (copia fijada en `deploy/roundcube/elastic2022`)
-  y la marca de Mailway (`mailway_theme`: logotipo, iconos, panel vacío, foto
-  propia y portada del acceso), también en modo oscuro.
+- Webmail con aspecto actual (capa `mailway_theme` sobre Elastic), también en
+  modo oscuro.
 - **Entrega de la configuración** en la puesta en marcha: cada buzón sabe si
   su titular ya lo ha configurado (`configuredAt`: terminó el enlace, instaló
   el perfil de Apple, entró en «Mi buzón» o en el webmail, o se marcó a mano)

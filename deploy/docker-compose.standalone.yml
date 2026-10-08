@@ -142,9 +142,7 @@ services:
       ROUNDCUBEMAIL_SMTP_SERVER: ssl://mailway-mail
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
-      # Tema Elastic2022 (copia fijada en roundcube/elastic2022, montada abajo:
-      # con la carpeta presente, la imagen no intenta descargarlo).
-      ROUNDCUBEMAIL_SKIN: elastic2022
+      ROUNDCUBEMAIL_SKIN: elastic
       ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_perfil,mailway_sesion,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       ROUNDCUBEMAIL_DES_KEY: ${ROUNDCUBE_DES_KEY:?Define ROUNDCUBE_DES_KEY (24 caracteres) en deploy/.env}
@@ -158,9 +156,7 @@ services:
     volumes:
       - mailway-webmail-db:/var/roundcube/db
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
-      # Tema del webmail (ver roundcube/README.md).
-      - ./roundcube/elastic2022:/var/www/html/skins/elastic2022:ro
-      # Marca de Mailway en el webmail: logotipo, iconos y acceso (ver roundcube/README.md).
+      # Capa visual de Mailway sobre Elastic (solo aspecto; ver roundcube/README.md).
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
       # Nombre visible y foto del buzón desde el panel (ver roundcube/README.md).
       - ./roundcube/mailway_perfil:/var/www/html/plugins/mailway_perfil:ro

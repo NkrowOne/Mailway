@@ -1,31 +1,19 @@
 <?php
 
 /**
- * Marca de Mailway en el webmail (Roundcube 1.7).
+ * Capa visual de Mailway sobre Elastic (Roundcube 1.7).
  *
- * Con el tema Elastic2022 (el de Mailway) pone la marca: el icono de
- * Mailway en la pestaña, su logotipo, el panel vacío, la foto propia en el
- * menú de la cuenta y la portada de la pantalla de acceso. Con Elastic (si
- * la instalación lo elige en ROUNDCUBEMAIL_SKIN) añade además la capa visual
- * completa de mailway.css. Con cualquier otro tema no hace nada.
- *
- * Solo apariencia: no toca la autenticación, el contenido de los mensajes,
- * los atajos ni la navegación. Si algo de esto fallara, el webmail seguiría
- * funcionando con el aspecto original del tema.
+ * Solo apariencia: añade dos hojas de estilo (iconos y tema), una clase en
+ * <html>, el color de la barra del navegador, el icono de Mailway en la
+ * pestaña y su logotipo (con el nombre del servicio en la pantalla de
+ * acceso). No toca la autenticación, el contenido de los mensajes, los
+ * atajos ni la navegación: si algo de esto fallara, el webmail seguiría
+ * funcionando con el aspecto original de Elastic.
  */
 class mailway_theme extends rcube_plugin
 {
-    /** El favicon de los temas cuando nadie ha configurado otro. */
+    /** El favicon de Elastic cuando nadie ha configurado otro. */
     private const FAVICON_ROUNDCUBE = '/images/favicon.ico';
-
-    /** Temas con los que funciona: las reglas están escritas contra su marcado. */
-    private const TEMAS = ['elastic', 'elastic2022'];
-
-    /** @var string Tema en uso (uno de TEMAS). */
-    private $tema = '';
-
-    /** @var bool Si se aplica la capa visual de mailway.css en esta página. */
-    private $capa = false;
 
     /** @var bool Si se ponen los iconos de Mailway (el operador no tiene los suyos). */
     private $iconos_propios = false;
@@ -35,34 +23,24 @@ class mailway_theme extends rcube_plugin
 
     public function init()
     {
-        // Con otro tema, las reglas romperían más de lo que arreglan.
-        $rcmail = rcmail::get_instance();
-        $this->tema = (string) $rcmail->config->get('skin');
-        if (!in_array($this->tema, self::TEMAS, true)) {
+        // Las reglas están escritas contra el marcado de Elastic; con otro
+        // tema romperían más de lo que arreglan.
+        if (rcmail::get_instance()->config->get('skin') !== 'elastic') {
             return;
         }
 
-        // Elastic lleva la capa completa. Elastic2022 tiene su propio
-        // aspecto y solo la recibe en la pantalla de acceso, donde no hay
-        // nada suyo que cambiar (mismo formulario que Elastic) y así la
-        // portada de Mailway se ve igual con los dos temas.
-        $this->capa = $this->tema === 'elastic' || $rcmail->task === 'login';
-        if ($this->capa) {
-            $this->include_stylesheet('iconos.css');
-            $this->include_stylesheet('mailway.css');
-        } else {
-            $this->include_stylesheet('elastic2022.css');
-        }
+        $this->include_stylesheet('iconos.css');
+        $this->include_stylesheet('mailway.css');
         $this->add_hook('render_page', [$this, 'render_page']);
 
-        // Panel vacío propio (vacio.html) en lugar de la marca de agua del
-        // tema, que muestra el logotipo de Roundcube aunque haya marca
-        // blanca. Si el operador configuró otra página, se respeta. El tema
-        // va en la dirección para que el fondo sea el del panel que lo rodea.
+        // Panel vacío propio (vacio.html) en lugar de la marca de agua de
+        // Elastic, que muestra el logotipo de Roundcube aunque haya marca
+        // blanca. Si el operador configuró otra página, se respeta.
+        $rcmail = rcmail::get_instance();
         if ($rcmail->output instanceof rcmail_output_html
             && $rcmail->config->get('blankpage_url', '/watermark.html') === '/watermark.html'
         ) {
-            $rcmail->output->set_env('blankpage', $this->urlbase . 'vacio.html?tema=' . $this->tema);
+            $rcmail->output->set_env('blankpage', $this->urlbase . 'vacio.html');
         }
 
         // Icono de la pestaña: el de Mailway (el mismo que el panel) y no el
@@ -77,7 +55,7 @@ class mailway_theme extends rcube_plugin
 
         // Logotipo: el de Mailway en lugar del de Roundcube (acceso y menú),
         // también con marca blanca. Se añade a skin_logo con la clave
-        // «<tema>:*», que Roundcube solo consulta para el logotipo de
+        // «elastic:*», que Roundcube solo consulta para el logotipo de
         // pantalla: no alcanza al favicon ni a la impresión, que piden un tipo
         // concreto. Va después de decidir los iconos porque esa decisión mira
         // skin_logo y debe ver solo lo que puso el operador. Un tipo «[dark]»
@@ -97,27 +75,55 @@ class mailway_theme extends rcube_plugin
             $logo = $rcmail->config->get('skin_logo');
             $logo = is_array($logo) ? $logo : [];
             $fecha = @filemtime($this->home . '/logo.svg');
-            $logo[$this->tema . ':*'] = $this->urlbase . 'logo.svg' . ($fecha ? '?s=' . $fecha : '');
+            $logo['elastic:*'] = $this->urlbase . 'logo.svg' . ($fecha ? '?s=' . $fecha : '');
             $rcmail->config->set('skin_logo', $logo);
         }
     }
 
     /**
-     * Capa visual, iconos de la pestaña y portada del acceso en el HTML de
-     * cada página.
+     * Marca el documento y ajusta el color del navegador.
+     *
+     * La clase «mailway» en <html> da a todas las reglas del tema la misma
+     * especificidad que las de Elastic para el modo oscuro (html.dark-mode),
+     * así que una sola regla con variables sirve para los dos modos sin
+     * recurrir a !important. Se pone en el servidor, no con JavaScript, para
+     * que no haya un parpadeo con el aspecto original al cargar.
      */
     public function render_page($args)
     {
         $html = $args['content'];
-        $acceso = ($args['template'] ?? '') === 'login';
 
-        if ($this->capa) {
-            $html = $this->con_capa($html, $acceso);
-        }
+        $html = preg_replace_callback('/<html\b([^>]*)>/i', static function (array $m): string {
+            $atributos = $m[1];
+            if (preg_match('/\bclass\s*=\s*(["\'])([^"\']*)\1/i', $atributos, $clase)) {
+                if (preg_match('/(^|\s)mailway(\s|$)/', $clase[2])) {
+                    return $m[0];
+                }
+                $atributos = str_replace($clase[0], 'class=' . $clase[1] . trim($clase[2] . ' mailway') . $clase[1], $atributos);
+            } else {
+                $atributos .= ' class="mailway"';
+            }
+
+            return '<html' . $atributos . '>';
+        }, $html, 1);
+
+        // Elastic declara un gris fijo (#f4f4f4). La barra del navegador del
+        // móvil se tiñe con el fondo de la pantalla de acceso y con el de la
+        // barra superior dentro del correo, en claro y en oscuro.
+        $acceso = ($args['template'] ?? '') === 'login';
+        $claro = $acceso ? '#f4f6f4' : '#ffffff';
+        $oscuro = $acceso ? '#101716' : '#172120';
+        $html = preg_replace(
+            '/<meta name="theme-color"[^>]*>/i',
+            '<meta name="theme-color" content="' . $claro . '" media="(prefers-color-scheme: light)">'
+                . '<meta name="theme-color" content="' . $oscuro . '" media="(prefers-color-scheme: dark)">',
+            $html,
+            1
+        );
 
         // Junto al .ico, la versión vectorial (nítida en cualquier tamaño, la
         // que prefieren los navegadores actuales) y el icono para la pantalla
-        // de inicio de iOS. Ninguno de los dos temas los declara. Rutas
+        // de inicio de iOS. Elastic no declara ninguno de los dos. Rutas
         // relativas: Roundcube las pasa luego por static.php y les añade la
         // fecha del fichero para invalidar la caché.
         if ($this->iconos_propios) {
@@ -142,52 +148,10 @@ class mailway_theme extends rcube_plugin
     }
 
     /**
-     * Marca el documento para la capa visual y ajusta el color del navegador.
-     *
-     * La clase «mailway» en <html> da a todas las reglas de la capa la misma
-     * especificidad que las del tema para el modo oscuro (html.dark-mode),
-     * así que una sola regla con variables sirve para los dos modos sin
-     * recurrir a !important. Se pone en el servidor, no con JavaScript, para
-     * que no haya un parpadeo con el aspecto original al cargar.
-     */
-    private function con_capa(string $html, bool $acceso): string
-    {
-        $html = preg_replace_callback('/<html\b([^>]*)>/i', static function (array $m): string {
-            $atributos = $m[1];
-            if (preg_match('/\bclass\s*=\s*(["\'])([^"\']*)\1/i', $atributos, $clase)) {
-                if (preg_match('/(^|\s)mailway(\s|$)/', $clase[2])) {
-                    return $m[0];
-                }
-                $atributos = str_replace($clase[0], 'class=' . $clase[1] . trim($clase[2] . ' mailway') . $clase[1], $atributos);
-            } else {
-                $atributos .= ' class="mailway"';
-            }
-
-            return '<html' . $atributos . '>';
-        }, $html, 1);
-
-        // Los temas declaran un color fijo (#f4f4f4 o #ffffff). La barra del
-        // navegador del móvil se tiñe con el fondo de la pantalla de acceso y
-        // con el de la barra superior dentro del correo, en claro y en oscuro.
-        $claro = $acceso ? '#f4f6f4' : '#ffffff';
-        $oscuro = $acceso ? '#101716' : '#172120';
-        $html = preg_replace(
-            '/<meta name="theme-color"[^>]*>/i',
-            '<meta name="theme-color" content="' . $claro . '" media="(prefers-color-scheme: light)">'
-                . '<meta name="theme-color" content="' . $oscuro . '" media="(prefers-color-scheme: dark)">',
-            $html,
-            1
-        );
-
-        return $html;
-    }
-
-    /**
      * Portada de la pantalla de acceso: panel de marca a la izquierda (logo
      * y nombre del servicio sobre el petróleo de la marca) y la tarjeta a la
-     * derecha; en el móvil, el panel queda como franja de cabecera. Solo
-     * con el logotipo de Mailway: un operador con marca propia conserva el
-     * acceso sencillo con su logotipo.
+     * derecha; en el móvil, el panel queda como franja de cabecera. Solo con el logotipo de Mailway: un operador con marca
+     * propia conserva el acceso sencillo con su logotipo.
      *
      * El nombre (product_name, de MAILWAY_BRAND) sale escapado. Al estar en
      * el panel, se quita del pie, que si no diría «<nombre> • Obtener
@@ -232,10 +196,8 @@ class mailway_theme extends rcube_plugin
         $html = preg_replace('/<body class="task-login/', '<body class="mailway-portada task-login', $html, 1);
 
 
-        // Elastic2022 no pone el nombre, pero sí el separador delante del
-        // enlace de soporte: también se quita.
         $html = preg_replace(
-            '/(<div id="login-footer"[^>]*>\s*)(?:' . preg_quote($nombre, '/') . '\s*)?(?:&nbsp;&bull;&nbsp;\s*)?/',
+            '/(<div id="login-footer"[^>]*>\s*)' . preg_quote($nombre, '/') . '\s*(?:&nbsp;&bull;&nbsp;\s*)?/',
             '$1',
             $html,
             1
