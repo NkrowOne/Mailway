@@ -37,7 +37,23 @@ export function contrasenaAleatoria(): string {
   return crypto.randomBytes(18).toString('base64url');
 }
 
-/** Cambia la contraseña, cierra las sesiones del usuario y lo anota en la actividad. */
+/**
+ * Correos de los administradores, para el mensaje de «no existe»: quien está
+ * en la terminal del servidor ya tiene acceso a la base, y sin saber con qué
+ * correo se dio de alta no podría restablecer nada.
+ */
+function correosDeAdministracion(): string[] {
+  return (db.prepare(`SELECT email FROM users WHERE role = 'admin' ORDER BY created_at`).all() as { email: string }[]).map(
+    (u) => u.email,
+  );
+}
+
+/**
+ * Cambia la contraseña, cierra las sesiones del usuario, quita el bloqueo por
+ * intentos fallidos del inicio de sesión (quien lo restablece desde el
+ * servidor no debe esperar diez minutos para entrar) y lo anota en la
+ * actividad.
+ */
 export function restablecerContrasena(correo: string, password: string, generada: boolean): string {
   const email = correo.trim().toLowerCase();
   if (password.length < MIN) throw new ErrorRestablecer(`La contraseña debe tener al menos ${MIN} caracteres.`);
@@ -47,9 +63,22 @@ export function restablecerContrasena(correo: string, password: string, generada
   }
   return db.transaction(() => {
     const usuario = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: string } | undefined;
-    if (!usuario) throw new ErrorRestablecer(`No existe ningún usuario con el correo ${email}.`);
+    if (!usuario) {
+      const admins = correosDeAdministracion();
+      throw new ErrorRestablecer(
+        `No existe ningún usuario con el correo ${email}.` +
+          (admins.length > 0 ? ` Correos de administración: ${admins.join(', ')}.` : ''),
+      );
+    }
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), usuario.id);
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(usuario.id);
+    // El bloqueo por IP (8 intentos) salta antes que el del correo (10), y
+    // aquí no se sabe desde qué IP entrará: se retiran los del inicio de
+    // sesión del panel (claves sin prefijo) y los de este correo. Los del
+    // portal del titular («buzon…») y la puesta en marcha («setup…») no.
+    db.prepare(
+      "DELETE FROM login_attempts WHERE ip = ? OR (ip NOT LIKE 'email:%' AND ip NOT LIKE 'buzon%' AND ip NOT LIKE 'setup%')",
+    ).run(`email:${email}`);
     auditSystem('auth.password_reset', { email, generated: generada, origen: 'terminal' });
     return email;
   })();
@@ -96,8 +125,8 @@ async function main(): Promise<number> {
     const email = restablecerContrasena(correo, password, generada);
     process.stdout.write(
       generada
-        ? `Contraseña nueva de ${email}: ${password}\nSe muestra solo esta vez. Se han cerrado las sesiones anteriores.\n`
-        : `Contraseña actualizada para ${email}. Se han cerrado las sesiones anteriores.\n`,
+        ? `Contraseña nueva de ${email}: ${password}\nSe muestra solo esta vez. Se han cerrado las sesiones anteriores y quitado el bloqueo por intentos fallidos.\n`
+        : `Contraseña actualizada para ${email}. Se han cerrado las sesiones anteriores y quitado el bloqueo por intentos fallidos.\n`,
     );
     return 0;
   } catch (err) {

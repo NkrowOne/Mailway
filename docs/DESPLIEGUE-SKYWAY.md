@@ -1158,7 +1158,11 @@ comprobar, trata la instalación como preproducción.
   unset CLAVE
   ```
   La contraseña debe tener entre 10 y 200 caracteres; se cierran las sesiones
-  de ese usuario y la Actividad lo anota como «Sistema». Escrita como
+  de ese usuario, se quita el bloqueo por intentos fallidos del inicio de
+  sesión (se entra en el acto) y la Actividad lo anota como «Sistema». Si el
+  correo no existe, la orden dice cuáles son los de administración. Para
+  encontrar el contenedor del panel:
+  `docker ps --filter label=skyway.service=<id del servicio> --format '{{.Names}}'`. Escrita como
   argumento también se admite, con un aviso: quedaría en el historial del
   shell y, mientras se ejecuta, a la vista de cualquier usuario del servidor
   con `ps`.
@@ -1263,6 +1267,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Tras actualizar Skyway a 0.34 las rutas de Mailway no se actualizan | Sigue el `docker-compose.override.yml` antiguo en la carpeta de Skyway | Elimínalo y ejecuta `docker compose up -d traefik` en la carpeta de Skyway (sección 4.2). |
 | El botón «Correo» no aparece en un proyecto de Skyway | Mailway no está conectado en Skyway, o el plan de la cuenta no incluye el módulo «Correo» | `sudo bash deploy/instalar.sh --emparejar` (sección 2.6) o sección 4.1. |
 | El instalador se detiene: «deploy/.env no menciona ese panel» | Se ejecutó sin terminal (`--actualizar` o desatendido) y encontró un panel que no conoce | Repite desde una terminal y confirma, o indica `MAILWAY_PANEL_SERVICIO=<id>` (actualizarlo) o `MAILWAY_PANEL_SERVICIO=ninguno` (no tocarlo). |
+| El instalador se detiene: «El panel detectado es de un proyecto de un cliente» | En Skyway, el proyecto del panel tiene asignado un cliente (workspace), y sus miembros verían sus variables | Si el cliente eres tú: `MAILWAY_PANEL_SERVICIO=<id> mailway update -y --reaplicar` (el instalador muestra la orden con el id). Si es de otra persona, quítale el cliente al proyecto en Skyway y repite. |
 | El instalador se detiene porque Skyway despliega varios paneles de Mailway | Hay más de un servicio con el panel (p. ej. una copia de prueba) | Repite con `MAILWAY_PANEL_SERVICIO=<id>` y el servicio que corresponde (el instalador los lista). |
 | El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
 | Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | Sin terminal: en las variables del servicio del panel pon `MAILWAY_ADMIN_EMAIL` y `MAILWAY_ADMIN_PASSWORD` y reinicia (sección 14); retira la contraseña después. Con terminal: `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |

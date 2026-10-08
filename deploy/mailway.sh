@@ -52,7 +52,9 @@ Uso: mailway <orden> [opciones]
   ayuda                      Muestra esta ayuda.
 
 Los secretos que acepta el instalador (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN…)
-se pasan igual que con instalar.sh, por el entorno y nunca en la orden.
+se pasan igual que con instalar.sh, por el entorno y nunca en la orden. Lo
+mismo MAILWAY_PANEL_SERVICIO, si el instalador lo pide:
+  MAILWAY_PANEL_SERVICIO=svc_… mailway update -y --reaplicar
 AYUDA
 }
 
@@ -84,7 +86,7 @@ como_root() {
   if [ "$(id -u)" != 0 ]; then
     command -v sudo >/dev/null 2>&1 || fallo "Ejecuta «mailway» como root."
     # Los secretos del instalador viajan por el entorno: se conservan.
-    exec sudo --preserve-env=CLOUDFLARE_API_TOKEN,SKYWAY_TOKEN,STALWART_ADMIN_PASSWORD,SKYWAY_URL bash "$SCRIPT" "$@"
+    exec sudo --preserve-env=CLOUDFLARE_API_TOKEN,SKYWAY_TOKEN,STALWART_ADMIN_PASSWORD,SKYWAY_URL,MAILWAY_PANEL_SERVICIO bash "$SCRIPT" "$@"
   fi
 }
 

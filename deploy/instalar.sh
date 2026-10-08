@@ -1916,6 +1916,15 @@ localizar_panel_en_skyway() {
     # Red de seguridad: detectar_panel_existente ya descarta los de clientes
     # cuando la API responde a tiempo. Solo se acepta si se indicó a mano.
     if [ -n "$(campo_json '.project.workspace_id // empty')" ] && [ -z "${MAILWAY_PANEL_SERVICIO:-}" ]; then
+      # Pasa si en Skyway se asigna el proyecto del panel a un cliente: sus
+      # miembros verían sus variables (clave maestra, tokens). Se dice cuál y
+      # cómo seguir, con la orden lista para copiar.
+      local cliente_panel
+      cliente_panel=$(campo_json '.project.client // empty')
+      aviso "El proyecto «$(campo_json '.project.name // empty')» del panel está asignado a ${cliente_panel:+«$cliente_panel», }un cliente de Skyway."
+      info "Si ese cliente eres tú (nadie más entra en él), sigue con:"
+      info "  MAILWAY_PANEL_SERVICIO=$PANEL_EXISTENTE_SERVICIO mailway update -y --reaplicar"
+      info "Si es de otra persona, quítale el cliente al proyecto en Skyway y repite «mailway update -y --reaplicar»."
       fallo "El panel detectado es de un proyecto de un cliente y no se toca. Si de verdad es el de esta instalación, indícalo con MAILWAY_PANEL_SERVICIO=$PANEL_EXISTENTE_SERVICIO."
     fi
     PANEL_ADOPTADO=$(campo_json '"\(.project.id) \(.project.slug) \(.service.id) \(.service.slug)"')
