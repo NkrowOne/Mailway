@@ -148,10 +148,9 @@ class mailway_theme extends rcube_plugin
     }
 
     /**
-     * Portada de la pantalla de acceso: panel de marca a la izquierda (logo,
-     * nombre del servicio, titular y tres ventajas) y la tarjeta a la
-     * derecha con «Inicia sesión»; en el móvil, el panel queda como franja
-     * de cabecera. Solo con el logotipo de Mailway: un operador con marca
+     * Portada de la pantalla de acceso: panel de marca a la izquierda (logo
+     * y nombre del servicio sobre el petróleo de la marca) y la tarjeta a la
+     * derecha; en el móvil, el panel queda como franja de cabecera. Solo con el logotipo de Mailway: un operador con marca
      * propia conserva el acceso sencillo con su logotipo.
      *
      * El nombre (product_name, de MAILWAY_BRAND) sale escapado. Al estar en
@@ -168,34 +167,9 @@ class mailway_theme extends rcube_plugin
             ? $m[1]
             : $this->urlbase . 'logo.svg';
 
-        $ventaja = static function (string $icono, string $titulo, string $texto): string {
-            return '<li><span class="mw-portada-icono" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-                . $icono . '</svg></span><span><strong>' . $titulo . '</strong>' . $texto . '</span></li>';
-        };
-        $portada = "
-" . '<aside id="mailway-portada" aria-hidden="true">'
+        // Solo marca y diseño: el panel no añade textos a la pantalla.
+        $portada = "\n" . '<aside id="mailway-portada" aria-hidden="true">'
             . '<div class="mw-portada-marca"><img src="' . $logo . '" alt=""><span>' . $nombre . '</span></div>'
-            . '<div class="mw-portada-cuerpo">'
-            . '<p class="mw-portada-titular">Tu correo, siempre a mano</p>'
-            . '<p class="mw-portada-texto">Entra desde cualquier navegador. Lo que hagas aquí se sincroniza con tu móvil y tu ordenador.</p>'
-            . '<ul class="mw-portada-ventajas">'
-            . $ventaja(
-                '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
-                'Conexión segura',
-                'Cifrado en cada acceso y filtro de correo no deseado.'
-            )
-            . $ventaja(
-                '<path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8"/><path d="M10 19v-3.96 3.15"/><path d="M7 19h5"/><rect width="6" height="10" x="16" y="12" rx="2"/>',
-                'En todos tus dispositivos',
-                'Móvil, ordenador y navegador, siempre al día.'
-            )
-            . $ventaja(
-                '<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>',
-                'Tu bandeja en orden',
-                'Carpetas, filtros y respuesta automática cuando no estés.'
-            )
-            . '</ul></div>'
-            . '<p class="mw-portada-pie">' . $nombre . '</p>'
             . '</aside>';
 
         // La portada abre el contenedor de la página; la clase en <body>
@@ -206,10 +180,6 @@ class mailway_theme extends rcube_plugin
         }
         $html = preg_replace('/<body class="task-login/', '<body class="mailway-portada task-login', $html, 1);
 
-        // Encabezado de la tarjeta (la etiqueta «Dirección de correo» se pone
-        // en init(): el formulario aún no está en la página en este punto).
-        $saludo = '<div id="mailway-saludo"><h2>Inicia sesión</h2><p>Con tu dirección de correo completa y tu contraseña.</p></div>';
-        $html = preg_replace('/(<form id="login-form"[^>]*>)/', '$1' . $saludo, $html, 1);
 
         $html = preg_replace(
             '/(<div id="login-footer"[^>]*>\s*)' . preg_quote($nombre, '/') . '\s*(?:&nbsp;&bull;&nbsp;\s*)?/',
