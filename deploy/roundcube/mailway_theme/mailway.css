@@ -772,6 +772,16 @@ html.mailway #layout-menu {
     padding: 0;
   }
 
+  /* El logotipo de Mailway (solo el nuestro: el de un operador conserva los
+     límites de arriba) va a tamaño fijo, como la tesela del panel: 36 px en
+     el carril estrecho de la tableta y 40 px en el de escritorio. */
+  html.mailway #layout-menu .popover-header img[src*="mailway_theme/logo.svg"] {
+    width: min(40px, calc(var(--mw-carril) - 20px));
+    height: min(40px, calc(var(--mw-carril) - 20px));
+    max-width: none;
+    max-height: none;
+  }
+
   html.mailway #taskmenu .special-buttons {
     background-color: var(--mw-mesa);
     padding-bottom: 8px;
@@ -2967,6 +2977,36 @@ html.mailway .task-login #logo {
   margin-bottom: 24px;
 }
 
+/* Logotipo de Mailway y nombre del servicio encima de la tarjeta, como en
+   el acceso del panel (la tesela en grande). Si el operador puso su propio
+   logotipo, ni hay nombre ni cambia el tamaño. */
+html.mailway .task-login #logo[src*="mailway_theme/logo.svg"] {
+  width: 52px;
+  height: 52px;
+  max-width: none;
+  max-height: none;
+  margin-bottom: 12px;
+}
+
+html.mailway #mailway-marca {
+  max-width: 400px;
+  margin: 0 0 24px;
+  color: var(--mw-tinta);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Elastic atenúa el logotipo en oscuro (pensado para el suyo, blanco): la
+   tesela petróleo ya está hecha para los dos fondos y apagada se vería
+   sucia. */
+html.mailway.dark-mode #logo[src*="mailway_theme/logo.svg"] {
+  opacity: 1;
+}
+
 html.mailway #login-form {
   top: auto;
   width: 100%;
@@ -3050,6 +3090,10 @@ html.mailway.dark-mode #login-footer {
 
 html.mailway #login-footer a {
   font-weight: 500;
+}
+
+html.mailway #login-footer.mailway-vacio {
+  margin-top: 0;
 }
 
 html.mailway #login-footer > div {
@@ -3178,6 +3222,11 @@ html.mailway .floating-action-buttons a.button .inner {
 
   html.mailway.layout-phone #layout-menu .popover-header img {
     max-height: 40px;
+  }
+
+  html.mailway.layout-phone #layout-menu .popover-header img[src*="mailway_theme/logo.svg"] {
+    width: 36px;
+    height: 36px;
   }
 
   html.mailway.layout-phone #layout-menu .popover-header a {
