@@ -32,6 +32,16 @@ import {
   thunderbirdAndroidQrPayload,
   type ConnectionSettings,
 } from './connection';
+import {
+  borrarFoto,
+  cambiarNombreVisible,
+  enviarFoto,
+  fechaFoto,
+  fotoSchema,
+  guardarFoto,
+  leerFoto,
+  nombreSchema,
+} from './perfil';
 
 /**
  * Portal del titular del buzón y enlaces de configuración de dispositivos.
@@ -532,6 +542,12 @@ async function ocupacion(titular: Titular): Promise<{ usedBytes: number | null; 
   }
 }
 
+/** URL de la foto con su fecha (o null si no hay): cambia al cambiar la foto. */
+function urlFoto(ruta: string, mailboxId: string): string | null {
+  const fecha = fechaFoto(mailboxId);
+  return fecha === null ? null : `${ruta}?v=${fecha}`;
+}
+
 /* ------------------------------ Webmail ------------------------------------ */
 
 /** Comparación en tiempo constante (también en longitud, gracias al hash). */
@@ -585,6 +601,13 @@ const appPasswordSchema = z.object({
     .trim()
     .min(1, 'Indica un nombre que identifique el dispositivo, por ejemplo «Móvil».')
     .max(60, 'El nombre no puede superar los 60 caracteres.'),
+});
+
+const webmailPerfilSchema = z.object({ user: z.string().trim().toLowerCase().min(3).max(320) });
+
+const webmailFotoSchema = z.object({
+  user: z.string().trim().toLowerCase().min(3).max(320),
+  email: z.string().trim().toLowerCase().min(3).max(320),
 });
 
 const webmailSchema = z.object({
@@ -738,6 +761,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // recibe un único enlace y la lista del panel vuelve a estar vacía. El
       // registro de actividad conserva su rastro.
       const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
+      // La foto es parte del onboarding del titular: la de la prueba se
+      // retira. El nombre visible lo puso quien creó el buzón y se conserva.
+      const photoRemoved = borrarFoto(titular.id);
       // Los fallos de la prueba no deben bloquear al titular en su primer acceso.
       db.prepare('DELETE FROM login_attempts WHERE ip IN (?, ?)').run(
         `buzon:${titular.email}`,
@@ -758,8 +784,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         ttlHours: body.ttlHours,
         linksRemoved,
         appPasswordsRevoked,
+        photoRemoved,
       }, titular.clientId);
-      return { password, link, linksRemoved, appPasswordsRevoked };
+      return { password, link, linksRemoved, appPasswordsRevoked, photoRemoved };
     });
   });
 
@@ -783,6 +810,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       hasPassword: password !== undefined,
       expiresAt: enlace.expires_at,
       portalUrl: `${base}/mi-buzon`,
+      // Relativa, como la de «Mi buzón»: la imagen se pide al mismo host que
+      // sirvió la página.
+      photoUrl: urlFoto(`/api/public/setup/${token}/photo`, titular.id),
       appleProfileUrl: `${base}/api/public/setup/${token}/perfil.mobileconfig`,
       thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
         titular.email,
@@ -816,6 +846,47 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     // El enlace sigue sirviendo de guía para otros dispositivos, pero ya no
     // tiene por qué guardar la contraseña.
     db.prepare('UPDATE setup_links SET password_enc = NULL WHERE id = ?').run(enlace.id);
+    return { ok: true };
+  });
+
+  // Perfil desde el onboarding: quien tiene el enlace es el titular, así que
+  // puede poner su nombre y su foto antes de configurar los dispositivos (el
+  // nombre va en el perfil de Apple y en el QR de Thunderbird).
+  app.patch('/api/public/setup/:token/profile', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    const body = nombreSchema.parse(req.body ?? {});
+    if (await cambiarNombreVisible(titular, body.displayName)) {
+      auditTitular(req, titular.clientId, 'portal.profile_updated', { email: titular.email, via: 'setup_link' });
+    }
+    return { displayName: body.displayName };
+  });
+
+  app.get('/api/public/setup/:token/photo', async (req, reply) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    return enviarFoto(reply, leerFoto(titular.id));
+  });
+
+  app.put('/api/public/setup/:token/photo', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    const body = fotoSchema.parse(req.body ?? {});
+    const photoUpdatedAt = guardarFoto(titular.id, body.photo);
+    auditTitular(req, titular.clientId, 'portal.photo_updated', { email: titular.email, via: 'setup_link' });
+    return { photoUrl: urlFoto(`/api/public/setup/${token}/photo`, titular.id), photoUpdatedAt };
+  });
+
+  app.delete('/api/public/setup/:token/photo', async (req) => {
+    limitarPublico(req);
+    const { token } = req.params as { token: string };
+    const { titular } = enlacePorToken(token);
+    if (borrarFoto(titular.id)) {
+      auditTitular(req, titular.clientId, 'portal.photo_removed', { email: titular.email, via: 'setup_link' });
+    }
     return { ok: true };
   });
 
@@ -866,6 +937,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // Relativa a propósito: la cookie del titular es del host desde el que
       // entró, que puede no ser la URL pública configurada del panel.
       appleProfileUrl: `${RUTA_COOKIE}/mobileconfig`,
+      photoUrl: urlFoto(`${RUTA_COOKIE}/photo`, titular.id),
       thunderbirdAndroidQr: thunderbirdAndroidQrPayload(
         titular.email,
         titular.displayName,
@@ -901,6 +973,36 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       settings,
     });
     return enviarPerfil(reply, titular.email, plist);
+  });
+
+  app.patch('/api/portal/profile', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const body = nombreSchema.parse(req.body ?? {});
+    if (await cambiarNombreVisible(titular, body.displayName)) {
+      auditTitular(req, titular.clientId, 'portal.profile_updated', { email: titular.email, via: 'portal' });
+    }
+    return { displayName: body.displayName };
+  });
+
+  app.get('/api/portal/photo', async (req, reply) => {
+    const { titular } = sesionBuzon(req);
+    return enviarFoto(reply, leerFoto(titular.id));
+  });
+
+  app.put('/api/portal/photo', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const body = fotoSchema.parse(req.body ?? {});
+    const photoUpdatedAt = guardarFoto(titular.id, body.photo);
+    auditTitular(req, titular.clientId, 'portal.photo_updated', { email: titular.email, via: 'portal' });
+    return { photoUrl: urlFoto(`${RUTA_COOKIE}/photo`, titular.id), photoUpdatedAt };
+  });
+
+  app.delete('/api/portal/photo', async (req) => {
+    const { titular } = sesionBuzon(req);
+    if (borrarFoto(titular.id)) {
+      auditTitular(req, titular.clientId, 'portal.photo_removed', { email: titular.email, via: 'portal' });
+    }
+    return { ok: true };
   });
 
   app.get('/api/portal/app-passwords', async (req) => {
@@ -991,6 +1093,40 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       alCambiarContrasenaBuzon(titular.id);
       auditTitular(req, titular.clientId, 'webmail.password_changed', { email: titular.email });
       return responder(200, 'ok');
+    });
+
+    /*
+     * Perfil para el complemento mailway_perfil de Roundcube: el nombre con
+     * el que crea (y mantiene) la identidad del remitente y si hay foto. Solo
+     * con el secreto compartido, como el cambio de contraseña.
+     */
+    scope.post('/api/webmail/profile', async (req, reply) => {
+      if (!config.webmailToken) throw notFound('Ruta no encontrada.');
+      if (!tokenWebmailValido(req.headers['x-mailway-token'])) throw unauthorized();
+      const parsed = webmailPerfilSchema.safeParse(req.body);
+      if (!parsed.success) throw badRequest('Petición no válida.');
+      const titular = buzonPorDireccion(parsed.data.user);
+      if (!titular) throw notFound('Buzón no encontrado.');
+      reply.header('Cache-Control', 'no-store');
+      return { name: titular.displayName, photo: fechaFoto(titular.id) !== null };
+    });
+
+    /*
+     * Avatar del remitente en el webmail. Solo entre buzones del mismo
+     * cliente: la foto de un empleado no se enseña a quien recibe su correo
+     * en otra empresa alojada en la misma instancia.
+     */
+    scope.post('/api/webmail/photo', async (req, reply) => {
+      if (!config.webmailToken) throw notFound('Ruta no encontrada.');
+      if (!tokenWebmailValido(req.headers['x-mailway-token'])) throw unauthorized();
+      const parsed = webmailFotoSchema.safeParse(req.body);
+      if (!parsed.success) throw badRequest('Petición no válida.');
+      const quienMira = buzonPorDireccion(parsed.data.user);
+      const remitente = buzonPorDireccion(parsed.data.email);
+      if (!quienMira || !remitente || quienMira.clientId !== remitente.clientId) {
+        throw notFound('Este buzón no tiene foto.', 'photo_not_found');
+      }
+      return enviarFoto(reply, leerFoto(remitente.id));
     });
   });
 }

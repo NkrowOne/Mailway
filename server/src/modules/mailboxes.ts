@@ -26,6 +26,8 @@ export interface Mailbox {
   usageCheckedAt: number | null;
   clientId: string;
   clientName: string;
+  /** Última vez que cambió la foto (para invalidar la caché); null = sin foto. */
+  photoUpdatedAt: number | null;
 }
 
 interface MailboxRow {
@@ -41,12 +43,16 @@ interface MailboxRow {
   domain: string;
   client_id: string;
   client_name: string;
+  photo_updated_at: number | null;
 }
 
-const MAILBOX_SELECT = `SELECT m.*, d.domain, d.client_id, c.name AS client_name
+// La foto solo aporta su fecha: la imagen se sirve aparte.
+const MAILBOX_SELECT = `SELECT m.*, d.domain, d.client_id, c.name AS client_name,
+    p.updated_at AS photo_updated_at
   FROM mailboxes m
   JOIN domains d ON d.id = m.domain_id
-  JOIN clients c ON c.id = d.client_id`;
+  JOIN clients c ON c.id = d.client_id
+  LEFT JOIN mailbox_photos p ON p.mailbox_id = m.id`;
 
 function toMailbox(row: MailboxRow): Mailbox {
   return {
@@ -63,6 +69,7 @@ function toMailbox(row: MailboxRow): Mailbox {
     usageCheckedAt: row.usage_checked_at ?? null,
     clientId: row.client_id,
     clientName: row.client_name,
+    photoUpdatedAt: row.photo_updated_at ?? null,
   };
 }
 

@@ -308,6 +308,7 @@ edita una ya publicada.
 | `006-formularios-web` | `forms` (formularios de contacto para webs estáticas) y `messages.form_id`. |
 | `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
 | `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
+| `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -323,6 +324,7 @@ aliases            alias → destinos (JSON: buzones del cliente o externos)
 app_passwords      contraseñas de aplicación: secreto tal como está en el motor, revocación
 setup_links        enlaces de configuración: hash del token, contraseña cifrada opcional
 mailbox_sessions   sesiones de «Mi buzón»
+mailbox_photos     foto de cada buzón (tipo comprobado, bytes, fecha para la caché)
 api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP cifrada,
                    límite diario opcional, revocación
 messages           registro de cada envío por API o formulario (estado, error, message-id,
@@ -411,6 +413,10 @@ controles táctiles de 44 px y un paso a la vez.
   /api/mailboxes/:id/setup-reset`): tras probarlo, contraseña nueva, fuera
   enlaces, sesiones de «Mi buzón», bloqueos y (opcional) contraseñas de
   aplicación, y un enlace de configuración nuevo para el titular.
+- **Perfil del buzón**: el titular pone su nombre visible y su foto en el
+  onboarding y en «Mi buzón» (y la administración en la ficha); el webmail los
+  usa para la identidad del remitente y como avatar entre buzones del mismo
+  cliente (complemento `mailway_perfil`).
 - El cliente como centro del panel de administración: su ficha agrupa en
   pestañas dominios, buzones, alias, usuarios, marca blanca, API de envío,
   formularios y actividad.

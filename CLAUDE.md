@@ -29,8 +29,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
     `clients` (planes, clientes, usuarios, `assertWithinLimit`), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
-    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `portal`
-    (enlaces de configuración, «Mi buzón», `/api/webmail/password`),
+    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `perfil`
+    (nombre visible y foto del buzón), `portal` (enlaces de configuración y
+    su reinicio, «Mi buzón», rutas `/api/webmail/*` de Roundcube),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
     (marca blanca y `/api/traefik/config`), `transactional` (claves y
