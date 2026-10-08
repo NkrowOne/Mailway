@@ -275,7 +275,7 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato) y `photoUpdatedAt` (`null` = sin foto). |
+| `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato), `photoUpdatedAt` (`null` = sin foto), `configuredAt` y `setup` (ver «Buzón configurado», abajo). |
 | `POST /api/mailboxes` | `{ domainId, localPart, displayName?, password? (10–200), quotaMb? }` → `{ mailbox, password? }` (`password` solo si se generó). La cuota se acota a la del plan. |
 | `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ dryRun, capacity, valid, exceedsPlan, ownershipPending, ownershipError, results }`; con la propiedad del dominio pendiente, cada línea sale con su error y no se responde `409`. Si no, exige la propiedad (`409 domain_ownership_pending`), comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. Con `setupLinks: { ttlHours? (1–720, 72) }`, cada buzón creado lleva además `setupLink: { id, url, expiresAt, hasPassword }`: su enlace de configuración con la contraseña dentro, listo para enviar a su titular. |
 | `PATCH /api/mailboxes/:id` | `{ displayName?, quotaMb?, status?: active\|suspended }`. Reactivar con el cliente suspendido: `409 client_suspended`. |
@@ -284,6 +284,7 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 | `GET /api/mailboxes/:id/connection` | Datos de conexión (sección 5.3). |
 | `GET /api/mailboxes/:id/mobileconfig` | Perfil de Apple del buzón, sin contraseña. Sin nombre de servidor configurado: `409 mail_hostname_missing`. |
 | `GET\|PUT\|DELETE /api/mailboxes/:id/photo` | Foto del buzón (ver «Perfil del buzón», abajo). `PUT { photo }` → `{ photoUpdatedAt }`. |
+| `POST /api/mailboxes/:id/configured` | `{ configured: boolean }` → `{ configuredAt }`. Marca a mano el buzón como configurado (el titular puso los datos a mano) o lo desmarca. Conserva el primer momento si ya lo estaba. Queda en la actividad como `mailbox.marked_configured`. |
 | `GET\|PUT /api/domains/:id/essential-addresses` | **postmaster@ y abuse@** del dominio → `{ addresses: [{ localPart, email, kind: alias\|mailbox\|null, destinations }] }`. `PUT { destinations (1–20) }` los crea o actualiza como alias (mismas reglas de destinos que los alias); un buzón con ese nombre se deja como está. Exige la propiedad del dominio. |
 | `GET /api/aliases?clientId=&domainId=` | `{ aliases }`, cada uno con `destinations` y `externalDestinations`. |
 | `POST /api/aliases` | `{ domainId, localPart, destinations (1–20) }`. |
@@ -310,6 +311,34 @@ photo_not_found`. Cambios en la actividad: `mailbox.photo_updated`,
 `mailbox.photo_removed` y, desde el titular, `portal.profile_updated`,
 `portal.photo_updated` y `portal.photo_removed`.
 
+**Buzón configurado.** Cada buzón lleva:
+
+```json
+{
+  "configuredAt": 1791475119879,
+  "setup": {
+    "lastLinkAt": 1791475119877,
+    "lastOpenedAt": null,
+    "lastEmail": { "to": "ana@gmail.com", "at": 1791475119879, "status": "sent" }
+  }
+}
+```
+
+- `configuredAt` (`null` = sin configurar) es el **primer** momento en que el
+  titular demostró tener acceso: pulsó «Ya lo he configurado» en el enlace de
+  configuración, descargó el perfil de Apple, entró en «Mi buzón» o en el
+  webmail; o se marcó a mano. Vuelve a `null` cuando el panel deja sus
+  dispositivos sin acceso: contraseña nueva desde el panel
+  (`POST …/password`), reinicio (`POST …/setup-reset`) o el correo de
+  configuración con contraseña nueva (sección 2.7). No cambia cuando el
+  titular cambia su contraseña desde «Mi buzón» o el webmail.
+- `setup.lastLinkAt` y `setup.lastOpenedAt`: creación del último enlace de
+  configuración y última apertura de cualquiera de ellos (de cualquier
+  estado; `null` si no hay).
+- `setup.lastEmail`: último correo de configuración (sección 2.7), enviado
+  (`sent`) o fallido (`failed`), con la dirección a la que se envió; `null` si
+  no hay ninguno o se reinició la configuración.
+
 Errores frecuentes de altas:
 
 | Código | Cuándo |
@@ -318,6 +347,7 @@ Errores frecuentes de altas:
 | `400 client_suspended` | El cliente está suspendido: no se crean recursos |
 | `409 domain_ownership_pending` | La propiedad del dominio no está comprobada (buzones, altas masivas y alias; sección 2.4) |
 | `400 invalid_local_part` | Nombre no válido (solo `a-z`, `0-9`, `.`, `-`, `_`; sin símbolo al principio o al final ni `..`) |
+| `400 reserved_address` | `configuration@` está reservada: desde ella se envían los correos de configuración (buzones, altas masivas, también en la revisión con `dryRun`, y alias) |
 | `409 mailbox_exists` · `409 alias_exists` | Ya existe un buzón o un alias con esa dirección |
 | `400 alias_loop` | El alias se reenvía a sí mismo |
 | `400 destination_other_client` | El destino es un buzón de otro cliente |
@@ -377,6 +407,7 @@ guarda en claro.
 | `GET /api/mailboxes/:id/setup-links/:linkId/url` | **Solo administración.** Vuelve a dar la URL de un enlace activo → `{ link: { id, url, expiresAt, hasPassword } }`. Caducado o revocado: `404 setup_link_invalid`; creado antes de la 1.3 (sin token guardado): `409 setup_link_not_recoverable`. Queda en la actividad como `mailbox.setup_link_viewed`. |
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
 | `POST /api/mailboxes/:id/setup-reset` | Reinicia la configuración del buzón (ver abajo). `{ revokeAppPasswords? (true por defecto), includePassword? (true por defecto), ttlHours? (1–720, 72 por defecto) }` → `{ password, link: { id, url, expiresAt, hasPassword }, linksRemoved, appPasswordsRevoked, photoRemoved }`. |
+| `POST /api/mailboxes/:id/setup-email` | Envía al titular su enlace de configuración por correo (ver abajo). `{ to (correo, ≤ 254), includePassword? (true por defecto), ttlHours? (1–720, 168 por defecto) }` → `{ sent: { to, at, status: 'sent' }, link: { expiresAt, hasPassword }, reused }`. **Nunca devuelve la URL ni el token.** |
 
 - Con `includePassword: true` hay que indicar en `password` la contraseña
   recién generada (`400 password_required`). Se comprueba con el motor antes de
@@ -409,7 +440,51 @@ activas y borra su historial; desmárcalo si alguna la usa una integración que
 debe seguir enviando. El correo del buzón no se modifica. Primero se revocan
 las contraseñas de aplicación y luego se cambia la principal: si el motor no
 responde (`502`), no se ha borrado ningún enlace y el reinicio se puede
-repetir. Queda en la actividad como `mailbox.setup_reset`, sin secretos.
+repetir. Queda en la actividad como `mailbox.setup_reset`, sin secretos. El
+buzón vuelve a estar sin configurar (`configuredAt: null`) y se olvidan sus
+correos de configuración (`setup.lastEmail: null`).
+
+**Correo de configuración** (`setup-email`): la puesta en marcha del cliente
+envía a cada titular, a la dirección que elija quien gestiona (su correo
+personal, el de otro trabajo…), un correo con su enlace de configuración.
+
+- Sale de **`configuration@<dominio del buzón>`** con el nombre «Configura tu
+  correo», el asunto `Configura tu correo <buzón>` y, como `Reply-To`, el
+  correo del usuario del panel que lo envía. El texto (en texto y HTML) saluda
+  por el nombre visible, explica qué hacer, lleva un botón «Configurar mi
+  correo» con la URL debajo, dice hasta cuándo vale el enlace (y, si lleva la
+  contraseña, que no se reenvíe) y lo firma «Te lo envía <usuario> desde
+  <cliente>». No menciona la plataforma (marca blanca).
+- `configuration@` es una cuenta oculta del motor por dominio, que se crea en
+  el primer envío: no es un buzón del cliente (no sale en ningún listado ni
+  cuenta para el plan) y su contraseña no se devuelve nunca. Por eso nadie
+  puede crear un buzón ni un alias `configuration` (`400 reserved_address`).
+  Se borra con el dominio.
+- **Enlace**: se reutiliza el más reciente que no esté revocado, venza dentro
+  de más de 24 horas, se pueda volver a enviar y lleve la contraseña (con
+  `includePassword`) o no la lleve (sin él; nunca se envía la contraseña si se
+  ha pedido sin ella). Si no hay ninguno, se crea uno con `ttlHours`; con
+  `includePassword` eso **genera una contraseña principal nueva** (como el
+  reinicio: los dispositivos que usaban la anterior dejan de entrar, las
+  contraseñas de aplicación siguen valiendo, se cierran las sesiones de «Mi
+  buzón» y el buzón vuelve a estar sin configurar). `reused` dice si se
+  reutilizó.
+- Límites por hora: 5 por buzón y 50 por cliente, contando también los
+  fallidos (`429 too_many_setup_emails`).
+- Errores: `400 setup_email_same_mailbox` (la dirección es la del propio
+  buzón, que aún no está configurado en ningún sitio), `403 client_suspended`
+  (cliente suspendido), `400 mailbox_suspended`, `409
+  domain_ownership_pending`, `409 configuration_sender_taken` (ya hay un buzón
+  o alias `configuration@` en el dominio, de antes de reservarla: copia el
+  enlace y envíalo tú), `503 engine_not_configured` y `502 setup_email_failed`
+  (el SMTP del motor lo ha rechazado; el mensaje incluye la causa). Si falla
+  el SMTP, el envío queda anotado como fallido y reintentar reutiliza el mismo
+  enlace. Ningún error previo al envío cambia la contraseña.
+- En modo demostración no se abre ninguna conexión SMTP: el envío se da por
+  hecho.
+- Queda en la actividad como `mailbox.setup_email_sent` o
+  `mailbox.setup_email_failed` con `{ mailboxId, email, to, linkId, reused,
+  hasPassword }`, nunca con la URL, el token ni la contraseña.
 
 ### 2.8 Actividad
 
@@ -844,8 +919,8 @@ Rutas públicas (60 peticiones por minuto e IP, sin caché):
 | Ruta | Descripción |
 |---|---|
 | `GET /api/public/setup/:token` | `{ email, displayName, brandName, connection, password?, hasPassword, expiresAt, portalUrl, photoUrl, appleProfileUrl, thunderbirdAndroidQr }`. `photoUrl` es relativa o `null`. |
-| `GET /api/public/setup/:token/perfil.mobileconfig` | Perfil de Apple (con la contraseña si el enlace la lleva). |
-| `POST /api/public/setup/:token/done` | «Ya lo he configurado»: borra la contraseña del enlace. |
+| `GET /api/public/setup/:token/perfil.mobileconfig` | Perfil de Apple (con la contraseña si el enlace la lleva). Marca el buzón como configurado. |
+| `POST /api/public/setup/:token/done` | «Ya lo he configurado»: borra la contraseña del enlace y marca el buzón como configurado. |
 | `PATCH /api/public/setup/:token/profile` | `{ displayName (≤ 80) }` → `{ displayName }`. Cambia también el motor. |
 | `GET\|PUT\|DELETE /api/public/setup/:token/photo` | Foto del buzón (sección 2.5). `PUT { photo }` → `{ photoUrl, photoUpdatedAt }`. |
 
@@ -861,7 +936,7 @@ aplicación.
 
 | Método y ruta | Descripción |
 |---|---|
-| `POST /api/portal/login` | `{ email, password }` → `{ ok, email }`. Cookie `mailway_buzon` (httpOnly, `SameSite=Lax`, `Path=/api/portal`, 12 horas). |
+| `POST /api/portal/login` | `{ email, password }` → `{ ok, email }`. Cookie `mailway_buzon` (httpOnly, `SameSite=Lax`, `Path=/api/portal`, 12 horas). Marca el buzón como configurado. |
 | `GET /api/portal/me` | Datos del buzón, conexión, ocupación, webmail y `photoUrl` (relativa o `null`). |
 | `PATCH /api/portal/profile` | `{ displayName (≤ 80) }` → `{ displayName }`. |
 | `GET\|PUT\|DELETE /api/portal/photo` | Foto del buzón (sección 2.5). `PUT { photo }` → `{ photoUrl, photoUpdatedAt }`. |
@@ -906,7 +981,8 @@ o formulario; sin secreto configurado, `404`; secreto incorrecto, `401`):
 
 - `POST /api/webmail/profile` `{ user }` → `{ name, photo }`: el nombre visible
   con el que se crea y se mantiene la identidad del remitente y si hay foto.
-  Buzón inexistente: `404`.
+  Buzón inexistente: `404`. Como el complemento la llama justo después de
+  entrar en el webmail, marca el buzón como configurado.
 - `POST /api/webmail/photo` `{ user, email }` → la imagen, **solo si `email`
   es un buzón del mismo cliente que `user`**; si no, `404`. La foto de un
   empleado nunca se muestra a otra empresa alojada en la misma instancia.

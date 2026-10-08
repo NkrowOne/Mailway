@@ -311,6 +311,7 @@ edita una ya publicada.
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 | `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
 | `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado y revocación). |
+| `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -321,10 +322,13 @@ sessions           sesiones del panel (hash del token, caducidad, IP, agente)
 management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, revocación
 domains            dominio → cliente, selector DKIM, último informe DNS (JSON), estado,
                    cuenta y zona de Cloudflare, dns_applied_at, owner_verified_at
-mailboxes          buzón → dominio (local_part único por dominio), cuota, estado, ocupación
+mailboxes          buzón → dominio (local_part único por dominio), cuota, estado, ocupación,
+                   configured_at (el titular ya lo tiene configurado)
 aliases            alias → destinos (JSON: buzones del cliente o externos)
 app_passwords      contraseñas de aplicación: secreto tal como está en el motor, revocación
 setup_links        enlaces de configuración: hash del token, contraseña cifrada opcional
+envios_configuracion  correos de configuración a los titulares: destinatario, estado, enlace
+remitentes_configuracion  cuenta oculta configuration@ de cada dominio (contraseña cifrada)
 client_invites     enlaces de bienvenida de los clientes: contacto, hash y token cifrado, estado
 mailbox_sessions   sesiones de «Mi buzón»
 mailbox_photos     foto de cada buzón (tipo comprobado, bytes, fecha para la caché)
@@ -430,8 +434,16 @@ controles táctiles de 44 px y un paso a la vez.
 - El cliente como centro del panel de administración: su ficha agrupa en
   pestañas dominios, buzones, alias, usuarios, marca blanca, API de envío,
   formularios y actividad.
-- Webmail con aspecto actual (capa `mailway_theme` sobre Elastic), también en
-  modo oscuro.
+- Webmail con el tema Elastic2022 (copia fijada en `deploy/roundcube/elastic2022`)
+  y la marca de Mailway (`mailway_theme`: logotipo, iconos, panel vacío, foto
+  propia y portada del acceso), también en modo oscuro.
+- **Entrega de la configuración** en la puesta en marcha: cada buzón sabe si
+  su titular ya lo ha configurado (`configuredAt`: terminó el enlace, instaló
+  el perfil de Apple, entró en «Mi buzón» o en el webmail, o se marcó a mano)
+  y el cliente le envía su enlace por correo, a la dirección que elija, desde
+  `configuration@<dominio>` («Configura tu correo»), una cuenta oculta del
+  motor por dominio. La dirección queda reservada; el envío reutiliza el
+  enlace vigente, tiene límites por hora y no devuelve nunca la URL.
 
 ### Límites conocidos
 

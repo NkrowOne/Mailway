@@ -63,14 +63,24 @@ export function PasoListo({
         />
         <FilaEstado
           concepto="Buzones del equipo"
-          veredicto={ctx.buzones.length > 0 ? 'normal' : 'vigilar'}
+          veredicto={ctx.buzones.length === 0 ? 'vigilar' : estados.equipo.veredicto}
           estado={estados.equipo.detalle}
           nota={
             ctx.buzones.length === 0
               ? 'Crea al menos uno para empezar a usar el correo.'
-              : 'Para añadir a más personas más adelante, ve a «Buzones».'
+              : estados.equipo.veredicto === 'fuera'
+                ? 'A alguien aún no le ha llegado su configuración: envíasela por correo o copia su enlace.'
+                : estados.equipo.veredicto === 'vigilar'
+                  ? 'Hay personas con la configuración enviada que aún no la han terminado.'
+                  : undefined
           }
-          accion={ctx.buzones.length === 0 ? revisar('equipo', 'Crear buzones') : undefined}
+          accion={
+            ctx.buzones.length === 0
+              ? revisar('equipo', 'Crear buzones')
+              : estados.equipo.veredicto !== 'normal'
+                ? revisar('equipo')
+                : undefined
+          }
         />
         <FilaEstado
           concepto="postmaster@ y abuse@"
@@ -80,7 +90,7 @@ export function PasoListo({
         />
         <FilaEstado
           concepto="Tus dispositivos"
-          veredicto={estados.dispositivos.hecho ? 'normal' : 'sin-dato'}
+          veredicto={estados.dispositivos.veredicto}
           estado={estados.dispositivos.detalle}
           accion={!estados.dispositivos.hecho ? revisar('dispositivos', 'Configurar') : undefined}
         />
@@ -89,11 +99,12 @@ export function PasoListo({
       <Hoja title="Cuando lo necesites">
         <ul className="flex flex-col gap-2.5 text-base text-tinta-2">
           <li className="max-w-[68ch]">
-            <span className="font-medium text-tinta">Más personas:</span> añádelas desde{' '}
+            <span className="font-medium text-tinta">Más personas:</span> pulsa «Añadir buzones» arriba en esta
+            página o ve a{' '}
             <Link to="/buzones" className={enlace}>
               Buzones
             </Link>
-            , una a una o con «Alta masiva», cada una con su enlace de configuración.
+            . Después, envía a cada una su configuración desde «Tu equipo».
           </li>
           <li className="max-w-[68ch]">
             <span className="font-medium text-tinta">Direcciones compartidas</span> como info@ o ventas@: créalas como{' '}

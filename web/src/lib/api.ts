@@ -165,8 +165,22 @@ export interface Mailbox {
   usageCheckedAt?: number | null;
   /** Cuándo se subió la foto del titular; null = sin foto. Va en la URL (?v=) para invalidar la caché. */
   photoUpdatedAt: number | null;
+  /**
+   * Cuándo demostró su titular que tiene acceso (terminó el enlace de
+   * configuración, instaló el perfil, entró en «Mi buzón» o en el webmail) o
+   * se marcó a mano como configurado; null = sin configurar.
+   */
+  configuredAt: number | null;
+  /** Entrega de la configuración: último enlace, última apertura y último correo enviado. */
+  setup: EntregaConfiguracion;
   clientId?: string;
   clientName?: string;
+}
+
+export interface EntregaConfiguracion {
+  lastLinkAt: number | null;
+  lastOpenedAt: number | null;
+  lastEmail: { to: string; at: number; status: 'sent' | 'failed' } | null;
 }
 
 export interface Alias {

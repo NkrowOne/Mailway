@@ -120,8 +120,18 @@ export const ordenVeredicto: Record<VeredictoUso, number> = {
 /** Mismas reglas que el servidor para el nombre de un buzón o alias. */
 const LOCAL_PART_RE = /^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$/;
 
+/**
+ * Dirección desde la que se envían los correos de configuración de cada
+ * dominio («Configura tu correo»). Está reservada: el servidor no deja crear
+ * un buzón ni un alias con ella, y aquí se avisa antes de intentarlo.
+ */
+export const REMITENTE_CONFIGURACION = 'configuration';
+
 export function errorNombreBuzon(local: string): string | null {
   if (!local) return 'Falta el nombre.';
+  if (local.toLowerCase() === REMITENTE_CONFIGURACION) {
+    return 'configuration@ está reservada: desde ella se envían las configuraciones de correo.';
+  }
   if (!LOCAL_PART_RE.test(local)) {
     return 'Solo letras sin tilde, números, puntos, guiones y guiones bajos; sin símbolo al principio ni al final.';
   }

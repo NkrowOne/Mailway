@@ -134,10 +134,11 @@ interface FilaBuzon {
 }
 
 /** Buzón visto desde el portal: con su cliente, para saber si puede entrar. */
-interface Titular {
+export interface Titular {
   id: string;
   email: string;
   displayName: string;
+  domainId: string;
   domain: string;
   clientId: string;
   quotaMb: number;
@@ -162,6 +163,7 @@ function aTitular(row: FilaBuzon): Titular {
     id: row.id,
     email: `${row.local_part}@${row.domain}`,
     displayName: row.display_name,
+    domainId: row.domain_id,
     domain: row.domain,
     clientId: row.client_id,
     quotaMb: row.quota_mb,
@@ -187,7 +189,7 @@ function buzonPorDireccion(email: string): Titular | null {
 }
 
 /** Buzón de una ruta del panel, con el control de acceso de su cliente. */
-function buzonDelPanel(req: FastifyRequest, mailboxId: string): Titular {
+export function buzonDelPanel(req: FastifyRequest, mailboxId: string): Titular {
   // Primero la sesión: a un anónimo no se le confirma qué ids existen.
   requireAuth(req);
   const titular = buzonPorId(mailboxId);
@@ -258,6 +260,31 @@ function auditTitular(
     `INSERT INTO audit_log (user_id, client_id, action, detail, ip, created_at)
      VALUES (NULL, ?, ?, ?, ?, ?)`,
   ).run(clientId, action, JSON.stringify(detail), req.ip || '', now());
+}
+
+/* ------------------------- Buzón configurado ------------------------------ */
+
+/**
+ * El titular ha demostrado que tiene acceso al buzón: terminó el enlace de
+ * configuración, descargó el perfil de Apple o entró en «Mi buzón» o en el
+ * webmail. Se guarda el primer momento; la puesta en marcha del cliente lo
+ * usa para saber qué buzones siguen sin configurar.
+ */
+export function marcarBuzonConfigurado(mailboxId: string): void {
+  db.prepare('UPDATE mailboxes SET configured_at = COALESCE(configured_at, ?) WHERE id = ?').run(
+    now(),
+    mailboxId,
+  );
+}
+
+/**
+ * El panel ha dejado los dispositivos del titular sin acceso (contraseña
+ * nueva, reinicio): el buzón vuelve a estar «sin configurar». No se llama
+ * cuando es el propio titular quien cambia su contraseña, porque él sigue
+ * teniendo acceso.
+ */
+export function olvidarBuzonConfigurado(mailboxId: string): void {
+  db.prepare('UPDATE mailboxes SET configured_at = NULL WHERE id = ?').run(mailboxId);
 }
 
 /* ------------------------- Límite de intentos ------------------------------ */
@@ -346,7 +373,7 @@ async function comprobarContrasenaPrincipal(
 
 /* --------------------------- Enlaces: utilidades --------------------------- */
 
-interface FilaEnlace {
+export interface FilaEnlace {
   id: string;
   token_hash: string;
   mailbox_id: string;
@@ -366,7 +393,7 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
  * debe seguir en la base ni un minuto más de lo necesario, aunque nadie
  * vuelva a abrirlo. Se hace en cada uso en vez de con un temporizador.
  */
-function purgarEnlaces(): void {
+export function purgarEnlaces(): void {
   const t = now();
   // Lo mismo con el token cifrado: un enlace muerto no se vuelve a enviar.
   db.prepare(
@@ -427,7 +454,7 @@ function enviarPerfil(reply: FastifyReply, email: string, plist: string): string
   return plist;
 }
 
-interface EnlaceNuevo {
+export interface EnlaceNuevo {
   id: string;
   url: string;
   expiresAt: number;
@@ -438,7 +465,7 @@ interface EnlaceNuevo {
  * Guarda un enlace de configuración nuevo y devuelve su URL. El token en
  * claro solo existe en la respuesta que lo crea; en la base, su hash.
  */
-function insertarEnlace(
+export function insertarEnlace(
   req: FastifyRequest,
   titular: Titular,
   passwordEnc: string | null,
@@ -828,11 +855,17 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       const password = generateMailboxPassword();
       await getEngine().setMailboxPassword(titular.email, password);
       alCambiarContrasenaBuzon(titular.id);
+      // Con la contraseña nueva ningún dispositivo entra: vuelve a estar sin
+      // configurar.
+      olvidarBuzonConfigurado(titular.id);
 
       // Los enlaces anteriores se borran, no solo se revocan: el titular
       // recibe un único enlace y la lista del panel vuelve a estar vacía. El
       // registro de actividad conserva su rastro.
       const linksRemoved = db.prepare('DELETE FROM setup_links WHERE mailbox_id = ?').run(titular.id).changes;
+      // Igual con los correos de configuración enviados: desde cero es sin
+      // «último envío» (también dejan de contar para el límite por hora).
+      db.prepare('DELETE FROM envios_configuracion WHERE mailbox_id = ?').run(titular.id);
       // La foto es parte del onboarding del titular: la de la prueba se
       // retira. El nombre visible lo puso quien creó el buzón y se conserva.
       const photoRemoved = borrarFoto(titular.id);
@@ -899,6 +932,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     const { token } = req.params as { token: string };
     const { enlace, titular } = enlacePorToken(token);
     db.prepare('UPDATE setup_links SET last_opened_at = ? WHERE id = ?').run(now(), enlace.id);
+    // Quien descarga el perfil lo instala en ese momento: es la señal más
+    // clara (en iPhone y Mac) de que el titular ya tiene el buzón.
+    marcarBuzonConfigurado(titular.id);
     const { settings } = datosConexion(titular);
     const plist = mobileconfigPlist({
       email: titular.email,
@@ -914,10 +950,11 @@ export function registerPortalRoutes(app: FastifyInstance): void {
   app.post('/api/public/setup/:token/done', async (req) => {
     limitarPublico(req);
     const { token } = req.params as { token: string };
-    const { enlace } = enlacePorToken(token);
+    const { enlace, titular } = enlacePorToken(token);
     // El enlace sigue sirviendo de guía para otros dispositivos, pero ya no
     // tiene por qué guardar la contraseña.
     db.prepare('UPDATE setup_links SET password_enc = NULL WHERE id = ?').run(enlace.id);
+    marcarBuzonConfigurado(titular.id);
     return { ok: true };
   });
 
@@ -980,6 +1017,8 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     }
     await comprobarContrasenaPrincipal(titular, body.password, ip, credencialesIncorrectas);
     crearSesionBuzon(req, reply, titular.id);
+    // Entrar con la contraseña principal demuestra que el titular la tiene.
+    marcarBuzonConfigurado(titular.id);
     auditTitular(req, titular.clientId, 'portal.login', { email: titular.email });
     return { ok: true, email: titular.email };
   });
@@ -1179,6 +1218,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       if (!parsed.success) throw badRequest('Petición no válida.');
       const titular = buzonPorDireccion(parsed.data.user);
       if (!titular) throw notFound('Buzón no encontrado.');
+      // Roundcube solo la llama justo después de que el titular haya entrado
+      // en el webmail con su contraseña (alta y cada acceso): ya tiene el buzón.
+      marcarBuzonConfigurado(titular.id);
       reply.header('Cache-Control', 'no-store');
       return { name: titular.displayName, photo: fechaFoto(titular.id) !== null };
     });

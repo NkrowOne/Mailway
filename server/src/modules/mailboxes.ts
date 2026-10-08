@@ -17,7 +17,8 @@ import {
   getPlan,
 } from './clients';
 import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
-import { alCambiarContrasenaBuzon, enlaceConContrasena } from './portal';
+import { alCambiarContrasenaBuzon, enlaceConContrasena, olvidarBuzonConfigurado } from './portal';
+import { MENSAJE_DIRECCION_RESERVADA, assertDireccionNoReservada, esDireccionReservada } from './remitente';
 
 export interface Mailbox {
   id: string;
@@ -36,6 +37,23 @@ export interface Mailbox {
   clientName: string;
   /** Última vez que cambió la foto (para invalidar la caché); null = sin foto. */
   photoUpdatedAt: number | null;
+  /**
+   * Primer momento en que el titular demostró tener acceso (terminó el enlace
+   * de configuración, descargó el perfil de Apple, entró en «Mi buzón» o en
+   * el webmail) o en que se marcó a mano; null = sin configurar.
+   */
+  configuredAt: number | null;
+  /** Entrega de la configuración al titular. */
+  setup: EntregaConfiguracion;
+}
+
+export interface EntregaConfiguracion {
+  /** Creación del último enlace de configuración (de cualquier estado). */
+  lastLinkAt: number | null;
+  /** Última vez que se abrió alguno de sus enlaces. */
+  lastOpenedAt: number | null;
+  /** Último correo de configuración enviado (o intentado). */
+  lastEmail: { to: string; at: number; status: 'sent' | 'failed' } | null;
 }
 
 interface MailboxRow {
@@ -52,15 +70,30 @@ interface MailboxRow {
   client_id: string;
   client_name: string;
   photo_updated_at: number | null;
+  configured_at: number | null;
+  last_link_at: number | null;
+  last_opened_at: number | null;
+  last_email_to: string | null;
+  last_email_at: number | null;
+  last_email_status: 'sent' | 'failed' | null;
 }
 
-// La foto solo aporta su fecha: la imagen se sirve aparte.
+// La foto solo aporta su fecha: la imagen se sirve aparte. La entrega de la
+// configuración sale de subconsultas por buzón que usan los índices por
+// mailbox_id: el listado sigue siendo UNA consulta, sin una más por buzón.
 const MAILBOX_SELECT = `SELECT m.*, d.domain, d.client_id, c.name AS client_name,
-    p.updated_at AS photo_updated_at
+    p.updated_at AS photo_updated_at,
+    (SELECT MAX(sl.created_at) FROM setup_links sl WHERE sl.mailbox_id = m.id) AS last_link_at,
+    (SELECT MAX(sl.last_opened_at) FROM setup_links sl WHERE sl.mailbox_id = m.id) AS last_opened_at,
+    ec.recipient AS last_email_to, ec.created_at AS last_email_at, ec.status AS last_email_status
   FROM mailboxes m
   JOIN domains d ON d.id = m.domain_id
   JOIN clients c ON c.id = d.client_id
-  LEFT JOIN mailbox_photos p ON p.mailbox_id = m.id`;
+  LEFT JOIN mailbox_photos p ON p.mailbox_id = m.id
+  LEFT JOIN envios_configuracion ec ON ec.id = (
+    SELECT e.id FROM envios_configuracion e WHERE e.mailbox_id = m.id
+    ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1
+  )`;
 
 function toMailbox(row: MailboxRow): Mailbox {
   return {
@@ -78,6 +111,15 @@ function toMailbox(row: MailboxRow): Mailbox {
     clientId: row.client_id,
     clientName: row.client_name,
     photoUpdatedAt: row.photo_updated_at ?? null,
+    configuredAt: row.configured_at ?? null,
+    setup: {
+      lastLinkAt: row.last_link_at ?? null,
+      lastOpenedAt: row.last_opened_at ?? null,
+      lastEmail:
+        row.last_email_at !== null && row.last_email_to !== null && row.last_email_status !== null
+          ? { to: row.last_email_to, at: row.last_email_at, status: row.last_email_status }
+          : null,
+    },
   };
 }
 
@@ -196,6 +238,9 @@ function normalizeLocalPart(input: string): string {
   const local = input.trim().toLowerCase();
   const error = localPartError(local);
   if (error) throw badRequest(error, 'invalid_local_part');
+  // configuration@ es la cuenta oculta desde la que se envían los correos de
+  // configuración de cada dominio: ni buzón ni alias pueden ocuparla.
+  assertDireccionNoReservada(local);
   return local;
 }
 
@@ -534,6 +579,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       const localPart = entry.localPart.trim().toLowerCase();
       const email = `${localPart}@${domain.domain}`;
       let error = localPartError(localPart);
+      if (!error && esDireccionReservada(localPart)) error = MENSAJE_DIRECCION_RESERVADA;
       if (!error && seen.has(localPart)) error = 'La dirección está repetida en la lista.';
       if (!error && mailboxExists(domain.id, localPart)) error = 'El buzón ya existe.';
       if (!error && aliasExists(domain.id, localPart)) error = 'Ya existe un alias con esa dirección.';
@@ -708,6 +754,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     // La contraseña anterior deja de valer: se borra de los enlaces de
     // configuración que la llevaban y se cierran las sesiones de «Mi buzón».
     alCambiarContrasenaBuzon(id);
+    // Los dispositivos del titular dejan de entrar: vuelve a estar sin
+    // configurar hasta que use la contraseña nueva.
+    olvidarBuzonConfigurado(id);
     audit(req, 'mailbox.password_reset', { id, email: mailbox.email, generated: !body.password }, domain.clientId);
     return { password: body.password ? undefined : password, ok: true };
   });

@@ -12,6 +12,8 @@ un Traefik de Skyway simulado del que solo se usa su volumen de certificados
   - el certificado servido en 993 y 465 (cadena, nombre y huella);
   - el inicio de sesión IMAP desde el webmail (biblioteca de Roundcube) y
     desde fuera, y la autenticación SMTP en 465 y 587, sin enviar correo;
+  - que la pantalla de acceso del webmail usa el tema montado (Elastic2022,
+    sin descargarlo) con la marca de Mailway;
   - la renovación y el paso a un certificado comodín, aplicados por el
     extractor sin perder el acceso;
   - deploy/instalar.sh --comprobar y --probar-acceso.
@@ -292,6 +294,24 @@ class Pila:
             return r.stdout.strip() if r.returncode == 0 else None
         registrar('OK: webmail → ' + esperar(entrar, 'el inicio de sesión desde el webmail', segundos=60))
 
+    def comprobar_tema_webmail(self) -> None:
+        """La pantalla de acceso, pedida dentro del contenedor, sale con el tema montado y la marca de Mailway."""
+        def pagina():
+            r = docker('exec', 'mailway-webmail', 'php', '-r', 'echo @file_get_contents("http://127.0.0.1/");',
+                       comprobar=False)
+            return r.stdout if r.returncode == 0 and 'rcmloginuser' in r.stdout else None
+        html = esperar(pagina, 'la pantalla de acceso del webmail', segundos=60)
+        for marca, que in (('skins/elastic2022/styles/', 'la hoja de estilos de Elastic2022'),
+                           ('plugins/mailway_theme/logo.svg', 'el logotipo de Mailway'),
+                           ('plugins/mailway_theme/favicon.svg', 'el icono de Mailway'),
+                           ('id="mailway-portada"', 'la portada del acceso')):
+            assert marca in html, f'falta {que} en la pantalla de acceso del webmail'
+        assert 'skins/elastic/' not in html, 'la pantalla de acceso del webmail aún carga Elastic'
+        registros = docker('logs', 'mailway-webmail', comprobar=False)
+        assert 'Installing missing skin' not in registros.stdout + registros.stderr, \
+            'la imagen intentó descargar el tema en lugar de usar la carpeta montada'
+        registrar('OK: el webmail usa Elastic2022 (carpeta montada) con el logotipo, el icono y la portada de Mailway.')
+
     def comprobar_contrasena_incorrecta(self) -> None:
         r = self.acceso_webmail('contraseña-incorrecta')
         assert r.returncode == 1 and 'rechazó' in r.stdout, r.stdout + r.stderr
@@ -376,6 +396,7 @@ def main() -> int:
             pila.sirve(pila.primero, 'el certificado de Traefik')
             pila.crear_buzon()
             pila.comprobar_imap_webmail()
+            pila.comprobar_tema_webmail()
             pila.comprobar_contrasena_incorrecta()
             pila.comprobar_imap_y_smtp_directos()
 
