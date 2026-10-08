@@ -310,6 +310,7 @@ edita una ya publicada.
 | `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 | `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
+| `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado y revocación). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -324,6 +325,7 @@ mailboxes          buzón → dominio (local_part único por dominio), cuota, es
 aliases            alias → destinos (JSON: buzones del cliente o externos)
 app_passwords      contraseñas de aplicación: secreto tal como está en el motor, revocación
 setup_links        enlaces de configuración: hash del token, contraseña cifrada opcional
+client_invites     enlaces de bienvenida de los clientes: contacto, hash y token cifrado, estado
 mailbox_sessions   sesiones de «Mi buzón»
 mailbox_photos     foto de cada buzón (tipo comprobado, bytes, fecha para la caché)
 api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP cifrada,
@@ -414,6 +416,10 @@ controles táctiles de 44 px y un paso a la vez.
   /api/mailboxes/:id/setup-reset`): tras probarlo, contraseña nueva, fuera
   enlaces, sesiones de «Mi buzón», bloqueos y (opcional) contraseñas de
   aplicación, y un enlace de configuración nuevo para el titular.
+- **Enlace de bienvenida del cliente**: la persona de contacto crea su acceso
+  y hace la **puesta en marcha** de toda la suite (dominio y DNS, buzones del
+  equipo de una vez con su enlace de configuración, postmaster y abuse, sus
+  dispositivos). postmaster@ y abuse@ no cuentan para el límite de alias.
 - **Volver a enviar** un enlace de configuración activo (solo la
   administración) y **favicon** con el logotipo de Mailway en el panel, el
   portal y el webmail.

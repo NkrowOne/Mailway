@@ -164,6 +164,17 @@ export interface ClientUsage {
   messagesLast30d: number;
 }
 
+/**
+ * Direcciones que los estándares exigen en todo dominio de correo (RFC 5321:
+ * postmaster; RFC 2142: abuse). Son alias del cliente, pero no cuentan para
+ * el límite de su plan: un plan pequeño no debe impedir tenerlas.
+ */
+export const DIRECCIONES_OBLIGATORIAS = ['postmaster', 'abuse'] as const;
+
+export function esDireccionObligatoria(localPart: string): boolean {
+  return (DIRECCIONES_OBLIGATORIAS as readonly string[]).includes(localPart);
+}
+
 export function getClientUsage(clientId: string): ClientUsage {
   const domains = (
     db.prepare('SELECT COUNT(*) AS c FROM domains WHERE client_id = ?').get(clientId) as { c: number }
@@ -180,7 +191,7 @@ export function getClientUsage(clientId: string): ClientUsage {
     db
       .prepare(
         `SELECT COUNT(*) AS c FROM aliases a JOIN domains d ON d.id = a.domain_id
-         WHERE d.client_id = ?`,
+         WHERE d.client_id = ? AND a.local_part NOT IN ('postmaster', 'abuse')`,
       )
       .get(clientId) as { c: number }
   ).c;
@@ -407,7 +418,7 @@ const userPatchSchema = z.object({
   disabled: z.boolean().optional(),
 });
 
-function assertUserEmailFree(email: string): void {
+export function assertUserEmailFree(email: string): void {
   const existing = db.prepare('SELECT 1 FROM users WHERE email = ?').get(email);
   if (existing) throw conflict('Ya existe un usuario con ese correo.', 'user_exists');
 }

@@ -453,6 +453,32 @@ const migrations: { id: string; sql: string }[] = [
       ALTER TABLE setup_links ADD COLUMN token_enc TEXT;
     `,
   },
+  {
+    id: '011-invitaciones-de-clientes',
+    sql: `
+      -- Enlace de bienvenida de un cliente: la persona de contacto crea con él
+      -- su acceso al panel y hace la puesta en marcha de su correo. Se busca
+      -- por el hash del token; la copia cifrada permite a la administración
+      -- volver a enviarlo mientras siga pendiente y se borra al usarlo,
+      -- revocarlo o caducar.
+      CREATE TABLE client_invites (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        email TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        token_hash TEXT NOT NULL UNIQUE,
+        token_enc TEXT,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        opened_at INTEGER,
+        accepted_at INTEGER,
+        accepted_user_id TEXT,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_client_invites_client ON client_invites(client_id);
+    `,
+  },
 ];
 
 function runMigrations(): void {

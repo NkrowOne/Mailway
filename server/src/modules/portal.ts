@@ -472,6 +472,22 @@ function insertarEnlace(
   };
 }
 
+/**
+ * Enlace con la contraseña recién generada de un buzón, para las altas
+ * masivas con enlace (la contraseña acaba de crearse: no hace falta
+ * comprobarla con el motor como en POST …/setup-links).
+ */
+export function enlaceConContrasena(
+  req: FastifyRequest,
+  mailboxId: string,
+  password: string,
+  ttlHours: number,
+): EnlaceNuevo {
+  const titular = buzonPorId(mailboxId);
+  if (!titular) throw notFound('Buzón no encontrado.');
+  return insertarEnlace(req, titular, encryptSecret(password), ttlHours);
+}
+
 function exigirBuzonActivo(titular: Titular): void {
   if (titular.suspendido) {
     throw badRequest(

@@ -25,6 +25,7 @@ import { registerAutoconfigRoutes } from './modules/autoconfig';
 import { registerPortalRoutes } from './modules/portal';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
 import { registerProfileRoutes } from './modules/perfil';
+import { registerInviteRoutes } from './modules/invitaciones';
 import { registerEngineOpsRoutes } from './modules/engineops';
 import { registerFormRoutes } from './modules/forms';
 
@@ -148,6 +149,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerPortalRoutes(app);
   registerAppPasswordRoutes(app);
   registerProfileRoutes(app);
+  registerInviteRoutes(app);
   registerEngineOpsRoutes(app);
   registerFormRoutes(app);
 

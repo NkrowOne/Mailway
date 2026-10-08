@@ -27,7 +27,8 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   `src/index.ts` la pone a escuchar y arranca el vigilante.
   - `src/modules/`: un módulo por área. `auth` (sesiones, tokens `mwt_`,
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
-    `clients` (planes, clientes, usuarios, `assertWithinLimit`), `domains`
+    `clients` (planes, clientes, usuarios, `assertWithinLimit`),
+    `invitaciones` (enlace de bienvenida del cliente), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
     `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `perfil`
     (nombre visible y foto del buzón), `portal` (enlaces de configuración y
