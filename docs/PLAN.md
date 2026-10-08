@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.2.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.3.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -404,6 +404,13 @@ controles táctiles de 44 px y un paso a la vez.
 - El alta de un cliente con su primer dominio admite el DNS automático.
 - Cierre de la vía por la que un cliente (o `soloCliente=1`) usaba la cuenta de
   la instancia asociada a su dominio (decisión 15).
+
+### Hecho en la 1.3
+
+- **Reiniciar la configuración** de un buzón (`POST
+  /api/mailboxes/:id/setup-reset`): tras probarlo, contraseña nueva, fuera
+  enlaces, sesiones de «Mi buzón», bloqueos y (opcional) contraseñas de
+  aplicación, y un enlace de configuración nuevo para el titular.
 
 ### Límites conocidos
 
