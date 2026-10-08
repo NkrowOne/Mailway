@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ListChecks } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type ClientDashboard } from '../lib/api';
@@ -15,6 +16,7 @@ import {
   MarcaFondo,
   Membrete,
   Cargando,
+  Tesela,
 } from '../ui/kit';
 
 interface Paso {
@@ -66,12 +68,14 @@ export default function InicioCliente() {
   const porVerificar = domains.find((d) => d.status !== 'active') ?? domains[0];
   const portal = `${panel}/mi-buzon`;
 
+  // Los pasos llevan a la puesta en marcha guiada, cada uno a su apartado;
+  // el del DNS, a la ficha del dominio, que es donde están todos los registros.
   const pasos: Paso[] = [
     {
       key: 'alta',
       label: 'Dar de alta el dominio',
       done: onboarding.hasDomain,
-      to: '/dominios',
+      to: '/puesta-en-marcha?paso=dominio',
       hint: 'Registra el dominio con el que enviarás y recibirás correo (por ejemplo, tu-empresa.com).',
       obligatorio: true,
     },
@@ -79,7 +83,7 @@ export default function InicioCliente() {
       key: 'dns',
       label: 'Configurar el DNS',
       done: onboarding.hasActiveDomain,
-      to: porVerificar ? `/dominios/${porVerificar.id}` : '/dominios',
+      to: porVerificar ? `/dominios/${porVerificar.id}` : '/puesta-en-marcha?paso=dominio',
       hint: (
         <>
           {/* Sin nombrar el producto: el panel del cliente puede ir con marca blanca. */}
@@ -89,6 +93,9 @@ export default function InicioCliente() {
             conecta tu cuenta en Conexiones
           </Link>{' '}
           y los registros se crearán automáticamente.
+          {onboarding.ownershipVerified && !onboarding.hasMailbox && (
+            <> La propiedad ya está comprobada: puedes crear los buzones mientras tanto.</>
+          )}
         </>
       ),
       obligatorio: true,
@@ -97,15 +104,23 @@ export default function InicioCliente() {
       key: 'buzones',
       label: 'Crear los buzones',
       done: onboarding.hasMailbox,
-      to: '/buzones',
-      hint: 'Las cuentas de correo de tu equipo (por ejemplo, info@ o ventas@).',
+      to: '/puesta-en-marcha?paso=equipo',
+      hint: 'Las cuentas de correo de tu equipo, todas de una vez y cada una con su enlace de configuración.',
+      obligatorio: true,
+    },
+    {
+      key: 'obligatorias',
+      label: 'Crear postmaster@ y abuse@',
+      done: onboarding.hasEssentialAddresses,
+      to: '/puesta-en-marcha?paso=obligatorias',
+      hint: 'Las exigen los estándares del correo: ahí llegan los avisos de entrega y las quejas por abuso. No cuentan para tu plan.',
       obligatorio: true,
     },
     {
       key: 'dispositivos',
       label: 'Conectar los dispositivos',
       done: null,
-      to: '/buzones',
+      to: '/puesta-en-marcha?paso=dispositivos',
       hint: (
         <>
           Envía a cada persona el enlace de configuración de su buzón desde «Buzones», o indícale
@@ -152,29 +167,42 @@ export default function InicioCliente() {
           )
         }
         actions={
-          siguiente || data.webmailUrl ? (
-            <>
-              {/* El webmail siempre a mano; mientras quede un paso pendiente,
-                  la acción principal es ese paso y el webmail pasa a secundaria. */}
-              {data.webmailUrl && (
-                <a
-                  href={data.webmailUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={estiloBoton(siguiente ? 'perfil' : 'principal')}
-                >
-                  Abrir webmail <span aria-hidden>↗</span>
-                </a>
-              )}
-              {siguiente && (
-                <Link to={siguiente.to} className={estiloBoton('principal')}>
-                  {siguiente.label}
-                </Link>
-              )}
-            </>
+          data.webmailUrl ? (
+            // El webmail siempre a mano; mientras quede un paso pendiente, la
+            // acción principal es la puesta en marcha (debajo) y el webmail
+            // pasa a secundaria.
+            <a
+              href={data.webmailUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={estiloBoton(siguiente ? 'perfil' : 'principal')}
+            >
+              Abrir webmail <span aria-hidden>↗</span>
+            </a>
           ) : undefined
         }
       />
+
+      {siguiente && !data.client.suspended && (
+        <Hoja className="mb-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+            <Tesela icono={ListChecks} />
+            <div className="min-w-0 flex-1 basis-64">
+              <p className="text-md font-semibold text-tinta">
+                {hechos === 0 ? 'Pon en marcha el correo de tu empresa' : 'Tu correo aún no está listo del todo'}
+              </p>
+              <p className="max-w-[68ch] text-base text-tinta-2">
+                {hechos === 0
+                  ? 'Dominio, buzones de todo el equipo y dispositivos, paso a paso. Se guarda solo: puedes dejarlo y seguir más tarde.'
+                  : `Siguiente: ${siguiente.label.charAt(0).toLowerCase()}${siguiente.label.slice(1)}. La puesta en marcha te guía y sigue donde lo dejaste.`}
+              </p>
+            </div>
+            <Link to="/puesta-en-marcha" className={estiloBoton('principal', 'w-full sm:w-auto')}>
+              {hechos === 0 ? 'Empezar la puesta en marcha' : 'Continuar la puesta en marcha'}
+            </Link>
+          </div>
+        </Hoja>
+      )}
 
       <div className="grid items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Hoja

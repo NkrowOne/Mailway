@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, type DomainRecord } from '../../lib/api';
+import { api, type ConEnlace, type DomainRecord } from '../../lib/api';
 import { plural } from '../../lib/format';
 import {
   csvCredenciales,
   descargarTexto,
   mensajeDe,
   parsearLista,
+  type BulkEntryResult,
   type BulkPreview,
   type BulkResponse,
 } from '../../lib/gestion';
@@ -16,9 +17,19 @@ import { Textarea } from '../../ui/Field';
 import { BotonCopiar, Dialogo, Escala, MarcaFondo } from '../../ui/kit';
 import { esPropiedadPendiente } from '../../lib/dominios';
 import {
+  BotonCopiarTexto,
+  FilaEnlace,
+  NotaEnlaces,
+  textoEnlaces,
+  VALIDEZ_ENLACE_HORAS,
+  type EnlaceDePersona,
+} from '../EnlacesEquipo';
+import { useUsuario } from './consultas';
+import {
   BandaAviso,
   BandaError,
   Botonera,
+  Casilla,
   dominioInicialDisponible,
   SelectorDominio,
   type MotivoBloqueoDominio,
@@ -59,6 +70,9 @@ export function AltaMasiva({
   const [texto, setTexto] = useState('');
   const [revision, setRevision] = useState<BulkPreview | null>(null);
   const [error, setError] = useState('');
+  // Por defecto, cada buzón sale con su enlace de configuración (con la
+  // contraseña dentro): entregarlo es lo siguiente que hay que hacer.
+  const [conEnlaces, setConEnlaces] = useState(true);
 
   const dominio = domains.find((d) => d.id === domainId);
   const lineas = useMemo(() => parsearLista(texto, dominio?.domain ?? ''), [texto, dominio?.domain]);
@@ -104,6 +118,7 @@ export function AltaMasiva({
       api.post<BulkResponse>('/api/mailboxes/bulk', {
         domainId,
         entries: enviadas.map((l) => ({ localPart: l.localPart, displayName: l.displayName })),
+        ...(conEnlaces ? { setupLinks: { ttlHours: VALIDEZ_ENLACE_HORAS } } : {}),
       }),
     onSuccess: async (data) => {
       onResultado({
@@ -125,6 +140,9 @@ export function AltaMasiva({
 
   const titulo = resultado ? 'Buzones creados' : revision ? 'Revisar el alta masiva' : 'Alta masiva de buzones';
   const conCredenciales = Boolean(resultado?.respuesta.results.some((r) => r.ok && r.password));
+  const conEnlacesCreados = Boolean(
+    resultado?.respuesta.results.some((r) => (r as ConEnlace<BulkEntryResult>).setupLink),
+  );
 
   // Cerrar con credenciales sin confirmar no las pierde (la página conserva el
   // resultado y ofrece volver a verlas), así que no se pregunta; pero la
@@ -137,12 +155,12 @@ export function AltaMasiva({
         onClose();
       }}
     >
-      {conCredenciales ? 'He guardado las credenciales' : 'Cerrar'}
+      {conEnlacesCreados ? 'He guardado los enlaces' : conCredenciales ? 'He guardado las credenciales' : 'Cerrar'}
     </Button>
   ) : undefined;
 
   return (
-    <Dialogo open={open} onClose={onClose} title={titulo} pie={pie}>
+    <Dialogo open={open} onClose={onClose} title={titulo} pie={pie} ancho={conEnlacesCreados ? 'amplio' : 'normal'}>
       {resultado ? (
         <Resultado dominio={resultado.dominio} respuesta={resultado.respuesta} />
       ) : revision ? (
@@ -273,6 +291,12 @@ export function AltaMasiva({
                 ))}
             </ul>
           )}
+          <Casilla
+            checked={conEnlaces}
+            onChange={setConEnlaces}
+            label="Crear un enlace de configuración para cada buzón"
+            help={`Cada enlace incluye la contraseña de su buzón y caduca a los ${VALIDEZ_ENLACE_HORAS / 24} días: así cada titular configura su correo sin ayuda.`}
+          />
           <p className="text-sm text-tinta-3">
             Las contraseñas se generan automáticamente y se muestran una sola vez al terminar, con opción de
             descargarlas en CSV.
@@ -298,10 +322,22 @@ function ordenarPorVeredicto<T extends { ok: boolean }>(filas: T[]): T[] {
 }
 
 function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkResponse }) {
+  const firma = useUsuario()?.name;
   const creados = respuesta.results.filter((r) => r.ok && r.password);
   const fallidos = respuesta.results.filter((r) => !r.ok);
   const filas = creados.map((r) => ({ email: r.email, displayName: r.displayName, password: r.password! }));
   const textoCopia = filas.map((f) => `${f.email}\t${f.password}`).join('\n');
+  // Con enlaces, cada fila es la de la puesta en marcha (copiar, enviar, QR)
+  // con su contraseña debajo, por si se prefiere configurar a mano.
+  const conEnlace = (creados as ConEnlace<BulkEntryResult>[]).filter((r) => r.setupLink);
+  const personas: (EnlaceDePersona & { password: string })[] = conEnlace.map((r) => ({
+    nombre: r.displayName,
+    email: r.email,
+    url: r.setupLink!.url,
+    expiresAt: r.setupLink!.expiresAt,
+    hasPassword: r.setupLink!.hasPassword,
+    password: r.password!,
+  }));
 
   return (
     <div className="flex flex-col gap-4">
@@ -309,7 +345,41 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
         Se {creados.length === 1 ? 'ha creado 1 buzón' : `han creado ${creados.length} buzones`}
         {fallidos.length > 0 && ` y ${fallidos.length === 1 ? '1 línea no se ha podido crear' : `${fallidos.length} líneas no se han podido crear`}`}.
       </p>
-      {creados.length > 0 && (
+      {personas.length > 0 && (
+        <>
+          <NotaEnlaces
+            expiresAt={Math.min(...personas.map((p) => p.expiresAt))}
+            conContrasena={personas.some((p) => p.hasPassword)}
+            conservacion="Los enlaces y las contraseñas solo se muestran ahora: envíalos o guárdalos antes de cerrar."
+          />
+          <div className="flex flex-wrap gap-2">
+            <BotonCopiarTexto texto={textoEnlaces(personas)} rotulo="Copiar todos los enlaces" />
+            <Button
+              variant="plano"
+              onClick={() =>
+                descargarTexto(
+                  `credenciales-${dominio || 'buzones'}-${new Date().toISOString().slice(0, 10)}.csv`,
+                  csvCredenciales(filas),
+                )
+              }
+            >
+              Descargar contraseñas (CSV)
+            </Button>
+          </div>
+          <ul className="max-h-[28rem] overflow-y-auto border border-regla">
+            {personas.map((p) => (
+              <FilaEnlace key={p.email} persona={p} firma={firma}>
+                <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                  <span className="rotulo">Contraseña</span>
+                  <span className="codigo break-all text-tinta">{p.password}</span>
+                  <BotonCopiar text={p.password} />
+                </p>
+              </FilaEnlace>
+            ))}
+          </ul>
+        </>
+      )}
+      {creados.length > 0 && personas.length === 0 && (
         <>
           <BandaAviso>
             Las contraseñas <strong className="font-semibold">solo se muestran ahora</strong>. Descárgalas o

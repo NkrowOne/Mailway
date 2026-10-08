@@ -330,6 +330,13 @@ export function AppShell({
       );
       return;
     }
+    // La puesta en marcha guarda en la pestaña los enlaces recién creados del
+    // equipo, que llevan contraseñas: no deben sobrevivir a la sesión.
+    try {
+      window.sessionStorage.clear();
+    } catch {
+      // Almacenamiento bloqueado: no hay nada que borrar.
+    }
     // Se vacía TODA la caché: los datos de esta cuenta (clientes, buzones,
     // claves…) no deben quedar en la pestaña para quien entre después. Solo se
     // conserva el estado público de la instalación, para no repetir la carga.

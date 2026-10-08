@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { UserRound } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api';
 import { formatDate, plural } from '../../../lib/format';
 import { esCorreoValido, mensajeDe, type ClientUser } from '../../../lib/gestion';
@@ -10,15 +11,33 @@ import { Dialogo, Hoja, MarcaFondo, Muestra, Vacio } from '../../../ui/kit';
 import { useToast } from '../../../ui/toast';
 import { BandaAviso, BandaError, Botonera, CabeceraVista, Opcion } from '../../../components/gestion/comun';
 import { useDireccionPanel } from '../../../components/gestion/consultas';
+import { DialogoBienvenida, HojaInvitaciones } from '../../../components/EnlaceBienvenida';
 import { CONFIRMAR_CONTRASENA, useRefrescarCliente, type ContextoCliente } from './datos';
 
 /**
  * Pestaña «Usuarios» de la ficha del cliente: las personas que entran en su
- * panel. Las contraseñas generadas se muestran una sola vez.
+ * panel y los enlaces de bienvenida con los que se dan de alta. El enlace es
+ * la forma recomendada de dar acceso (cada persona elige su contraseña);
+ * crear el usuario con una contraseña generada sigue disponible.
  */
 export default function UsuariosCliente({ contexto }: { contexto: ContextoCliente }) {
   const { id, cliente, usuarios } = contexto;
-  const [anadir, setAnadir] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Desde el Resumen se puede llegar con la alternativa ya elegida.
+  const [anadir, setAnadir] = useState(
+    () => Boolean((location.state as { anadirUsuario?: boolean } | null)?.anadirUsuario),
+  );
+  const [bienvenida, setBienvenida] = useState<null | { email: string; name: string }>(null);
+
+  function cerrarAnadir() {
+    setAnadir(false);
+    // Que volver atrás o recargar no reabra el diálogo.
+    if (location.state) navigate(location.pathname, { replace: true, state: null });
+  }
+
+  const enviarEnlace = (persona?: { email: string; name: string }) =>
+    setBienvenida(persona ?? { email: usuarios.length === 0 ? cliente.contactEmail : '', name: '' });
 
   return (
     <>
@@ -27,35 +46,59 @@ export default function UsuariosCliente({ contexto }: { contexto: ContextoClient
         title="Usuarios"
         meta={`Personas que entran en el panel de ${cliente.name} para gestionar sus dominios, buzones, alias y claves de API.`}
         actions={
-          <Button variant="principal" onClick={() => setAnadir(true)}>
-            Añadir usuario
-          </Button>
+          <>
+            <Button variant="perfil" onClick={() => setAnadir(true)}>
+              Crear usuario con contraseña
+            </Button>
+            <Button variant="principal" disabled={cliente.suspended} onClick={() => enviarEnlace()}>
+              Enviar enlace de bienvenida
+            </Button>
+          </>
         }
       />
 
-      <Hoja title="Usuarios del panel" meta={plural(usuarios.length, 'usuario', 'usuarios')} flush>
-        {usuarios.length === 0 ? (
-          <Vacio
-            icono={UserRound}
-            title="Sin usuarios de acceso"
-            action={
-              <Button variant="perfil" onClick={() => setAnadir(true)}>
-                Añadir el primero
-              </Button>
-            }
-          >
-            Este cliente aún no puede entrar en su panel. Crea su primer usuario para que gestione su correo.
-          </Vacio>
-        ) : (
-          <ul>
-            {usuarios.map((user) => (
-              <FilaUsuario key={user.id} clientId={id} user={user} />
-            ))}
-          </ul>
-        )}
-      </Hoja>
+      <div className="flex flex-col gap-4">
+        <Hoja title="Usuarios del panel" meta={plural(usuarios.length, 'usuario', 'usuarios')} flush>
+          {usuarios.length === 0 ? (
+            <Vacio
+              icono={UserRound}
+              title="Sin usuarios de acceso"
+              action={
+                <>
+                  <Button variant="perfil" disabled={cliente.suspended} onClick={() => enviarEnlace()}>
+                    Enviar enlace de bienvenida
+                  </Button>
+                  <Button variant="plano" onClick={() => setAnadir(true)}>
+                    Crear usuario con contraseña
+                  </Button>
+                </>
+              }
+            >
+              {cliente.name} aún no puede entrar en su panel. Con un enlace de bienvenida, la persona de contacto crea
+              su propio acceso y pone en marcha el correo paso a paso.
+            </Vacio>
+          ) : (
+            <ul>
+              {usuarios.map((user) => (
+                <FilaUsuario key={user.id} clientId={id} user={user} />
+              ))}
+            </ul>
+          )}
+        </Hoja>
 
-      {anadir && <AnadirUsuario clientId={id} clientName={cliente.name} onClose={() => setAnadir(false)} />}
+        <HojaInvitaciones clientId={id} clientName={cliente.name} onCrear={enviarEnlace} />
+      </div>
+
+      {anadir && <AnadirUsuario clientId={id} clientName={cliente.name} onClose={cerrarAnadir} />}
+      {bienvenida && (
+        <DialogoBienvenida
+          clientId={id}
+          clientName={cliente.name}
+          emailInicial={bienvenida.email}
+          nombreInicial={bienvenida.name}
+          onClose={() => setBienvenida(null)}
+        />
+      )}
     </>
   );
 }

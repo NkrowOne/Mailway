@@ -13,6 +13,9 @@ import { Cargando } from './ui/kit';
   administración entero; y quien administra no baja el portal.
 */
 const PortalApp = lazy(() => import('./pages/portal/PortalApp'));
+// El enlace de bienvenida lo abre la empresa cliente antes de tener cuenta:
+// tampoco necesita el panel para crear su acceso.
+const Bienvenida = lazy(() => import('./pages/bienvenida/Bienvenida'));
 // El marco del panel (índice, iconos) tampoco lo necesita el titular del buzón.
 const AppShell = lazy(() => import('./shell/AppShell').then((m) => ({ default: m.AppShell })));
 const Login = lazy(() => import('./pages/Login'));
@@ -26,6 +29,7 @@ const Avisos = lazy(() => import('./pages/admin/Avisos'));
 const Planes = lazy(() => import('./pages/admin/Planes'));
 const MarcaBlanca = lazy(() => import('./pages/MarcaBlanca'));
 const InicioCliente = lazy(() => import('./pages/InicioCliente'));
+const PuestaEnMarcha = lazy(() => import('./pages/PuestaEnMarcha'));
 const Dominios = lazy(() => import('./pages/Dominios'));
 const DominioDetalle = lazy(() => import('./pages/DominioDetalle'));
 const Buzones = lazy(() => import('./pages/Buzones'));
@@ -43,6 +47,15 @@ const Conexiones = lazy(() => import('./pages/Conexiones'));
  */
 export function esRutaPortal(pathname: string): boolean {
   return pathname.startsWith('/conectar/') || pathname === '/mi-buzon' || pathname.startsWith('/mi-buzon/');
+}
+
+/**
+ * El enlace de bienvenida de la empresa cliente también queda fuera: quien lo
+ * abre aún no tiene usuario, y la puerta de acceso del panel lo mandaría a
+ * iniciar sesión con una cuenta que todavía no existe.
+ */
+export function esRutaBienvenida(pathname: string): boolean {
+  return pathname.startsWith('/bienvenida/');
 }
 
 /** Mientras llega el código de una vista, el indicador de carga del sistema. */
@@ -70,6 +83,15 @@ export default function App() {
     return (
       <ConCarga pantalla>
         <PortalApp />
+      </ConCarga>
+    );
+  }
+  if (esRutaBienvenida(location.pathname)) {
+    return (
+      <ConCarga pantalla>
+        <Routes>
+          <Route path="/bienvenida/:token" element={<Bienvenida />} />
+        </Routes>
       </ConCarga>
     );
   }
@@ -169,9 +191,14 @@ function PanelApp() {
                 <Route path="/avisos" element={<Avisos />} />
                 <Route path="/planes" element={<Planes />} />
                 <Route path="/ajustes" element={<Ajustes />} />
+                {/* La puesta en marcha es del cliente: la administración tiene su resumen. */}
+                <Route path="/puesta-en-marcha" element={<Navigate to="/" replace />} />
               </>
             ) : (
-              <Route path="/" element={<InicioCliente />} />
+              <>
+                <Route path="/" element={<InicioCliente />} />
+                <Route path="/puesta-en-marcha" element={<PuestaEnMarcha />} />
+              </>
             )}
             <Route path="/dominios" element={<Dominios isAdmin={isAdmin} />} />
             <Route path="/dominios/:id" element={<DominioDetalle />} />

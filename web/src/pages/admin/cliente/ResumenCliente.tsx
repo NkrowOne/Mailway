@@ -12,6 +12,7 @@ import { Input, Select } from '../../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Cargando, Vacio } from '../../../ui/kit';
 import { useToast } from '../../../ui/toast';
 import { BandaAviso, BandaError, Botonera, FilaDato, rutaCliente } from '../../../components/gestion/comun';
+import { SiguientePasoBienvenida } from '../../../components/EnlaceBienvenida';
 import { useRefrescarCliente, type ContextoCliente } from './datos';
 
 /** Dominios que se enseñan en el resumen; el resto, en la pestaña «Dominios». */
@@ -23,7 +24,7 @@ const DOMINIOS_EN_RESUMEN = 6;
  * eliminar). Lo que tiene listas largas vive en su propia pestaña.
  */
 export default function ResumenCliente({ contexto }: { contexto: ContextoCliente }) {
-  const { id, cliente: data, plan, usage } = contexto;
+  const { id, cliente: data, plan, usage, usuarios } = contexto;
   const [dialogo, setDialogo] = useState<null | 'suspender' | 'eliminar' | { plan: Plan }>(null);
   const [fallosSuspension, setFallosSuspension] = useState<SuspensionResult['failed']>([]);
 
@@ -63,6 +64,28 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
             de correo ({fallosSuspension.map((f) => f.email).join(', ')}). Comprueba el estado del motor y vuelve a
             aplicar el cambio desde «Estado del servicio».
           </BandaAviso>
+        </div>
+      )}
+
+      {/* Sin usuarios, el cliente no puede entrar en su panel: lo primero es
+          darle acceso, y la forma recomendada es el enlace de bienvenida. */}
+      {usuarios.length === 0 && (
+        <div className="mb-4">
+          <SiguientePasoBienvenida
+            clientId={id}
+            clientName={data.name}
+            contactEmail={data.contactEmail}
+            suspended={data.suspended}
+            alternativa={
+              <Link
+                to={rutaCliente(id, 'usuarios')}
+                state={{ anadirUsuario: true }}
+                className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
+              >
+                O crea el usuario con una contraseña
+              </Link>
+            }
+          />
         </div>
       )}
 
