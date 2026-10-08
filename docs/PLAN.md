@@ -430,8 +430,9 @@ controles táctiles de 44 px y un paso a la vez.
 - El cliente como centro del panel de administración: su ficha agrupa en
   pestañas dominios, buzones, alias, usuarios, marca blanca, API de envío,
   formularios y actividad.
-- Webmail con aspecto actual (capa `mailway_theme` sobre Elastic), también en
-  modo oscuro.
+- Webmail con el tema Elastic2022 (copia fijada en `deploy/roundcube/elastic2022`)
+  y la marca de Mailway (`mailway_theme`: logotipo, iconos, panel vacío, foto
+  propia y portada del acceso), también en modo oscuro.
 
 ### Límites conocidos
 

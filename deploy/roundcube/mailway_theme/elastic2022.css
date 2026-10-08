@@ -1,0 +1,26 @@
+/* Marca de Mailway sobre Elastic2022 (fuera de la pantalla de acceso, que
+   lleva la capa de mailway.css).
+
+   El tema se respeta tal cual: aquí solo va lo que falta para que sea el
+   webmail de Mailway. Lo demás (logotipo, iconos de la pestaña, panel
+   vacío) lo pone mailway_theme.php. */
+
+/* Foto propia en el botón de la cuenta, arriba a la derecha. La ponen en
+   variables el complemento mailway_perfil (solo si el titular subió una
+   foto en el panel); sin ellas, content: none y queda el icono del tema. */
+.sebmenu > .sebicon.usermenu {
+  position: relative;
+}
+
+.sebmenu > .sebicon.usermenu::after {
+  content: var(--mw-foto-propia-marca, none);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--background) var(--mw-foto-propia, none) center / cover no-repeat;
+  box-shadow: 0 0 0 1px var(--bordercolor);
+}

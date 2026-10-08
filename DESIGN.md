@@ -445,13 +445,18 @@ es opcional. El estado sale del servidor: se retoma donde se dejó.
 
 ### Webmail
 
-`deploy/roundcube/mailway_theme/` (`mailway.css`, `iconos.css`, `vacio.html`)
-traslada a Elastic los tokens del panel: fondo gris verdoso, lista y lectura
-en paneles blancos de 16 px de radio, carpetas y secciones en píldora,
-«Redactar» como botón petróleo, barras de herramientas solo con iconos de
-Lucide (los del panel), no leídos con punto petróleo y foco petróleo. El modo
-oscuro tiene su propia paleta equivalente. Letra del sistema; nada se carga
-de fuera.
+El webmail usa el tema Elastic2022 tal cual (`deploy/roundcube/elastic2022/`)
+con la marca de Mailway encima (`deploy/roundcube/mailway_theme/`): logotipo
+y favicon de Mailway, panel vacío con la tesela del panel (`vacio.html`),
+foto propia en el botón de la cuenta (`elastic2022.css`) y la portada de la
+pantalla de acceso (panel petróleo con la marca y la tarjeta, de
+`mailway.css`).
+
+`mailway.css` e `iconos.css` son además una capa completa sobre Elastic, que
+se aplica si la instalación usa ese tema: lleva los tokens del panel (fondo
+gris verdoso, paneles blancos de 16 px de radio, carpetas en píldora,
+«Redactar» petróleo, iconos de Lucide, no leídos con punto petróleo) y un
+modo oscuro propio. Letra del sistema; nada se carga de fuera.
 
 ## Do's and Don'ts
 

@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title></title>
 <!--
-  Panel vacío de Mailway (sustituye a skins/elastic/watermark.html cuando no
-  hay ningún mensaje, contacto o ajuste abierto). Elastic pinta ahí su
-  logotipo en gris, que además asoma aunque el operador haya puesto su marca;
+  Panel vacío de Mailway (sustituye al watermark.html del tema cuando no
+  hay ningún mensaje, contacto o ajuste abierto). El tema pinta ahí el
+  logotipo de Roundcube, que además asoma aunque el operador haya puesto su marca;
   aquí va solo la tesela del panel con el icono de la sección, sin texto, así
   que vale para cualquier idioma y cualquier marca blanca.
 -->
@@ -36,6 +36,8 @@ body {
   mask: var(--icono) center / 26px no-repeat;
 }
 html.dark-mode body { background: #172120; }
+/* Con Elastic2022, el fondo de su panel de contenido (variable --background). */
+html.elastic2022.dark-mode body { background: #1a1c1e; }
 html.dark-mode .tesela { background: #233d3a; }
 html.dark-mode .tesela span { background: #7ad3c8; }
 :root {
@@ -49,8 +51,8 @@ html.dark-mode .tesela span { background: #7ad3c8; }
 }
 </style>
 <script>
-  // Mismo criterio que Elastic para el modo oscuro (cookie o sistema); al
-  // cambiarlo desde el menú, Elastic ya actualiza la clase de los marcos.
+  // Mismo criterio que el tema para el modo oscuro (cookie o sistema); al
+  // cambiarlo desde el menú, el tema ya actualiza la clase de los marcos.
   try {
     if (document.cookie.indexOf('colorMode=dark') > -1
       || (document.cookie.indexOf('colorMode=light') === -1 && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -58,6 +60,10 @@ html.dark-mode .tesela span { background: #7ad3c8; }
       document.documentElement.className += ' dark-mode';
     }
   } catch (e) { }
+  // Tema en uso (lo añade mailway_theme a la dirección), para el fondo.
+  if (/[?&]tema=elastic2022(&|$)/.test(location.search)) {
+    document.documentElement.className += ' elastic2022';
+  }
   // Icono de la sección en la que está el marco (correo por defecto).
   try {
     var tarea = (parent.document.body.className.match(/\btask-(addressbook|settings)\b/) || [])[1];

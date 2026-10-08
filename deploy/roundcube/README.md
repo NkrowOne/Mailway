@@ -1,17 +1,60 @@
 # Roundcube en Mailway
 
-Tres complementos propios (`mailway_theme`, `mailway_perfil` y
-`mailway_sesion`), la configuración (`mailway.php`) y el diagnóstico que usa
-el instalador.
+El tema Elastic2022 (`elastic2022`), tres complementos propios
+(`mailway_theme`, `mailway_perfil` y `mailway_sesion`), la configuración
+(`mailway.php`) y el diagnóstico que usa el instalador.
 
-## Apariencia (`mailway_theme`)
+## Tema (`elastic2022`)
 
-`mailway_theme` es una capa visual sobre Elastic 1.7, mediante la API de
-complementos, que acerca el webmail a un cliente de correo actual y al aspecto
-del panel (ver `DESIGN.md`). Los dos ficheros Compose de Mailway montan el
-complemento en solo lectura y lo incluyen en `ROUNDCUBEMAIL_PLUGINS`.
+El webmail usa [Elastic2022](https://github.com/seb1k/Elastic2022), de
+Sébastien Mille: un tema basado en Elastic, con avatares en la lista, menús
+modernos y modo claro y oscuro. La carpeta es una copia sin cambios del
+commit `780d591ebcd79cf65179495c7cd0af502c2ae90d` (sin `img/`, que solo tiene
+las capturas de su README). Licencia del tema: CC BY-SA 3.0 (`meta.json`); su
+JavaScript (`ui.js`), como el de Elastic, GPL. No se edita: lo propio de
+Mailway va en `mailway_theme`.
 
-Qué cambia:
+Los dos ficheros Compose la montan en `/var/www/html/skins/elastic2022` en
+solo lectura y la eligen con `ROUNDCUBEMAIL_SKIN`. Con la carpeta presente, la
+imagen de Roundcube no intenta descargar el tema. `mailway.php` pone `skin`
+en `dont_override`: el tema es el de la instalación para todos los titulares,
+también para quien guardó sus preferencias con el anterior, y el selector de
+temas no aparece en los ajustes.
+
+Para actualizarlo, se sustituye la carpeta por el contenido de un commit
+nuevo (sin `img/`, `.github` ni `.gitattributes`), se anota aquí el commit y
+se prueba con Roundcube 1.7 (ver el final).
+
+## Marca de Mailway (`mailway_theme`)
+
+`mailway_theme` pone la marca de Mailway sobre el tema, mediante la API de
+complementos. Los dos ficheros Compose montan el complemento en solo lectura
+y lo incluyen en `ROUNDCUBEMAIL_PLUGINS`. Solo actúa con Elastic2022 y con
+Elastic; con otro tema no hace nada.
+
+Con Elastic2022 (el tema de Mailway), el tema se respeta tal cual y se
+añade:
+
+- El icono de la pestaña de Mailway (`favicon.ico`, `favicon.svg` y
+  `apple-touch-icon.png`, los mismos del panel), salvo que el operador haya
+  configurado el suyo (`skin_logo` con `[favicon]` o `favicon`).
+- El logotipo de Mailway (`logo.svg`), también con marca blanca; si el
+  operador puso su logotipo en `skin_logo`, se respeta tal cual (y el acceso
+  queda en su versión sencilla).
+- El panel vacío (sin mensaje abierto) con la tesela del panel
+  (`vacio.html`) en vez del logotipo de Roundcube, que asomaba aunque hubiera
+  marca blanca.
+- La foto propia del titular en el botón de la cuenta, arriba a la derecha
+  (`elastic2022.css`).
+- La pantalla de acceso de Mailway: una portada en dos columnas, con el panel
+  de marca en petróleo (logotipo y nombre del servicio centrados y una
+  bandeja de entrada dibujada, sin textos añadidos) y la tarjeta, con la
+  etiqueta «Dirección de correo». En el móvil, el panel queda como franja de
+  cabecera con la marca. Usa las reglas de acceso de `mailway.css`, que solo
+  se cargan en esa pantalla: el formulario es el mismo en los dos temas.
+
+Con Elastic, además, `mailway.css` e `iconos.css` son una capa visual
+completa que acerca el webmail al aspecto del panel (ver `DESIGN.md`):
 
 - Carril de tareas claro, con «Redactar» como botón relleno y redondeado y la
   sección activa en una pastilla petróleo tenue; en el móvil, el mismo menú
@@ -27,36 +70,28 @@ Qué cambia:
   plano en la letra normal; búsqueda en un campo redondeado.
 - Redacción con las cabeceras en filas y los destinatarios en fichas;
   formularios, interruptores, menús, diálogos y avisos con los controles del
-  panel; pantalla de acceso con las etiquetas encima de los campos.
+  panel.
 - Modo oscuro propio y coherente (gris verdoso profundo, petróleo aclarado,
   contraste AA) en lugar del gris azulado de Elastic.
-- El panel vacío (sin mensaje abierto) muestra la tesela del panel en vez del
-  logotipo de Roundcube, que asomaba aunque hubiera marca blanca.
-- El icono de la pestaña es el de Mailway (`favicon.ico`, `favicon.svg` y
-  `apple-touch-icon.png`, los mismos del panel), salvo que el operador haya
-  configurado el suyo (`skin_logo` con `[favicon]` o `favicon`).
-- El logotipo es la tesela de Mailway (`logo.svg`) en el acceso y en el
-  menú; si el operador puso su logotipo en `skin_logo`, se respeta tal cual
-  (y el acceso queda en su versión sencilla).
-- La pantalla de acceso es una portada en dos columnas: panel de marca en
-  petróleo (logotipo y nombre del servicio centrados y una bandeja de
-  entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
-  «Dirección de correo»; en el móvil, el panel queda como franja de
-  cabecera con la marca.
+- La foto propia junto a la dirección, encima de las carpetas.
 
 Ficheros:
 
-- `mailway_theme.php`: incluye las hojas de estilo, marca `<html>` con la
-  clase `mailway` (para que las reglas valgan igual en claro y en oscuro sin
-  `!important`), ajusta `theme-color`, pone los iconos de la pestaña y apunta
-  el panel vacío a `vacio.html`.
-- `mailway.css`: el tema, con la paleta clara y la oscura en variables.
+- `mailway_theme.php`: decide qué se aplica según el tema y la pantalla,
+  incluye las hojas de estilo, marca `<html>` con la clase `mailway` donde va
+  la capa (para que las reglas valgan igual en claro y en oscuro sin
+  `!important`), ajusta `theme-color`, pone los iconos de la pestaña, el
+  logotipo y la portada del acceso, y apunta el panel vacío a `vacio.html`.
+- `mailway.css`: la capa de Elastic y la pantalla de acceso, con la paleta
+  clara y la oscura en variables.
 - `iconos.css`: los iconos de Lucide en línea (licencia ISC, aviso incluido).
-- `vacio.html`: el panel vacío, sin texto, válido para cualquier idioma.
+- `elastic2022.css`: lo poco que se añade a Elastic2022 fuera del acceso.
+- `vacio.html`: el panel vacío, sin texto, válido para cualquier idioma; el
+  fondo sigue al tema (`?tema=`).
 
 No modifica la autenticación, el contenido de los mensajes, los atajos ni la
-estructura adaptable de Elastic (escritorio, tableta y móvil), no carga nada
-de fuera (letra del sistema e iconos en línea) y no sustituye el logotipo de
+estructura adaptable del tema (escritorio, tableta y móvil), no carga nada de
+fuera (letra del sistema e iconos en línea) y no sustituye el logotipo de
 marca blanca configurado.
 
 ## Nombre y foto del buzón (`mailway_perfil`)
@@ -78,8 +113,9 @@ webmail los usa:
   remitente, se pide al panel, que solo la da si es un buzón del mismo cliente
   (nunca la de otro cliente). Las respuestas, también las negativas, se
   guardan cinco minutos en la caché de Roundcube por usuario.
-- **Foto propia**: si el titular tiene foto, `mailway_theme` la muestra junto
-  a su dirección, encima de las carpetas.
+- **Foto propia**: si el titular tiene foto, `mailway_theme` la muestra en el
+  botón de la cuenta (Elastic2022) o junto a su dirección, encima de las
+  carpetas (Elastic).
 
 Consulta `POST /api/webmail/profile` y `POST /api/webmail/photo` del panel por
 la red interna, con el mismo token que el cambio de contraseña
@@ -121,8 +157,8 @@ IMAP de Roundcube. Los compose montan esa carpeta en `/opt/mailway`, fuera de
 la raíz web y de `/var/roundcube/config/` (cuyos `.php` se cargarían como
 configuración).
 
-Después de actualizar el repositorio, aplica los cambios con el instalador
-(`sudo bash deploy/instalar.sh --actualizar`) o recrea solo el webmail con el
+Para traer y aplicar los cambios del repositorio, usa `mailway update -y`
+(`git pull` e `instalar.sh --actualizar`), o recrea solo el webmail con el
 mismo Compose y el mismo fichero de entorno de siempre:
 
 ```sh
@@ -135,8 +171,10 @@ redacción, los adjuntos, los contactos, los ajustes, el teclado, el móvil y el
 modo oscuro antes de ofrecerlo a los clientes: la compilación de la web no
 valida esta capa PHP/CSS y la prueba requiere una instancia de Roundcube.
 
-Para volver al aspecto original, retira `mailway_theme` de la variable de
-complementos y recrea solo el servicio; para dejar de usar el nombre y la
+Para volver a Elastic, pon `ROUNDCUBEMAIL_SKIN: elastic` en el compose (la
+capa completa de `mailway_theme` se aplica sola); para quitar la marca de
+Mailway, retira `mailway_theme` de la variable de complementos. En los dos
+casos se recrea solo el servicio. Para dejar de usar el nombre y la
 foto del panel, retira `mailway_perfil` (las identidades conservan el nombre
 que ya tuvieran); `mailway_sesion` se retira igual. No hay cambios de
 esquema ni de datos.
