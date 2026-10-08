@@ -39,9 +39,10 @@ Qué cambia:
   menú; si el operador puso su logotipo en `skin_logo`, se respeta tal cual
   (y el acceso queda en su versión sencilla).
 - La pantalla de acceso es una portada en dos columnas: panel de marca en
-  petróleo (logotipo, nombre del servicio y sobres de línea tenues, sin
-  textos añadidos) y la tarjeta, con la etiqueta «Dirección de correo»; en
-  el móvil, el panel queda como franja de cabecera.
+  petróleo (logotipo y nombre del servicio centrados y una bandeja de
+  entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
+  «Dirección de correo»; en el móvil, el panel queda como franja de
+  cabecera con la marca.
 
 Ficheros:
 

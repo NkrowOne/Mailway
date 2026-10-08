@@ -167,10 +167,25 @@ class mailway_theme extends rcube_plugin
             ? $m[1]
             : $this->urlbase . 'logo.svg';
 
-        // Solo marca y diseño: el panel no añade textos a la pantalla.
-        $portada = "\n" . '<aside id="mailway-portada" aria-hidden="true">'
+        // Solo marca y diseño, sin textos añadidos: el logotipo y el nombre
+        // centrados y, debajo, una bandeja de entrada dibujada (avatares y
+        // barras, nada legible) que dice «correo» sin palabras.
+        $fila = static function (string $clase): string {
+            return '<div class="mw-fila ' . $clase . '"><i class="mw-avatar"></i>'
+                . '<span class="mw-lineas"><b></b><b></b></span><i class="mw-hora"></i></div>';
+        };
+        $bandeja = '<div class="mw-escena">'
+            . '<div class="mw-tarjeta mw-tarjeta-fondo"></div>'
+            . '<div class="mw-tarjeta">'
+            . '<div class="mw-tarjeta-barra"><i></i><i></i><i></i><span></span></div>'
+            . $fila('mw-no-leido mw-a1') . $fila('mw-no-leido mw-a2') . $fila('mw-a3') . $fila('mw-a4')
+            . '</div>'
+            . '<div class="mw-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="m4.5 7.5 6.3 4.7a2 2 0 0 0 2.4 0l6.3-4.7"/></svg></div>'
+            . '</div>';
+        $portada = "\n" . '<aside id="mailway-portada" aria-hidden="true"><div class="mw-portada-centro">'
             . '<div class="mw-portada-marca"><img src="' . $logo . '" alt=""><span>' . $nombre . '</span></div>'
-            . '</aside>';
+            . $bandeja
+            . '</div></aside>';
 
         // La portada abre el contenedor de la página; la clase en <body>
         // activa la disposición en dos columnas y oculta el logotipo suelto.

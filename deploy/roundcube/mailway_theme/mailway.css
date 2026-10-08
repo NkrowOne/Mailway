@@ -3127,10 +3127,9 @@ html.mailway #mailway-portada {
   flex: 0 0 min(46%, 600px);
   padding: 48px 56px;
   overflow: hidden;
-  /* Petróleo con profundidad y una composición de sobres de línea muy
-     tenues centrada en el panel: presencia de marca sin ruido. */
+  /* Petróleo con profundidad: dos luces suaves sobre el degradado. La
+     bandeja dibujada pone el resto. */
   background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cg opacity='.10'%3E%3Crect x='110' y='130' width='240' height='176' rx='26'/%3E%3Cpath d='m123 147 100 74a26 26 0 0 0 31 0l100-74'/%3E%3C/g%3E%3Cg opacity='.07'%3E%3Crect x='30' y='250' width='150' height='110' rx='18'/%3E%3Cpath d='m38 262 63 46a16 16 0 0 0 19 0l63-46'/%3E%3C/g%3E%3Cg opacity='.06'%3E%3Crect x='240' y='24' width='124' height='90' rx='15'/%3E%3Cpath d='m246 34 53 38a13 13 0 0 0 15 0l53-38'/%3E%3C/g%3E%3Cg opacity='.05'%3E%3Crect x='20' y='40' width='96' height='70' rx='12'/%3E%3Cpath d='m25 48 41 30a10 10 0 0 0 12 0l41-30'/%3E%3C/g%3E%3C/svg%3E") center 58% / min(560px, 92%) no-repeat,
     radial-gradient(120% 80% at 0% 0%, rgb(255 255 255 / 0.10), transparent 60%),
     radial-gradient(90% 60% at 100% 100%, rgb(0 0 0 / 0.18), transparent 70%),
     linear-gradient(160deg, #0f6a6c 0%, #0d5c5e 45%, #083f41 100%);
@@ -3138,27 +3137,201 @@ html.mailway #mailway-portada {
 
 html.mailway.dark-mode #mailway-portada {
   background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cg opacity='.10'%3E%3Crect x='110' y='130' width='240' height='176' rx='26'/%3E%3Cpath d='m123 147 100 74a26 26 0 0 0 31 0l100-74'/%3E%3C/g%3E%3Cg opacity='.07'%3E%3Crect x='30' y='250' width='150' height='110' rx='18'/%3E%3Cpath d='m38 262 63 46a16 16 0 0 0 19 0l63-46'/%3E%3C/g%3E%3Cg opacity='.06'%3E%3Crect x='240' y='24' width='124' height='90' rx='15'/%3E%3Cpath d='m246 34 53 38a13 13 0 0 0 15 0l53-38'/%3E%3C/g%3E%3Cg opacity='.05'%3E%3Crect x='20' y='40' width='96' height='70' rx='12'/%3E%3Cpath d='m25 48 41 30a10 10 0 0 0 12 0l41-30'/%3E%3C/g%3E%3C/svg%3E") center 58% / min(560px, 92%) no-repeat,
     radial-gradient(90% 60% at 100% 100%, rgb(0 0 0 / 0.25), transparent 70%),
     linear-gradient(160deg, #0b4b4d 0%, #083a3c 50%, #052728 100%);
 }
 
+/* Todo centrado en el panel: marca arriba y la escena debajo. */
+html.mailway .mw-portada-centro {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 44px;
+}
+
 html.mailway .mw-portada-marca {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+  max-width: 100%;
   color: #ffffff;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 /* La tesela petróleo sobre petróleo: un filo claro la separa del fondo. */
 html.mailway .mw-portada-marca img {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22), 0 6px 16px rgb(0 0 0 / 0.18);
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.24), 0 10px 28px rgb(0 0 0 / 0.22);
+}
+
+/* Bandeja dibujada: una tarjeta delante y otra detrás, con un resplandor. */
+html.mailway .mw-escena {
+  position: relative;
+  width: min(380px, 100%);
+  aspect-ratio: 380 / 290;
+}
+
+html.mailway .mw-escena::before {
+  content: "";
+  position: absolute;
+  inset: -30% -20%;
+  background: radial-gradient(closest-side, rgb(122 211 200 / 0.28), transparent);
+  pointer-events: none;
+}
+
+html.mailway .mw-tarjeta {
+  position: absolute;
+  inset: 0 0 auto 0;
+  padding: 14px 16px 6px;
+  border-radius: 18px;
+  background-color: #ffffff;
+  box-shadow: 0 24px 60px rgb(4 30 31 / 0.38), 0 2px 6px rgb(4 30 31 / 0.18);
+}
+
+html.mailway .mw-tarjeta-fondo {
+  inset: 26px -22px auto 22px;
+  height: 92%;
+  background-color: rgb(255 255 255 / 0.16);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.2);
+  transform: rotate(4deg);
+}
+
+html.mailway .mw-tarjeta-barra {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf1f0;
+}
+
+html.mailway .mw-tarjeta-barra i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: #dfe6e4;
+}
+
+html.mailway .mw-tarjeta-barra span {
+  height: 22px;
+  margin-left: 12px;
+  flex: 1;
+  border-radius: 999px;
+  background-color: #f1f4f3;
+}
+
+html.mailway .mw-fila {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid #f0f3f2;
+}
+
+html.mailway .mw-fila:last-child {
+  border-bottom: 0;
+}
+
+html.mailway .mw-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+}
+
+html.mailway .mw-a1 .mw-avatar { background-color: #0d5c5e; }
+html.mailway .mw-a2 .mw-avatar { background-color: #7ab8b0; }
+html.mailway .mw-a3 .mw-avatar { background-color: #c9ded9; }
+html.mailway .mw-a4 .mw-avatar { background-color: #e3ebe9; }
+
+html.mailway .mw-lineas {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+html.mailway .mw-lineas b {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background-color: #e6ecea;
+}
+
+html.mailway .mw-lineas b:first-child { width: 46%; }
+html.mailway .mw-lineas b:last-child { width: 82%; }
+html.mailway .mw-a2 .mw-lineas b:first-child { width: 58%; }
+html.mailway .mw-a2 .mw-lineas b:last-child { width: 70%; }
+html.mailway .mw-a3 .mw-lineas b:first-child { width: 38%; }
+html.mailway .mw-a4 .mw-lineas b:last-child { width: 64%; }
+
+/* Los no leídos, como en la bandeja de verdad: remitente más oscuro. */
+html.mailway .mw-no-leido .mw-lineas b:first-child {
+  background-color: #b7c7c4;
+}
+
+html.mailway .mw-hora {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 7px;
+  border-radius: 999px;
+  background-color: #edf1f0;
+}
+
+html.mailway .mw-no-leido .mw-hora {
+  background-color: #9fd3cb;
+}
+
+/* Un sobre «recién llegado» que flota en la esquina de la tarjeta. */
+html.mailway .mw-chip {
+  position: absolute;
+  top: -18px;
+  right: -14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background-color: #7ad3c8;
+  color: #083f41;
+  box-shadow: 0 12px 28px rgb(4 30 31 / 0.35);
+  transform: rotate(-6deg);
+}
+
+html.mailway .mw-chip svg {
+  width: 26px;
+  height: 26px;
+}
+
+html.mailway.dark-mode .mw-tarjeta:not(.mw-tarjeta-fondo) {
+  background-color: #172120;
+}
+
+html.mailway.dark-mode .mw-tarjeta-barra,
+html.mailway.dark-mode .mw-fila {
+  border-color: rgb(255 255 255 / 0.07);
+}
+
+html.mailway.dark-mode .mw-tarjeta-barra i,
+html.mailway.dark-mode .mw-tarjeta-barra span,
+html.mailway.dark-mode .mw-lineas b,
+html.mailway.dark-mode .mw-hora,
+html.mailway.dark-mode .mw-a4 .mw-avatar {
+  background-color: rgb(255 255 255 / 0.09);
+}
+
+html.mailway.dark-mode .mw-no-leido .mw-lineas b:first-child {
+  background-color: rgb(255 255 255 / 0.22);
 }
 
 /* Lado de la tarjeta: ocupa el resto y la centra. */
@@ -3187,12 +3360,26 @@ html.mailway.dark-mode body.mailway-portada #login-form {
     overflow-y: auto;
   }
 
+  html.mailway .mw-escena {
+    display: none;
+  }
+
+  html.mailway .mw-portada-marca {
+    flex-direction: row;
+    gap: 12px;
+    font-size: 19px;
+  }
+
+  html.mailway .mw-portada-marca img {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+  }
+
   html.mailway #mailway-portada,
   html.mailway.dark-mode #mailway-portada {
     flex: 0 0 auto;
-    padding: 24px 20px 88px;
-    background-size: 320px auto, auto, auto, auto;
-    background-position: right -40px center, 0 0, 0 0, 0 0;
+    padding: 28px 20px 92px;
   }
 
   html.mailway body.mailway-portada #layout-content,
