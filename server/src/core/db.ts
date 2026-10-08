@@ -479,6 +479,48 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_client_invites_client ON client_invites(client_id);
     `,
   },
+  {
+    id: '012-entrega-de-la-configuracion',
+    sql: `
+      -- Primer momento en que el titular demostró que tiene acceso al buzón
+      -- (terminó el enlace de configuración, descargó el perfil de Apple,
+      -- entró en «Mi buzón» o en el webmail) o en que se marcó a mano. La
+      -- puesta en marcha del cliente lo usa para señalar qué buzones siguen
+      -- sin configurar. Se vacía cuando el panel deja sin acceso a sus
+      -- dispositivos (contraseña nueva o reinicio), no cuando la cambia el
+      -- propio titular, que sigue teniéndolo.
+      ALTER TABLE mailboxes ADD COLUMN configured_at INTEGER;
+
+      -- Cuenta oculta configuration@<dominio> de cada dominio, desde la que se
+      -- envían los correos de configuración. No es un buzón del cliente: no
+      -- figura en mailboxes (ni en sus listados ni en el plan). La contraseña
+      -- va cifrada porque hay que recuperarla para autenticarse en el SMTP
+      -- del motor; nunca sale del servidor.
+      CREATE TABLE remitentes_configuracion (
+        domain_id TEXT PRIMARY KEY REFERENCES domains(id) ON DELETE CASCADE,
+        password_enc TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      -- Correos de configuración enviados a los titulares: el último se
+      -- enseña en el panel y la última hora cuenta para los límites (por
+      -- buzón y por cliente). recipient es la dirección que eligió quien lo
+      -- envió; nunca se guardan la URL, el token ni la contraseña.
+      CREATE TABLE envios_configuracion (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('sent', 'failed')),
+        error TEXT NOT NULL DEFAULT '',
+        link_id TEXT,
+        sent_by TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_envios_configuracion_mailbox ON envios_configuracion(mailbox_id, created_at);
+      CREATE INDEX idx_envios_configuracion_client ON envios_configuracion(client_id, created_at);
+    `,
+  },
 ];
 
 function runMigrations(): void {

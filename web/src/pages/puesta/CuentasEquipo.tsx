@@ -55,12 +55,12 @@ export function CuentasEquipo({
   onEnviar: (ids: string[]) => void;
 }) {
   const cuentas = useMemo(() => ordenarCuentas(ctx.buzones), [ctx.buzones]);
-  const sinConfigurar = cuentas.filter((b) => lecturaCuenta(b).estado === 'sin-configurar');
+  // Los de otras personas: el propio se configura en el paso 4 (su fila lo dice).
+  const sinConfigurar = cuentas.filter((b) => b.id !== ctx.mioId && lecturaCuenta(b).estado === 'sin-configurar');
   const configurados = cuentas.filter((b) => b.configuredAt).length;
   const enlaces = ctx.enlaces.filter((e) => e.email.endsWith(`@${dominio.domain}`));
   const caducan = enlaces.length > 0 ? Math.min(...enlaces.map((e) => e.expiresAt)) : 0;
-  // Los de otras personas: el propio se configura en el paso 4.
-  const porEnviar = sinConfigurar.filter((b) => b.id !== ctx.mioId && b.status === 'active');
+  const porEnviar = sinConfigurar.filter((b) => b.status === 'active');
 
   return (
     <Hoja
@@ -461,7 +461,7 @@ export function EnviarConfiguracion({
                         autoComplete="off"
                         autoCapitalize="none"
                         spellCheck={false}
-                        placeholder="ana@gmail.com"
+                        placeholder="Su correo personal"
                         value={para[b.id] ?? ''}
                         disabled={enviando}
                         error={error ?? undefined}

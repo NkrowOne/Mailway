@@ -28,6 +28,7 @@ import { registerProfileRoutes } from './modules/perfil';
 import { registerInviteRoutes } from './modules/invitaciones';
 import { registerEngineOpsRoutes } from './modules/engineops';
 import { registerFormRoutes } from './modules/forms';
+import { registerSetupEmailRoutes } from './modules/envioconfiguracion';
 
 const MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -152,6 +153,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerInviteRoutes(app);
   registerEngineOpsRoutes(app);
   registerFormRoutes(app);
+  registerSetupEmailRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = path.resolve(__dirname, '../../web/dist');

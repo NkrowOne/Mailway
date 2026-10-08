@@ -28,7 +28,7 @@ import {
 import { PasoDominio } from './puesta/PasoDominio';
 import { PasoEquipo } from './puesta/PasoEquipo';
 import { PasoObligatorias } from './puesta/PasoObligatorias';
-import { buzonPropio, PasoDispositivos } from './puesta/PasoDispositivos';
+import { buzonPropioSeguro, PasoDispositivos } from './puesta/PasoDispositivos';
 import { PasoListo } from './puesta/PasoListo';
 
 /*
@@ -158,11 +158,12 @@ function Asistente({
   // haya llegado (ni abierto) su configuración. Mientras quede alguno, «Tu
   // equipo» no está hecho: así la puesta en marcha vuelve ahí, que es donde
   // se resuelve, y no a un paso posterior.
-  const lecturas = buzones.map(lecturaCuenta);
-  const sinConfigurar = lecturas.filter((l) => l.estado === 'sin-configurar').length;
-  const configurados = lecturas.filter((l) => l.estado === 'configurado').length;
-  const propio = buzonPropio({ buzones, mioId, usuario });
+  // El buzón propio no cuenta aquí: se configura en el paso 4, que sale en
+  // rojo él solo.
+  const propio = buzonPropioSeguro({ buzones, mioId, usuario });
   const buzonMio = buzones.find((b) => b.id === propio) ?? null;
+  const sinConfigurar = buzones.filter((b) => b.id !== propio && lecturaCuenta(b).estado === 'sin-configurar').length;
+  const configurados = buzones.filter((b) => lecturaCuenta(b).estado === 'configurado').length;
 
   const estados: Record<PasoId, EstadoPaso> = {
     dominio: !dominio
@@ -184,7 +185,7 @@ function Asistente({
       ? { hecho: true, detalle: 'Creadas', veredicto: 'normal' }
       : { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' },
     dispositivos: !buzonMio
-      ? { hecho: false, detalle: 'Pendiente', veredicto: 'sin-dato' }
+      ? { hecho: false, detalle: buzones.length > 0 ? 'Recomendado' : 'Pendiente', veredicto: 'sin-dato' }
       : buzonMio.configuredAt
         ? { hecho: true, detalle: 'Configurados', veredicto: 'normal' }
         : { hecho: false, detalle: 'Tu buzón sin configurar', veredicto: 'fuera' },
@@ -251,7 +252,8 @@ function Asistente({
     buzonesCliente,
     enlaces,
     setEnlaces: (fn) => setEnlaces((prev) => fn(vigentes(prev))),
-    mioId,
+    // El suyo, aunque no lo marcara al crear el equipo (otro navegador).
+    mioId: propio,
     setMioId,
     personales,
     setPersonal: (mailboxId, correo) => setPersonales((prev) => ({ ...prev, [mailboxId]: correo })),
@@ -260,7 +262,8 @@ function Asistente({
     anadirBuzones,
     suspendido: panel.client.suspended,
   };
-  const puedeAnadir = Boolean(dominio && !propiedadPendiente(dominio)) && !ctx.suspendido;
+  // En «Tu equipo» ya está en la lista de buzones: aquí sobraría.
+  const puedeAnadir = Boolean(dominio && !propiedadPendiente(dominio)) && !ctx.suspendido && paso !== 'equipo';
 
   return (
     <>

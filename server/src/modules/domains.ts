@@ -14,6 +14,8 @@ import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import { assertWithinLimit } from './clients';
 import { aplicarDnsDominio, moverReservaDominio, permiteInstancia, pideSoloCliente, reservaDeDominio } from './cloudflare';
 import { checkDomainDns, type DomainDnsReport } from './deliverability';
+import { borrarRemitenteConfiguracion } from './remitente';
+import { forgetTransport } from './transactional';
 import {
   categoriaDe,
   destinosMx,
@@ -702,6 +704,15 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         'partial_delete',
       );
     }
+
+    // La cuenta oculta configuration@ (correos de configuración) va antes que
+    // el dominio del motor. Si no se puede borrar, no se detiene el borrado:
+    // queda huérfana sin que nadie conozca su contraseña y, si el dominio
+    // vuelve a darse de alta, se adopta con una nueva.
+    if (!(await borrarRemitenteConfiguracion(domain))) {
+      req.log.warn({ domain: domain.domain }, 'No se ha podido borrar en el motor la cuenta remitente de configuración');
+    }
+    forgetTransport(`config:${id}`);
 
     await engine.deleteDomain(domain.domain);
     db.prepare('DELETE FROM domains WHERE id = ?').run(id);

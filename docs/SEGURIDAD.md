@@ -142,6 +142,27 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   rechaza en lugar de salir a Internet.
 - **Remitente de las claves**: siempre un buzón del mismo cliente; el `From`
   no se puede cambiar.
+- **Correo de configuración** (`POST /api/mailboxes/:id/setup-email`): solo
+  para un buzón del propio cliente, activo, de un cliente no suspendido
+  (`403 client_suspended`, como la API de envío) y de un dominio con la
+  propiedad comprobada. Sale de `configuration@<dominio>`, una cuenta oculta
+  del motor por dominio que no es un buzón del cliente: no aparece en los
+  listados ni cuenta para el plan, no entra en «Mi buzón» y su contraseña
+  (aleatoria, de 32 caracteres) solo la conoce el panel y no se devuelve
+  nunca. La parte local `configuration` está reservada: nadie, tampoco la
+  administración, crea un buzón ni un alias con ella (`400 reserved_address`),
+  y ningún alias puede reenviar a la cuenta oculta (no es un buzón). Si ya
+  existe un buzón o alias `configuration@` anterior a la reserva, no se envía
+  (`409 configuration_sender_taken`): enviar desde él sería suplantarlo.
+  Límites: 5 por buzón y 50 por cliente cada hora, contando también los
+  fallidos (`429 too_many_setup_emails`). La contraseña del titular solo
+  cambia cuando no queda otra: se reutiliza el enlace vigente (más de 24 horas
+  de validez, recuperable y con la contraseña si se pide); si se pide sin
+  contraseña, nunca se envía un enlace que la lleve; y si hay que generar una,
+  se hace después de comprobar el remitente, para que un error previo al envío
+  no deje al titular sin acceso. La respuesta, el registro de envíos y la
+  actividad (`mailbox.setup_email_sent` / `_failed`) nunca llevan la URL, el
+  token ni la contraseña; solo la dirección de destino.
 - **Formularios de contacto**: el buzón destinatario es del mismo cliente y de
   un dominio con la propiedad comprobada (también para la administración); un
   cliente no ve, edita ni elimina los formularios de otro.
@@ -218,7 +239,8 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 - **Cifrado en reposo** (AES-256-GCM) de lo que hay que recuperar: contraseña
   del motor, tokens de Cloudflare, credencial SMTP de cada clave de API y de
   cada formulario, secreto de Turnstile de un formulario, contraseña opcional
-  de un enlace de configuración.
+  de un enlace de configuración, contraseña de la cuenta remitente
+  `configuration@` de cada dominio.
 - **Solo hash** (HMAC-SHA256 con la clave maestra) de lo que no hay que
   recuperar: sesiones, tokens de gestión, claves de API, tokens de enlaces.
 - Contraseñas, tokens y claves se devuelven **una sola vez**. Los bloques

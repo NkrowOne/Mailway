@@ -217,10 +217,18 @@ function Equipo({
     window.requestAnimationFrame(() => altaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
-  // «Añadir buzones» desde la cabecera con el paso ya abierto: la dirección
-  // cambia (?anadir=1) pero el paso no se vuelve a montar.
+  // «Añadir buzones» (?anadir=1), al entrar en el paso o con él abierto: el
+  // alta se abre con una fila lista para escribir. La referencia evita una
+  // segunda fila si el efecto se repite con la misma petición.
+  const altaPedida = useRef(false);
   useEffect(() => {
-    if (ctx.anadir && !anadiendo) abrirAlta();
+    if (!ctx.anadir) {
+      altaPedida.current = false;
+      return;
+    }
+    if (altaPedida.current) return;
+    altaPedida.current = true;
+    abrirAlta();
     // Solo al pedirlo; abrirAlta cambia en cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.anadir]);
@@ -338,7 +346,7 @@ function Equipo({
 
   const formularioAbierto = anadiendo || ctx.buzones.length === 0;
   const ejemplo = usadas.find((f) => f.nombre.trim())?.nombre ?? 'Ana García';
-  const sinConfigurar = ctx.buzones.filter((b) => lecturaCuenta(b).estado === 'sin-configurar').length;
+  const sinConfigurar = ctx.buzones.filter((b) => b.id !== ctx.mioId && lecturaCuenta(b).estado === 'sin-configurar').length;
 
   const principal =
     usadas.length > 0 ? (

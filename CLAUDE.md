@@ -33,6 +33,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `perfil`
     (nombre visible y foto del buzón), `portal` (enlaces de configuración y
     su reinicio, «Mi buzón», rutas `/api/webmail/*` de Roundcube),
+    `remitente` (cuenta oculta `configuration@<dominio>`, reservada) y
+    `envioconfiguracion` (correo «Configura tu correo» con el enlace de cada
+    titular y marca de buzón configurado),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
     (marca blanca y `/api/traefik/config`), `transactional` (claves y

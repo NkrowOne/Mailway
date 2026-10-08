@@ -18,13 +18,22 @@ import { CabeceraPaso, PieDePaso, type ContextoPuesta } from './marco';
  * correo; si no, el primero.
  */
 export function buzonPropio(ctx: Pick<ContextoPuesta, 'buzones' | 'mioId' | 'usuario'>): string | null {
+  return buzonPropioSeguro(ctx) ?? ctx.buzones[0]?.id ?? null;
+}
+
+/**
+ * Lo mismo, pero sin recurrir al primero: solo si consta o coincide con su
+ * nombre o su correo. Es el que marca «Tú» en la lista y el que da el estado
+ * del paso 4; un buzón adivinado no debe salir como el suyo.
+ */
+export function buzonPropioSeguro(ctx: Pick<ContextoPuesta, 'buzones' | 'mioId' | 'usuario'>): string | null {
   const { buzones, mioId, usuario } = ctx;
   if (mioId && buzones.some((b) => b.id === mioId)) return mioId;
   const nombre = usuario.name.trim().toLowerCase();
   const porNombre = buzones.find(
     (b) => b.email.toLowerCase() === usuario.email.toLowerCase() || (nombre && b.displayName.trim().toLowerCase() === nombre),
   );
-  return porNombre?.id ?? buzones[0]?.id ?? null;
+  return porNombre?.id ?? null;
 }
 
 export function PasoDispositivos({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<HTMLHeadingElement> }) {
