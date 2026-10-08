@@ -28,16 +28,25 @@ Qué cambia:
 - Redacción con las cabeceras en filas y los destinatarios en fichas;
   formularios, interruptores, menús, diálogos y avisos con los controles del
   panel; pantalla de acceso con las etiquetas encima de los campos.
-- Modo oscuro propio y coherente (gris verdoso profundo, petróleo aclarado,
-  contraste AA) en lugar del gris azulado de Elastic.
+- Campos de texto con fondo propio y borde visible (también De,
+  Destinatario y Asunto al redactar), para que se vean aunque estén vacíos;
+  al enfocarlos pasan a blanco con borde petróleo.
+- Modo oscuro propio y amable (gris verdoso suave, no casi negro; acento
+  apagado para textos e iconos; botones principales en un petróleo
+  intermedio con texto claro; contraste AA) en lugar del gris azulado de
+  Elastic. El editor HTML también se ve en oscuro (`editor.js`): Elastic lo
+  deja en blanco. Es solo la vista al escribir; el mensaje sale sin colores
+  añadidos.
 - El panel vacío (sin mensaje abierto) muestra la tesela del panel en vez del
   logotipo de Roundcube, que asomaba aunque hubiera marca blanca.
 - El icono de la pestaña es el de Mailway (`favicon.ico`, `favicon.svg` y
   `apple-touch-icon.png`, los mismos del panel), salvo que el operador haya
   configurado el suyo (`skin_logo` con `[favicon]` o `favicon`).
 - El logotipo es la tesela de Mailway (`logo.svg`) en el acceso y en el
-  menú; si el operador puso su logotipo en `skin_logo`, se respeta tal cual
-  (y el acceso queda en su versión sencilla).
+  menú; en el menú va en su recuadro (tesela blanca con borde fino y una
+  regla debajo) para que no se confunda con «Redactar», el botón petróleo
+  que tiene debajo. Si el operador puso su logotipo en `skin_logo`, se
+  respeta tal cual (y el acceso queda en su versión sencilla).
 - La pantalla de acceso es una portada en dos columnas: panel de marca en
   petróleo (logotipo y nombre del servicio centrados y una bandeja de
   entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
@@ -52,6 +61,8 @@ Ficheros:
   el panel vacío a `vacio.html`.
 - `mailway.css`: el tema, con la paleta clara y la oscura en variables.
 - `iconos.css`: los iconos de Lucide en línea (licencia ISC, aviso incluido).
+- `editor.js`: el editor HTML sigue el modo oscuro (estilo de la vista, no
+  del mensaje).
 - `vacio.html`: el panel vacío, sin texto, válido para cualquier idioma.
 
 El tema es Elastic, el que trae la imagen de Roundcube (no hay que mantener

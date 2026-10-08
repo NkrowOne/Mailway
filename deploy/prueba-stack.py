@@ -303,6 +303,7 @@ class Pila:
         html = esperar(pagina, 'la pantalla de acceso del webmail', segundos=60)
         for marca, que in (('skins/elastic/styles/', 'la hoja de estilos de Elastic'),
                            ('plugins/mailway_theme/mailway.css', 'la capa visual de Mailway'),
+                           ('plugins/mailway_theme/editor.js', 'el editor en modo oscuro'),
                            ('plugins/mailway_theme/logo.svg', 'el logotipo de Mailway'),
                            ('plugins/mailway_theme/favicon.svg', 'el icono de Mailway'),
                            ('id="mailway-portada"', 'la portada del acceso')):

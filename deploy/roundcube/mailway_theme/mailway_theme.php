@@ -31,6 +31,8 @@ class mailway_theme extends rcube_plugin
 
         $this->include_stylesheet('iconos.css');
         $this->include_stylesheet('mailway.css');
+        // El editor HTML sigue el modo oscuro (ver editor.js).
+        $this->include_script('editor.js');
         $this->add_hook('render_page', [$this, 'render_page']);
 
         // Panel vacío propio (vacio.html) en lugar de la marca de agua de
@@ -112,7 +114,7 @@ class mailway_theme extends rcube_plugin
         // barra superior dentro del correo, en claro y en oscuro.
         $acceso = ($args['template'] ?? '') === 'login';
         $claro = $acceso ? '#f4f6f4' : '#ffffff';
-        $oscuro = $acceso ? '#101716' : '#172120';
+        $oscuro = $acceso ? '#1a2120' : '#212a29';
         $html = preg_replace(
             '/<meta name="theme-color"[^>]*>/i',
             '<meta name="theme-color" content="' . $claro . '" media="(prefers-color-scheme: light)">'

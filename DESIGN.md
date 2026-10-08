@@ -468,9 +468,12 @@ cabecera, lleva siempre a ese paso con el alta abierta.
 traslada a Elastic los tokens del panel: fondo gris verdoso, lista y lectura
 en paneles blancos de 16 px de radio, carpetas y secciones en píldora,
 «Redactar» como botón petróleo, barras de herramientas solo con iconos de
-Lucide (los del panel), no leídos con punto petróleo y foco petróleo. El modo
-oscuro tiene su propia paleta equivalente. Letra del sistema; nada se carga
-de fuera.
+Lucide (los del panel), no leídos con punto petróleo y foco petróleo. Los
+campos tienen fondo propio y borde visible (también al redactar) y el
+logotipo del menú va en su recuadro, separado de «Redactar». El modo oscuro
+es un gris verdoso suave con el acento apagado: botones principales en un
+petróleo intermedio con texto claro, nunca aguamarina macizo, y el editor
+HTML también en oscuro. Letra del sistema; nada se carga de fuera.
 
 ## Do's and Don'ts
 

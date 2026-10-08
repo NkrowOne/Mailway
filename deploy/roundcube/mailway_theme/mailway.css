@@ -27,7 +27,9 @@ html.mailway {
   --mw-hoja: #ffffff;
   --mw-hoja-2: #f7f9f8;
   --mw-hoja-3: #edf1ef;
-  --mw-campo: #eef2f0;
+  --mw-campo: #f1f4f3;
+  /* Borde de los campos: visible sobre el blanco de los paneles. */
+  --mw-borde-campo: rgb(23 31 30 / 0.18);
   --mw-tinta: #171f1e;
   --mw-tinta-2: #485452;
   --mw-tinta-3: #636e6c;
@@ -35,6 +37,11 @@ html.mailway {
   --mw-acento-hondo: #09484a;
   --mw-acento-tenue: #e2f0ed;
   --mw-sobre-acento: #ffffff;
+  /* Relleno de los botones principales («Redactar», «Enviar», «Guardar»):
+     en claro es el mismo petróleo; en oscuro, uno intermedio con texto
+     claro en lugar del aguamarina vivo. */
+  --mw-relleno: #0d5c5e;
+  --mw-relleno-hondo: #09484a;
   --mw-seleccion: #e2f0ed;
   --mw-fuera: #c21630;
   --mw-fuera-tenue: #fde8eb;
@@ -63,36 +70,42 @@ html.mailway {
   color-scheme: light;
 }
 
-/* Modo oscuro: los mismos papeles, con un gris verdoso profundo y el
-   petróleo aclarado para que acento y foco sigan teniendo contraste AA. */
+/* Modo oscuro: los mismos papeles, en un gris verdoso suave (no casi
+   negro) y con el acento apagado: el aguamarina queda para textos, iconos y
+   foco, y los botones principales van en un petróleo intermedio con texto
+   claro. Menos contraste entre superficies y ningún bloque vivo: se lee
+   durante horas sin cansar. Textos y acento conservan el contraste AA. */
 html.mailway.dark-mode {
-  --mw-mesa: #101716;
-  --mw-hoja: #172120;
-  --mw-hoja-2: #1d2827;
-  --mw-hoja-3: #243231;
-  --mw-campo: #1f2a29;
-  --mw-tinta: #e4eae8;
-  --mw-tinta-2: #b5c1be;
-  --mw-tinta-3: #94a19e;
-  --mw-acento: #7ad3c8;
-  --mw-acento-hondo: #9be0d7;
-  --mw-acento-tenue: #233d3a;
-  --mw-sobre-acento: #062b29;
-  --mw-seleccion: #253d3a;
-  --mw-fuera: #ff8f9e;
-  --mw-fuera-tenue: #3a1e23;
-  --mw-vigilar: #f2b45c;
-  --mw-vigilar-tenue: #3a2c17;
-  --mw-normal: #6fd3a2;
-  --mw-normal-tenue: #17342a;
-  --mw-regla: rgb(255 255 255 / 0.09);
-  --mw-regla-suave: rgb(255 255 255 / 0.06);
-  --mw-regla-fuerte: rgb(255 255 255 / 0.18);
-  --mw-velo: rgb(0 0 0 / 0.6);
-  --mw-sombra-suave: 0 1px 2px rgb(0 0 0 / 0.3);
-  --mw-sombra-flotante: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.35);
-  --mw-anillo: rgb(122 211 200 / 0.25);
-  --mw-barra: rgb(255 255 255 / 0.22);
+  --mw-mesa: #1a2120;
+  --mw-hoja: #212a29;
+  --mw-hoja-2: #273130;
+  --mw-hoja-3: #2e3937;
+  --mw-campo: #1a2221;
+  --mw-borde-campo: rgb(255 255 255 / 0.16);
+  --mw-tinta: #e1e8e5;
+  --mw-tinta-2: #b4c0bd;
+  --mw-tinta-3: #95a29f;
+  --mw-acento: #86cbc1;
+  --mw-acento-hondo: #a3d9d1;
+  --mw-acento-tenue: #2a3f3c;
+  --mw-sobre-acento: #f1f8f6;
+  --mw-relleno: #2b6f69;
+  --mw-relleno-hondo: #327d76;
+  --mw-seleccion: #2c4340;
+  --mw-fuera: #ee9aa4;
+  --mw-fuera-tenue: #3b2629;
+  --mw-vigilar: #e5b877;
+  --mw-vigilar-tenue: #3a3020;
+  --mw-normal: #86cca8;
+  --mw-normal-tenue: #20392e;
+  --mw-regla: rgb(255 255 255 / 0.08);
+  --mw-regla-suave: rgb(255 255 255 / 0.055);
+  --mw-regla-fuerte: rgb(255 255 255 / 0.16);
+  --mw-velo: rgb(0 0 0 / 0.5);
+  --mw-sombra-suave: 0 1px 2px rgb(0 0 0 / 0.22);
+  --mw-sombra-flotante: 0 16px 40px -8px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.28);
+  --mw-anillo: rgb(134 203 193 / 0.28);
+  --mw-barra: rgb(255 255 255 / 0.2);
 
   color-scheme: dark;
 }
@@ -773,13 +786,24 @@ html.mailway #layout-menu {
   }
 
   /* El logotipo de Mailway (solo el nuestro: el de un operador conserva los
-     límites de arriba) va a tamaño fijo, como la tesela del panel: 36 px en
-     el carril estrecho de la tableta y 40 px en el de escritorio. */
+     límites de arriba) va en su recuadro: tesela blanca con borde fino,
+     como un sello, y una regla debajo que lo separa del carril. Así no se
+     confunde con «Redactar», el botón petróleo macizo que tiene debajo. */
+  html.mailway #layout-menu .popover-header {
+    margin: 0 10px 6px;
+    border-bottom: 1px solid var(--mw-regla);
+  }
+
   html.mailway #layout-menu .popover-header img[src*="mailway_theme/logo.svg"] {
-    width: min(40px, calc(var(--mw-carril) - 20px));
-    height: min(40px, calc(var(--mw-carril) - 20px));
+    box-sizing: content-box;
+    width: min(28px, calc(var(--mw-carril) - 36px));
+    height: min(28px, calc(var(--mw-carril) - 36px));
     max-width: none;
     max-height: none;
+    padding: 5px;
+    border: 1px solid var(--mw-regla-fuerte);
+    border-radius: 12px;
+    background-color: var(--mw-hoja);
   }
 
   html.mailway #taskmenu .special-buttons {
@@ -902,13 +926,13 @@ html.mailway #layout-menu {
     top: 6px;
     height: 48px;
     border-radius: 16px;
-    background-color: var(--mw-acento);
+    background-color: var(--mw-relleno);
     box-shadow: var(--mw-sombra-suave);
   }
 
   html.mailway #taskmenu .action-buttons a.compose:hover::after,
   html.mailway #taskmenu .action-buttons a.compose.selected::after {
-    background-color: var(--mw-acento-hondo);
+    background-color: var(--mw-relleno-hondo);
   }
 
   html.mailway #taskmenu .action-buttons a.compose:hover,
@@ -2129,8 +2153,8 @@ html.mailway button.btn::before {
 html.mailway .btn-primary,
 html.mailway.dark-mode .btn-primary {
   color: var(--mw-sobre-acento);
-  background: var(--mw-acento);
-  border-color: var(--mw-acento);
+  background: var(--mw-relleno);
+  border-color: var(--mw-relleno);
 }
 
 html.mailway .btn-primary:hover,
@@ -2138,14 +2162,14 @@ html.mailway .btn-primary:focus,
 html.mailway.dark-mode .btn-primary:hover:not(:disabled),
 html.mailway .btn-primary:not(:disabled):not(.disabled):active {
   color: var(--mw-sobre-acento);
-  background: var(--mw-acento-hondo);
-  border-color: var(--mw-acento-hondo);
+  background: var(--mw-relleno-hondo);
+  border-color: var(--mw-relleno-hondo);
 }
 
 html.mailway .btn-primary.disabled,
 html.mailway .btn-primary:disabled {
-  background: var(--mw-acento);
-  border-color: var(--mw-acento);
+  background: var(--mw-relleno);
+  border-color: var(--mw-relleno);
 }
 
 html.mailway .btn-secondary,
@@ -2201,20 +2225,29 @@ html.mailway .btn-secondary:not(:disabled):not(.disabled):active:focus {
   box-shadow: 0 0 0 3px var(--mw-anillo);
 }
 
-/* Campos: borde fino y foco petróleo con anillo de 3 px, como en el panel. */
+/* Campos: fondo propio (un gris verdoso apenas marcado en claro, más hondo
+   que el panel en oscuro) y borde visible, para que se vean como sitio
+   donde escribir aunque estén vacíos; al enfocarlos pasan a blanco con
+   borde petróleo y anillo de 3 px, como en el panel. */
 html.mailway .form-control,
 html.mailway .custom-select,
 html.mailway .custom-file-label,
 html.mailway.dark-mode .form-control,
 html.mailway.dark-mode .custom-file-label {
   color: var(--mw-tinta);
-  background-color: var(--mw-hoja);
-  border: 1px solid var(--mw-regla-fuerte);
+  background-color: var(--mw-campo);
+  border: 1px solid var(--mw-borde-campo);
   border-radius: var(--mw-radio-control);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 html.mailway .form-control:not(.is-invalid),
 html.mailway.dark-mode .form-control:not(.is-invalid) {
+  border-color: var(--mw-borde-campo);
+}
+
+html.mailway .form-control:not(.is-invalid):not(:focus):not(:disabled):hover,
+html.mailway .custom-select:not(:focus):not(:disabled):hover {
   border-color: var(--mw-regla-fuerte);
 }
 
@@ -2244,7 +2277,7 @@ html.mailway .custom-select,
 html.mailway .form-control.custom-select,
 html.mailway.dark-mode .custom-select {
   padding-right: 32px;
-  background: var(--mw-hoja) no-repeat right 10px center / 16px;
+  background: var(--mw-campo) no-repeat right 10px center / 16px;
   background-image: var(--mw-flecha-select);
 }
 
@@ -2305,8 +2338,8 @@ html.mailway.dark-mode .custom-switch .custom-control-label::after {
 
 html.mailway .custom-switch .custom-control-input:checked ~ .custom-control-label::before,
 html.mailway.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
-  border-color: var(--mw-acento);
-  background-color: var(--mw-acento);
+  border-color: var(--mw-relleno);
+  background-color: var(--mw-relleno);
 }
 
 html.mailway.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::after {
@@ -2319,8 +2352,8 @@ html.mailway .custom-switch .custom-control-input:focus ~ .custom-control-label:
 
 html.mailway .custom-control-input:checked ~ .custom-control-label::before,
 html.mailway .custom-checkbox .custom-control-input:checked ~ .custom-control-label::before {
-  border-color: var(--mw-acento);
-  background-color: var(--mw-acento);
+  border-color: var(--mw-relleno);
+  background-color: var(--mw-relleno);
 }
 
 /* Formularios de ajustes: secciones con título, etiquetas en tinta-2 y
@@ -2418,8 +2451,10 @@ html.mailway.dark-mode .table-widget {
 /* Redacción                                                           */
 /* ------------------------------------------------------------------ */
 
-/* Cabeceras del mensaje como en los clientes actuales: filas separadas por
-   una línea, con la etiqueta pequeña a la izquierda. */
+/* Cabeceras del mensaje: la etiqueta pequeña a la izquierda y cada campo
+   en su recuadro (De, Destinatario, Asunto…), para que se vea dónde se
+   escribe aunque esté vacío. Sin líneas entre filas: ya separan los
+   recuadros. */
 html.mailway #compose-content {
   background-color: transparent;
 }
@@ -2429,7 +2464,7 @@ html.mailway #compose-headers .compose-headers > .row {
   align-items: center;
   margin-bottom: 0;
   padding: 4px 0;
-  border-bottom: 1px solid var(--mw-regla-suave);
+  border-bottom: 0;
 }
 
 html.mailway #compose-headers label.col-form-label {
@@ -2455,28 +2490,43 @@ html.mailway #compose-headers .row > .col-10 {
 
 html.mailway #compose-headers .form-control,
 html.mailway #compose-headers .custom-select,
-html.mailway #compose-headers .input-group-text,
 html.mailway.dark-mode #compose-headers .form-control:not(.is-invalid) {
-  border-color: transparent;
-  background-color: transparent;
+  border-color: var(--mw-borde-campo);
+  background-color: var(--mw-campo);
   box-shadow: none;
 }
 
 html.mailway #compose-headers .form-control.custom-select,
 html.mailway #compose-headers select.form-control {
-  background: transparent no-repeat right 10px center / 16px;
+  background: var(--mw-campo) no-repeat right 10px center / 16px;
   background-image: var(--mw-flecha-select);
+}
+
+/* El recuadro del campo es redondo entero; los botones de al lado (añadir
+   destinatario, editar identidad…) van sueltos, sin caja, separados 4 px. */
+html.mailway #compose-headers .input-group > .form-control,
+html.mailway #compose-headers .input-group > .custom-select {
+  border-radius: var(--mw-radio-control);
+}
+
+html.mailway #compose-headers .input-group-append {
+  margin-left: 4px;
 }
 
 html.mailway #compose-headers .form-control:focus,
 html.mailway #compose-headers .recipient-input.focus,
+html.mailway.dark-mode #compose-headers .form-control:focus:not(.is-invalid),
 html.mailway.dark-mode #compose-headers .recipient-input.focus {
-  border-color: transparent;
-  background-color: var(--mw-hoja-2);
-  box-shadow: none;
+  border-color: var(--mw-acento);
+  background-color: var(--mw-hoja);
+  box-shadow: 0 0 0 3px var(--mw-anillo);
 }
 
 html.mailway #compose-headers .input-group-text {
+  border-color: transparent;
+  border-radius: var(--mw-radio-control);
+  background-color: transparent;
+  box-shadow: none;
   color: var(--mw-tinta-3);
 }
 
@@ -2542,6 +2592,14 @@ html.mailway .recipient-input li.recipient a.button.icon:hover {
 html.mailway .recipient-input input,
 html.mailway.dark-mode .recipient-input input {
   color: var(--mw-tinta);
+}
+
+/* Área de escritura del editor HTML: en oscuro sigue a la interfaz (ver
+   editor.js) y el marco toma el color del panel para que no destelle en
+   blanco mientras carga. */
+html.mailway .tox .tox-edit-area__iframe,
+html.mailway.dark-mode .tox .tox-edit-area__iframe {
+  background-color: var(--mw-hoja);
 }
 
 /* Editor: barra de formato plana y área sin marco. */
@@ -3314,7 +3372,7 @@ html.mailway .mw-chip svg {
 }
 
 html.mailway.dark-mode .mw-tarjeta:not(.mw-tarjeta-fondo) {
-  background-color: #172120;
+  background-color: #212a29;
 }
 
 html.mailway.dark-mode .mw-tarjeta-barra,
@@ -3480,7 +3538,7 @@ html.mailway.dark-mode .floating-action-buttons a.button {
   margin: 0 16px 16px 0;
   padding: 0 20px 0 16px;
   border-radius: 16px;
-  background: var(--mw-acento);
+  background: var(--mw-relleno);
   color: var(--mw-sobre-acento);
   box-shadow: var(--mw-sombra-flotante);
   opacity: 1;
@@ -3527,8 +3585,13 @@ html.mailway .floating-action-buttons a.button .inner {
   }
 
   html.mailway.layout-phone #layout-menu .popover-header img[src*="mailway_theme/logo.svg"] {
-    width: 36px;
-    height: 36px;
+    box-sizing: content-box;
+    width: 26px;
+    height: 26px;
+    padding: 5px;
+    border: 1px solid var(--mw-regla-fuerte);
+    border-radius: 12px;
+    background-color: var(--mw-hoja-2);
   }
 
   html.mailway.layout-phone #layout-menu .popover-header a {
@@ -3588,7 +3651,7 @@ html.mailway .floating-action-buttons a.button .inner {
   html.mailway.dark-mode #taskmenu .action-buttons a.compose {
     margin: 4px 12px 12px;
     color: var(--mw-sobre-acento);
-    background-color: var(--mw-acento);
+    background-color: var(--mw-relleno);
     font-weight: 600;
   }
 
