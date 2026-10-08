@@ -430,8 +430,21 @@ finas en `tinta` al 24 %.
 Barra blanca con logotipo, nombre de la instancia y «Cerrar sesión»; debajo,
 título, dirección del buzón y tarjetas en una columna. Selector de
 dispositivo con botones de 8 px de radio; pasos numerados con círculos en
-petróleo tenue. La portada de acceso del portal es igual que la del panel:
-logotipo y nombre centrados y una tarjeta de 16 px de radio.
+petróleo tenue.
+
+Las dos entradas viven en la misma dirección y son a propósito distintas,
+para que nadie las confunda:
+
+- **Panel de gestión** (`/login`): dos columnas en escritorio, el formulario
+  a la izquierda sobre blanco (distintivo «Panel de gestión», «Iniciar
+  sesión») y, a la derecha, un panel de gestión dibujado sobre el degradado
+  petróleo de la marca (`IlustracionPanel`); en el móvil, solo el formulario.
+- **Mi buzón** (`/mi-buzon`): tarjeta centrada de 24 px de radio con un
+  ordenador y un móvil dibujados (`IlustracionBuzon`), distintivo «Tu
+  correo» y «Entrar en mi buzón», sobre un velo aguamarina.
+
+Cada una enlaza a la otra, las dos dejan ver la contraseña y las
+ilustraciones (`components/Portadas.tsx`) son solo formas, sin texto.
 
 ### Bienvenida y puesta en marcha
 
