@@ -822,12 +822,24 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
 ### 8.1 Actualizar
 
 - **Panel con Skyway**: se actualiza solo al cambiar la rama desplegada.
-- **Motor, webmail y configuración**:
+- **Motor, webmail y configuración**: el instalador deja la orden `mailway`
+  en `/usr/local/bin`. Trae lo nuevo de GitHub, enseña qué cambia y lo
+  aplica:
+  ```bash
+  mailway update        # pregunta antes de aplicar
+  mailway update -y     # sin preguntar
+  ```
+  Equivale a:
   ```bash
   cd /ruta/a/Mailway
   git pull
   sudo bash deploy/instalar.sh --actualizar
   ```
+  Si aún no tienes la orden (instalaciones anteriores a la 1.3), créala una
+  vez con `sudo bash /ruta/a/Mailway/deploy/mailway.sh update -y`. Se niega a
+  seguir si hay cambios hechos a mano en ficheros del repositorio (no cuenta
+  `deploy/.env`). `mailway comprobar` y `mailway probar-acceso` son
+  `--comprobar` y `--probar-acceso` del instalador.
   O a mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml pull && docker compose --env-file deploy/.env
   -f deploy/docker-compose.mail.yml up -d`. Los volúmenes no se tocan.

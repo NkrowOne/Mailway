@@ -52,7 +52,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   `ClienteDetalle.tsx` y `src/pages/admin/cliente/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
-- `deploy/` — `instalar.sh` (instalador idempotente), compose del motor y el
+- `deploy/` — `instalar.sh` (instalador idempotente), `mailway.sh` (la orden
+  `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`),
+  compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`), plantilla del override de Traefik y
