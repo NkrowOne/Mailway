@@ -193,7 +193,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       titulo="Mi buzón"
       meta={
         <div className="flex items-center gap-3">
-          <AvatarBuzon src={me.photoUrl} />
+          <AvatarBuzon src={me.photoUrl} nombre={me.displayName} />
           <div className="min-w-0">
             <p className="break-all font-medium text-tinta">{me.email}</p>
             {me.displayName && <p className="break-words">{me.displayName}</p>}

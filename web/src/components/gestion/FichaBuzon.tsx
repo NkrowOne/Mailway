@@ -179,7 +179,7 @@ function Resumen({
   return (
     <>
       <div className="flex items-center gap-3">
-        <AvatarBuzon src={urlFotoBuzon(mailbox)} />
+        <AvatarBuzon src={urlFotoBuzon(mailbox)} nombre={mailbox.displayName} />
         <Muestra rotulo="Dirección" copiar={mailbox.email} className="flex-1">
           <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
         </Muestra>
@@ -400,6 +400,7 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
       <FotoBuzon
         fotoUrl={urlFotoBuzon(mailbox)}
         url={`/api/mailboxes/${mailbox.id}/photo`}
+        nombre={mailbox.displayName}
         rotulo="Foto"
         ayuda="Se guarda al elegirla. En el correo web la ven los buzones del mismo cliente."
         onCambio={async (cambio) => {
