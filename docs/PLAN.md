@@ -309,6 +309,7 @@ edita una ya publicada.
 | `007-origen-de-los-envios` | `messages.source` (`api` o `form`, se conserva al eliminar el formulario) e índice por formulario: el cupo de la API solo cuenta `api` y cada formulario tiene el suyo. |
 | `008-reservas-de-cloudflare` | `cloudflare_reservas`: dominios cuyo DNS escribió la administración con una cuenta de la instancia, con el cliente para el que se escribió (sin claves foráneas: sobrevive al dominio y al cliente). Rellena las de la 1.0: dominios con `dns_applied_at` y la zona anotada cuya cuenta es de la instancia o ya no existe. |
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
+| `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -413,6 +414,9 @@ controles táctiles de 44 px y un paso a la vez.
   /api/mailboxes/:id/setup-reset`): tras probarlo, contraseña nueva, fuera
   enlaces, sesiones de «Mi buzón», bloqueos y (opcional) contraseñas de
   aplicación, y un enlace de configuración nuevo para el titular.
+- **Volver a enviar** un enlace de configuración activo (solo la
+  administración) y **favicon** con el logotipo de Mailway en el panel, el
+  portal y el webmail.
 - **Perfil del buzón**: el titular pone su nombre visible y su foto en el
   onboarding y en «Mi buzón» (y la administración en la ficha); el webmail los
   usa para la identidad del remitente y como avatar entre buzones del mismo

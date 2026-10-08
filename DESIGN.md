@@ -415,6 +415,12 @@ diálogos y avisos, cajón móvil en 220 ms y el giro del aro de carga. Con
 
 ### Superficies del navegador
 
+Favicon: el `Logotipo` (sobre blanco en tesela petróleo, con el sobre algo
+más grande para leerse a 16 px). `web/public/favicon.svg` es la fuente;
+`favicon.ico` (16, 32 y 48 px) y `apple-touch-icon.png` (180 px, a sangre)
+se generan a partir de él. El webmail usa los mismos ficheros desde
+`mailway_theme`.
+
 `theme-color` es el fondo (`#f4f6f4`) en la portada y el portal, y blanco
 dentro del panel, a juego con la barra superior. Barras de desplazamiento
 finas en `tinta` al 24 %.

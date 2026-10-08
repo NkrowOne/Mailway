@@ -4,12 +4,19 @@
  * Capa visual de Mailway sobre Elastic (Roundcube 1.7).
  *
  * Solo apariencia: añade dos hojas de estilo (iconos y tema), una clase en
- * <html> y el color de la barra del navegador. No toca la autenticación, el
+ * <html>, el color de la barra del navegador y el icono de Mailway en la
+ * pestaña. No toca la autenticación, el
  * contenido de los mensajes, los atajos ni la navegación: si algo de esto
  * fallara, el webmail seguiría funcionando con el aspecto original de Elastic.
  */
 class mailway_theme extends rcube_plugin
 {
+    /** El favicon de Elastic cuando nadie ha configurado otro. */
+    private const FAVICON_ROUNDCUBE = '/images/favicon.ico';
+
+    /** @var bool Si se ponen los iconos de Mailway (el operador no tiene los suyos). */
+    private $iconos_propios = false;
+
     public function init()
     {
         // Las reglas están escritas contra el marcado de Elastic; con otro
@@ -30,6 +37,16 @@ class mailway_theme extends rcube_plugin
             && $rcmail->config->get('blankpage_url', '/watermark.html') === '/watermark.html'
         ) {
             $rcmail->output->set_env('blankpage', $this->urlbase . 'vacio.html');
+        }
+
+        // Icono de la pestaña: el de Mailway (el mismo que el panel) y no el
+        // de Roundcube, también en los dominios de marca blanca del webmail.
+        // Va como valor por defecto de «favicon», que Roundcube solo usa si el
+        // operador no ha puesto el suyo en skin_logo; si lo cambió en
+        // «favicon», tampoco se toca.
+        $this->iconos_propios = $this->sin_iconos_del_operador($rcmail);
+        if ($this->iconos_propios) {
+            $rcmail->config->set('favicon', $this->urlbase . 'favicon.ico');
         }
     }
 
@@ -74,8 +91,51 @@ class mailway_theme extends rcube_plugin
             1
         );
 
+        // Junto al .ico, la versión vectorial (nítida en cualquier tamaño, la
+        // que prefieren los navegadores actuales) y el icono para la pantalla
+        // de inicio de iOS. Elastic no declara ninguno de los dos. Rutas
+        // relativas: Roundcube las pasa luego por static.php y les añade la
+        // fecha del fichero para invalidar la caché.
+        if ($this->iconos_propios) {
+            $iconos = "\n" . '<link rel="icon" type="image/svg+xml" href="' . $this->urlbase . 'favicon.svg">'
+                . "\n" . '<link rel="apple-touch-icon" href="' . $this->urlbase . 'apple-touch-icon.png">';
+            $html = preg_replace('/<link[^>]*rel="apple-touch-icon"[^>]*>\s*/i', '', $html);
+            $con_icono = preg_replace('/(<link[^>]*rel="shortcut icon"[^>]*>)/i', '$1' . $iconos, $html, 1, $hechos);
+            if ($hechos) {
+                $html = $con_icono;
+            } else {
+                $html = preg_replace('/<\/head>/i', $iconos . "\n</head>", $html, 1);
+            }
+        }
+
         $args['content'] = $html;
 
         return $args;
+    }
+
+    /**
+     * Cierto si el operador no ha configurado iconos propios.
+     *
+     * Roundcube toma el favicon de skin_logo (una entrada «[favicon]» o, si
+     * skin_logo es un texto, el propio logotipo) y, si no, de «favicon».
+     * Cualquiera de los dos puestos por el operador manda sobre los nuestros.
+     */
+    private function sin_iconos_del_operador(rcmail $rcmail): bool
+    {
+        $logo = $rcmail->config->get('skin_logo');
+        if (is_string($logo) && $logo !== '') {
+            return false;
+        }
+        if (is_array($logo)) {
+            foreach (array_keys($logo) as $clave) {
+                if (str_contains((string) $clave, '[favicon]')) {
+                    return false;
+                }
+            }
+        }
+
+        $favicon = (string) $rcmail->config->get('favicon', '');
+
+        return $favicon === '' || $favicon === self::FAVICON_ROUNDCUBE;
     }
 }

@@ -31,12 +31,16 @@ Qué cambia:
   contraste AA) en lugar del gris azulado de Elastic.
 - El panel vacío (sin mensaje abierto) muestra la tesela del panel en vez del
   logotipo de Roundcube, que asomaba aunque hubiera marca blanca.
+- El icono de la pestaña es el de Mailway (`favicon.ico`, `favicon.svg` y
+  `apple-touch-icon.png`, los mismos del panel), salvo que el operador haya
+  configurado el suyo (`skin_logo` con `[favicon]` o `favicon`).
 
 Ficheros:
 
 - `mailway_theme.php`: incluye las hojas de estilo, marca `<html>` con la
   clase `mailway` (para que las reglas valgan igual en claro y en oscuro sin
-  `!important`), ajusta `theme-color` y apunta el panel vacío a `vacio.html`.
+  `!important`), ajusta `theme-color`, pone los iconos de la pestaña y apunta
+  el panel vacío a `vacio.html`.
 - `mailway.css`: el tema, con la paleta clara y la oscura en variables.
 - `iconos.css`: los iconos de Lucide en línea (licencia ISC, aviso incluido).
 - `vacio.html`: el panel vacío, sin texto, válido para cualquier idioma.
