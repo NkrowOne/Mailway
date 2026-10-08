@@ -164,6 +164,16 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
         <p className="mt-4 text-center text-sm text-tinta-3">
           Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.
         </p>
+        {/* Esta entrada es la de los buzones: una cuenta del panel (la de
+            administración o la de un cliente) no entra aquí, y es fácil
+            confundirlas porque viven en la misma dirección. */}
+        <p className="mt-2 text-center text-sm text-tinta-3">
+          ¿Gestionas el correo de tu empresa o el servicio?{' '}
+          <a href="/login" className="text-petroleo underline underline-offset-2 hover:text-tinta">
+            Entra en el panel
+          </a>
+          .
+        </p>
       </div>
     </div>
   );
