@@ -35,6 +35,8 @@ export interface SetupPublico {
   portalUrl: string;
   appleProfileUrl: string;
   thunderbirdAndroidQr: string;
+  /** Foto del titular (/api/public/setup/<token>/photo?v=…), o null si no tiene. */
+  photoUrl: string | null;
 }
 
 /** GET /api/portal/me */
@@ -50,6 +52,8 @@ export interface PortalMe {
   webmailUrl: string;
   appleProfileUrl: string;
   thunderbirdAndroidQr: string;
+  /** Foto del titular (/api/portal/photo?v=…), o null si no tiene. */
+  photoUrl: string | null;
 }
 
 export interface ContrasenaAplicacion {

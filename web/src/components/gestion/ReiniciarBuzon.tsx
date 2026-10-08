@@ -17,6 +17,8 @@ interface Reinicio {
   link: EnlaceCreado;
   linksRemoved: number;
   appPasswordsRevoked: number;
+  /** El reinicio borra la foto del titular (forma parte de su puesta en marcha); el nombre se conserva. */
+  photoRemoved: boolean;
 }
 
 const VALIDECES = [
@@ -84,6 +86,8 @@ export function ReiniciarBuzon({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['setup-links', mailbox.id] }),
         queryClient.invalidateQueries({ queryKey: ['app-passwords', mailbox.id] }),
+        // Sin foto: el avatar de la ficha y de la lista debe desaparecer.
+        queryClient.invalidateQueries({ queryKey: ['mailboxes'] }),
       ]);
     },
     onError: (err) => setError(mensajeDe(err, 'No se ha podido reiniciar la configuración del buzón.')),
@@ -111,6 +115,7 @@ export function ReiniciarBuzon({
             (hecho.appPasswordsRevoked === 1
               ? ' Se ha revocado 1 contraseña de aplicación.'
               : ` Se han revocado ${plural(hecho.appPasswordsRevoked, 'contraseña de aplicación', 'contraseñas de aplicación')}.`)}
+          {hecho.photoRemoved && ' Se ha eliminado la foto del buzón.'}
         </p>
         <Botonera>
           <Button
@@ -147,6 +152,7 @@ export function ReiniciarBuzon({
               : 'No hay enlaces de configuración anteriores'}{' '}
           y se cierran las sesiones abiertas en «Mi buzón».
         </li>
+        {Boolean(mailbox.photoUpdatedAt) && <li>Se elimina la foto del buzón; el nombre visible se conserva.</li>}
         <li>Se crea un enlace de configuración nuevo para el titular.</li>
       </ul>
 

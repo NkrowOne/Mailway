@@ -163,6 +163,8 @@ export interface Mailbox {
   /** Bytes ocupados según el motor; null = sin dato. */
   usedBytes: number | null;
   usageCheckedAt?: number | null;
+  /** Cuándo se subió la foto del titular; null = sin foto. Va en la URL (?v=) para invalidar la caché. */
+  photoUpdatedAt: number | null;
   clientId?: string;
   clientName?: string;
 }
