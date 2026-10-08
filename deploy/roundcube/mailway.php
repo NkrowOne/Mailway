@@ -43,6 +43,10 @@ if ($mailwayPanelUrl !== '') {
 $config['timezone'] = 'auto';
 $config['date_format'] = 'd/m/Y';
 $config['time_format'] = 'H:i';
+// Fecha completa (lista de mensajes, cabecera del mensaje) en el mismo
+// formato. Roundcube solo la deriva de las dos anteriores cuando el usuario
+// guarda sus preferencias; hasta entonces mostraría «2026-10-01 09:30».
+$config['date_long'] = 'd/m/Y H:i';
 
 /* ---------------------------- Inicio de sesión ----------------------------- */
 
@@ -109,6 +113,11 @@ $config['prefer_html'] = true;
 $config['show_images'] = 1;
 // Redactar en HTML salvo al responder a un mensaje de texto plano.
 $config['htmleditor'] = 4;
+// Letra del editor: Arial a 11 pt, legible y presente en cualquier equipo
+// del destinatario. La predeterminada de Roundcube (Verdana a 10 pt) se ve
+// pequeña y anticuada al escribir.
+$config['default_font'] = 'Arial';
+$config['default_font_size'] = '11pt';
 $config['draft_autosave'] = 60;
 // Responder encima del mensaje citado, con la firma bajo la respuesta,
 // como en Gmail y Outlook.

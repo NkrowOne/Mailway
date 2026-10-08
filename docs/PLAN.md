@@ -411,6 +411,11 @@ controles táctiles de 44 px y un paso a la vez.
   /api/mailboxes/:id/setup-reset`): tras probarlo, contraseña nueva, fuera
   enlaces, sesiones de «Mi buzón», bloqueos y (opcional) contraseñas de
   aplicación, y un enlace de configuración nuevo para el titular.
+- El cliente como centro del panel de administración: su ficha agrupa en
+  pestañas dominios, buzones, alias, usuarios, marca blanca, API de envío,
+  formularios y actividad.
+- Webmail con aspecto actual (capa `mailway_theme` sobre Elastic), también en
+  modo oscuro.
 
 ### Límites conocidos
 

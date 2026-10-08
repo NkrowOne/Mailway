@@ -429,9 +429,13 @@ logotipo y nombre centrados y una tarjeta de 16 px de radio.
 
 ### Webmail
 
-`deploy/roundcube/mailway_theme/mailway.css` traslada a Elastic los mismos
-colores (petróleo, fondo y bordes), radios de 8 y 16 px y el foco petróleo,
-sin tocar su modo oscuro.
+`deploy/roundcube/mailway_theme/` (`mailway.css`, `iconos.css`, `vacio.html`)
+traslada a Elastic los tokens del panel: fondo gris verdoso, lista y lectura
+en paneles blancos de 16 px de radio, carpetas y secciones en píldora,
+«Redactar» como botón petróleo, barras de herramientas solo con iconos de
+Lucide (los del panel), no leídos con punto petróleo y foco petróleo. El modo
+oscuro tiene su propia paleta equivalente. Letra del sistema; nada se carga
+de fuera.
 
 ## Do's and Don'ts
 

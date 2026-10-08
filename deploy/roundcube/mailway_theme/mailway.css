@@ -1,56 +1,3326 @@
-/* Capa visual de Mailway para Elastic 1.7: los colores y las formas del panel
-   (verde petróleo, fondo gris verdoso claro, esquinas suaves). Conserva los
-   paneles adaptables y el modo oscuro de Elastic. */
-html:not(.dark-mode) {
-  --mw-brand: #0d5c5e;
-  --mw-brand-hover: #09484a;
-  --mw-brand-soft: #e2f0ed;
-  --mw-paper: #f9faf9;
-  --mw-border: #e1e5e4;
+/* Capa visual de Mailway para Elastic (Roundcube 1.7).
+
+   Objetivo: que el webmail se sienta como un cliente de correo actual y como
+   parte del mismo producto que el panel (DESIGN.md): fondo gris verdoso,
+   paneles blancos de esquinas suaves, un único acento petróleo, iconos de
+   línea (Lucide, en iconos.css) y letra del sistema.
+
+   Cómo está hecho:
+   - Todas las reglas cuelgan de html.mailway (la clase la pone
+     mailway_theme.php). Así tienen la misma especificidad que las de
+     Elastic para el modo oscuro (html.dark-mode …) y, como esta hoja se
+     carga después, ganan sin !important. Solo se usa !important donde
+     Elastic también lo usa o donde su JavaScript escribe estilos en línea.
+   - Los colores son variables definidas una vez para el modo claro y otra
+     para el oscuro: el resto de reglas no sabe en qué modo está.
+   - No se ocultan funciones ni se cambia la estructura adaptable de
+     Elastic (escritorio, tableta, móvil, menús deslizables); solo su
+     aspecto. Las etiquetas que dejan de verse en las barras de iconos se
+     conservan para lectores de pantalla y en el atributo title. */
+
+/* ------------------------------------------------------------------ */
+/* Paleta                                                              */
+/* ------------------------------------------------------------------ */
+
+html.mailway {
+  --mw-mesa: #f4f6f4;
+  --mw-hoja: #ffffff;
+  --mw-hoja-2: #f7f9f8;
+  --mw-hoja-3: #edf1ef;
+  --mw-campo: #eef2f0;
+  --mw-tinta: #171f1e;
+  --mw-tinta-2: #485452;
+  --mw-tinta-3: #636e6c;
+  --mw-acento: #0d5c5e;
+  --mw-acento-hondo: #09484a;
+  --mw-acento-tenue: #e2f0ed;
+  --mw-sobre-acento: #ffffff;
+  --mw-seleccion: #e2f0ed;
+  --mw-fuera: #c21630;
+  --mw-fuera-tenue: #fde8eb;
+  --mw-vigilar: #a85e00;
+  --mw-vigilar-tenue: #fdf2e0;
+  --mw-normal: #087a4c;
+  --mw-normal-tenue: #e4f5ec;
+  --mw-regla: rgb(23 31 30 / 0.1);
+  --mw-regla-suave: rgb(23 31 30 / 0.07);
+  --mw-regla-fuerte: rgb(23 31 30 / 0.2);
+  --mw-velo: rgb(23 31 30 / 0.4);
+  --mw-sombra-suave: 0 1px 2px rgb(23 31 30 / 0.04), 0 1px 3px rgb(23 31 30 / 0.03);
+  --mw-sombra-flotante: 0 12px 32px -8px rgb(23 31 30 / 0.18), 0 2px 6px rgb(23 31 30 / 0.06);
+  --mw-anillo: rgb(13 92 94 / 0.15);
+  --mw-barra: rgb(23 31 30 / 0.24);
+
+  --mw-letra: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --mw-radio-control: 8px;
+  --mw-radio-boton: 10px;
+  --mw-radio-tarjeta: 12px;
+  --mw-radio-panel: 16px;
+  --mw-carril: 56px;
+  --mw-cabecera: 56px;
+  --mw-hueco: 8px;
+
+  color-scheme: light;
 }
-html:not(.dark-mode) body { color: #171f1e; background: #f4f6f4; }
-html:not(.dark-mode) #layout-menu,
-html:not(.dark-mode) #taskmenu { background: var(--mw-brand); }
-html:not(.dark-mode) #taskmenu a { color: #d9ebe8; }
-html:not(.dark-mode) #taskmenu a:hover { background: var(--mw-brand-hover); color: white; }
-html:not(.dark-mode) #taskmenu a.selected { background: white; color: var(--mw-brand); }
-html:not(.dark-mode) #layout-sidebar { background: var(--mw-paper); }
-html:not(.dark-mode) #layout-sidebar > .header,
-html:not(.dark-mode) #layout-list > .header,
-html:not(.dark-mode) #layout-content > .header {
-  background: var(--mw-paper); border-color: var(--mw-border); color: #171f1e;
+
+/* Modo oscuro: los mismos papeles, con un gris verdoso profundo y el
+   petróleo aclarado para que acento y foco sigan teniendo contraste AA. */
+html.mailway.dark-mode {
+  --mw-mesa: #101716;
+  --mw-hoja: #172120;
+  --mw-hoja-2: #1d2827;
+  --mw-hoja-3: #243231;
+  --mw-campo: #1f2a29;
+  --mw-tinta: #e4eae8;
+  --mw-tinta-2: #b5c1be;
+  --mw-tinta-3: #94a19e;
+  --mw-acento: #7ad3c8;
+  --mw-acento-hondo: #9be0d7;
+  --mw-acento-tenue: #233d3a;
+  --mw-sobre-acento: #062b29;
+  --mw-seleccion: #253d3a;
+  --mw-fuera: #ff8f9e;
+  --mw-fuera-tenue: #3a1e23;
+  --mw-vigilar: #f2b45c;
+  --mw-vigilar-tenue: #3a2c17;
+  --mw-normal: #6fd3a2;
+  --mw-normal-tenue: #17342a;
+  --mw-regla: rgb(255 255 255 / 0.09);
+  --mw-regla-suave: rgb(255 255 255 / 0.06);
+  --mw-regla-fuerte: rgb(255 255 255 / 0.18);
+  --mw-velo: rgb(0 0 0 / 0.6);
+  --mw-sombra-suave: 0 1px 2px rgb(0 0 0 / 0.3);
+  --mw-sombra-flotante: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.35);
+  --mw-anillo: rgb(122 211 200 / 0.25);
+  --mw-barra: rgb(255 255 255 / 0.22);
+
+  color-scheme: dark;
 }
-html:not(.dark-mode) #mailboxlist li.selected > a,
-html:not(.dark-mode) #messagelist tr.selected td {
-  background: var(--mw-brand-soft); color: var(--mw-brand);
+
+@media screen and (min-width: 1025px) {
+  html.mailway { --mw-carril: 84px; }
 }
-html:not(.dark-mode) #messagelist tr.unread td { font-weight: 600; }
-html:not(.dark-mode) .btn-primary {
-  background: var(--mw-brand); border-color: var(--mw-brand); border-radius: 8px;
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+html.mailway body,
+html.mailway button,
+html.mailway input,
+html.mailway optgroup,
+html.mailway select,
+html.mailway textarea,
+html.mailway .popover {
+  font-family: var(--mw-letra);
 }
-html:not(.dark-mode) .btn-primary:hover { background: var(--mw-brand-hover); border-color: var(--mw-brand-hover); }
-html:not(.dark-mode) .form-control,
-html:not(.dark-mode) .custom-select { border-radius: 8px; border-color: #cfd5d4; }
-html:not(.dark-mode) .form-control:focus,
-html:not(.dark-mode) .custom-select:focus { border-color: var(--mw-brand); box-shadow: 0 0 0 3px #0d5c5e26; }
-html:not(.dark-mode) :is(a, button, input, select, textarea):focus-visible {
-  outline: 2px solid var(--mw-brand); outline-offset: 2px;
+
+html.mailway body {
+  color: var(--mw-tinta);
+  background-color: var(--mw-mesa);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
-html:not(.dark-mode) .task-login #layout-content {
-  background: #f4f6f4;
-  padding: 3rem 1rem;
+
+/* Los documentos de los marcos (vista del mensaje, ajustes) van sobre el
+   panel blanco que los contiene. */
+html.mailway.iframe body {
+  background-color: var(--mw-hoja);
+}
+
+html.mailway a {
+  color: var(--mw-acento);
+}
+
+html.mailway a:hover {
+  color: var(--mw-acento-hondo);
+}
+
+html.mailway ::selection {
+  background-color: rgb(13 92 94 / 0.16);
+}
+
+html.mailway.dark-mode ::selection {
+  background-color: rgb(122 211 200 / 0.28);
+}
+
+html.mailway input,
+html.mailway textarea {
+  caret-color: var(--mw-acento);
+  accent-color: var(--mw-acento);
+}
+
+/* Foco de teclado: anillo petróleo de 2 px, como en el panel. Elastic quita
+   el contorno en muchos sitios (outline: 0) con la misma especificidad. */
+html.mailway :focus-visible {
+  outline: 2px solid var(--mw-acento);
+  outline-offset: 2px;
+}
+
+html.mailway .header a:focus-visible,
+html.mailway .toolbar a:focus-visible,
+html.mailway .menu a:focus-visible,
+html.mailway #taskmenu a:focus-visible,
+html.mailway .listing li > a:focus-visible,
+html.mailway .popover a:focus-visible,
+html.mailway .searchbar a:focus-visible,
+html.mailway .attachmentslist a:focus-visible {
+  outline-offset: -2px;
+}
+
+html.mailway .form-control:focus-visible,
+html.mailway .custom-select:focus-visible,
+html.mailway .searchbar input:focus-visible,
+html.mailway .listing td:focus-visible,
+html.mailway .listing tr:focus-visible,
+html.mailway .recipient-input input:focus-visible {
+  outline: none;
+}
+
+/* Barras de desplazamiento finas y discretas en los dos modos. */
+html.mailway {
+  scrollbar-color: var(--mw-barra) transparent;
+}
+
+html.mailway:not(.touch) ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html.mailway:not(.touch) ::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+html.mailway:not(.touch) ::-webkit-scrollbar-thumb {
+  background-color: var(--mw-barra);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------------ */
+/* Iconos                                                              */
+/* ------------------------------------------------------------------ */
+
+/* Elastic dibuja los iconos con Font Awesome en los ::before. Aquí se
+   conserva el glifo (mantiene el tamaño de la caja que Elastic calcula) y se
+   pinta encima el icono de Lucide como máscara del color del texto. Si un
+   elemento no tiene icono asignado, var(--mw-icono) no existe, las dos
+   declaraciones se anulan y se ve el glifo original: nunca un cuadrado. */
+html.mailway #taskmenu a::before,
+html.mailway .menu a::before,
+html.mailway a.button.icon::before,
+html.mailway button.btn::before,
+html.mailway .searchbar form::before,
+html.mailway .searchbar a::before,
+html.mailway .folderlist li > a::before,
+html.mailway .listing.iconized li > a::before,
+html.mailway .listing.iconized tr td::before,
+html.mailway .messagelist span.msgicon::before,
+html.mailway .messagelist td.flags span span::before,
+html.mailway .messagelist tr.thread td.threads div::before,
+html.mailway ul.treelist li div.treetoggle::before,
+html.mailway #message-header .header-links a::before,
+html.mailway .attachmentslist li::before,
+html.mailway .attachmentslist li a.delete::before,
+html.mailway .attachmentslist li a.cancelupload::before,
+html.mailway .input-group .icon::before,
+html.mailway p.image-attachment .attachment-links a::before,
+html.mailway #message-header > .subject a.extwin::before,
+html.mailway .floating-action-buttons a.button::before,
+html.mailway .contactlist li a::before,
+html.mailway .contactlist td.contact::before,
+html.mailway .contactlist td.contactgroup::before,
+html.mailway #identities-table td.mail::before,
+html.mailway #responses-table td.name::before,
+html.mailway #filterslist td.name::before,
+html.mailway #filtersetslist td.name::before,
+html.mailway .ui-dialog .ui-dialog-titlebar-close::before {
+  background: var(--mw-icono) 0 0 / 0 0 no-repeat, currentColor;
+  -webkit-mask: var(--mw-icono) center / var(--mw-icono-tam, 20px) no-repeat;
+  mask: var(--mw-icono) center / var(--mw-icono-tam, 20px) no-repeat;
+}
+
+/* Barra de tareas y menús */
+html.mailway a.compose { --mw-icono: var(--mw-i-redactar); }
+html.mailway a.mail { --mw-icono: var(--mw-i-correo); }
+html.mailway a.contacts { --mw-icono: var(--mw-i-contactos); }
+html.mailway a.settings,
+html.mailway a.actions,
+html.mailway a.tools { --mw-icono: var(--mw-i-ajustes); }
+html.mailway a.theme.dark { --mw-icono: var(--mw-i-luna); }
+html.mailway a.theme.light { --mw-icono: var(--mw-i-sol); }
+html.mailway a.about,
+html.mailway a.help { --mw-icono: var(--mw-i-ayuda); }
+html.mailway a.logout { --mw-icono: var(--mw-i-salir); }
+html.mailway a.task-menu-button { --mw-icono: var(--mw-i-menu); }
+html.mailway a.sidebar-menu,
+html.mailway a.toolbar-menu-button,
+html.mailway a.toolbar-list-button { --mw-icono: var(--mw-i-mas-vertical); }
+html.mailway a.back-sidebar-button,
+html.mailway a.back-content-button,
+html.mailway a.back-list-button,
+html.mailway a.back,
+html.mailway a.prev { --mw-icono: var(--mw-i-atras); }
+html.mailway a.back-sidebar-button.folders { --mw-icono: var(--mw-i-carpeta); }
+html.mailway a.next { --mw-icono: var(--mw-i-adelante); }
+html.mailway a.cancel,
+html.mailway a.close,
+html.mailway a.reset,
+html.mailway a.remove,
+html.mailway a.select.none,
+html.mailway button.btn.cancel,
+html.mailway button.btn.no { --mw-icono: var(--mw-i-cerrar); }
+
+/* Acciones sobre mensajes */
+html.mailway a.select { --mw-icono: var(--mw-i-seleccionar); }
+html.mailway a.select.all { --mw-icono: var(--mw-i-todo); }
+html.mailway a.select.page { --mw-icono: var(--mw-i-lista); }
+html.mailway a.select.unread { --mw-icono: var(--mw-i-correo); }
+html.mailway a.select.flagged { --mw-icono: var(--mw-i-bandera); }
+html.mailway a.select.invert,
+html.mailway a.selection { --mw-icono: var(--mw-i-invertir); }
+html.mailway a.threads { --mw-icono: var(--mw-i-hilos); }
+html.mailway a.options { --mw-icono: var(--mw-i-opciones); }
+html.mailway a.refresh { --mw-icono: var(--mw-i-actualizar); }
+html.mailway a.reply { --mw-icono: var(--mw-i-responder); }
+html.mailway a.reply-all,
+html.mailway a.reply.all,
+html.mailway a.reply.list { --mw-icono: var(--mw-i-responder-todos); }
+html.mailway a.forward { --mw-icono: var(--mw-i-reenviar); }
+html.mailway a.delete,
+html.mailway button.btn.delete,
+html.mailway button.btn.discard { --mw-icono: var(--mw-i-papelera); }
+html.mailway a.archive { --mw-icono: var(--mw-i-archivo); }
+html.mailway a.junk { --mw-icono: var(--mw-i-spam); }
+html.mailway a.notjunk { --mw-icono: var(--mw-i-escudo); }
+html.mailway a.markmessage { --mw-icono: var(--mw-i-etiqueta); }
+html.mailway a.more { --mw-icono: var(--mw-i-mas); }
+html.mailway a.print { --mw-icono: var(--mw-i-imprimir); }
+html.mailway a.dropdown { --mw-icono: var(--mw-i-abajo); }
+html.mailway a.move { --mw-icono: var(--mw-i-mover); }
+html.mailway a.copy { --mw-icono: var(--mw-i-copiar); }
+html.mailway a.download,
+html.mailway a.export,
+html.mailway button.btn.export { --mw-icono: var(--mw-i-descargar); }
+html.mailway a.import,
+html.mailway a.upload,
+html.mailway button.btn.import { --mw-icono: var(--mw-i-subir); }
+html.mailway a.source { --mw-icono: var(--mw-i-codigo); }
+html.mailway a.edit,
+html.mailway a.rename,
+html.mailway button.btn.edit { --mw-icono: var(--mw-i-redactar); }
+html.mailway a.extwin,
+html.mailway a.open { --mw-icono: var(--mw-i-ventana); }
+html.mailway a.read { --mw-icono: var(--mw-i-leido); }
+html.mailway a.unread { --mw-icono: var(--mw-i-correo); }
+html.mailway a.flag { --mw-icono: var(--mw-i-bandera); }
+html.mailway a.unflag { --mw-icono: var(--mw-i-sin-bandera); }
+html.mailway a.undo,
+html.mailway button.btn.restore { --mw-icono: var(--mw-i-deshacer); }
+html.mailway a.expunge { --mw-icono: var(--mw-i-compactar); }
+html.mailway a.purge { --mw-icono: var(--mw-i-vaciar); }
+html.mailway a.folders,
+html.mailway button.btn.folders { --mw-icono: var(--mw-i-carpeta); }
+html.mailway a.create,
+html.mailway button.btn.create { --mw-icono: var(--mw-i-anadir); }
+html.mailway a.expand.all { --mw-icono: var(--mw-i-abajo); }
+html.mailway a.expand.none { --mw-icono: var(--mw-i-arriba); }
+html.mailway a.expand.unread { --mw-icono: var(--mw-i-correo); }
+html.mailway a.firstpage { --mw-icono: var(--mw-i-primera); }
+html.mailway a.prevpage { --mw-icono: var(--mw-i-izquierda); }
+html.mailway a.nextpage { --mw-icono: var(--mw-i-derecha); }
+html.mailway a.lastpage { --mw-icono: var(--mw-i-ultima); }
+html.mailway a.showurl { --mw-icono: var(--mw-i-enlace); }
+html.mailway a.qrcode,
+html.mailway button.btn.qrcode { --mw-icono: var(--mw-i-qr); }
+html.mailway a.properties { --mw-icono: var(--mw-i-info); }
+html.mailway a.info { --mw-icono: var(--mw-i-info); }
+html.mailway a.rotate { --mw-icono: var(--mw-i-girar); }
+html.mailway a.zoomin { --mw-icono: var(--mw-i-ampliar); }
+html.mailway a.zoomout { --mw-icono: var(--mw-i-reducir); }
+html.mailway a.assigngroup { --mw-icono: var(--mw-i-persona-mas); }
+html.mailway a.removegroup { --mw-icono: var(--mw-i-persona-menos); }
+html.mailway a.addressbook,
+html.mailway a.recipient { --mw-icono: var(--mw-i-persona); }
+html.mailway a.vcard { --mw-icono: var(--mw-i-clip); }
+html.mailway a.filterlink { --mw-icono: var(--mw-i-filtro); }
+html.mailway a.search,
+html.mailway button.btn.search { --mw-icono: var(--mw-i-buscar); }
+html.mailway a.search.delete { --mw-icono: var(--mw-i-papelera); }
+
+/* Redacción */
+html.mailway a.save { --mw-icono: var(--mw-i-guardar); }
+html.mailway a.attach,
+html.mailway button.btn.attach { --mw-icono: var(--mw-i-clip); }
+html.mailway button.btn.attach.vcard { --mw-icono: var(--mw-i-persona); }
+html.mailway a.signature { --mw-icono: var(--mw-i-firma); }
+html.mailway a.responses,
+html.mailway a.insertresponse { --mw-icono: var(--mw-i-respuestas); }
+html.mailway a.spellcheck { --mw-icono: var(--mw-i-ortografia); }
+html.mailway a.encrypt,
+html.mailway button.btn.encrypt { --mw-icono: var(--mw-i-candado); }
+html.mailway a.send,
+html.mailway button.btn.send,
+html.mailway button.btn.bounce { --mw-icono: var(--mw-i-enviar); }
+html.mailway a.submit,
+html.mailway button.btn.submit,
+html.mailway button.btn.yes,
+html.mailway button.btn.continue,
+html.mailway button.btn.generate { --mw-icono: var(--mw-i-ok); }
+html.mailway button.btn.save { --mw-icono: var(--mw-i-ok); }
+html.mailway button.btn.insert.recipient { --mw-icono: var(--mw-i-persona-mas); }
+
+/* Búsqueda */
+html.mailway .searchbar form { --mw-icono: var(--mw-i-buscar); }
+html.mailway .searchbar a.options { --mw-icono: var(--mw-i-abajo); }
+html.mailway .searchbar.open a.options { --mw-icono: var(--mw-i-arriba); }
+html.mailway .searchbar a.unread { --mw-icono: var(--mw-i-correo); }
+
+/* Carpetas: mismo criterio que Elastic (las subcarpetas de la papelera,
+   enviados… heredan su icono). */
+html.mailway .folderlist li > a { --mw-icono: var(--mw-i-carpeta); }
+html.mailway .folderlist li.inbox > a { --mw-icono: var(--mw-i-entrada); }
+html.mailway .folderlist li.drafts a { --mw-icono: var(--mw-i-borrador); }
+html.mailway .folderlist li.sent a { --mw-icono: var(--mw-i-enviar); }
+html.mailway .folderlist li.junk a { --mw-icono: var(--mw-i-spam); }
+html.mailway .folderlist li.trash a { --mw-icono: var(--mw-i-papelera); }
+html.mailway .folderlist li.archive > a { --mw-icono: var(--mw-i-archivo); }
+html.mailway .folderlist li.ns-shared > a { --mw-icono: var(--mw-i-compartir); }
+html.mailway .folderlist li.ns-other > a { --mw-icono: var(--mw-i-grupo); }
+html.mailway ul.treelist li div.treetoggle { --mw-icono: var(--mw-i-derecha-grueso); --mw-icono-tam: 14px; }
+html.mailway ul.treelist li div.treetoggle.expanded { --mw-icono: var(--mw-i-abajo-grueso); }
+
+/* Secciones de ajustes y libretas */
+html.mailway .listing.iconized li.preferences > a { --mw-icono: var(--mw-i-opciones); }
+html.mailway .listing.iconized li.folders > a { --mw-icono: var(--mw-i-carpeta); }
+html.mailway .listing.iconized li.responses > a { --mw-icono: var(--mw-i-respuestas); }
+html.mailway .listing.iconized li.identities > a { --mw-icono: var(--mw-i-identidad); }
+html.mailway .listing.iconized li.password > a { --mw-icono: var(--mw-i-llave); }
+html.mailway .listing.iconized li.filter > a { --mw-icono: var(--mw-i-filtro); }
+html.mailway .listing.iconized li.vacation > a { --mw-icono: var(--mw-i-reloj); }
+html.mailway .listing.iconized li.forward > a { --mw-icono: var(--mw-i-reenviar); }
+html.mailway .listing.iconized li.info > a,
+html.mailway .listing.iconized li.userinfo > a { --mw-icono: var(--mw-i-info); }
+html.mailway .listing.iconized li.enigma.keys > a { --mw-icono: var(--mw-i-llave); }
+html.mailway .listing.iconized li a.about { --mw-icono: var(--mw-i-ayuda); }
+html.mailway .listing.iconized li a.license { --mw-icono: var(--mw-i-escudo); }
+html.mailway .listing.iconized li.addressbook > a,
+html.mailway .contactlist li a.addressbook { --mw-icono: var(--mw-i-libreta); }
+html.mailway .listing.iconized li.contactgroup > a,
+html.mailway .contactlist li a.contactgroup { --mw-icono: var(--mw-i-grupo); }
+html.mailway .listing.iconized li.contactsearch > a { --mw-icono: var(--mw-i-buscar); }
+html.mailway .listing.iconized tr.general > td.section { --mw-icono: var(--mw-i-pantalla); }
+html.mailway .listing.iconized tr.mailbox > td.section { --mw-icono: var(--mw-i-entrada); }
+html.mailway .listing.iconized tr.mailview > td.section { --mw-icono: var(--mw-i-leido); }
+html.mailway .listing.iconized tr.compose > td.section { --mw-icono: var(--mw-i-redactar); }
+html.mailway .listing.iconized tr.addressbook > td.section { --mw-icono: var(--mw-i-contactos); }
+html.mailway .listing.iconized tr.folders > td.section { --mw-icono: var(--mw-i-carpeta); }
+html.mailway .listing.iconized tr.server > td.section { --mw-icono: var(--mw-i-servidor); }
+html.mailway .listing.iconized tr.encryption > td.section { --mw-icono: var(--mw-i-candado); }
+html.mailway .listing.iconized tr.calendar > td.section { --mw-icono: var(--mw-i-calendario); }
+html.mailway .listing.iconized tr.contact.person td.name,
+html.mailway .contactlist td.contact { --mw-icono: var(--mw-i-persona); }
+html.mailway .listing.iconized tr.contact.group td.name,
+html.mailway .contactlist td.contactgroup { --mw-icono: var(--mw-i-grupo); }
+
+html.mailway #identities-table td.mail { --mw-icono: var(--mw-i-identidad); }
+html.mailway #responses-table td.name { --mw-icono: var(--mw-i-respuestas); }
+html.mailway #filterslist td.name { --mw-icono: var(--mw-i-filtro); }
+html.mailway #filtersetslist td.name { --mw-icono: var(--mw-i-fichero-texto); }
+html.mailway .ui-dialog .ui-dialog-titlebar-close { --mw-icono: var(--mw-i-cerrar); }
+
+html.mailway #identities-table td.mail::before,
+html.mailway #responses-table td.name::before,
+html.mailway #filterslist td.name::before,
+html.mailway #filtersetslist td.name::before {
+  width: 20px;
+  height: 35px;
+  margin-right: 10px;
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+  line-height: 35px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+/* Cabecera del mensaje y adjuntos */
+html.mailway #message-header .header-links a.headers-details,
+html.mailway #message-header .header-links a.headers-summary { --mw-icono: var(--mw-i-lista); }
+html.mailway #message-header .header-links a.headers-all { --mw-icono: var(--mw-i-codigo); }
+html.mailway #message-header .header-links a.html { --mw-icono: var(--mw-i-imagen); }
+html.mailway #message-header .header-links a.plain { --mw-icono: var(--mw-i-texto); }
+html.mailway #message-header .header-links a.zipdownload { --mw-icono: var(--mw-i-descargar); }
+html.mailway .attachmentslist li { --mw-icono: var(--mw-i-fichero); }
+html.mailway .attachmentslist li:is(.txt, .text, .pdf, .odt, .doc, .docx, .msword, .html) { --mw-icono: var(--mw-i-fichero-texto); }
+html.mailway .attachmentslist li:is(.ods, .xls, .xlsx, .msexcel) { --mw-icono: var(--mw-i-fichero-tabla); }
+html.mailway .attachmentslist li:is(.rar, .zip, .gz) { --mw-icono: var(--mw-i-fichero-zip); }
+html.mailway .attachmentslist li:is(.image, .jpg, .jpeg, .png) { --mw-icono: var(--mw-i-fichero-imagen); }
+html.mailway .attachmentslist li a.delete,
+html.mailway .attachmentslist li a.cancelupload { --mw-icono: var(--mw-i-cerrar); }
+html.mailway .input-group .icon.user { --mw-icono: var(--mw-i-persona); }
+html.mailway .input-group .icon.pass { --mw-icono: var(--mw-i-candado); }
+html.mailway .input-group .icon.search { --mw-icono: var(--mw-i-buscar); }
+html.mailway .input-group .icon.edit { --mw-icono: var(--mw-i-redactar); }
+html.mailway .input-group .icon.add { --mw-icono: var(--mw-i-anadir); }
+html.mailway .input-group .icon.add.recipient { --mw-icono: var(--mw-i-persona-mas); }
+html.mailway .input-group .icon.delete { --mw-icono: var(--mw-i-papelera); }
+html.mailway .input-group .icon.cancel { --mw-icono: var(--mw-i-cerrar); }
+html.mailway .popover .menu li a[aria-haspopup]::after {
+  background: currentColor;
+  -webkit-mask: var(--mw-i-derecha) center / 16px no-repeat;
+  mask: var(--mw-i-derecha) center / 16px no-repeat;
+}
+
+/* ------------------------------------------------------------------ */
+/* Armazón: carril, paneles y cabeceras                                */
+/* ------------------------------------------------------------------ */
+
+/* Escritorio y tableta: los paneles de lista y contenido son tarjetas
+   blancas sobre el fondo, separadas por un hueco; carril y carpetas quedan
+   sobre el fondo, como en los clientes de correo actuales. */
+@media screen and (min-width: 769px) {
+  html.mailway body:not(.task-login):not(.task-error-login) #layout {
+    padding: var(--mw-hueco) var(--mw-hueco) var(--mw-hueco) 0;
+    gap: var(--mw-hueco);
+  }
+
+  html.mailway #layout-sidebar,
+  html.mailway #layout-sidebar > .header,
+  html.mailway #layout-sidebar > .footer {
+    background-color: transparent;
+    border: 0;
+  }
+
+  html.mailway body:not(.task-login) #layout-list,
+  html.mailway body:not(.task-login) #layout-content,
+  html.mailway #layout-sidebar.sidebar-right {
+    background-color: var(--mw-hoja);
+    border: 0;
+    border-radius: var(--mw-radio-panel);
+    box-shadow: 0 0 0 1px var(--mw-regla-suave), var(--mw-sombra-suave);
+  }
+
+  /* El marco no puede desbordar las esquinas del panel. */
+  html.mailway #layout-content .iframe-wrapper {
+    border-radius: var(--mw-radio-panel);
+    overflow: hidden;
+  }
+
+  /* En ajustes la cabecera del panel de contenido queda vacía en
+     escritorio (solo lleva el botón «Volver» del móvil): se quita para que
+     el formulario empiece arriba. Si un complemento pone ahí una barra, se
+     mantiene. */
+  html.mailway body.task-settings #layout-content > .header:not(:has(.toolbar, .menu, .buttons, .button:not(.back-list-button))) {
+    display: none;
+  }
+
+  html.mailway #layout-content > .formcontent,
+  html.mailway #layout-content > .content {
+    border-radius: 0 0 var(--mw-radio-panel) var(--mw-radio-panel);
+  }
+}
+
+/* Móvil (menos de 769 px): un panel cada vez, de borde a borde y blanco,
+   como en las aplicaciones de correo del teléfono. */
+@media screen and (max-width: 768px) {
+  html.mailway #layout-sidebar,
+  html.mailway #layout-list,
+  html.mailway #layout-content {
+    background-color: var(--mw-hoja);
+    border: 0;
+  }
+}
+
+/* Cabeceras de los paneles */
+html.mailway #layout > div > .header,
+html.mailway #layout > div > .footer,
+html.mailway.iframe #layout-content > .header {
+  background-color: transparent;
+  color: var(--mw-tinta);
+  border-color: var(--mw-regla-suave);
+}
+
+html.mailway #layout > div > .header {
+  height: var(--mw-cabecera);
+  min-height: var(--mw-cabecera);
+  line-height: var(--mw-cabecera);
+  align-items: center;
+  padding: 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 0;
+}
+
+html.mailway #layout > div > .header .header-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+html.mailway #layout > div > .header a.button {
+  color: var(--mw-tinta-2);
+}
+
+/* Botones de icono de las cabeceras: 40 px, esquinas suaves y fondo al
+   pasar. La etiqueta deja de verse pero se queda para lectores de pantalla
+   (y el title muestra el nombre al pasar el ratón). */
+html.mailway #layout > div > .header a.button.icon,
+html.mailway #layout > div > .header .menu.toolbar a,
+html.mailway .header > .toolbar a,
+html.mailway .header > .toolbar .dropbutton a {
+  flex: none;
+  float: none;
+  width: 40px;
+  min-width: 40px;
+  max-width: none;
+  height: 40px;
+  margin: 0 1px !important;
+  padding: 10px !important;
+  border-radius: var(--mw-radio-boton);
+  line-height: 1;
+  color: var(--mw-tinta-2);
+  background: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+html.mailway #layout > div > .header a.button.icon::before,
+html.mailway #layout > div > .header .menu.toolbar a::before,
+html.mailway .header > .toolbar a::before {
+  display: block;
+  float: none !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px;
+  margin: 0 !important;
+  font-size: 18px;
+  line-height: 20px;
+  overflow: hidden;
+}
+
+html.mailway #layout > div > .header a.button.icon > span.inner,
+html.mailway #layout > div > .header .menu.toolbar a > span.inner,
+html.mailway .header > .toolbar a > span.inner {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+html.mailway #layout > div > .header a.button.icon:not(.disabled):hover,
+html.mailway #layout > div > .header .menu.toolbar a:not(.disabled):hover,
+html.mailway #layout > div > .header .menu.toolbar a:not(.disabled):focus-visible,
+html.mailway .header > .toolbar a:not(.disabled):hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway #layout > div > .header .menu.toolbar a.selected,
+html.mailway #layout > div > .header .menu.toolbar a.pressed {
+  color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+}
+
+html.mailway #layout > div > .header .menu.toolbar a.disabled {
+  opacity: 0.38;
+}
+
+/* En móvil y tableta Elastic convierte estas barras en menús emergentes
+   (.popupmenu, ocultos hasta que se abren): no hay que volver a mostrarlas. */
+html.mailway .header > .toolbar:not(.popupmenu) {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+html.mailway .header > .toolbar li,
+html.mailway #layout > div > .header > ul.menu.toolbar > li {
+  display: flex;
+  align-items: center;
+  height: auto;
+  border: 0;
+  line-height: 1;
+  background: none;
+}
+
+html.mailway .header > .toolbar > .spacer {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background-color: var(--mw-regla);
+}
+
+/* Botón con desplegable (responder a todos, reenviar): una sola pastilla. */
+html.mailway #layout > div > .header .toolbar .dropbutton {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--mw-radio-boton);
+}
+
+html.mailway #layout > div > .header .toolbar .dropbutton:not(.disabled):hover {
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway #layout > div > .header .toolbar .dropbutton a:first-child {
+  width: 34px;
+  min-width: 34px;
+  margin-right: 0 !important;
+  padding: 10px 4px 10px 10px !important;
+  border-radius: var(--mw-radio-boton) 0 0 var(--mw-radio-boton);
+}
+
+html.mailway #layout > div > .header .toolbar .dropbutton a.dropdown {
+  width: 20px;
+  min-width: 20px;
+  margin-left: 0 !important;
+  padding: 13px 6px 13px 0 !important;
+  border-radius: 0 var(--mw-radio-boton) var(--mw-radio-boton) 0;
+  --mw-icono-tam: 14px;
+}
+
+html.mailway #layout > div > .header .toolbar .dropbutton a.dropdown::before {
+  width: 14px !important;
+  min-width: 14px;
+}
+
+html.mailway #layout > div > .header .toolbar .dropbutton:not(.disabled):hover a,
+html.mailway.dark-mode .menu.toolbar .dropbutton a.dropdown:hover {
+  background-color: transparent;
+}
+
+/* Escritorio: barras alineadas a la izquierda y el título de la lista
+   visible («Entrada»), que Elastic oculta y centra con JavaScript. */
+@media screen and (min-width: 769px) {
+  html.mailway #layout > div > .header {
+    justify-content: flex-start;
+    padding: 0 8px 0 12px;
+  }
+
+  html.mailway #layout-list > .header > .header-title:not(.all-sizes),
+  html.mailway #layout-sidebar > .header > .header-title {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    margin: 0 8px 0 4px !important;
+    padding: 0 !important;
+    text-align: left;
+    font-size: 18px;
+    font-weight: 650;
+  }
+
+  html.mailway #layout-sidebar > .header > .header-title.username {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--mw-tinta-2);
+  }
+
+  html.mailway #layout-content > .header #mailtoolbar,
+  html.mailway #layout-content > .header #messagetoolbar {
+    flex: 1;
+    justify-content: flex-start;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Carril de tareas                                                    */
+/* ------------------------------------------------------------------ */
+
+html.mailway #layout-menu {
+  background-color: var(--mw-mesa);
+  border-right: 0;
+}
+
+@media screen and (min-width: 481px) {
+  html.mailway #layout-menu {
+    width: var(--mw-carril);
+    min-width: var(--mw-carril);
+  }
+
+  /* Elastic fuerza aquí el fondo oscuro con !important. */
+  html.mailway #layout-menu .popover-header {
+    height: 64px;
+    line-height: 64px;
+    background-color: transparent !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  html.mailway #layout-menu .popover-header img {
+    max-width: calc(var(--mw-carril) - 16px);
+    max-height: 44px;
+    padding: 0;
+  }
+
+  html.mailway #taskmenu .special-buttons {
+    background-color: var(--mw-mesa);
+    padding-bottom: 8px;
+  }
+
+  html.mailway #taskmenu a,
+  html.mailway #taskmenu a.selected {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: var(--mw-carril);
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    padding: 6px 0;
+    color: var(--mw-tinta-2);
+    background: none;
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 16px;
+    letter-spacing: -0.005em;
+  }
+
+  /* La pastilla del elemento activo va en ::after, detrás del icono. */
+  html.mailway #taskmenu a::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    top: 6px;
+    left: 50%;
+    width: 52px;
+    height: 32px;
+    margin-left: -26px;
+    border-radius: 16px;
+    background-color: transparent;
+    transition: background-color 0.15s ease;
+  }
+
+  html.mailway #taskmenu a::before {
+    display: block;
+    float: none !important;
+    width: 24px !important;
+    height: 32px !important;
+    margin: 0 !important;
+    font-size: 18px;
+    line-height: 32px;
+    overflow: hidden;
+    --mw-icono-tam: 22px;
+  }
+
+  html.mailway #taskmenu a:hover,
+  html.mailway #taskmenu a.selected:hover,
+  html.mailway #taskmenu a:focus {
+    color: var(--mw-tinta);
+    background: none;
+  }
+
+  html.mailway #taskmenu a:hover::after {
+    background-color: var(--mw-hoja-3);
+  }
+
+  html.mailway #taskmenu a.selected {
+    color: var(--mw-acento);
+    font-weight: 650;
+  }
+
+  html.mailway #taskmenu a.selected::after {
+    background-color: var(--mw-acento-tenue);
+  }
+
+  /* Foco de teclado: el anillo rodea la pastilla, no todo el enlace. */
+  html.mailway #taskmenu a:focus-visible {
+    outline: none;
+  }
+
+  html.mailway #taskmenu a:focus-visible::after {
+    box-shadow: 0 0 0 2px var(--mw-acento);
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose:focus-visible::after {
+    box-shadow: 0 0 0 2px var(--mw-mesa), 0 0 0 4px var(--mw-acento);
+  }
+
+  /* Cerrar sesión no es una acción destructiva: sin rojo. */
+  html.mailway #taskmenu a.logout,
+  html.mailway #taskmenu a.logout:hover {
+    color: var(--mw-tinta-2) !important;
+  }
+
+  html.mailway.dark-mode #taskmenu .special-buttons a:not(:focus) {
+    background: none;
+  }
+
+  /* Redactar: la acción principal, un botón relleno y redondeado arriba del
+     carril, como el de los clientes de correo actuales. */
+  html.mailway #taskmenu .action-buttons {
+    display: block;
+    padding: 2px 0 10px;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose {
+    color: var(--mw-acento);
+    font-weight: 650;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose::before {
+    width: 52px !important;
+    height: 48px !important;
+    line-height: 48px;
+    color: var(--mw-sobre-acento);
+    --mw-icono-tam: 22px;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose::after {
+    top: 6px;
+    height: 48px;
+    border-radius: 16px;
+    background-color: var(--mw-acento);
+    box-shadow: var(--mw-sombra-suave);
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose:hover::after,
+  html.mailway #taskmenu .action-buttons a.compose.selected::after {
+    background-color: var(--mw-acento-hondo);
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose:hover,
+  html.mailway #taskmenu .action-buttons a.compose.selected {
+    color: var(--mw-acento);
+  }
+}
+
+/* Tableta y ventanas medianas: carril de solo iconos (las etiquetas siguen
+   ahí para lectores de pantalla, en vez del display: none de Elastic). */
+@media screen and (min-width: 481px) and (max-width: 1024px) {
+  html.mailway #taskmenu a {
+    height: 48px;
+    padding: 0;
+  }
+
+  html.mailway #taskmenu a::after {
+    top: 8px;
+    width: 40px;
+    margin-left: -20px;
+  }
+
+  html.mailway #taskmenu a span.inner {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose {
+    height: 56px;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose::before {
+    width: 44px !important;
+    height: 44px !important;
+    line-height: 44px;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose::after {
+    top: 6px;
+    width: 44px;
+    height: 44px;
+    margin-left: -22px;
+    border-radius: 14px;
+  }
+}
+
+@media screen and (min-width: 1025px) {
+  html.mailway #taskmenu a span.inner {
+    display: block;
+    max-width: calc(var(--mw-carril) - 8px);
+    margin-top: 4px;
+    padding: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose span.inner {
+    margin-top: 6px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Búsqueda                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Campo redondeado en lugar de la franja gris de Elastic. */
+html.mailway .searchbar {
+  height: 40px;
+  min-height: 40px;
+  line-height: 40px;
+  margin: 0 12px 8px;
+  padding: 0 4px 0 2px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background-color: var(--mw-campo);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+html.mailway .searchbar:focus-within {
+  background-color: var(--mw-hoja);
+  border-color: var(--mw-acento);
+  box-shadow: 0 0 0 3px var(--mw-anillo);
+}
+
+html.mailway .searchbar form::before {
+  width: 20px;
+  height: 38px;
+  margin: 0 2px 0 10px;
+  color: var(--mw-tinta-3);
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .searchbar input,
+html.mailway.dark-mode .searchbar input {
+  height: 38px;
+  padding: 0 8px;
+  color: var(--mw-tinta);
+  font-size: 14px;
+}
+
+html.mailway .searchbar input::placeholder {
+  color: var(--mw-tinta-3);
+  opacity: 1;
+}
+
+html.mailway .searchbar a,
+html.mailway.dark-mode .searchbar a {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .searchbar a::before {
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .searchbar a:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway .searchbar a.selected,
+html.mailway.dark-mode .searchbar a.selected {
+  color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+}
+
+html.mailway .searchoptions,
+html.mailway #searchmenu {
+  color: var(--mw-tinta);
+}
+
+/* ------------------------------------------------------------------ */
+/* Listas en general                                                   */
+/* ------------------------------------------------------------------ */
+
+html.mailway .listing tbody td,
+html.mailway .listing li {
+  border-bottom-color: var(--mw-regla-suave);
+}
+
+html.mailway .listing tbody td,
+html.mailway .listing tbody td a,
+html.mailway .listing li a,
+html.mailway.dark-mode .listing tbody td,
+html.mailway.dark-mode .listing tbody td a,
+html.mailway.dark-mode .listing li a {
+  color: var(--mw-tinta);
+}
+
+html.mailway .listing li.selected,
+html.mailway .listing li.selected > a,
+html.mailway .listing tr.selected td,
+html.mailway.dark-mode .listing li.selected,
+html.mailway.dark-mode .listing li.selected > a,
+html.mailway.dark-mode .listing tr.selected td {
+  color: var(--mw-tinta);
+  background-color: var(--mw-seleccion);
+}
+
+html.mailway .listing li.droptarget > a,
+html.mailway .listing tr.droptarget > td,
+html.mailway.dark-mode .listing li.droptarget > a,
+html.mailway.dark-mode .listing tr.droptarget > td {
+  background-color: var(--mw-acento-tenue);
+  box-shadow: inset 0 0 0 2px var(--mw-acento);
+}
+
+html.mailway .listing span.secondary,
+html.mailway .listing-info,
+html.mailway.dark-mode .listing span.secondary,
+html.mailway.dark-mode .listing-info {
+  color: var(--mw-tinta-3);
+  font-weight: 500;
+}
+
+/* Indicador de foco del teclado: barra petróleo a la izquierda. */
+html.mailway:not(.touch) .listing li > a:focus,
+html.mailway:not(.touch) .listing.focus tbody tr.focused > td:first-child,
+html.mailway:not(.touch) .listing.focus:not(.withselection) tbody tr.focused > td.selection + td {
+  border-left-color: var(--mw-acento);
+  border-left-width: 3px;
+}
+
+html.mailway .listing.iconized li > a::before {
+  width: 20px;
+  height: 100%;
+  margin-right: 12px;
+  color: var(--mw-tinta-2);
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .listing.iconized tr td::before {
+  width: 20px;
+  height: 35px;
+  margin-right: 12px;
+  color: var(--mw-tinta-2);
+  line-height: 35px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway #sections-table tbody td::before {
+  height: 40px;
+  line-height: 40px;
+}
+
+/* Listas de navegación (carpetas, secciones de ajustes, libretas): filas
+   en forma de pastilla, sin líneas, con el activo en petróleo tenue. */
+html.mailway #layout-sidebar .listing,
+html.mailway #layout-list #sections-table,
+html.mailway #layout-list .listing.iconized:not(.contactlist) {
+  padding: 4px 8px;
+}
+
+html.mailway #layout-sidebar .listing li,
+html.mailway #layout-sidebar .listing li ul,
+html.mailway #sections-table tbody td,
+html.mailway.dark-mode #layout-sidebar .listing li,
+html.mailway.dark-mode #layout-sidebar .listing li ul,
+html.mailway.dark-mode #sections-table tbody td {
+  border: 0;
+}
+
+html.mailway #layout-sidebar .listing li > a,
+html.mailway #layout-sidebar .listing li > div > a {
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 0;
+  padding-right: 12px;
+  border-radius: 999px;
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+  transition: background-color 0.12s ease;
+}
+
+html.mailway.touch #layout-sidebar .listing li > a,
+html.mailway.touch #layout-sidebar .listing li > div > a,
+html.mailway.touch .folderlist li.mailbox .unreadcount,
+html.mailway.touch ul.treelist li div.treetoggle,
+html.mailway.touch ul.treelist li div.treetoggle::before,
+html.mailway.touch .folderlist li > a::before {
+  height: 44px;
+  line-height: 44px;
+}
+
+html.mailway.touch #sections-table tbody td,
+html.mailway.touch #sections-table tbody td::before {
+  height: 48px;
+  line-height: 48px;
+}
+
+@media (hover: hover) {
+  html.mailway #layout-sidebar .listing li > a:hover,
+  html.mailway #sections-table tbody tr:hover td {
+    background-color: var(--mw-hoja-3);
+    color: var(--mw-tinta);
+  }
+}
+
+html.mailway #layout-sidebar .listing li.selected,
+html.mailway.dark-mode #layout-sidebar .listing li.selected {
+  background-color: transparent;
+}
+
+html.mailway #layout-sidebar .listing li.selected > a,
+html.mailway #layout-sidebar .listing li.selected > div > a,
+html.mailway.dark-mode #layout-sidebar .listing li.selected > a,
+html.mailway.dark-mode #layout-sidebar .listing li.selected > div > a {
+  color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+  font-weight: 650;
+}
+
+html.mailway #layout-sidebar .listing li.selected > a::before,
+html.mailway #sections-table tr.selected td::before {
+  color: var(--mw-acento);
+}
+
+html.mailway.dark-mode .listing li.selected ul {
+  background-color: transparent;
+}
+
+/* En las pastillas, la barra de foco de Elastic (borde izquierdo) se
+   convierte en un anillo, y solo con teclado. */
+html.mailway:not(.touch) #layout-sidebar .listing li > a:focus,
+html.mailway:not(.touch) #layout-sidebar .listing li > a:focus-visible {
+  border-left-color: transparent;
+}
+
+html.mailway #layout-sidebar .listing li > a:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--mw-acento);
+}
+
+html.mailway #sections-table tbody td {
+  height: 40px;
+  line-height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--mw-tinta-2);
+}
+
+html.mailway #sections-table tbody tr.selected td,
+html.mailway.dark-mode #sections-table tbody tr.selected td {
+  color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+  font-weight: 650;
+}
+
+html.mailway #sections-table {
+  border-spacing: 0 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Carpetas                                                            */
+/* ------------------------------------------------------------------ */
+
+html.mailway .folderlist li > a::before {
+  width: 20px;
+  height: 36px;
+  margin-right: 12px;
+  color: var(--mw-tinta-2);
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .folderlist li.mailbox.unread > a {
+  color: var(--mw-tinta);
+  font-weight: 650;
+  padding-right: 3em;
+}
+
+/* Recuento de no leídos: número sencillo a la derecha, como en Gmail. */
+html.mailway .folderlist li.mailbox .unreadcount,
+html.mailway.dark-mode .folderlist li.mailbox .unreadcount {
+  top: 0;
+  right: 4px;
+  min-width: 0;
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 0;
+  padding: 0 10px;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+html.mailway .folderlist li.mailbox.recent > a {
+  color: var(--mw-acento);
+}
+
+html.mailway ul.treelist li div.treetoggle {
+  height: 36px;
+  top: 1px;
+  color: var(--mw-tinta-3);
+}
+
+html.mailway ul.treelist li div.treetoggle::before {
+  width: 16px;
+  height: 36px;
+  margin-left: 6px;
+}
+
+html.mailway .folderlist li.virtual > a,
+html.mailway .folderlist li > a.virtual {
+  opacity: 0.55;
+}
+
+/* Cuota: barra fina al pie de las carpetas. Sin cuota (u otro contenido)
+   los pies solo llevan espacios, no están :empty y Elastic los pinta como
+   una franja vacía. */
+html.mailway #layout > div > .footer:not(:has(*)) {
+  display: none;
+}
+
+html.mailway #layout-sidebar > .footer {
+  padding: 0 20px;
+  font-weight: 400;
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .quota-widget,
+html.mailway.dark-mode .quota-widget {
+  color: var(--mw-tinta-3);
+  font-size: 12px;
+}
+
+html.mailway .quota-widget .bar,
+html.mailway.dark-mode .quota-widget .bar {
+  height: 4px;
+  border: 0;
+  border-radius: 4px;
+  background-color: var(--mw-regla);
+}
+
+html.mailway .quota-widget .bar .value {
+  border-radius: 4px;
+  background-color: var(--mw-acento);
+}
+
+/* ------------------------------------------------------------------ */
+/* Lista de mensajes                                                   */
+/* ------------------------------------------------------------------ */
+
+/* Elastic usa reglas muy específicas para el modo oscuro de esta lista
+   (tr:not(.flagged):not(.deleted) …); aquí se repite la misma forma con
+   tr.message:not(.deleted) para igualarlas sin !important. */
+html.mailway .messagelist tbody tr.message td,
+html.mailway .messagelist tbody tr.message:not(.deleted) td {
+  border-bottom-color: var(--mw-regla-suave);
+  color: var(--mw-tinta-2);
+  background-color: transparent;
+  transition: background-color 0.1s ease;
+}
+
+html.mailway .messagelist tr.message td.subject {
+  position: relative;
+  padding: 9px 6px 9px 30px;
+}
+
+html.mailway .messagelist tr.message td.subject span {
+  line-height: 21px;
+}
+
+html.mailway .messagelist tr.message:not(.deleted) td.subject span.fromto {
+  padding-left: 0;
+  font-size: 14px;
+  color: var(--mw-tinta);
+}
+
+html.mailway .messagelist tr.message:not(.deleted) td.subject span.date,
+html.mailway .messagelist tr.message:not(.deleted) td.subject span.size {
+  padding-left: 8px;
+  font-size: 12.5px;
+  color: var(--mw-tinta-3);
+  font-variant-numeric: tabular-nums;
+}
+
+html.mailway .messagelist tr.message:not(.deleted) td.subject span.subject a {
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+}
+
+/* No leídos: remitente y asunto en tinta y seminegrita, fecha en petróleo
+   y un punto en la columna de estado. */
+html.mailway .messagelist tr.message.unread:not(.deleted) td.subject span.fromto,
+html.mailway .messagelist tr.message.unread:not(.deleted) td.subject span.subject a {
+  color: var(--mw-tinta);
+  font-weight: 650;
+}
+
+html.mailway .messagelist tr.message.unread td.subject span.subject {
+  font-weight: 650;
+}
+
+html.mailway .messagelist tr.message.unread:not(.deleted) td.subject span.date {
+  color: var(--mw-acento);
+  font-weight: 650;
+}
+
+/* Columna de estado a la izquierda: punto de no leído o flecha de
+   respondido/reenviado. Sigue siendo el control para marcar como leído. */
+html.mailway .messagelist tr.message td.subject span.msgicon.status,
+html.mailway.dark-mode .messagelist tr.message:not(.deleted) td.subject span.msgicon.status {
+  position: absolute;
+  top: 9px;
+  left: 6px;
+  width: 20px;
+  height: 21px;
+  color: var(--mw-tinta-3);
+  cursor: pointer;
+}
+
+html.mailway .messagelist td.subject span.msgicon.status::before,
+html.mailway .messagelist td.subject span.msgicon.status.unread::before,
+html.mailway .messagelist td.subject span.msgicon.status.unreadchildren::before,
+html.mailway .messagelist td.subject span.msgicon.status.replied::before,
+html.mailway .messagelist td.subject span.msgicon.status.forwarded::before {
+  content: "";
+  width: 20px;
+  height: 21px;
+  margin: 0;
+  font-size: 0;
+  -webkit-mask: none;
+  mask: none;
+  background: none;
+}
+
+html.mailway .messagelist td.subject span.msgicon.status.replied.forwarded::after {
+  display: none;
+}
+
+html.mailway .messagelist td.subject span.msgicon.status.unread::before {
+  background: radial-gradient(circle, var(--mw-acento) 0 4px, transparent 4.5px);
+}
+
+html.mailway .messagelist td.subject span.msgicon.status.unreadchildren::before {
+  background: radial-gradient(circle, transparent 0 2.5px, var(--mw-acento) 3px 4px, transparent 4.5px);
+}
+
+html.mailway .messagelist td.subject span.msgicon.status.replied::before,
+html.mailway .messagelist td.subject span.msgicon.status.forwarded::before {
+  background-color: currentColor;
+  -webkit-mask: var(--mw-i-responder-grueso) center / 14px no-repeat;
+  mask: var(--mw-i-responder-grueso) center / 14px no-repeat;
+}
+
+html.mailway .messagelist td.subject span.msgicon.status.forwarded:not(.replied)::before {
+  -webkit-mask-image: var(--mw-i-reenviar-grueso);
+  mask-image: var(--mw-i-reenviar-grueso);
+}
+
+/* Al pasar por un mensaje leído se insinúa el control para marcarlo. */
+html.mailway:not(.touch) .messagelist tr.message:hover td.subject span.msgicon.status:not(.unread):not(.replied):not(.forwarded)::before {
+  background: radial-gradient(circle, transparent 0 3px, var(--mw-regla-fuerte) 3.5px 4.5px, transparent 5px);
+}
+
+/* Bandera y clip, a la derecha. */
+html.mailway .messagelist tr.message td.flags {
+  width: 34px;
+  padding: 9px 10px 9px 0;
+}
+
+html.mailway .messagelist td.flags > span {
+  height: 21px;
+  line-height: 21px;
+}
+
+html.mailway .messagelist td.flags span span::before {
+  display: block;
+  float: none;
+  width: 18px;
+  height: 21px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 21px;
+  --mw-icono-tam: 15px;
+}
+
+html.mailway .messagelist td.flags span.flagged,
+html.mailway .messagelist td.flags span.unflagged {
+  --mw-icono: var(--mw-i-bandera-llena);
+}
+
+html.mailway .messagelist td.flags span.flagged::before {
+  content: "\00a0";
+}
+
+html.mailway .messagelist tr.message:not(.deleted) td.flags span.flag span.flagged {
+  color: var(--mw-fuera);
+}
+
+/* La bandera vacía aparece al pasar para poder resaltar con un clic (en
+   pantallas táctiles no hay «pasar»: se resalta desde el menú). */
+html.mailway:not(.touch) .messagelist tr.message:hover td.flags span.unflagged::before,
+html.mailway .messagelist tr.flaggedroot:not(:hover) span.unflagged::before {
+  content: "\00a0";
+  font-family: inherit;
+  color: var(--mw-tinta-3);
+  opacity: 0.55;
+  --mw-icono: var(--mw-i-bandera-grueso);
+}
+
+html.mailway .messagelist span.attachment span,
+html.mailway .messagelist tr.message:not(.deleted) span.attachment span,
+html.mailway.dark-mode .messagelist span.attachment span {
+  color: var(--mw-tinta-3);
+  --mw-icono: var(--mw-i-clip-grueso);
+}
+
+html.mailway .messagelist span.attachment span.report { --mw-icono: var(--mw-i-fichero-texto); }
+html.mailway .messagelist span.attachment span.encrypted { --mw-icono: var(--mw-i-candado); }
+html.mailway .messagelist span.attachment span.vcard { --mw-icono: var(--mw-i-persona-grueso); }
+
+/* Resaltados: Elastic tiñe de rojo toda la fila; aquí basta la bandera. */
+html.mailway .messagelist tr.flagged td,
+html.mailway .messagelist tr.flagged span.size,
+html.mailway .messagelist tr.flagged td.subject span.subject a,
+html.mailway .messagelist tr.flagged td.subject span.date,
+html.mailway .messagelist tr.flagged td.subject span.fromto {
+  color: inherit;
+}
+
+/* Borrados (si se marcan en lugar de moverse a la papelera). */
+html.mailway .messagelist tr.message.deleted td,
+html.mailway .messagelist tr.message.deleted td.subject span,
+html.mailway .messagelist tr.message.deleted td.subject span.subject a {
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .messagelist tr.message.deleted td.subject span.subject a {
+  text-decoration: line-through;
+}
+
+/* Menú que aparece al pasar por un mensaje (tamaño, resaltar, borrar). */
+html.mailway .listing-hover-menu,
+html.mailway.dark-mode .listing-hover-menu {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-boton);
+  background-color: var(--mw-hoja);
+  box-shadow: var(--mw-sombra-flotante);
+}
+
+html.mailway .listing-hover-menu span.txt,
+html.mailway.dark-mode .listing-hover-menu span.txt {
+  margin: 0 4px 0 0;
+  color: var(--mw-tinta-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+html.mailway .listing-hover-menu a.button,
+html.mailway.dark-mode .listing-hover-menu a.button {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 5px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .listing-hover-menu a.button::before {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .listing-hover-menu a.button:hover,
+html.mailway.dark-mode .listing-hover-menu a.button:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway .listing-hover-menu a.button.delete:hover {
+  color: var(--mw-fuera);
+}
+
+/* Hilos */
+html.mailway .messagelist tr.message td.threads {
+  padding: 9px 0 0 6px;
+}
+
+html.mailway .messagelist tr.thread td.threads div::before {
+  width: 16px;
+  height: 21px;
+  color: var(--mw-tinta-3);
+  --mw-icono: var(--mw-i-derecha-grueso);
+  --mw-icono-tam: 14px;
+}
+
+html.mailway .messagelist tr.thread.expanded td.threads div::before {
+  --mw-icono: var(--mw-i-abajo-grueso);
+}
+
+html.mailway .messagelist tr.unroot td.subject a {
+  text-decoration: none;
+}
+
+/* Pasar, seleccionar. El fondo al pasar solo con ratón: en pantallas
+   táctiles se quedaría pegado a la última fila tocada. */
+@media (hover: hover) {
+  html.mailway .messagelist tbody tr.message:hover td {
+    background-color: var(--mw-hoja-2);
+  }
+}
+
+html.mailway .messagelist tbody tr.message.selected td,
+html.mailway .messagelist tbody tr.message.selected:not(.deleted) td,
+html.mailway .messagelist tbody tr.message.selected:hover td {
+  background-color: var(--mw-seleccion);
+}
+
+html.mailway .messagelist tr.message.selected:not(.deleted) td.subject span.subject a,
+html.mailway .messagelist tr.message.selected:not(.deleted) td.subject span.fromto {
+  color: var(--mw-tinta);
+}
+
+html.mailway .messagelist tr.message.selected:not(.deleted) td.subject span.msgicon.status,
+html.mailway .messagelist tr.message.selected:not(.unread):not(.deleted) td.subject span.date {
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .messagelist td.selection input {
+  width: 16px;
+  height: 16px;
+  margin-top: 11px;
+}
+
+/* Tocar: filas más altas y letra de 15 px. */
+html.mailway.touch .messagelist tr.message td.subject,
+html.mailway.layout-phone .messagelist tr.message td.subject {
+  padding: 12px 36px 12px 32px;
+}
+
+html.mailway.touch .messagelist tr.message td.subject span,
+html.mailway.layout-phone .messagelist tr.message td.subject span {
+  line-height: 22px;
+}
+
+html.mailway.touch .messagelist tr.message:not(.deleted) td.subject span.fromto,
+html.mailway.touch .messagelist tr.message:not(.deleted) td.subject span.subject a,
+html.mailway.layout-phone .messagelist tr.message:not(.deleted) td.subject span.fromto,
+html.mailway.layout-phone .messagelist tr.message:not(.deleted) td.subject span.subject a {
+  font-size: 15px;
+}
+
+html.mailway.touch .messagelist tr.message td.subject span.msgicon.status,
+html.mailway.layout-phone .messagelist tr.message td.subject span.msgicon.status {
+  top: 12px;
+  left: 8px;
+  height: 22px;
+}
+
+/* Elastic oculta la bandera en pantallas táctiles porque allí colorea la
+   fila entera; como aquí la fila no cambia de color, la bandera de los
+   resaltados se deja ver (la vacía, no). */
+html.mailway.touch .messagelist tr.message td.flags,
+html.mailway.layout-phone .messagelist tr.message td.flags {
+  top: 12px;
+  right: 10px;
+  bottom: auto;
+  width: 22px;
+  padding: 0;
+  border: 0;
+}
+
+html.mailway.touch .messagelist td.flags span.flag,
+html.mailway.layout-phone .messagelist td.flags span.flag {
+  visibility: visible;
+}
+
+html.mailway.touch .messagelist td.flags > span,
+html.mailway.layout-phone .messagelist td.flags > span {
+  height: 22px;
+  line-height: 22px;
+}
+
+html.mailway.touch .messagelist td.flags span span::before,
+html.mailway.layout-phone .messagelist td.flags span span::before {
+  height: 22px;
+}
+
+html.mailway.touch .messagelist tr.message td.subject .subject,
+html.mailway.layout-phone .messagelist tr.message td.subject .subject {
+  padding-right: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Paginación                                                          */
+/* ------------------------------------------------------------------ */
+
+html.mailway .menu.pagenav,
+html.mailway #layout > div > .footer.pagenav {
+  height: 40px;
+  min-height: 40px;
+  line-height: 40px;
+  padding: 0 8px !important;
+  border-top: 1px solid var(--mw-regla-suave);
+  background-color: transparent;
+  font-weight: 400;
+}
+
+html.mailway .menu.pagenav a,
+html.mailway.dark-mode .menu.pagenav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  min-width: 32px !important;
+  height: 32px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .menu.pagenav a::before {
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  font-size: 14px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .menu.pagenav a:not(.disabled):hover {
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway .menu.pagenav .pagenav-text,
+html.mailway.dark-mode .menu.pagenav .pagenav-text {
+  color: var(--mw-tinta-3);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+html.mailway .menu.pagenav input {
+  width: 2.75rem;
+  height: 26px;
+  min-height: 0;
+  max-height: 26px;
+  padding: 0 4px;
+  border-radius: var(--mw-radio-control);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Vista del mensaje                                                   */
+/* ------------------------------------------------------------------ */
+
+html.mailway .frame-content {
+  padding: 24px 28px;
+}
+
+html.mailway #message-header {
+  margin-bottom: 20px;
+}
+
+html.mailway #message-header > .subject {
+  margin: 0 0 18px;
+  color: var(--mw-tinta);
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+html.mailway #message-header > .subject a.extwin {
+  display: inline-flex;
+  vertical-align: middle;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-3);
+}
+
+html.mailway #message-header > .subject a.extwin::before {
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  font-size: 14px;
+  --mw-icono-tam: 16px;
+}
+
+html.mailway #message-header > .subject a.extwin:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway body.status-flagged #message-header > .subject::before {
+  display: inline-block;
+  width: 20px;
+  height: 24px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  overflow: hidden;
+  color: var(--mw-fuera);
+  background: currentColor;
+  -webkit-mask: var(--mw-i-bandera-llena) center / 18px no-repeat;
+  mask: var(--mw-i-bandera-llena) center / 18px no-repeat;
+}
+
+html.mailway #message-header > .header {
+  align-items: flex-start;
+}
+
+html.mailway #message-header > .header img.contactphoto,
+html.mailway.dark-mode img.contactphoto {
+  width: 44px;
+  height: 44px;
+  margin: 0 14px 0 0;
+  background-color: var(--mw-acento-tenue) !important;
+}
+
+html.mailway #message-header .header-content {
+  min-height: 44px;
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+html.mailway #message-header .header-summary {
+  margin-top: 0;
+}
+
+html.mailway #message-header .header-summary a.rcmContactAddress,
+html.mailway #message-header .header-headers a.rcmContactAddress {
+  color: var(--mw-tinta);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+html.mailway #message-header .header-summary a.rcmContactAddress:hover,
+html.mailway #message-header .header-headers a.rcmContactAddress:hover {
+  color: var(--mw-acento);
+  text-decoration: underline;
+}
+
+html.mailway #message-header .header-summary .text-nowrap {
+  color: var(--mw-tinta-3);
+}
+
+html.mailway #message-header .header-headers .header-title,
+html.mailway.dark-mode #message-header .header-headers .header-title {
+  color: var(--mw-tinta-3);
+  font-weight: 500;
+}
+
+html.mailway #message-header .header-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0 -8px;
+}
+
+html.mailway #message-header .header-links a {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px 0 8px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+html.mailway #message-header .header-links a::before {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  overflow: hidden;
+  --mw-icono-tam: 16px;
+}
+
+html.mailway #message-header .header-links a:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+/* Adjuntos: fichas redondeadas en lugar de la franja gris. */
+html.mailway .attachmentslist,
+html.mailway.dark-mode .attachmentslist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+html.mailway #message-content .attachmentslist:not(:empty) {
+  margin-bottom: 20px;
+}
+
+html.mailway .attachmentslist li {
+  align-items: center;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-boton);
+  background-color: var(--mw-hoja);
+  line-height: 38px;
+  color: var(--mw-tinta-2);
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+html.mailway .attachmentslist li:hover {
+  border-color: var(--mw-regla-fuerte);
+  background-color: var(--mw-hoja-2);
+}
+
+html.mailway .attachmentslist li::before {
+  width: 18px;
+  height: 38px;
+  margin: 0 2px 0 0;
+  color: var(--mw-acento);
+  font-size: 14px;
+  line-height: 38px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .attachmentslist li a,
+html.mailway .attachmentslist li a.filename {
+  height: 38px;
+  line-height: 38px;
+}
+
+html.mailway .attachmentslist li .attachment-name,
+html.mailway.dark-mode .attachmentslist li .attachment-name {
+  color: var(--mw-tinta);
+  font-weight: 500;
+  font-size: 13.5px;
+}
+
+html.mailway .attachmentslist li .attachment-size,
+html.mailway.dark-mode .attachmentslist li .attachment-size {
+  color: var(--mw-tinta-3);
+  font-size: 12.5px;
+}
+
+html.mailway .attachmentslist li a.button.icon,
+html.mailway .attachmentslist li a.dropdown,
+html.mailway .attachmentslist li a.delete,
+html.mailway .attachmentslist li a.cancelupload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 0 2px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .attachmentslist li a.button.icon::before,
+html.mailway .attachmentslist li a.delete::before,
+html.mailway .attachmentslist li a.cancelupload::before {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  overflow: hidden;
+  --mw-icono-tam: 16px;
+}
+
+html.mailway .attachmentslist li a.button.icon:hover,
+html.mailway .attachmentslist li a.delete:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway .attachmentslist li.uploading::before {
+  -webkit-mask: none;
+  mask: none;
+  background: none;
+}
+
+/* Miniaturas de imágenes adjuntas */
+html.mailway p.image-attachment,
+html.mailway.dark-mode p.image-attachment {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja-2);
+  min-height: 220px;
+}
+
+html.mailway p.image-attachment span,
+html.mailway.dark-mode p.image-attachment span {
+  color: var(--mw-tinta-3);
+  line-height: 32px;
+  font-size: 12.5px;
+}
+
+html.mailway p.image-attachment .image-filename {
+  padding-left: 12px;
+}
+
+html.mailway p.image-attachment .image-filesize {
+  padding-right: 12px;
+}
+
+html.mailway p.image-attachment .image-link img {
+  border-radius: var(--mw-radio-control);
+}
+
+html.mailway p.image-attachment .attachment-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 36px;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+html.mailway p.image-attachment .attachment-links a::before {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  overflow: hidden;
+  --mw-icono-tam: 16px;
+}
+
+/* Cuerpo: texto de 15 px con aire. El texto plano deja la monoespaciada,
+   como en los clientes actuales; se respetan saltos y sangrías. */
+html.mailway #messagebody {
+  color: var(--mw-tinta);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+html.mailway .message-part div.pre {
+  font-family: var(--mw-letra);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+html.mailway .message-part,
+html.mailway .message-htmlpart {
+  border-color: var(--mw-regla-suave);
+}
+
+html.mailway .message-part span.sig,
+html.mailway.dark-mode .message-part span.sig {
+  color: var(--mw-tinta-3);
+}
+
+/* Citas: una línea gris a la izquierda, sin los colores de Elastic. */
+html.mailway .message-part blockquote,
+html.mailway .message-htmlpart blockquote,
+html.mailway.dark-mode .message-part blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--mw-regla-fuerte);
+  border-right: 0;
+  background: none;
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .message-part blockquote blockquote,
+html.mailway .message-part blockquote blockquote blockquote,
+html.mailway.dark-mode .message-part blockquote blockquote,
+html.mailway.dark-mode .message-part blockquote blockquote blockquote {
+  border-left-color: var(--mw-regla);
+  border-right: 0;
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .message-part blockquote span.blockquote-link,
+html.mailway.dark-mode .message-part blockquote span.blockquote-link {
+  border: 1px solid var(--mw-regla);
+  border-radius: 999px;
+  background-color: var(--mw-hoja);
+  color: var(--mw-tinta-2);
+  font-family: var(--mw-letra);
+  padding: 3px 10px;
+}
+
+/* Los mensajes HTML se ven como los diseñó el remitente (sobre blanco),
+   también en modo oscuro, pero dentro de una tarjeta. */
+html.mailway.dark-mode .message-htmlpart {
+  border-radius: var(--mw-radio-tarjeta);
+  padding: 12px;
+}
+
+html.mailway .message-partheaders,
+html.mailway.dark-mode .message-partheaders {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja-2);
+  padding: 8px 12px;
+}
+
+/* Avisos dentro del mensaje (imágenes bloqueadas, firma…). */
+html.mailway #message-objects .ui.alert,
+html.mailway #messagebody .ui.alert,
+html.mailway .ui.alert {
+  border-radius: var(--mw-radio-tarjeta);
+}
+
+/* ------------------------------------------------------------------ */
+/* Botones y formularios                                               */
+/* ------------------------------------------------------------------ */
+
+html.mailway .btn {
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: var(--mw-radio-control);
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 22px;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Elastic deja el icono de los botones en línea (display: inline
+   !important), y así la máscara no tendría caja propia. */
+html.mailway a.btn::before,
+html.mailway button.btn::before {
+  display: inline-block !important;
+  width: 18px;
+  height: 18px;
+  vertical-align: -4px;
+  font-size: 14px;
+  line-height: 18px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .btn-primary,
+html.mailway.dark-mode .btn-primary {
+  color: var(--mw-sobre-acento);
+  background: var(--mw-acento);
+  border-color: var(--mw-acento);
+}
+
+html.mailway .btn-primary:hover,
+html.mailway .btn-primary:focus,
+html.mailway.dark-mode .btn-primary:hover:not(:disabled),
+html.mailway .btn-primary:not(:disabled):not(.disabled):active {
+  color: var(--mw-sobre-acento);
+  background: var(--mw-acento-hondo);
+  border-color: var(--mw-acento-hondo);
+}
+
+html.mailway .btn-primary.disabled,
+html.mailway .btn-primary:disabled {
+  background: var(--mw-acento);
+  border-color: var(--mw-acento);
+}
+
+html.mailway .btn-secondary,
+html.mailway.dark-mode .btn-secondary {
+  color: var(--mw-tinta);
+  background: var(--mw-hoja);
+  border-color: var(--mw-regla-fuerte);
+  box-shadow: 0 1px 2px rgb(23 31 30 / 0.06);
+}
+
+html.mailway .btn-secondary:hover,
+html.mailway .btn-secondary:focus,
+html.mailway.dark-mode .btn-secondary:hover:not(:disabled),
+html.mailway .btn-secondary:not(:disabled):not(.disabled):active {
+  color: var(--mw-tinta);
+  background: var(--mw-hoja-2);
+  border-color: var(--mw-regla-fuerte);
+}
+
+html.mailway .btn-secondary.disabled,
+html.mailway .btn-secondary:disabled {
+  background: var(--mw-hoja);
+  border-color: var(--mw-regla);
+}
+
+html.mailway .btn-danger,
+html.mailway.dark-mode .btn-danger {
+  color: var(--mw-fuera);
+  background: var(--mw-hoja);
+  border-color: color-mix(in srgb, var(--mw-fuera) 35%, transparent);
+}
+
+html.mailway .btn-danger:hover,
+html.mailway .btn-danger:focus,
+html.mailway.dark-mode .btn-danger:hover:not(:disabled),
+html.mailway .btn-danger:not(:disabled):not(.disabled):active {
+  color: var(--mw-fuera);
+  background: var(--mw-fuera-tenue);
+  border-color: color-mix(in srgb, var(--mw-fuera) 50%, transparent);
+}
+
+html.mailway .btn-link,
+html.mailway.dark-mode .btn-link {
+  color: var(--mw-acento);
+}
+
+html.mailway .btn:focus,
+html.mailway .btn-primary:focus,
+html.mailway .btn-secondary:focus,
+html.mailway .btn-danger:focus,
+html.mailway .btn-primary:not(:disabled):not(.disabled):active:focus,
+html.mailway .btn-secondary:not(:disabled):not(.disabled):active:focus {
+  box-shadow: 0 0 0 3px var(--mw-anillo);
+}
+
+/* Campos: borde fino y foco petróleo con anillo de 3 px, como en el panel. */
+html.mailway .form-control,
+html.mailway .custom-select,
+html.mailway .custom-file-label,
+html.mailway.dark-mode .form-control,
+html.mailway.dark-mode .custom-file-label {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja);
+  border: 1px solid var(--mw-regla-fuerte);
+  border-radius: var(--mw-radio-control);
+}
+
+html.mailway .form-control:not(.is-invalid),
+html.mailway.dark-mode .form-control:not(.is-invalid) {
+  border-color: var(--mw-regla-fuerte);
+}
+
+html.mailway .form-control:focus,
+html.mailway.dark-mode .form-control:focus,
+html.mailway.dark-mode .form-control:focus:not(.is-invalid),
+html.mailway .custom-select:focus {
+  color: var(--mw-tinta) !important;
+  background-color: var(--mw-hoja);
+  border-color: var(--mw-acento);
+  box-shadow: 0 0 0 3px var(--mw-anillo);
+}
+
+html.mailway .form-control.is-invalid,
+html.mailway.dark-mode .form-control.is-invalid {
+  border-color: var(--mw-fuera);
+}
+
+html.mailway .form-control::placeholder,
+html.mailway.dark-mode ::placeholder {
+  color: var(--mw-tinta-3);
+  opacity: 0.85;
+}
+
+/* Flecha de los desplegables con el color del modo. */
+html.mailway .custom-select,
+html.mailway .form-control.custom-select,
+html.mailway.dark-mode .custom-select {
+  padding-right: 32px;
+  background: var(--mw-hoja) no-repeat right 10px center / 16px;
+  background-image: var(--mw-flecha-select);
+}
+
+html.mailway {
+  --mw-flecha-select: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23636e6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html.mailway.dark-mode {
+  --mw-flecha-select: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a19e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html.mailway .input-group-text,
+html.mailway.dark-mode .input-group-text {
+  color: var(--mw-tinta-2);
+  background-color: var(--mw-hoja-2);
+  border-color: var(--mw-regla-fuerte);
+}
+
+html.mailway .input-group > .form-control:not(:last-child),
+html.mailway .input-group > .custom-select:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+html.mailway .input-group-append .input-group-text,
+html.mailway .input-group-append .btn {
+  border-top-right-radius: var(--mw-radio-control);
+  border-bottom-right-radius: var(--mw-radio-control);
+}
+
+html.mailway .input-group-prepend .input-group-text {
+  border-top-left-radius: var(--mw-radio-control);
+  border-bottom-left-radius: var(--mw-radio-control);
+}
+
+html.mailway .input-group .icon::before {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+/* Interruptores: pista redondeada en petróleo cuando está activo. */
+html.mailway .custom-switch .custom-control-label::before,
+html.mailway.dark-mode .custom-switch .custom-control-label::before {
+  border: 0;
+  background-color: var(--mw-regla-fuerte);
+}
+
+html.mailway .custom-switch .custom-control-label::after,
+html.mailway.dark-mode .custom-switch .custom-control-label::after {
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+html.mailway .custom-switch .custom-control-input:checked ~ .custom-control-label::before,
+html.mailway.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+  border-color: var(--mw-acento);
+  background-color: var(--mw-acento);
+}
+
+html.mailway.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::after {
+  background-color: var(--mw-sobre-acento);
+}
+
+html.mailway .custom-switch .custom-control-input:focus ~ .custom-control-label::before {
+  box-shadow: 0 0 0 3px var(--mw-anillo);
+}
+
+html.mailway .custom-control-input:checked ~ .custom-control-label::before,
+html.mailway .custom-checkbox .custom-control-input:checked ~ .custom-control-label::before {
+  border-color: var(--mw-acento);
+  background-color: var(--mw-acento);
+}
+
+/* Formularios de ajustes: secciones con título, etiquetas en tinta-2 y
+   aire entre filas. */
+html.mailway .formcontent legend,
+html.mailway .propform legend {
+  margin-bottom: 8px;
+  padding-top: 4px;
+  color: var(--mw-tinta);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+html.mailway .formcontent fieldset:not(.tab-pane):nth-of-type(n+2) {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--mw-regla-suave);
+}
+
+html.mailway .formcontent label,
+html.mailway .propform label,
+html.mailway .formcontent .col-form-label {
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .formcontent .row.form-group {
+  margin-bottom: 10px;
+}
+
+html.mailway .formcontent .hint,
+html.mailway .form-text,
+html.mailway.dark-mode .formcontent .hint {
+  color: var(--mw-tinta-3);
+  font-size: 12.5px;
+}
+
+html.mailway .formcontainer .formbuttons,
+html.mailway .formbuttons {
+  padding: 12px 16px;
+}
+
+html.mailway .nav-tabs,
+html.mailway.dark-mode .nav-tabs {
+  border-bottom: 1px solid var(--mw-regla);
+}
+
+html.mailway .nav-tabs .nav-link,
+html.mailway.dark-mode .nav-tabs .nav-link {
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--mw-tinta-2);
+  font-weight: 500;
+}
+
+html.mailway .nav-tabs .nav-link:hover,
+html.mailway.dark-mode .nav-tabs .nav-link:hover {
+  border-color: transparent;
+  border-bottom-color: var(--mw-regla-fuerte);
+  background: none;
+  color: var(--mw-tinta);
+}
+
+html.mailway .nav-tabs .nav-link.active,
+html.mailway.dark-mode .nav-tabs .nav-link.active {
+  border-color: transparent;
+  border-bottom-color: var(--mw-acento);
+  background: none;
+  color: var(--mw-acento);
+  font-weight: 650;
+}
+
+html.mailway .table,
+html.mailway.dark-mode .table {
+  color: var(--mw-tinta);
+}
+
+html.mailway .table td,
+html.mailway .table th,
+html.mailway.dark-mode .table td,
+html.mailway.dark-mode .table th {
+  border-color: var(--mw-regla-suave);
+}
+
+html.mailway .table-widget,
+html.mailway.dark-mode .table-widget {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* Redacción                                                           */
+/* ------------------------------------------------------------------ */
+
+/* Cabeceras del mensaje como en los clientes actuales: filas separadas por
+   una línea, con la etiqueta pequeña a la izquierda. */
+html.mailway #compose-content {
+  background-color: transparent;
+}
+
+html.mailway #compose-headers .form-group.row,
+html.mailway #compose-headers .compose-headers > .row {
+  align-items: center;
+  margin-bottom: 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--mw-regla-suave);
+}
+
+html.mailway #compose-headers label.col-form-label {
+  color: var(--mw-tinta-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Columna de etiquetas de ancho fijo: en móvil el 20 % de Bootstrap corta
+   «Destinatario» y en escritorio deja un hueco enorme. */
+html.mailway #compose-headers .row > .col-2 {
+  flex: 0 0 96px;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.mailway #compose-headers .row > .col-10 {
+  flex: 1 1 0;
+  max-width: calc(100% - 96px);
+}
+
+html.mailway #compose-headers .form-control,
+html.mailway #compose-headers .custom-select,
+html.mailway #compose-headers .input-group-text,
+html.mailway.dark-mode #compose-headers .form-control:not(.is-invalid) {
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+html.mailway #compose-headers .form-control.custom-select,
+html.mailway #compose-headers select.form-control {
+  background: transparent no-repeat right 10px center / 16px;
+  background-image: var(--mw-flecha-select);
+}
+
+html.mailway #compose-headers .form-control:focus,
+html.mailway #compose-headers .recipient-input.focus,
+html.mailway.dark-mode #compose-headers .recipient-input.focus {
+  border-color: transparent;
+  background-color: var(--mw-hoja-2);
+  box-shadow: none;
+}
+
+html.mailway #compose-headers .input-group-text {
+  color: var(--mw-tinta-3);
+}
+
+html.mailway #compose-headers a.input-group-text:hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway #compose-headers .input-group a:focus {
+  box-shadow: 0 0 0 3px var(--mw-anillo);
+}
+
+html.mailway #compose-subject {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Destinatarios como fichas redondeadas. */
+html.mailway .recipient-input li.recipient,
+html.mailway.dark-mode .recipient-input .recipient,
+html.mailway body > li.recipient.ui-sortable-helper {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background-color: var(--mw-acento-tenue);
+  padding: 0 4px 0 10px;
+  color: var(--mw-tinta);
+}
+
+/* En pantallas estrechas Elastic estira cada ficha a todo el ancho; basta
+   con que no lo supere. */
+html.mailway .recipient-input li.recipient {
+  width: auto;
+  max-width: 100%;
+}
+
+html.mailway .recipient-input li.recipient .name {
+  padding: 4px 2px;
+  font-weight: 500;
+}
+
+html.mailway .recipient-input li.recipient a.button.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .recipient-input li.recipient a.button.icon::before {
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  --mw-icono-tam: 14px;
+}
+
+html.mailway .recipient-input li.recipient a.button.icon:hover {
+  background-color: rgb(13 92 94 / 0.12);
+}
+
+html.mailway .recipient-input input,
+html.mailway.dark-mode .recipient-input input {
+  color: var(--mw-tinta);
+}
+
+/* Editor: barra de formato plana y área sin marco. */
+html.mailway #compose-content .tox.tox-tinymce,
+html.mailway.dark-mode .tox.tox-tinymce {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+}
+
+html.mailway .tox .tox-toolbar,
+html.mailway .tox .tox-toolbar__primary,
+html.mailway .tox .tox-toolbar-overlord,
+html.mailway .tox:not(.tox-tinymce-inline) .tox-editor-header,
+html.mailway.dark-mode .tox .tox-toolbar,
+html.mailway.dark-mode .tox .tox-toolbar-overlord > div {
+  background: var(--mw-hoja-2);
+  border-color: var(--mw-regla-suave);
+}
+
+html.mailway .tox .tox-toolbar__group:not(:last-of-type),
+html.mailway.dark-mode .tox .tox-toolbar__group:not(:last-of-type) {
+  border-color: var(--mw-regla-suave);
+}
+
+html.mailway .tox .tox-tbtn,
+html.mailway .tox .tox-split-button,
+html.mailway.dark-mode .tox .tox-tbtn,
+html.mailway.dark-mode .tox .tox-split-button {
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .tox .tox-tbtn svg,
+html.mailway.dark-mode .tox .tox-tbtn svg {
+  fill: var(--mw-tinta-2) !important;
+}
+
+html.mailway .tox .tox-tbtn:hover,
+html.mailway .tox .tox-tbtn:focus,
+html.mailway .tox .tox-split-button:hover,
+html.mailway.dark-mode .tox .tox-tbtn:hover,
+html.mailway.dark-mode .tox .tox-tbtn:focus,
+html.mailway.dark-mode .tox .tox-split-button:hover {
+  color: var(--mw-tinta);
+  background: var(--mw-hoja-3);
+  box-shadow: none;
+}
+
+html.mailway .tox .tox-tbtn--enabled,
+html.mailway .tox .tox-tbtn--enabled:hover,
+html.mailway.dark-mode .tox .tox-tbtn--enabled {
+  background: var(--mw-acento-tenue);
+}
+
+html.mailway .html-editor .editor-toolbar,
+html.mailway.dark-mode .html-editor .editor-toolbar {
+  background-color: var(--mw-hoja-2);
+  border-color: var(--mw-regla);
+}
+
+html.mailway #compose-content textarea.form-control {
+  border-color: var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  line-height: 1.6;
+}
+
+/* Botón Enviar: la acción principal de la pantalla. */
+html.mailway:not(.layout-small):not(.layout-phone) #compose-content .formbuttons {
+  display: flex;
+  align-items: center;
+  padding: 16px 14px 12px;
+}
+
+html.mailway #compose-content .formbuttons .float-right {
+  margin-left: auto;
+}
+
+@media screen and (min-width: 769px) {
+  html.mailway body.action-compose #layout-content > .header > .header-title {
+    display: block;
+    flex: none;
+    margin: 0 12px 0 4px !important;
+    padding: 0 !important;
+    font-size: 18px;
+    font-weight: 650;
+  }
+}
+
+html.mailway #compose-content .formbuttons .btn.send,
+html.mailway #rcmbtn-send,
+html.mailway button.btn.send {
+  min-height: 40px;
+  padding: 8px 20px 8px 16px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+/* Barra lateral de opciones y adjuntos */
+html.mailway #layout-sidebar.sidebar-right > .header .header-title {
+  font-size: 15px;
+}
+
+html.mailway .file-upload,
+html.mailway.dark-mode .file-upload {
+  border: 1px dashed var(--mw-regla-fuerte);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja-2);
+}
+
+html.mailway .file-upload .hint,
+html.mailway.dark-mode .file-upload .hint {
+  color: var(--mw-tinta-3);
+}
+
+html.mailway .file-upload.droptarget::after {
+  content: "";
+  width: 40px;
+  height: 40px;
+  margin: 56px auto 0;
+  background-color: var(--mw-tinta-3);
+  opacity: 0.6;
+  -webkit-mask: var(--mw-i-subir) center / 40px no-repeat;
+  mask: var(--mw-i-subir) center / 40px no-repeat;
+  mix-blend-mode: normal;
+}
+
+html.mailway .file-upload.droptarget.hover,
+html.mailway.dark-mode .file-upload.droptarget.hover {
+  border-color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+}
+
+/* ------------------------------------------------------------------ */
+/* Menús emergentes, diálogos y avisos                                 */
+/* ------------------------------------------------------------------ */
+
+html.mailway .popover,
+html.mailway.dark-mode .popover {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja);
+  box-shadow: var(--mw-sombra-flotante);
+  overflow: hidden;
+}
+
+html.mailway .popover .arrow {
+  display: none;
+}
+
+html.mailway .popover-body,
+html.mailway.dark-mode .popover-body {
+  color: var(--mw-tinta);
+}
+
+html.mailway .popover .listing,
+html.mailway .popupmenu .listing {
+  padding: 4px;
+}
+
+html.mailway .popover .listing li,
+html.mailway .popupmenu .listing li,
+html.mailway.dark-mode .popover .listing li {
+  border: 0;
+}
+
+html.mailway .popover .menu li a,
+html.mailway .popover .listing li a,
+html.mailway.dark-mode .popover .listing li a {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  line-height: 36px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--mw-radio-control);
+  color: var(--mw-tinta);
+  font-size: 14px;
+}
+
+html.mailway .popover .menu li a::before {
+  flex: none;
+  width: 18px !important;
+  min-width: 18px;
+  height: 36px !important;
+  margin-right: 12px !important;
+  color: var(--mw-tinta-2);
+  font-size: 14px;
+  overflow: hidden;
+  --mw-icono-tam: 18px;
+}
+
+html.mailway .popover .menu li a:not(.disabled):hover,
+html.mailway .popupmenu .listing li > a:not(.disabled):hover,
+html.mailway .popover .menu li a:not(.disabled):focus-visible,
+html.mailway.dark-mode .popupmenu .listing li > a:not(.disabled):hover,
+html.mailway.dark-mode .menu a:not(.disabled):hover {
+  color: var(--mw-tinta);
+  background-color: var(--mw-hoja-3);
+}
+
+html.mailway .popover .menu li a[aria-haspopup]::after,
+html.mailway .popover .menu li a[aria-haspopup]:hover::after,
+html.mailway.dark-mode .popover .menu li a[aria-haspopup]::after {
+  width: 16px;
+  min-width: 16px;
+  height: 36px;
+  margin-left: auto;
+  color: var(--mw-tinta-3);
+  overflow: hidden;
+}
+
+html.mailway .popupmenu .listing li.selected,
+html.mailway .popupmenu .listing li.selected > a {
+  color: var(--mw-acento);
+  background-color: var(--mw-acento-tenue);
+}
+
+html.mailway .popover .menu li.separator,
+html.mailway.dark-mode .popover .menu li.separator {
+  padding: 8px 12px 2px;
+  background: none;
+  color: var(--mw-tinta-3);
+  font-size: 12px !important;
+  font-weight: 600;
+}
+
+html.mailway .popover .menu ul + li.separator,
+html.mailway.dark-mode .popover .menu ul + li.separator {
+  border-top: 1px solid var(--mw-regla-suave);
+}
+
+html.mailway .popover .menu .dropbutton:not(.disabled):hover,
+html.mailway .popover .menu .dropbutton a.dropdown {
+  background: none;
+}
+
+html.mailway .popupmenu.propform,
+html.mailway #listoptions-menu {
+  padding: 12px 16px;
+}
+
+/* Menús de selección (carpetas destino, idiomas…) */
+html.mailway .select-menu .listing li a,
+html.mailway .select-menu .listing li {
+  border-radius: var(--mw-radio-control);
+}
+
+/* Diálogos de jQuery UI */
+html.mailway .ui-dialog,
+html.mailway.dark-mode .ui-dialog {
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja);
+  box-shadow: var(--mw-sombra-flotante);
+}
+
+/* Sin cambiar alturas ni rellenos verticales: jQuery UI mide el diálogo al
+   abrirlo con los de Elastic y lo que sobrara quedaría cortado. */
+html.mailway .ui-dialog .ui-dialog-titlebar,
+html.mailway.dark-mode .ui-dialog .ui-dialog-titlebar {
+  padding: 0;
+  border-color: var(--mw-regla-suave);
+  border-radius: var(--mw-radio-tarjeta) var(--mw-radio-tarjeta) 0 0;
+  background: none;
+}
+
+html.mailway .ui-dialog .ui-dialog-title,
+html.mailway.dark-mode .ui-dialog .ui-dialog-title {
+  padding: 0 3.5rem 0 20px;
+  color: var(--mw-tinta);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+html.mailway .ui-dialog .ui-dialog-titlebar-close,
+html.mailway.dark-mode .ui-dialog .ui-dialog-titlebar-close {
+  width: 36px;
+  height: 36px;
+  margin: 11px 12px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mw-radio-control);
+  background: transparent;
+  box-shadow: none;
+  color: var(--mw-tinta-2);
+}
+
+html.mailway .ui-dialog .ui-dialog-titlebar-close::before {
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  line-height: 36px;
+  overflow: hidden;
+}
+
+html.mailway .ui-dialog .ui-dialog-titlebar-close:hover {
+  background-color: var(--mw-hoja-3);
+  color: var(--mw-tinta);
+}
+
+html.mailway .ui-dialog .ui-dialog-titlebar-close .ui-button-icon,
+html.mailway .ui-dialog .ui-dialog-titlebar-close .ui-button-icon-space {
+  display: none;
+}
+
+html.mailway .ui-dialog .ui-dialog-content,
+html.mailway .ui-widget-content,
+html.mailway.dark-mode .ui-widget-content {
+  background-color: var(--mw-hoja);
+  color: var(--mw-tinta);
+}
+
+html.mailway .ui-dialog .ui-dialog-buttonpane,
+html.mailway.dark-mode .ui-dialog .ui-dialog-buttonpane {
+  border-color: var(--mw-regla-suave);
+  border-radius: 0 0 var(--mw-radio-tarjeta) var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja);
+}
+
+html.mailway .ui-widget-overlay,
+html.mailway.dark-mode .ui-widget-overlay {
+  background-color: var(--mw-velo);
+  opacity: 1;
+}
+
+html.mailway.layout-small .popover-overlay,
+html.mailway.layout-phone .popover-overlay,
+html.mailway.dark-mode.layout-small .popover-overlay,
+html.mailway.dark-mode.layout-phone .popover-overlay {
+  background-color: var(--mw-velo);
+}
+
+/* Avisos emergentes: tarjeta flotante con el icono del color del estado. */
+html.mailway #messagestack div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-tarjeta);
+  background-color: var(--mw-hoja);
+  box-shadow: var(--mw-sombra-flotante);
+  color: var(--mw-tinta);
+  opacity: 1;
+}
+
+html.mailway #messagestack div i.icon::before,
+html.mailway.dark-mode #messagestack div i.icon::before {
+  color: var(--mw-acento);
+}
+
+html.mailway #messagestack .alert-danger i.icon::before,
+html.mailway.dark-mode #messagestack .alert-danger i.icon::before {
+  color: var(--mw-fuera);
+}
+
+html.mailway #messagestack .alert-warning i.icon::before,
+html.mailway.dark-mode #messagestack .alert-warning i.icon::before {
+  color: var(--mw-vigilar);
+}
+
+html.mailway #messagestack .alert-success i.icon::before,
+html.mailway.dark-mode #messagestack .alert-success i.icon::before {
+  color: var(--mw-normal);
+}
+
+html.mailway #messagestack div,
+html.mailway.dark-mode #messagestack .alert-info,
+html.mailway.dark-mode #messagestack .alert-danger,
+html.mailway.dark-mode #messagestack .alert-warning,
+html.mailway.dark-mode #messagestack .alert-success,
+html.mailway.dark-mode #messagestack .loading {
+  background-color: var(--mw-hoja);
+  color: var(--mw-tinta);
+}
+
+/* Avisos en línea (cajas de Elastic) con los colores de estado del panel. */
+html.mailway .ui.alert,
+html.mailway.dark-mode .ui.alert.boxinformation,
+html.mailway.dark-mode .ui.alert.boxerror,
+html.mailway.dark-mode .ui.alert.boxwarning,
+html.mailway.dark-mode .ui.alert.boxconfirmation {
+  border: 1px solid var(--mw-regla);
+  color: var(--mw-tinta);
+}
+
+html.mailway .ui.alert.boxinformation,
+html.mailway.dark-mode .ui.alert.boxinformation { background-color: var(--mw-acento-tenue); }
+html.mailway .ui.alert.boxwarning,
+html.mailway.dark-mode .ui.alert.boxwarning { background-color: var(--mw-vigilar-tenue); }
+html.mailway .ui.alert.boxerror,
+html.mailway.dark-mode .ui.alert.boxerror { background-color: var(--mw-fuera-tenue); }
+html.mailway .ui.alert.boxconfirmation,
+html.mailway.dark-mode .ui.alert.boxconfirmation { background-color: var(--mw-normal-tenue); }
+
+html.mailway .ui.alert i.icon::before,
+html.mailway.dark-mode .ui.alert i.icon::before {
+  color: var(--mw-tinta-2);
+}
+
+/* Cargando */
+html.mailway .iframe-loader,
+html.mailway.dark-mode .iframe-loader {
+  background-color: color-mix(in srgb, var(--mw-hoja) 85%, transparent);
+}
+
+html.mailway .iframe-loader .spinner-border,
+html.mailway.dark-mode .iframe-loader .spinner-border {
+  color: var(--mw-acento);
+  border-color: var(--mw-acento) var(--mw-acento-tenue) var(--mw-acento-tenue) var(--mw-acento-tenue);
+}
+
+/* ------------------------------------------------------------------ */
+/* Pantalla de acceso                                                  */
+/* ------------------------------------------------------------------ */
+
+html.mailway .task-login #layout-content,
+html.mailway.dark-mode .task-login #layout-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 32px 16px;
   overflow-y: auto;
+  background-color: var(--mw-mesa);
 }
-html:not(.dark-mode) .task-login #logo { top: auto; margin-bottom: 2rem; }
-html:not(.dark-mode) #login-form {
-  top: auto; max-width: 400px; padding: 1.75rem;
-  border: 1px solid var(--mw-border); border-radius: 16px;
-  background: white; box-shadow: 0 1px 2px #171f1e0a, 0 1px 3px #171f1e08;
+
+html.mailway .task-login #logo {
+  top: auto;
+  max-width: min(280px, 80vw);
+  max-height: 72px;
+  margin-bottom: 24px;
 }
-@media (min-width: 1025px) {
-  html:not(.dark-mode) .task-login #layout-content { padding-top: 15vh; }
+
+html.mailway #login-form {
+  top: auto;
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+  padding: 28px;
+  border: 1px solid var(--mw-regla);
+  border-radius: var(--mw-radio-panel);
+  background-color: var(--mw-hoja);
+  box-shadow: var(--mw-sombra-suave);
+  text-align: left;
 }
-@media (max-width: 480px) {
-  html:not(.dark-mode) #login-form { width: 100%; padding: 1.25rem; }
-  html:not(.dark-mode) .task-login input { font-size: 16px; }
+
+html.mailway #login-form table,
+html.mailway #login-form tbody {
+  width: 100%;
+}
+
+html.mailway #login-form tr.form-group {
+  display: block;
+  margin-bottom: 16px;
+}
+
+/* Etiqueta encima del campo (Elastic la oculta y usa el placeholder). */
+html.mailway #login-form td.title {
+  display: block !important;
+  padding: 0 0 6px;
+}
+
+html.mailway #login-form td.title label {
+  color: var(--mw-tinta-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+html.mailway #login-form td.input {
+  display: block;
+  width: 100%;
+}
+
+html.mailway #login-form .input-group-prepend {
+  display: none;
+}
+
+html.mailway #login-form .input-group > .form-control,
+html.mailway #login-form input.form-control {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: var(--mw-radio-boton);
+  font-size: 16px;
+}
+
+/* La etiqueta ya está encima: el texto de ejemplo sobraría. */
+html.mailway #login-form input.form-control::placeholder {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+html.mailway #login-form .formbuttons {
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+html.mailway #rcmloginsubmit {
+  height: 44px;
+  border-radius: var(--mw-radio-boton);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none !important;
+  letter-spacing: 0;
+}
+
+html.mailway #login-footer,
+html.mailway.dark-mode #login-footer {
+  margin-top: 20px;
+  color: var(--mw-tinta-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+html.mailway #login-footer a {
+  font-weight: 500;
+}
+
+html.mailway #login-footer > div {
+  border-radius: var(--mw-radio-control);
+  background-color: var(--mw-hoja-2);
+}
+
+/* ------------------------------------------------------------------ */
+/* Móvil y tableta pequeña                                             */
+/* ------------------------------------------------------------------ */
+
+@media screen and (max-width: 768px) {
+  html.mailway #layout > div > .header,
+  html.mailway.dark-mode #layout > div > .header {
+    height: var(--mw-cabecera);
+    min-height: var(--mw-cabecera);
+    line-height: var(--mw-cabecera);
+    padding: 0 4px;
+    background-color: var(--mw-hoja);
+    border-bottom: 1px solid var(--mw-regla-suave);
+    font-size: 17px;
+  }
+
+  html.mailway #layout > div > .header a.button.icon,
+  html.mailway #layout > div > .header .menu.toolbar a {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    border-radius: 999px;
+  }
+
+  html.mailway #layout > div > .header a.button::before {
+    width: 22px !important;
+    height: 22px !important;
+    --mw-icono-tam: 22px;
+  }
+
+  html.mailway #layout > div > .footer,
+  html.mailway.dark-mode #layout > div > .footer {
+    background-color: var(--mw-hoja);
+    border-top: 1px solid var(--mw-regla-suave);
+  }
+
+  html.mailway .searchbar {
+    margin: 8px 12px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  html.mailway .searchbar input {
+    font-size: 16px;
+  }
+
+  html.mailway .frame-content {
+    padding: 16px;
+  }
+
+  html.mailway #message-header > .subject {
+    font-size: 20px;
+  }
+
+  /* Barra inferior del mensaje (anterior, responder, siguiente). */
+  html.mailway .menu.footer a,
+  html.mailway.dark-mode .menu.footer a {
+    color: var(--mw-tinta-2);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  html.mailway .menu.footer a::before {
+    --mw-icono-tam: 22px;
+  }
+}
+
+/* Botón flotante de redactar en el móvil: pastilla ancha con el texto. */
+html.mailway .floating-action-buttons a.button,
+html.mailway.dark-mode .floating-action-buttons a.button {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  height: 56px;
+  margin: 0 16px 16px 0;
+  padding: 0 20px 0 16px;
+  border-radius: 16px;
+  background: var(--mw-acento);
+  color: var(--mw-sobre-acento);
+  box-shadow: var(--mw-sombra-flotante);
+  opacity: 1;
+}
+
+html.mailway .floating-action-buttons a.button::before {
+  width: 24px;
+  height: 24px;
+  margin: 0 12px 0 0;
+  line-height: 24px;
+  font-size: 18px;
+  overflow: hidden;
+  --mw-icono-tam: 22px;
+}
+
+html.mailway .floating-action-buttons a.button .inner {
+  display: inline;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Menú lateral del móvil (el carril se convierte en un cajón). */
+@media screen and (max-width: 480px) {
+  html.mailway #layout-menu,
+  html.mailway.layout-phone #layout-menu,
+  html.mailway.dark-mode.layout-phone #layout-menu {
+    background-color: var(--mw-hoja);
+    border: 0;
+  }
+
+  html.mailway.layout-phone #layout-menu .popover-header,
+  html.mailway.dark-mode.layout-phone #layout-menu .popover-header {
+    height: 64px;
+    min-height: 64px;
+    padding: 0 8px 0 20px;
+    border-bottom: 0;
+    background-color: var(--mw-hoja);
+    color: var(--mw-tinta);
+    justify-content: space-between;
+  }
+
+  html.mailway.layout-phone #layout-menu .popover-header img {
+    max-height: 40px;
+  }
+
+  html.mailway.layout-phone #layout-menu .popover-header a {
+    flex: none;
+    width: 44px;
+    color: var(--mw-tinta-2);
+  }
+
+  html.mailway.layout-phone #layout-menu .popover-header a::before {
+    width: 44px;
+    height: 44px;
+    --mw-icono-tam: 22px;
+  }
+
+  html.mailway #taskmenu {
+    padding: 4px 0 16px;
+  }
+
+  html.mailway #taskmenu a,
+  html.mailway.dark-mode #taskmenu a {
+    display: flex;
+    align-items: center;
+    height: 48px;
+    margin: 2px 12px;
+    padding: 0 16px;
+    border: 0 !important;
+    border-radius: 999px;
+    color: var(--mw-tinta-2);
+    background: none;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 48px;
+  }
+
+  html.mailway #taskmenu a::before {
+    width: 22px !important;
+    height: 48px !important;
+    margin-right: 16px !important;
+    font-size: 16px;
+    line-height: 48px;
+    overflow: hidden;
+    --mw-icono-tam: 22px;
+  }
+
+  html.mailway #taskmenu a:hover {
+    background-color: var(--mw-hoja-3);
+  }
+
+  html.mailway #taskmenu a.selected,
+  html.mailway.dark-mode #taskmenu a.selected {
+    color: var(--mw-acento);
+    background-color: var(--mw-acento-tenue);
+    font-weight: 650;
+  }
+
+  html.mailway #taskmenu .action-buttons a.compose,
+  html.mailway.dark-mode #taskmenu .action-buttons a.compose {
+    margin: 4px 12px 12px;
+    color: var(--mw-sobre-acento);
+    background-color: var(--mw-acento);
+    font-weight: 600;
+  }
+
+  html.mailway #taskmenu .special-buttons {
+    display: block;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--mw-regla-suave);
+  }
+
+  html.mailway #taskmenu a.logout {
+    color: var(--mw-tinta-2);
+  }
+}
+
+/* Menús emergentes del móvil: cajón blanco con la cabecera en el mismo
+   blanco (Elastic usa una banda azul). */
+html.mailway.layout-small .popover-header,
+html.mailway.layout-phone .popover-header,
+html.mailway.dark-mode.layout-small .popover-header,
+html.mailway.dark-mode.layout-phone .popover-header {
+  background-color: var(--mw-hoja);
+  color: var(--mw-tinta);
+  border-bottom: 1px solid var(--mw-regla-suave);
+  font-weight: 650;
+}
+
+html.mailway.layout-small .popover-header a,
+html.mailway.layout-phone .popover-header a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--mw-tinta);
+  font-size: 16px;
+}
+
+html.mailway.layout-small .popover-header a::before,
+html.mailway.layout-phone .popover-header a::before {
+  float: none;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 0 4px;
+  color: var(--mw-tinta-2);
+  overflow: hidden;
+  --mw-icono-tam: 22px;
+}
+
+html.mailway.layout-small .popover:not(.select-menu) .listing li:last-child,
+html.mailway.layout-phone .popover:not(.select-menu) .listing li:last-child {
+  border-bottom: 0;
+}
+
+html.mailway.layout-small .popover:not(.select-menu),
+html.mailway.layout-phone .popover:not(.select-menu),
+html.mailway.dark-mode.layout-small .popover:not(.select-menu),
+html.mailway.dark-mode.layout-phone .popover:not(.select-menu) {
+  border: 0;
+  border-radius: 0;
+  box-shadow: var(--mw-sombra-flotante);
+}
+
+html.mailway.touch .popover .listing li a {
+  height: 48px;
+  line-height: 48px;
+  font-size: 15px;
+}
+
+html.mailway.touch .popover .menu li a::before {
+  height: 48px !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Impresión                                                           */
+/* ------------------------------------------------------------------ */
+
+/* La vista de impresión y el papel van sobre blanco, sin el fondo gris del
+   armazón. */
+html.mailway body.action-print {
+  background-color: #ffffff;
+}
+
+@media print {
+  html.mailway body,
+  html.mailway.iframe body {
+    background-color: #ffffff;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Movimiento reducido                                                 */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  html.mailway *,
+  html.mailway *::before,
+  html.mailway *::after {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+  }
 }
