@@ -1,4 +1,9 @@
-# Apariencia Mailway para Roundcube
+# Roundcube en Mailway
+
+Dos complementos propios (`mailway_theme` y `mailway_perfil`), la
+configuración (`mailway.php`) y el diagnóstico que usa el instalador.
+
+## Apariencia (`mailway_theme`)
 
 `mailway_theme` es una capa visual sobre Elastic 1.7, mediante la API de
 complementos, que acerca el webmail a un cliente de correo actual y al aspecto
@@ -41,9 +46,43 @@ estructura adaptable de Elastic (escritorio, tableta y móvil), no carga nada
 de fuera (letra del sistema e iconos en línea) y no sustituye el logotipo de
 marca blanca configurado.
 
+## Nombre y foto del buzón (`mailway_perfil`)
+
+Complemento funcional, aparte de la capa visual. El titular pone su nombre
+visible y su foto en el panel (enlace de configuración o «Mi buzón») y el
+webmail los usa:
+
+- **Alta en Roundcube** (`user_create`): la identidad del remitente se crea
+  con el nombre del panel. Sin el complemento, Roundcube la crearía sin
+  nombre y los correos saldrían solo con la dirección.
+- **Cada acceso** (`login_after`): el nombre de la identidad de la dirección
+  del buzón se pone al día con el del panel solo si está vacío o sigue siendo
+  el último que puso el complemento (lo guarda en la preferencia
+  `mailway_nombre`). Así un cambio en «Mi buzón» llega en el siguiente acceso
+  y uno hecho en los ajustes de Roundcube se respeta. Las identidades de otras
+  direcciones no se tocan.
+- **Avatares** (`contact_photo`): si las libretas no tienen foto de un
+  remitente, se pide al panel, que solo la da si es un buzón del mismo cliente
+  (nunca la de otro cliente). Las respuestas, también las negativas, se
+  guardan cinco minutos en la caché de Roundcube por usuario.
+- **Foto propia**: si el titular tiene foto, `mailway_theme` la muestra junto
+  a su dirección, encima de las carpetas.
+
+Consulta `POST /api/webmail/profile` y `POST /api/webmail/photo` del panel por
+la red interna, con el mismo token que el cambio de contraseña
+(`MAILWAY_WEBMAIL_TOKEN` y `MAILWAY_PANEL_INTERNAL_URL`); sin ellos,
+`mailway.php` retira el complemento. Los tiempos de espera son cortos (1 s de
+conexión, 2 s en total) y cualquier fallo del panel solo se anota en el
+registro de errores de Roundcube: nunca impide entrar ni leer un mensaje. Los
+navegadores guardan un día los avatares de los remitentes (lo decide
+Roundcube), así que una foto nueva puede tardar en verse en un equipo que ya
+mostró la anterior; la propia se renueva en cada acceso.
+
+## Configuración y diagnóstico
+
 `mailway.php` es la configuración de Mailway para Roundcube (servidores,
-complemento de contraseña, ManageSieve, marca, formato de fecha y letra del
-editor); el compose lo monta en `/var/roundcube/config/`.
+complemento de contraseña y de perfil, ManageSieve, marca, formato de fecha y
+letra del editor); el compose lo monta en `/var/roundcube/config/`.
 
 `diagnostico/comprobar.php` es el diagnóstico de línea de órdenes que usan
 `deploy/instalar.sh --comprobar` y `--probar-acceso`: abre IMAP y SMTP con la
@@ -68,4 +107,6 @@ modo oscuro antes de ofrecerlo a los clientes: la compilación de la web no
 valida esta capa PHP/CSS y la prueba requiere una instancia de Roundcube.
 
 Para volver al aspecto original, retira `mailway_theme` de la variable de
-complementos y recrea solo el servicio. No hay cambios de esquema ni de datos.
+complementos y recrea solo el servicio; para dejar de usar el nombre y la
+foto del panel, retira `mailway_perfil` (las identidades conservan el nombre
+que ya tuvieran). No hay cambios de esquema ni de datos.

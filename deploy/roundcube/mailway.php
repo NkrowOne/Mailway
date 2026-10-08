@@ -204,4 +204,18 @@ if ($mailwayToken !== '' && $mailwayPanelInterno !== '') {
     $config['plugins'] = array_values(array_diff((array) ($config['plugins'] ?? []), ['password']));
 }
 
+/* --------------------------- Nombre y foto del buzón ------------------------- */
+
+// El complemento «mailway_perfil» trae del panel el nombre visible y la foto
+// que el titular puso en «Mi buzón»: la identidad del remitente sale con su
+// nombre y los buzones del mismo cliente se ven con su foto. Usa el mismo
+// token que el cambio de contraseña; sin él, se retira (no tendría a quién
+// preguntar).
+if ($mailwayToken !== '' && $mailwayPanelInterno !== '') {
+    $config['mailway_perfil_url'] = $mailwayPanelInterno;
+    $config['mailway_perfil_token'] = $mailwayToken;
+} else {
+    $config['plugins'] = array_values(array_diff((array) ($config['plugins'] ?? []), ['mailway_perfil']));
+}
+
 unset($mailwayEnv, $mailwayPanelUrl, $mailwayTlsInterno, $mailwayDicts, $mailwayToken, $mailwayPanelInterno);
