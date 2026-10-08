@@ -4,10 +4,11 @@
  * Capa visual de Mailway sobre Elastic (Roundcube 1.7).
  *
  * Solo apariencia: añade dos hojas de estilo (iconos y tema), una clase en
- * <html>, el color de la barra del navegador y el icono de Mailway en la
- * pestaña. No toca la autenticación, el
- * contenido de los mensajes, los atajos ni la navegación: si algo de esto
- * fallara, el webmail seguiría funcionando con el aspecto original de Elastic.
+ * <html>, el color de la barra del navegador, el icono de Mailway en la
+ * pestaña y su logotipo (con el nombre del servicio en la pantalla de
+ * acceso). No toca la autenticación, el contenido de los mensajes, los
+ * atajos ni la navegación: si algo de esto fallara, el webmail seguiría
+ * funcionando con el aspecto original de Elastic.
  */
 class mailway_theme extends rcube_plugin
 {
@@ -16,6 +17,9 @@ class mailway_theme extends rcube_plugin
 
     /** @var bool Si se ponen los iconos de Mailway (el operador no tiene los suyos). */
     private $iconos_propios = false;
+
+    /** @var bool Si se pone el logotipo de Mailway (el operador no tiene el suyo). */
+    private $logo_propio = false;
 
     public function init()
     {
@@ -47,6 +51,32 @@ class mailway_theme extends rcube_plugin
         $this->iconos_propios = $this->sin_iconos_del_operador($rcmail);
         if ($this->iconos_propios) {
             $rcmail->config->set('favicon', $this->urlbase . 'favicon.ico');
+        }
+
+        // Logotipo: el de Mailway en lugar del de Roundcube (acceso y menú),
+        // también con marca blanca. Se añade a skin_logo con la clave
+        // «elastic:*», que Roundcube solo consulta para el logotipo de
+        // pantalla: no alcanza al favicon ni a la impresión, que piden un tipo
+        // concreto. Va después de decidir los iconos porque esa decisión mira
+        // skin_logo y debe ver solo lo que puso el operador. Un tipo «[dark]»
+        // o «[small]» no hace falta: la tesela se lee igual en claro y en
+        // oscuro y a cualquier tamaño.
+        //
+        // La fecha del fichero va a mano: Roundcube no la añade a las rutas
+        // de skin_logo y, sin ella, un logotipo nuevo tardaría en verse.
+        $this->logo_propio = $this->sin_logo_del_operador($rcmail);
+
+        // En el acceso, el usuario es la dirección completa: la etiqueta lo
+        // dice en lugar de «Nombre de usuario», que hace dudar a la gente.
+        if ($this->logo_propio && $rcmail->task === 'login') {
+            $rcmail->load_language(null, [], ['username' => 'Dirección de correo']);
+        }
+        if ($this->logo_propio) {
+            $logo = $rcmail->config->get('skin_logo');
+            $logo = is_array($logo) ? $logo : [];
+            $fecha = @filemtime($this->home . '/logo.svg');
+            $logo['elastic:*'] = $this->urlbase . 'logo.svg' . ($fecha ? '?s=' . $fecha : '');
+            $rcmail->config->set('skin_logo', $logo);
         }
     }
 
@@ -108,9 +138,82 @@ class mailway_theme extends rcube_plugin
             }
         }
 
+        if ($acceso && $this->logo_propio) {
+            $html = $this->marca_en_acceso($html, rcmail::get_instance());
+        }
+
         $args['content'] = $html;
 
         return $args;
+    }
+
+    /**
+     * Portada de la pantalla de acceso: panel de marca a la izquierda (logo
+     * y nombre del servicio sobre el petróleo de la marca) y la tarjeta a la
+     * derecha; en el móvil, el panel queda como franja de cabecera. Solo con el logotipo de Mailway: un operador con marca
+     * propia conserva el acceso sencillo con su logotipo.
+     *
+     * El nombre (product_name, de MAILWAY_BRAND) sale escapado. Al estar en
+     * el panel, se quita del pie, que si no diría «<nombre> • Obtener
+     * soporte» bajo la tarjeta.
+     */
+    private function marca_en_acceso(string $html, rcmail $rcmail): string
+    {
+        $nombre = html::quote(trim((string) $rcmail->config->get('product_name', '')) ?: 'Webmail');
+        // La misma URL que Roundcube dio al logotipo (pasa por static.php y
+        // lleva la fecha del fichero): una ruta escrita aquí no se reescribe.
+        $logo = preg_match('/<img\b[^>]*\bid="logo"[^>]*\bsrc="([^"]+)"/i', $html, $m)
+            || preg_match('/<img\b[^>]*\bsrc="([^"]+)"[^>]*\bid="logo"/i', $html, $m)
+            ? $m[1]
+            : $this->urlbase . 'logo.svg';
+
+        // Solo marca y diseño, sin textos añadidos: el logotipo y el nombre
+        // centrados y, debajo, una bandeja de entrada dibujada (avatares y
+        // barras, nada legible) que dice «correo» sin palabras.
+        $fila = static function (string $clase): string {
+            return '<div class="mw-fila ' . $clase . '"><i class="mw-avatar"></i>'
+                . '<span class="mw-lineas"><b></b><b></b></span><i class="mw-hora"></i></div>';
+        };
+        $bandeja = '<div class="mw-escena">'
+            . '<div class="mw-tarjeta mw-tarjeta-fondo"></div>'
+            . '<div class="mw-tarjeta">'
+            . '<div class="mw-tarjeta-barra"><i></i><i></i><i></i><span></span></div>'
+            . $fila('mw-no-leido mw-a1') . $fila('mw-no-leido mw-a2') . $fila('mw-a3') . $fila('mw-a4')
+            . '</div>'
+            . '<div class="mw-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="m4.5 7.5 6.3 4.7a2 2 0 0 0 2.4 0l6.3-4.7"/></svg></div>'
+            . '</div>';
+        $portada = "\n" . '<aside id="mailway-portada" aria-hidden="true"><div class="mw-portada-centro">'
+            . '<div class="mw-portada-marca"><img src="' . $logo . '" alt=""><span>' . $nombre . '</span></div>'
+            . $bandeja
+            . '</div></aside>';
+
+        // La portada abre el contenedor de la página; la clase en <body>
+        // activa la disposición en dos columnas y oculta el logotipo suelto.
+        $html = preg_replace('/<div id="layout">/', '<div id="layout">' . $portada, $html, 1, $hechos);
+        if (!$hechos) {
+            return $html;
+        }
+        $html = preg_replace('/<body class="task-login/', '<body class="mailway-portada task-login', $html, 1);
+
+
+        $html = preg_replace(
+            '/(<div id="login-footer"[^>]*>\s*)' . preg_quote($nombre, '/') . '\s*(?:&nbsp;&bull;&nbsp;\s*)?/',
+            '$1',
+            $html,
+            1
+        );
+        // Sin enlace de soporte (no hay URL del panel), el pie se queda
+        // vacío: se marca para que su margen no deje un hueco en la tarjeta.
+        // No se quita, porque otros complementos pueden escribir en él desde
+        // JavaScript (contenedor «loginfooter»).
+        $html = preg_replace(
+            '/<div id="login-footer"([^>]*)>\s*<\/div>/',
+            '<div id="login-footer"$1 class="mailway-vacio"></div>',
+            $html,
+            1
+        );
+
+        return $html;
     }
 
     /**
@@ -137,5 +240,35 @@ class mailway_theme extends rcube_plugin
         $favicon = (string) $rcmail->config->get('favicon', '');
 
         return $favicon === '' || $favicon === self::FAVICON_ROUNDCUBE;
+    }
+
+    /**
+     * Cierto si el operador no ha puesto un logotipo propio en skin_logo.
+     *
+     * Cuenta como logotipo cualquier entrada que Roundcube pinte en pantalla:
+     * un texto, o una clave sin tipo («login», «elastic:*», «*»...) o con los
+     * tipos de Elastic para el modo oscuro y el móvil. Si solo configuró el
+     * favicon, el enlace del logotipo o el logotipo de impresión, en pantalla
+     * seguiría saliendo el de Roundcube: ahí sí va el de Mailway.
+     */
+    private function sin_logo_del_operador(rcmail $rcmail): bool
+    {
+        $logo = $rcmail->config->get('skin_logo');
+        if (is_string($logo)) {
+            return $logo === '';
+        }
+        if (!is_array($logo)) {
+            return true;
+        }
+
+        foreach (array_keys($logo) as $clave) {
+            if (!preg_match('/\[([a-z-]+)\]$/', (string) $clave, $tipo)
+                || in_array($tipo[1], ['dark', 'small', 'small-dark'], true)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -35,6 +35,14 @@ Qué cambia:
 - El icono de la pestaña es el de Mailway (`favicon.ico`, `favicon.svg` y
   `apple-touch-icon.png`, los mismos del panel), salvo que el operador haya
   configurado el suyo (`skin_logo` con `[favicon]` o `favicon`).
+- El logotipo es la tesela de Mailway (`logo.svg`) en el acceso y en el
+  menú; si el operador puso su logotipo en `skin_logo`, se respeta tal cual
+  (y el acceso queda en su versión sencilla).
+- La pantalla de acceso es una portada en dos columnas: panel de marca en
+  petróleo (logotipo y nombre del servicio centrados y una bandeja de
+  entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
+  «Dirección de correo»; en el móvil, el panel queda como franja de
+  cabecera con la marca.
 
 Ficheros:
 
