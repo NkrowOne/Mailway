@@ -23,6 +23,8 @@ import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
 import { VariablesIntegracion } from '../../components/VariablesIntegracion';
+import { AvatarBuzon } from '../../components/FotoBuzon';
+import { HojaPerfil } from './Perfil';
 
 /**
  * «Mi buzón»: el titular entra con su dirección y la contraseña del buzón
@@ -190,10 +192,13 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       marca={me.brandName}
       titulo="Mi buzón"
       meta={
-        <>
-          <p className="break-all font-medium text-tinta">{me.email}</p>
-          {me.displayName && <p className="mt-1">{me.displayName}</p>}
-        </>
+        <div className="flex items-center gap-3">
+          <AvatarBuzon src={me.photoUrl} nombre={me.displayName} />
+          <div className="min-w-0">
+            <p className="break-all font-medium text-tinta">{me.email}</p>
+            {me.displayName && <p className="break-words">{me.displayName}</p>}
+          </div>
+        </div>
       }
       acciones={
         <Button variant="plano" onClick={() => void salir()} disabled={saliendo} className={`shrink-0 ${TACTIL}`}>
@@ -202,6 +207,20 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       }
     >
       <HojaEspacio me={me} />
+
+      <HojaPerfil
+        displayName={me.displayName}
+        fotoUrl={me.photoUrl}
+        urlPerfil="/api/portal/profile"
+        urlFoto="/api/portal/photo"
+        explicacion={
+          <p>
+            Así te verán quienes reciban tus correos. En los dispositivos que ya tengas configurados, el nombre se
+            cambia en los ajustes de la cuenta de cada uno.
+          </p>
+        }
+        onCambio={() => queryClient.invalidateQueries({ queryKey: ['portal-me'] })}
+      />
 
       <Hoja title="Configurar un dispositivo">
         <GuiasDispositivo

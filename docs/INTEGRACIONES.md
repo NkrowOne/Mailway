@@ -154,6 +154,26 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | `POST /api/clients/:id/users` | `{ email, name, password? }`. Correo repetido: `409 user_exists`. |
 | `PATCH /api/clients/:id/users/:userId` | `{ name?, password?, generatePassword?, disabled? }`. |
 | `DELETE /api/clients/:id/users/:userId` | Elimina el usuario. |
+| `POST /api/clients/:id/invites` | **Enlace de bienvenida** para la persona de contacto (ver abajo). `{ email, name?, ttlHours? (1–720, 168 por defecto) }` → `{ invite: { id, url, email, name, expiresAt } }`. Correo de un usuario existente: `409 user_exists`; cliente suspendido: `400 client_suspended`. |
+| `GET /api/clients/:id/invites` | Últimos 50: `{ invites: [{ id, email, name, createdAt, expiresAt, openedAt, acceptedAt, revokedAt, status (pending\|accepted\|expired\|revoked), recoverable }] }`. |
+| `GET /api/clients/:id/invites/:inviteId/url` | Vuelve a dar la URL de un enlace pendiente → `{ invite }`. Usado, revocado o caducado: `404 invite_invalid`; ilegible: `409 invite_not_recoverable`. |
+| `DELETE /api/clients/:id/invites/:inviteId` | Revoca un enlace pendiente. |
+
+**Enlace de bienvenida.** Es para la empresa, no para un buzón: la persona de
+contacto lo abre (`<panel>/bienvenida/<token>`, con el dominio de marca blanca
+del panel del cliente si lo tiene activo), crea su propio acceso al panel
+—nadie le dicta una contraseña— y entra en la **puesta en marcha**: dominio y
+DNS, los buzones de su equipo de una vez (cada uno con su enlace de
+configuración), postmaster y abuse, y sus dispositivos. Solo la
+administración lo crea, lo vuelve a enviar o lo revoca. Sirve una vez y caduca
+(7 días por defecto); uno nuevo para el mismo correo sustituye al pendiente.
+El token se busca por su hash y se guarda además cifrado mientras está
+pendiente. Rutas del enlace (60 peticiones por minuto e IP):
+
+| Ruta | Descripción |
+|---|---|
+| `GET /api/invite/:token` | `{ clientName, brandName, email, name, expiresAt }`. No existe, caducó o se revocó: `404 invite_invalid`; ya usado: `409 invite_used`; cliente suspendido: `403 client_suspended`. |
+| `POST /api/invite/:token/accept` | `{ name (2–80), password (10–200) }` → crea el usuario del cliente, abre su sesión del panel y devuelve `{ ok, redirect: '/puesta-en-marcha' }`. Al abrir una sesión, pasa la protección CSRF de las peticiones con cookie (solo desde el propio panel). |
 
 ### 2.4 Dominios
 
@@ -257,17 +277,21 @@ Los alias del propio dominio se borran con él y no figuran en la respuesta.
 |---|---|
 | `GET /api/mailboxes?clientId=&domainId=` | `{ mailboxes }`, con `usedBytes` (ocupación leída del motor, en caché unos minutos; `null` = sin dato) y `photoUpdatedAt` (`null` = sin foto). |
 | `POST /api/mailboxes` | `{ domainId, localPart, displayName?, password? (10–200), quotaMb? }` → `{ mailbox, password? }` (`password` solo si se generó). La cuota se acota a la del plan. |
-| `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ dryRun, capacity, valid, exceedsPlan, ownershipPending, ownershipError, results }`; con la propiedad del dominio pendiente, cada línea sale con su error y no se responde `409`. Si no, exige la propiedad (`409 domain_ownership_pending`), comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. |
+| `POST /api/mailboxes/bulk` | `{ domainId, entries: [{ localPart, displayName? }] (1–100), quotaMb?, dryRun? }`. Con `dryRun: true` solo valida y devuelve `{ dryRun, capacity, valid, exceedsPlan, ownershipPending, ownershipError, results }`; con la propiedad del dominio pendiente, cada línea sale con su error y no se responde `409`. Si no, exige la propiedad (`409 domain_ownership_pending`), comprueba el plan para el lote entero antes de crear ninguno y devuelve `{ results (con la contraseña de cada buzón creado), created, failed, capacity }`. Otro lote en curso: `409 bulk_in_progress`. Con `setupLinks: { ttlHours? (1–720, 72) }`, cada buzón creado lleva además `setupLink: { id, url, expiresAt, hasPassword }`: su enlace de configuración con la contraseña dentro, listo para enviar a su titular. |
 | `PATCH /api/mailboxes/:id` | `{ displayName?, quotaMb?, status?: active\|suspended }`. Reactivar con el cliente suspendido: `409 client_suspended`. |
 | `POST /api/mailboxes/:id/password` | `{ password? }` → `{ ok, password? }`. Sin cuerpo genera una. **Desconecta los dispositivos** que usan la contraseña principal; las contraseñas de aplicación siguen valiendo. Cierra las sesiones de «Mi buzón» y borra la contraseña guardada en los enlaces de configuración. |
 | `DELETE /api/mailboxes/:id` | → `{ ok, aliasesUpdated, aliasesDeleted }`: antes de borrar, quita el buzón de los alias que reenvían a él (y borra los que se quedan sin destinos). Remitente de una clave activa: `409 mailbox_in_use`. |
 | `GET /api/mailboxes/:id/connection` | Datos de conexión (sección 5.3). |
 | `GET /api/mailboxes/:id/mobileconfig` | Perfil de Apple del buzón, sin contraseña. Sin nombre de servidor configurado: `409 mail_hostname_missing`. |
 | `GET\|PUT\|DELETE /api/mailboxes/:id/photo` | Foto del buzón (ver «Perfil del buzón», abajo). `PUT { photo }` → `{ photoUpdatedAt }`. |
+| `GET\|PUT /api/domains/:id/essential-addresses` | **postmaster@ y abuse@** del dominio → `{ addresses: [{ localPart, email, kind: alias\|mailbox\|null, destinations }] }`. `PUT { destinations (1–20) }` los crea o actualiza como alias (mismas reglas de destinos que los alias); un buzón con ese nombre se deja como está. Exige la propiedad del dominio. |
 | `GET /api/aliases?clientId=&domainId=` | `{ aliases }`, cada uno con `destinations` y `externalDestinations`. |
 | `POST /api/aliases` | `{ domainId, localPart, destinations (1–20) }`. |
 | `PATCH /api/aliases/:id` | `{ destinations }`: sustituye los destinos. |
 | `DELETE /api/aliases/:id` | Elimina el alias. |
+
+postmaster@ y abuse@ (RFC 5321 y 2142) **no cuentan para el límite de alias
+del plan**, se creen con la ruta anterior o como alias normales.
 
 Los destinos de un alias pueden ser buzones del **mismo cliente** o direcciones
 externas (reenvío a otro proveedor). Una dirección de un dominio de esta
@@ -349,7 +373,8 @@ guarda en claro.
 | Método y ruta | Descripción |
 |---|---|
 | `POST /api/mailboxes/:id/setup-links` | `{ includePassword?, password?, ttlHours? (1–720, 72 por defecto) }` → `{ link: { id, url, expiresAt, hasPassword } }`. `url` = `<panel>/conectar/<token>`. |
-| `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword }] }`. |
+| `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword, recoverable }] }`. |
+| `GET /api/mailboxes/:id/setup-links/:linkId/url` | **Solo administración.** Vuelve a dar la URL de un enlace activo → `{ link: { id, url, expiresAt, hasPassword } }`. Caducado o revocado: `404 setup_link_invalid`; creado antes de la 1.3 (sin token guardado): `409 setup_link_not_recoverable`. Queda en la actividad como `mailbox.setup_link_viewed`. |
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
 | `POST /api/mailboxes/:id/setup-reset` | Reinicia la configuración del buzón (ver abajo). `{ revokeAppPasswords? (true por defecto), includePassword? (true por defecto), ttlHours? (1–720, 72 por defecto) }` → `{ password, link: { id, url, expiresAt, hasPassword }, linksRemoved, appPasswordsRevoked, photoRemoved }`. |
 
@@ -364,7 +389,9 @@ guarda en claro.
     minutos o crea el enlace sin contraseña.
   - `503 engine_unreachable`: el motor no ha respondido, así que no se puede
     comprobar. No se crea ningún enlace; reintenta o crea uno sin contraseña.
-- El token del enlace tiene 256 bits y solo se guarda su hash. La contraseña
+- El token del enlace tiene 256 bits. Se busca por su hash; además se guarda
+  **cifrado** con la clave maestra para que la administración pueda volver a
+  enviarlo, y ese cifrado se borra al caducar o revocar el enlace. La contraseña
   se guarda cifrada y se borra al caducar o revocar el enlace, cuando el
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
   buzón. Los enlaces caducados se eliminan 30 días después.

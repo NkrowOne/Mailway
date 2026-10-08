@@ -415,6 +415,12 @@ diálogos y avisos, cajón móvil en 220 ms y el giro del aro de carga. Con
 
 ### Superficies del navegador
 
+Favicon: el `Logotipo` (sobre blanco en tesela petróleo, con el sobre algo
+más grande para leerse a 16 px). `web/public/favicon.svg` es la fuente;
+`favicon.ico` (16, 32 y 48 px) y `apple-touch-icon.png` (180 px, a sangre)
+se generan a partir de él. El webmail usa los mismos ficheros desde
+`mailway_theme`.
+
 `theme-color` es el fondo (`#f4f6f4`) en la portada y el portal, y blanco
 dentro del panel, a juego con la barra superior. Barras de desplazamiento
 finas en `tinta` al 24 %.
@@ -426,6 +432,16 @@ título, dirección del buzón y tarjetas en una columna. Selector de
 dispositivo con botones de 8 px de radio; pasos numerados con círculos en
 petróleo tenue. La portada de acceso del portal es igual que la del panel:
 logotipo y nombre centrados y una tarjeta de 16 px de radio.
+
+### Bienvenida y puesta en marcha
+
+`/bienvenida/:token` sigue el marco del portal (fuera del panel): marca,
+saludo con el nombre del cliente, los pasos que vienen en una lista numerada
+y la tarjeta «Crea tu acceso». `/puesta-en-marcha` vive dentro del panel del
+cliente: lista de pasos a la izquierda desde 1280 px (arriba, una barra
+compacta «Paso N de 5» con círculos) y, a la derecha, un paso cada vez con su
+porqué en una frase, una acción principal y «Saltar por ahora» donde el paso
+es opcional. El estado sale del servidor: se retoma donde se dejó.
 
 ### Webmail
 

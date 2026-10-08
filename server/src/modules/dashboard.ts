@@ -6,6 +6,7 @@ import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import { getClient, getClientUsage, getPlan } from './clients';
 import { webmailUrlForClient } from './connection';
 import { listDomains } from './domains';
+import { direccionesObligatorias } from './mailboxes';
 import { getInstanceSettings } from './settings';
 
 function count(sql: string, ...params: unknown[]): number {
@@ -72,6 +73,12 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
     const hasApiKey = usage.apiKeys > 0;
     const hasSentMessage =
       count('SELECT COUNT(*) AS c FROM messages WHERE client_id = ?', clientId) > 0;
+    // postmaster@ y abuse@ solo se pueden crear con la propiedad comprobada:
+    // se exigen en esos dominios (y sin ninguno, aún no toca).
+    const verificados = domains.filter((d) => d.ownershipVerifiedAt !== null);
+    const hasEssentialAddresses =
+      verificados.length > 0 &&
+      verificados.every((d) => direccionesObligatorias(d).every((a) => a.kind !== null));
 
     return {
       client: { id: client.id, name: client.name, suspended: client.suspended },
@@ -96,6 +103,9 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
         hasMailbox,
         hasApiKey,
         hasSentMessage,
+        ownershipVerified: verificados.length > 0,
+        hasEssentialAddresses,
+        mailboxes: usage.mailboxes,
       },
       // El webmail con la marca del cliente, si ya lo tiene en marcha.
       webmailUrl: webmailUrlForClient(clientId),

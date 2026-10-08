@@ -16,8 +16,10 @@ import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { Dialogo, Escala, Hoja, MarcaFondo, Membrete, Cargando, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
-import { BandaAviso, BandaError, Botonera, Casilla, rutaCliente } from '../../components/gestion/comun';
+import { BandaAviso, BandaError, Botonera, Casilla, Opcion, rutaCliente } from '../../components/gestion/comun';
 import { useDireccionPanel } from '../../components/gestion/consultas';
+import { CamposBienvenida, EnlaceBienvenidaListo } from '../../components/EnlaceBienvenida';
+import { VALIDEZ_POR_DEFECTO, type InvitacionCreada } from '../../lib/bienvenida';
 
 /**
  * Cartera de clientes: una fila por cliente, con el uso de buzones medido
@@ -89,8 +91,8 @@ export default function Clientes() {
               </Button>
             }
           >
-            Un cliente es una empresa o un proyecto: se le asigna un plan, un usuario para su panel y sus
-            dominios de correo.
+            Un cliente es una empresa o un proyecto: se le asigna un plan y se le envía un enlace de bienvenida
+            para que cree su acceso y ponga en marcha su correo.
           </Vacio>
         </Hoja>
       ) : (
@@ -183,6 +185,8 @@ interface Resultado {
   client: Client;
   user?: { id: string; email: string; name: string };
   password?: string;
+  /** Enlace de bienvenida: el cliente ya existe aunque este paso falle. */
+  invitacion?: { ok: true; invite: InvitacionCreada } | { ok: false; error: string };
   dominio?:
     | {
         ok: true;
@@ -194,10 +198,16 @@ interface Resultado {
     | { ok: false; error: string };
 }
 
+/** Cómo recibe el cliente su primer acceso al panel. */
+type ModoAcceso = 'bienvenida' | 'contrasena' | 'ninguno';
+
 /**
- * Alta guiada: datos, plan, primer usuario del panel (con contraseña
- * generada que se muestra una vez) y, opcionalmente, el primer dominio. Al
- * terminar lleva a la ficha del cliente.
+ * Alta guiada: datos, plan, acceso al panel y, opcionalmente, el primer
+ * dominio. El acceso recomendado es el enlace de bienvenida: la persona de
+ * contacto elige su contraseña y hace la puesta en marcha guiada, sin que
+ * nadie tenga que entregarle credenciales. Crear el usuario con una
+ * contraseña generada (que se muestra una vez) sigue disponible. Al terminar
+ * lleva a la ficha del cliente.
  */
 function AltaCliente({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -213,9 +223,12 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [planId, setPlanId] = useState('');
-  const [conUsuario, setConUsuario] = useState(true);
+  const [acceso, setAcceso] = useState<ModoAcceso>('bienvenida');
+  const [validez, setValidez] = useState<string>(VALIDEZ_POR_DEFECTO);
   const [userName, setUserName] = useState('');
-  const [userEmail, setUserEmail] = useState('');
+  // null = sin tocar: el correo del acceso sigue al de contacto mientras se
+  // escribe, y se ve como valor (no como ejemplo gris que parece vacío).
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [dominio, setDominio] = useState('');
   const [autoDns, setAutoDns] = useState(true);
   const [error, setError] = useState('');
@@ -236,8 +249,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
   const conDns = hayCloudflare && autoDns && Boolean(dominio.trim());
 
   const plan = planList.find((p) => p.id === planId) ?? planList[0];
-  // Por defecto, el usuario del panel es la persona de contacto.
-  const correoUsuario = userEmail || contactEmail;
+  // Por defecto, el acceso (enlace o usuario) es para la persona de contacto.
+  const correoUsuario = userEmail ?? contactEmail;
+  const conUsuario = acceso === 'contrasena';
 
   const alta = useMutation({
     mutationFn: async (): Promise<Resultado> => {
@@ -252,6 +266,19 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
         user: conUsuario ? { name: userName || name, email: correoUsuario } : undefined,
       });
       const out: Resultado = { ...created };
+      if (acceso === 'bienvenida') {
+        // Como el dominio: si falla, el cliente ya existe y el enlace se puede
+        // crear después desde su ficha; se explica en el resultado.
+        try {
+          const inv = await api.post<{ invite: InvitacionCreada }>(
+            `/api/clients/${encodeURIComponent(created.client.id)}/invites`,
+            { email: correoUsuario.trim(), name: (userName || '').trim() || undefined, ttlHours: Number(validez) },
+          );
+          out.invitacion = { ok: true, invite: inv.invite };
+        } catch (err) {
+          out.invitacion = { ok: false, error: mensajeDe(err, 'No se ha podido crear el enlace de bienvenida.') };
+        }
+      }
       if (dominio.trim()) {
         // El dominio se da de alta aparte: si falla, el cliente ya existe y
         // se explica en el resultado en lugar de perder todo lo anterior.
@@ -283,7 +310,8 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
       // reclama atención (motivo, errores o conflictos), se muestra en el
       // resumen en lugar de en un aviso que desaparece.
       const dns = data.dominio?.ok && data.dominio.alta.autoDns ? data.dominio.aviso : null;
-      if (!data.password && (!data.dominio || data.dominio.ok) && dns?.tono !== 'error') {
+      // El enlace de bienvenida se enseña siempre: es lo siguiente que hay que enviar.
+      if (!data.password && !data.invitacion && (!data.dominio || data.dominio.ok) && dns?.tono !== 'error') {
         toast('ok', dns ? `Cliente ${data.client.name} dado de alta. ${dns.texto}` : `Cliente ${data.client.name} dado de alta.`);
         navigate(rutaCliente(data.client.id));
         return;
@@ -311,6 +339,10 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
       setError('Indica el correo del usuario de acceso (o el correo de contacto).');
       return;
     }
+    if (acceso === 'bienvenida' && !esCorreoValido(correoUsuario)) {
+      setError('Indica el correo de la persona que recibirá el enlace de bienvenida (o el correo de contacto).');
+      return;
+    }
     setError('');
     alta.mutate();
   }
@@ -324,6 +356,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
 
   if (resultado) {
     const conContrasena = Boolean(resultado.password && resultado.user);
+    const conEnlace = resultado.invitacion?.ok === true;
     const irAFicha = () => navigate(rutaCliente(resultado.client.id));
     return (
       <Dialogo
@@ -348,7 +381,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
                 {resultado.dominio.alta.autoDns ? 'Revisar el DNS' : 'Configurar el DNS'}
               </Button>
             )}
-            <Button variant="principal" onClick={irAFicha}>
+            {/* Con el enlace a la vista, la acción principal es enviarlo (en el
+                cuerpo); ir a la ficha pasa a secundaria. */}
+            <Button variant={conEnlace ? 'perfil' : 'principal'} onClick={irAFicha}>
               {conContrasena ? 'Ya he guardado la contraseña' : 'Ir a la ficha del cliente'}
             </Button>
           </>
@@ -359,6 +394,15 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
             Se ha dado de alta <strong className="font-semibold text-tinta">{resultado.client.name}</strong> con
             el plan «{resultado.client.plan?.name ?? plan?.name}».
           </p>
+          {resultado.invitacion &&
+            (resultado.invitacion.ok ? (
+              <EnlaceBienvenidaListo invitacion={resultado.invitacion.invite} clientName={resultado.client.name} />
+            ) : (
+              <BandaError>
+                El cliente se ha creado, pero no se ha podido crear el enlace de bienvenida: {resultado.invitacion.error}{' '}
+                Puedes crearlo después desde la pestaña «Usuarios» de su ficha.
+              </BandaError>
+            ))}
           {resultado.password && resultado.user && (
             <>
               <BandaAviso>
@@ -452,12 +496,40 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
 
         <section className="flex flex-col gap-3">
           <p className="rotulo">3 · Acceso al panel</p>
-          <Casilla
-            checked={conUsuario}
-            onChange={limpiar(setConUsuario)}
-            label="Crear el primer usuario del panel"
-            help="Se generará una contraseña segura que se mostrará una sola vez."
-          />
+          <fieldset className="flex flex-col gap-2.5">
+            <legend className="sr-only">Cómo recibe el cliente su acceso</legend>
+            <Opcion
+              name="alta-acceso"
+              checked={acceso === 'bienvenida'}
+              onChange={() => limpiar(setAcceso)('bienvenida')}
+              label="Enviar un enlace de bienvenida al contacto"
+              help="Recomendado. Crea su propio acceso con la contraseña que elija y pone en marcha el correo paso a paso."
+            />
+            <Opcion
+              name="alta-acceso"
+              checked={acceso === 'contrasena'}
+              onChange={() => limpiar(setAcceso)('contrasena')}
+              label="Crear el usuario con una contraseña generada"
+              help="Se muestra una sola vez y tendrás que entregarla tú por un canal seguro."
+            />
+            <Opcion
+              name="alta-acceso"
+              checked={acceso === 'ninguno'}
+              onChange={() => limpiar(setAcceso)('ninguno')}
+              label="Ahora no"
+              help="Podrás enviarle el enlace más tarde desde su ficha."
+            />
+          </fieldset>
+          {acceso === 'bienvenida' && (
+            <CamposBienvenida
+              email={correoUsuario}
+              name={userName}
+              validez={validez}
+              onEmail={limpiar(setUserEmail)}
+              onName={limpiar(setUserName)}
+              onValidez={setValidez}
+            />
+          )}
           {conUsuario && (
             <div className="grid gap-3 sm:grid-cols-2">
               <Input
@@ -470,9 +542,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
               <Input
                 label="Correo (será su usuario)"
                 type="email"
-                value={userEmail}
+                value={correoUsuario}
                 onChange={(e) => limpiar(setUserEmail)(e.target.value)}
-                placeholder={contactEmail || 'persona@empresa.com'}
+                placeholder="persona@empresa.com"
               />
             </div>
           )}

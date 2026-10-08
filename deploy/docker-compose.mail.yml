@@ -122,7 +122,7 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: '465'
       ROUNDCUBEMAIL_DB_TYPE: sqlite
       ROUNDCUBEMAIL_SKIN: elastic
-      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_theme
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve,password,markasjunk,newmail_notifier,attachment_reminder,emoticons,vcard_attachments,hide_blockquote,identity_select,mailway_perfil,mailway_sesion,mailway_theme
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
       # Clave fija: con la que genera la imagen en cada recreación, las
       # sesiones abiertas y las contraseñas guardadas dejarían de valer.
@@ -143,6 +143,10 @@ services:
       - ./roundcube/mailway.php:/var/roundcube/config/mailway.php:ro
       # Capa visual de Mailway sobre Elastic (solo aspecto; ver roundcube/README.md).
       - ./roundcube/mailway_theme:/var/www/html/plugins/mailway_theme:ro
+      # Nombre visible y foto del buzón desde el panel (ver roundcube/README.md).
+      - ./roundcube/mailway_perfil:/var/www/html/plugins/mailway_perfil:ro
+      # Cierre de sesión con aviso si la contraseña cambia por fuera (ver roundcube/README.md).
+      - ./roundcube/mailway_sesion:/var/www/html/plugins/mailway_sesion:ro
       # Diagnóstico de instalar.sh --comprobar y --probar-acceso (solo línea
       # de órdenes). Fuera de la raíz web y de /var/roundcube/config, cuyos
       # .php se cargarían como configuración.

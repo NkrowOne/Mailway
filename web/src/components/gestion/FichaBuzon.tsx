@@ -8,6 +8,7 @@ import { Input } from '../../ui/Field';
 import { Dialogo, MarcaFondo, Muestra, type ConfirmarCierre } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { ConectarBuzon } from '../ConectarBuzon';
+import { AvatarBuzon, FotoBuzon, urlFotoBuzon } from '../FotoBuzon';
 import { BandaAviso, BandaError, Botonera, FilaDato, Opcion } from './comun';
 import { ContrasenasAplicacion } from './ContrasenasAplicacion';
 import { ReiniciarBuzon } from './ReiniciarBuzon';
@@ -177,9 +178,12 @@ function Resumen({
   const suspendido = mailbox.status === 'suspended' || clienteSuspendido;
   return (
     <>
-      <Muestra rotulo="Dirección" copiar={mailbox.email}>
-        <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
-      </Muestra>
+      <div className="flex items-center gap-3">
+        <AvatarBuzon src={urlFotoBuzon(mailbox)} nombre={mailbox.displayName} />
+        <Muestra rotulo="Dirección" copiar={mailbox.email} className="flex-1">
+          <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
+        </Muestra>
+      </div>
       <div className="border border-regla">
         <FilaDato rotulo="Nombre visible">{mailbox.displayName || <span className="text-tinta-3">Sin nombre visible</span>}</FilaDato>
         <FilaDato rotulo="Ocupación">
@@ -225,7 +229,12 @@ function Resumen({
           boton="Reiniciar"
           onClick={() => onVista('reiniciar')}
         />
-        <Accion titulo="Editar" detalle="Nombre visible y cuota." boton="Editar" onClick={() => onVista('editar')} />
+        <Accion
+          titulo="Editar"
+          detalle="Nombre visible, foto y cuota."
+          boton="Editar"
+          onClick={() => onVista('editar')}
+        />
         <Accion
           titulo="Restablecer contraseña"
           detalle="Los dispositivos configurados deberán actualizarse con la nueva."
@@ -385,59 +394,73 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
     save.mutate();
   }
 
-  // Sin validación nativa: el globo del navegador (en su idioma) tapaba los
-  // mensajes del panel y bloqueaba el envío sin explicar por qué.
   return (
-    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-      <Input
-        label="Nombre visible"
-        maxLength={80}
-        value={displayName}
-        onChange={(e) => {
-          setError('');
-          setDisplayName(e.target.value);
+    <>
+      {/* Fuera del formulario: la foto se guarda al elegirla, no con «Guardar cambios». */}
+      <FotoBuzon
+        fotoUrl={urlFotoBuzon(mailbox)}
+        url={`/api/mailboxes/${mailbox.id}/photo`}
+        nombre={mailbox.displayName}
+        rotulo="Foto"
+        ayuda="Se guarda al elegirla. En el correo web la ven los buzones del mismo cliente."
+        onCambio={async (cambio) => {
+          await queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+          toast('ok', cambio === 'subida' ? `Foto de ${mailbox.email} guardada.` : `Foto de ${mailbox.email} quitada.`);
         }}
-        placeholder="Equipo de soporte"
-        help="Es el nombre que ven los destinatarios junto a la dirección."
       />
-      <Input
-        label="Cuota (MB)"
-        type="number"
-        inputMode="numeric"
-        step={1}
-        mono
-        value={quota}
-        onChange={(e) => {
-          setError('');
-          setQuota(e.target.value);
-        }}
-        help={
-          planQuotaMb !== undefined
-            ? `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}. Máximo del plan: ${formatQuota(planQuotaMb)} (${planQuotaMb} MB).`
-            : `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}.`
-        }
-        error={
-          excedePlan
-            ? `Supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indica un valor igual o inferior.`
-            : undefined
-        }
-      />
-      {bajoUso && (
-        <BandaAviso>
-          El buzón ya ocupa {formatBytes(mailbox.usedBytes!)}. Con esta cuota dejará de recibir correo hasta
-          que se libere espacio.
-        </BandaAviso>
-      )}
-      {error && <BandaError>{error}</BandaError>}
-      <Botonera>
-        <Button type="button" variant="plano" onClick={onHecho}>
-          Cancelar
-        </Button>
-        <Button type="submit" variant="principal" busy={save.isPending}>
-          Guardar cambios
-        </Button>
-      </Botonera>
-    </form>
+      {/* Sin validación nativa: el globo del navegador (en su idioma) tapaba los
+          mensajes del panel y bloqueaba el envío sin explicar por qué. */}
+      <form onSubmit={submit} noValidate className="flex flex-col gap-4 border-t border-regla pt-4">
+        <Input
+          label="Nombre visible"
+          maxLength={80}
+          value={displayName}
+          onChange={(e) => {
+            setError('');
+            setDisplayName(e.target.value);
+          }}
+          placeholder="Equipo de soporte"
+          help="Es el nombre que ven los destinatarios junto a la dirección."
+        />
+        <Input
+          label="Cuota (MB)"
+          type="number"
+          inputMode="numeric"
+          step={1}
+          mono
+          value={quota}
+          onChange={(e) => {
+            setError('');
+            setQuota(e.target.value);
+          }}
+          help={
+            planQuotaMb !== undefined
+              ? `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}. Máximo del plan: ${formatQuota(planQuotaMb)} (${planQuotaMb} MB).`
+              : `Equivale a ${quotaValida ? formatQuota(quotaMb) : '—'}.`
+          }
+          error={
+            excedePlan
+              ? `Supera el máximo del plan (${formatQuota(planQuotaMb!)}). Indica un valor igual o inferior.`
+              : undefined
+          }
+        />
+        {bajoUso && (
+          <BandaAviso>
+            El buzón ya ocupa {formatBytes(mailbox.usedBytes!)}. Con esta cuota dejará de recibir correo hasta
+            que se libere espacio.
+          </BandaAviso>
+        )}
+        {error && <BandaError>{error}</BandaError>}
+        <Botonera>
+          <Button type="button" variant="plano" onClick={onHecho}>
+            Cancelar
+          </Button>
+          <Button type="submit" variant="principal" busy={save.isPending}>
+            Guardar cambios
+          </Button>
+        </Botonera>
+      </form>
+    </>
   );
 }
 

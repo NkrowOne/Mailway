@@ -10,6 +10,7 @@ import { Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { EnlaceListo } from '../ConectarBuzon';
 import { BandaAviso, BandaError, Botonera, Casilla } from './comun';
+import { useUsuario } from './consultas';
 
 /** Respuesta de POST /api/mailboxes/:id/setup-reset. */
 interface Reinicio {
@@ -17,6 +18,8 @@ interface Reinicio {
   link: EnlaceCreado;
   linksRemoved: number;
   appPasswordsRevoked: number;
+  /** El reinicio borra la foto del titular (forma parte de su puesta en marcha); el nombre se conserva. */
+  photoRemoved: boolean;
 }
 
 const VALIDECES = [
@@ -52,10 +55,14 @@ export function ReiniciarBuzon({
   const [revocarApps, setRevocarApps] = useState(true);
   const [error, setError] = useState('');
   const [hecho, setHecho] = useState<Reinicio | null>(null);
+  // La administración puede volver a enviar el enlace (y con él la
+  // contraseña, si la lleva): entonces cerrar la ficha no pierde nada.
+  const esAdmin = useUsuario()?.role === 'admin';
+  const recuperable = esAdmin && hecho !== null && hecho.link.hasPassword;
 
   useEffect(() => {
-    onPendiente(hecho !== null);
-  }, [hecho, onPendiente]);
+    onPendiente(hecho !== null && !recuperable);
+  }, [hecho, recuperable, onPendiente]);
   // Al salir de la vista ya no hay nada pendiente que proteger.
   useEffect(() => () => onPendiente(false), [onPendiente]);
 
@@ -84,6 +91,8 @@ export function ReiniciarBuzon({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['setup-links', mailbox.id] }),
         queryClient.invalidateQueries({ queryKey: ['app-passwords', mailbox.id] }),
+        // Sin foto: el avatar de la ficha y de la lista debe desaparecer.
+        queryClient.invalidateQueries({ queryKey: ['mailboxes'] }),
       ]);
     },
     onError: (err) => setError(mensajeDe(err, 'No se ha podido reiniciar la configuración del buzón.')),
@@ -97,12 +106,14 @@ export function ReiniciarBuzon({
           enlace: al abrirlo verá las instrucciones para su dispositivo
           {hecho.link.hasPassword ? ' y la contraseña del buzón' : ''}.
         </p>
-        <EnlaceListo email={mailbox.email} enlace={hecho.link} />
+        <EnlaceListo email={mailbox.email} enlace={hecho.link} recuperable={esAdmin} />
         <Muestra rotulo="Contraseña nueva" copiar={hecho.password}>
           <p className="codigo break-all text-base text-tinta">{hecho.password}</p>
         </Muestra>
         <p className="text-sm text-tinta-3">
-          La contraseña tampoco se podrá volver a ver.
+          {recuperable
+            ? 'La contraseña va dentro del enlace, que puedes volver a enviar desde «Conectar dispositivos» mientras siga activo.'
+            : 'La contraseña no se podrá volver a ver.'}
           {hecho.linksRemoved > 0 &&
             (hecho.linksRemoved === 1
               ? ' Se ha eliminado el enlace anterior.'
@@ -111,6 +122,7 @@ export function ReiniciarBuzon({
             (hecho.appPasswordsRevoked === 1
               ? ' Se ha revocado 1 contraseña de aplicación.'
               : ` Se han revocado ${plural(hecho.appPasswordsRevoked, 'contraseña de aplicación', 'contraseñas de aplicación')}.`)}
+          {hecho.photoRemoved && ' Se ha eliminado la foto del buzón.'}
         </p>
         <Botonera>
           <Button
@@ -147,6 +159,7 @@ export function ReiniciarBuzon({
               : 'No hay enlaces de configuración anteriores'}{' '}
           y se cierran las sesiones abiertas en «Mi buzón».
         </li>
+        {Boolean(mailbox.photoUpdatedAt) && <li>Se elimina la foto del buzón; el nombre visible se conserva.</li>}
         <li>Se crea un enlace de configuración nuevo para el titular.</li>
       </ul>
 

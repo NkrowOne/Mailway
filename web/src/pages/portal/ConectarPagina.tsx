@@ -12,6 +12,7 @@ import { QR } from '../../components/QR';
 import { Button } from '../../ui/Button';
 import { Dialogo, Hoja, Cargando, Muestra } from '../../ui/kit';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
+import { HojaPerfil } from './Perfil';
 import {
   AvisoError,
   AvisoHecho,
@@ -145,6 +146,22 @@ export default function ConectarPagina() {
           </Nota>
         </Hoja>
       )}
+
+      {/* Antes de los dispositivos: el perfil de Apple y el QR de Thunderbird
+          llevan el nombre guardado. Es opcional y no bloquea nada de lo demás. */}
+      <HojaPerfil
+        displayName={datos.displayName}
+        fotoUrl={datos.photoUrl}
+        urlPerfil={`/api/public/setup/${encodeURIComponent(token)}/profile`}
+        urlFoto={`/api/public/setup/${encodeURIComponent(token)}/photo`}
+        explicacion={
+          <p>
+            Así te verán quienes reciban tus correos. Indica tu nombre antes de configurar tus dispositivos para que
+            lo incluyan. Es opcional y puedes cambiarlo más adelante en «Mi buzón».
+          </p>
+        }
+        onCambio={() => queryClient.invalidateQueries({ queryKey: clave })}
+      />
 
       <Hoja title="Elige tu dispositivo">
         <GuiasDispositivo

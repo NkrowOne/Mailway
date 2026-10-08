@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
@@ -17,6 +17,7 @@ import { MarcaFondo, Cargando, Muestra } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { DatosManuales } from '../pages/portal/GuiasDispositivo';
 import { AvisoError, claseEnlaceBoton } from '../pages/portal/comun';
+import { useUsuario } from './gestion/consultas';
 import { QR } from './QR';
 
 /**
@@ -75,6 +76,22 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
     },
   });
 
+  // Volver a enviar un enlace activo es solo de la administración: el
+  // servidor guarda su token cifrado y solo se lo devuelve a ella.
+  const esAdmin = useUsuario()?.role === 'admin';
+  const arriba = useRef<HTMLDivElement>(null);
+  const recuperar = useMutation({
+    mutationFn: (linkId: string) =>
+      api.get<{ link: EnlaceCreado }>(`/api/mailboxes/${mailboxId}/setup-links/${linkId}/url`),
+    onSuccess: (data) => {
+      setCreado(data.link);
+      // Se muestra arriba, donde está «Enviar al titular»: sin esto, en el
+      // móvil quedaría fuera de la vista.
+      arriba.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    onError: (err) => toast('error', mensajeError(err, 'No se ha podido recuperar el enlace.')),
+  });
+
   const revocar = useMutation({
     mutationFn: (linkId: string) => api.delete(`/api/mailboxes/${mailboxId}/setup-links/${linkId}`),
     onSuccess: async (_data, linkId) => {
@@ -106,7 +123,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
   const lista = enlaces.data?.links ?? [];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={arriba} className="flex flex-col gap-6">
       {/* 1. Lo que más ahorra: que el titular lo configure solo. */}
       <Seccion titulo="Enviar al titular">
         <p className="text-base text-tinta-2">
@@ -115,7 +132,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
         </p>
 
         {creado ? (
-          <EnlaceListo email={email} enlace={creado}>
+          <EnlaceListo email={email} enlace={creado} recuperable={esAdmin}>
             <Button variant="plano" onClick={() => setCreado(null)}>
               Crear otro enlace
             </Button>
@@ -268,9 +285,21 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
                           </Button>
                         </>
                       ) : (
-                        <Button variant="plano" className="px-2" onClick={() => setARevocar(enlace.id)}>
-                          Revocar
-                        </Button>
+                        <>
+                          {esAdmin && enlace.recoverable && (
+                            <Button
+                              variant="perfil"
+                              className="px-2"
+                              busy={recuperar.isPending && recuperar.variables === enlace.id}
+                              onClick={() => recuperar.mutate(enlace.id)}
+                            >
+                              Volver a enviar
+                            </Button>
+                          )}
+                          <Button variant="plano" className="px-2" onClick={() => setARevocar(enlace.id)}>
+                            Revocar
+                          </Button>
+                        </>
                       )}
                     </div>
                   )}
@@ -285,17 +314,21 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
 }
 
 /**
- * Enlace de configuración recién creado, listo para entregar: URL para
- * copiar, QR para el móvil y correo preparado. Solo existe en la respuesta
- * que lo crea, así que se avisa de que no se podrá volver a ver.
+ * Enlace de configuración listo para entregar: URL para copiar, QR para el
+ * móvil y correo preparado. Para un cliente solo existe en la respuesta que lo
+ * crea; la administración puede volver a verlo mientras siga activo, y la
+ * nota lo dice.
  */
 export function EnlaceListo({
   email,
   enlace,
+  recuperable = false,
   children,
 }: {
   email: string;
   enlace: EnlaceCreado;
+  /** Quien lo ve puede recuperarlo después (administración). */
+  recuperable?: boolean;
   /** Acciones adicionales junto a «Enviar por correo». */
   children?: ReactNode;
 }) {
@@ -312,7 +345,11 @@ export function EnlaceListo({
           {enlace.hasPassword && (
             <p>Incluye la contraseña del buzón: envíalo solo al titular, preferiblemente por un canal privado.</p>
           )}
-          <p>El enlace solo se muestra ahora; si lo pierdes, crea otro.</p>
+          <p>
+            {recuperable
+              ? 'Mientras siga activo, puedes volver a enviarlo desde «Enlaces creados».'
+              : 'El enlace solo se muestra ahora; si lo pierdes, crea otro.'}
+          </p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">

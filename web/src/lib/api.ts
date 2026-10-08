@@ -163,6 +163,8 @@ export interface Mailbox {
   /** Bytes ocupados según el motor; null = sin dato. */
   usedBytes: number | null;
   usageCheckedAt?: number | null;
+  /** Cuándo se subió la foto del titular; null = sin foto. Va en la URL (?v=) para invalidar la caché. */
+  photoUpdatedAt: number | null;
   clientId?: string;
   clientName?: string;
 }
@@ -336,8 +338,41 @@ export interface ClientDashboard {
     hasMailbox: boolean;
     hasApiKey: boolean;
     hasSentMessage: boolean;
+    /** Algún dominio tiene la propiedad comprobada: ya admite buzones y alias. */
+    ownershipVerified: boolean;
+    /** Todos los dominios con la propiedad comprobada tienen postmaster@ y abuse@. */
+    hasEssentialAddresses: boolean;
+    /** Buzones del cliente (los mismos que `usage.mailboxes`). */
+    mailboxes: number;
   };
   webmailUrl: string;
+}
+
+/**
+ * Enlace de configuración creado junto con su buzón en un alta masiva
+ * (POST /api/mailboxes/bulk con `setupLinks`). Lleva la contraseña dentro y
+ * su URL solo existe en esa respuesta.
+ */
+export interface EnlaceAltaMasiva {
+  id: string;
+  url: string;
+  expiresAt: number;
+  hasPassword: boolean;
+}
+
+/** Línea de resultado del alta masiva con su enlace de configuración, si se pidió. */
+export type ConEnlace<T> = T & { setupLink?: EnlaceAltaMasiva };
+
+/**
+ * postmaster@ o abuse@ de un dominio (GET/PUT /api/domains/:id/essential-addresses).
+ * `kind: null` = todavía no existe; `mailbox` = hay un buzón con ese nombre y
+ * ya entrega por sí mismo.
+ */
+export interface DireccionObligatoria {
+  localPart: 'postmaster' | 'abuse';
+  email: string;
+  kind: 'alias' | 'mailbox' | null;
+  destinations: string[];
 }
 
 export interface AuditEntry {

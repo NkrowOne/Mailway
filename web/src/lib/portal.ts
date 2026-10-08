@@ -35,6 +35,8 @@ export interface SetupPublico {
   portalUrl: string;
   appleProfileUrl: string;
   thunderbirdAndroidQr: string;
+  /** Foto del titular (/api/public/setup/<token>/photo?v=…), o null si no tiene. */
+  photoUrl: string | null;
 }
 
 /** GET /api/portal/me */
@@ -50,6 +52,8 @@ export interface PortalMe {
   webmailUrl: string;
   appleProfileUrl: string;
   thunderbirdAndroidQr: string;
+  /** Foto del titular (/api/portal/photo?v=…), o null si no tiene. */
+  photoUrl: string | null;
 }
 
 export interface ContrasenaAplicacion {
@@ -69,6 +73,8 @@ export interface EnlaceConfiguracion {
   lastOpenedAt: number | null;
   revokedAt: number | null;
   hasPassword: boolean;
+  /** La administración puede volver a verlo y enviarlo mientras siga activo. */
+  recoverable: boolean;
 }
 
 /** Respuesta de POST /api/mailboxes/:id/setup-links: la URL solo existe aquí. */

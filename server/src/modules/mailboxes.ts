@@ -7,9 +7,17 @@ import { HttpError, badRequest, conflict, isUniqueViolation, notFound } from '..
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess, type AuthedUser } from './auth';
-import { assertClientActive, assertWithinLimit, getClient, getClientUsage, getPlan } from './clients';
+import {
+  DIRECCIONES_OBLIGATORIAS,
+  assertClientActive,
+  assertWithinLimit,
+  esDireccionObligatoria,
+  getClient,
+  getClientUsage,
+  getPlan,
+} from './clients';
 import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
-import { alCambiarContrasenaBuzon } from './portal';
+import { alCambiarContrasenaBuzon, enlaceConContrasena } from './portal';
 
 export interface Mailbox {
   id: string;
@@ -273,6 +281,21 @@ const bulkSchema = z.object({
   quotaMb: quotaSchema.optional(),
   /** true = solo validar y devolver la previsión, sin crear nada. */
   dryRun: z.boolean().optional().default(false),
+  /**
+   * Un enlace de configuración por buzón, con su contraseña dentro: quien da
+   * de alta al equipo lo envía a cada titular sin copiar contraseñas.
+   */
+  setupLinks: z
+    .object({
+      ttlHours: z
+        .number()
+        .int('La validez debe indicarse en horas enteras.')
+        .min(1, 'La validez mínima del enlace es de 1 hora.')
+        .max(720, 'La validez máxima del enlace es de 720 horas (30 días).')
+        .optional()
+        .default(72),
+    })
+    .optional(),
 });
 
 /**
@@ -566,6 +589,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       error?: string;
       mailbox?: Mailbox;
       password?: string;
+      setupLink?: { id: string; url: string; expiresAt: number; hasPassword: boolean };
     }[] = [];
     try {
       for (const entry of checked) {
@@ -588,6 +612,10 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
             ok: true,
             mailbox: created.mailbox,
             password: created.password,
+            setupLink:
+              body.setupLinks && created.password
+                ? enlaceConContrasena(req, created.mailbox.id, created.password, body.setupLinks.ttlHours)
+                : undefined,
           });
         } catch (err) {
           results.push({
@@ -610,6 +638,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       count: createdEmails.length,
       failed: results.length - createdEmails.length,
       emails: createdEmails,
+      setupLinks: results.filter((r) => r.setupLink).length,
     });
     return {
       results,
@@ -782,10 +811,12 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const domain = getDomain(body.domainId);
     const user = requireClientAccess(req, domain.clientId);
     return withLock(clientLockKey(domain.clientId), async () => {
-    assertWithinLimit(domain.clientId, 'aliases', 1, user.role === 'admin');
+    const localPart = normalizeLocalPart(body.localPart);
+    // postmaster@ y abuse@ los exigen los estándares: no cuentan para el plan.
+    if (esDireccionObligatoria(localPart)) assertClientActive(domain.clientId);
+    else assertWithinLimit(domain.clientId, 'aliases', 1, user.role === 'admin');
     assertDomainOwnership(domain.id);
 
-    const localPart = normalizeLocalPart(body.localPart);
     const email = `${localPart}@${domain.domain}`;
     if (mailboxExists(domain.id, localPart)) {
       throw conflict(`Ya existe un buzón ${email}. Elige otro nombre para el alias.`, 'mailbox_exists');
@@ -836,5 +867,76 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     db.prepare('DELETE FROM aliases WHERE id = ?').run(id);
     audit(req, 'alias.deleted', { id, email }, row.client_id);
     return { ok: true };
+  });
+
+  /* ------------------------ Direcciones obligatorias ----------------------- */
+
+  app.get('/api/domains/:id/essential-addresses', async (req) => {
+    const { id } = req.params as { id: string };
+    const domain = getDomain(id);
+    requireClientAccess(req, domain.clientId);
+    return { addresses: direccionesObligatorias(domain) };
+  });
+
+  /**
+   * postmaster@ y abuse@ de un dominio en un solo paso (la puesta en marcha
+   * del cliente): se crean o se actualizan como alias hacia los destinos
+   * indicados. Si ya hay un buzón con ese nombre, ya entrega y se deja.
+   */
+  app.put('/api/domains/:id/essential-addresses', async (req) => {
+    const { id } = req.params as { id: string };
+    const domain = getDomain(id);
+    const body = z.object({ destinations: destinationsSchema }).parse(req.body ?? {});
+    requireClientAccess(req, domain.clientId);
+    return withLock(clientLockKey(domain.clientId), async () => {
+      assertClientActive(domain.clientId);
+      assertDomainOwnership(domain.id);
+      const engine = getEngine();
+      for (const localPart of DIRECCIONES_OBLIGATORIAS) {
+        if (mailboxExists(domain.id, localPart)) continue;
+        const email = `${localPart}@${domain.domain}`;
+        const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
+        // Motor primero y base después, alias a alias: si algo falla a mitad,
+        // cada uno queda igual en los dos sitios y repetir lo completa.
+        await engine.upsertAlias(email, internal, external);
+        const existing = db
+          .prepare('SELECT id FROM aliases WHERE domain_id = ? AND local_part = ?')
+          .get(domain.id, localPart) as { id: string } | undefined;
+        if (existing) {
+          db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(all), existing.id);
+        } else {
+          db.prepare(
+            `INSERT INTO aliases (id, domain_id, local_part, destinations_json, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          ).run(randomId('als'), domain.id, localPart, JSON.stringify(all), now());
+        }
+      }
+      audit(
+        req,
+        'alias.essential_updated',
+        { domain: domain.domain, destinations: body.destinations.length },
+        domain.clientId,
+      );
+      return { addresses: direccionesObligatorias(domain) };
+    });
+  });
+}
+
+/** Estado de postmaster@ y abuse@ de un dominio: alias, buzón o sin crear. */
+export function direccionesObligatorias(domain: { id: string; domain: string }): {
+  localPart: string;
+  email: string;
+  kind: 'alias' | 'mailbox' | null;
+  destinations: string[];
+}[] {
+  return DIRECCIONES_OBLIGATORIAS.map((localPart) => {
+    const email = `${localPart}@${domain.domain}`;
+    if (mailboxExists(domain.id, localPart)) return { localPart, email, kind: 'mailbox' as const, destinations: [] };
+    const row = db
+      .prepare('SELECT destinations_json FROM aliases WHERE domain_id = ? AND local_part = ?')
+      .get(domain.id, localPart) as { destinations_json: string } | undefined;
+    return row
+      ? { localPart, email, kind: 'alias' as const, destinations: parseDestinations(row.destinations_json) }
+      : { localPart, email, kind: null, destinations: [] };
   });
 }

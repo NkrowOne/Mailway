@@ -726,6 +726,21 @@ html.mailway.dark-mode .menu.toolbar .dropbutton a.dropdown:hover {
   }
 }
 
+/* Foto propia junto a la dirección, en la cabecera de las carpetas. La
+   ponen en variables el complemento mailway_perfil (solo si el titular
+   subió una foto en el panel); sin ellas, content: none y no se dibuja. */
+html.mailway #layout-sidebar > .header > .header-title.username::before {
+  content: var(--mw-foto-propia-marca, none);
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  margin-right: 10px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--mw-hoja-3) var(--mw-foto-propia, none) center / cover no-repeat;
+  box-shadow: 0 0 0 1px var(--mw-regla);
+}
+
 /* ------------------------------------------------------------------ */
 /* Carril de tareas                                                    */
 /* ------------------------------------------------------------------ */
