@@ -318,7 +318,7 @@ function HojaMotor({
       className="min-w-0"
       actions={
         data.demoMode ? (
-          <MarcaFondo veredicto="vigilar">Demostración forzada por MAILWAY_DEMO=1</MarcaFondo>
+          <MarcaFondo veredicto="vigilar">Demostración (MAILWAY_DEMO)</MarcaFondo>
         ) : engine ? (
           <MarcaFondo veredicto={engine.kind === 'demo' ? 'sin-dato' : 'normal'}>
             {engine.kind === 'demo' ? 'Demostración' : 'Stalwart conectado'}

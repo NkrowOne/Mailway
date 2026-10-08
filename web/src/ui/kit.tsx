@@ -51,7 +51,9 @@ export function Hoja({
             )}
             {meta && <span className="text-sm text-tinta-3">{meta}</span>}
           </div>
-          {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+          {/* Sin shrink-0: en el móvil, si las acciones no caben en una línea,
+              se reparten en varias en vez de salirse de la tarjeta. */}
+          {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
         </header>
       )}
       <div className={flush ? '' : 'p-4'}>{children}</div>
