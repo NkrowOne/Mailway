@@ -73,6 +73,22 @@ export default function Cuenta() {
           </Hoja>
         )}
 
+        {user?.passwordFromEnv ? (
+          // La fija el entorno del panel: cambiarla aquí no duraría.
+          <Hoja title="Contraseña">
+            <div className="flex max-w-[68ch] flex-col gap-2 text-base text-tinta-2">
+              <p>
+                La contraseña de esta cuenta es la de la variable{' '}
+                <span className="codigo text-sm text-tinta">MAILWAY_ADMIN_PASSWORD</span> del panel, y es siempre la que
+                vale para entrar.
+              </p>
+              <p>
+                Para cambiarla, edita esa variable en las variables del servicio del panel (en Skyway) y vuelve a
+                desplegarlo. Si la quitas, podrás cambiarla aquí.
+              </p>
+            </div>
+          </Hoja>
+        ) : (
         <Hoja title="Cambiar contraseña">
           <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
             <Input
@@ -123,6 +139,7 @@ export default function Cuenta() {
             </Button>
           </form>
         </Hoja>
+        )}
       </div>
     </>
   );
