@@ -73,6 +73,8 @@ export interface EnlaceConfiguracion {
   lastOpenedAt: number | null;
   revokedAt: number | null;
   hasPassword: boolean;
+  /** La administración puede volver a verlo y enviarlo mientras siga activo. */
+  recoverable: boolean;
 }
 
 /** Respuesta de POST /api/mailboxes/:id/setup-links: la URL solo existe aquí. */

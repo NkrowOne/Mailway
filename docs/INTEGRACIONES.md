@@ -349,7 +349,8 @@ guarda en claro.
 | Método y ruta | Descripción |
 |---|---|
 | `POST /api/mailboxes/:id/setup-links` | `{ includePassword?, password?, ttlHours? (1–720, 72 por defecto) }` → `{ link: { id, url, expiresAt, hasPassword } }`. `url` = `<panel>/conectar/<token>`. |
-| `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword }] }`. |
+| `GET /api/mailboxes/:id/setup-links` | Últimos 50: `{ links: [{ id, createdAt, expiresAt, lastOpenedAt, revokedAt, hasPassword, recoverable }] }`. |
+| `GET /api/mailboxes/:id/setup-links/:linkId/url` | **Solo administración.** Vuelve a dar la URL de un enlace activo → `{ link: { id, url, expiresAt, hasPassword } }`. Caducado o revocado: `404 setup_link_invalid`; creado antes de la 1.3 (sin token guardado): `409 setup_link_not_recoverable`. Queda en la actividad como `mailbox.setup_link_viewed`. |
 | `DELETE /api/mailboxes/:id/setup-links/:linkId` | Revoca el enlace y borra su contraseña → `{ ok }`. |
 | `POST /api/mailboxes/:id/setup-reset` | Reinicia la configuración del buzón (ver abajo). `{ revokeAppPasswords? (true por defecto), includePassword? (true por defecto), ttlHours? (1–720, 72 por defecto) }` → `{ password, link: { id, url, expiresAt, hasPassword }, linksRemoved, appPasswordsRevoked, photoRemoved }`. |
 
@@ -364,7 +365,9 @@ guarda en claro.
     minutos o crea el enlace sin contraseña.
   - `503 engine_unreachable`: el motor no ha respondido, así que no se puede
     comprobar. No se crea ningún enlace; reintenta o crea uno sin contraseña.
-- El token del enlace tiene 256 bits y solo se guarda su hash. La contraseña
+- El token del enlace tiene 256 bits. Se busca por su hash; además se guarda
+  **cifrado** con la clave maestra para que la administración pueda volver a
+  enviarlo, y ese cifrado se borra al caducar o revocar el enlace. La contraseña
   se guarda cifrada y se borra al caducar o revocar el enlace, cuando el
   titular pulsa «Ya lo he configurado» o cuando cambia la contraseña del
   buzón. Los enlaces caducados se eliminan 30 días después.

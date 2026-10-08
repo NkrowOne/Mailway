@@ -870,3 +870,67 @@ test('reiniciar: solo quien gestiona el cliente, y nunca un buzón suspendido', 
   assert.equal(suspendido.statusCode, 400);
   assert.equal(suspendido.json().code, 'mailbox_suspended');
 });
+
+/* ------------------------ Volver a enviar un enlace ------------------------- */
+
+test('la administración puede volver a ver un enlace activo; el cliente no', async () => {
+  const b = await buzonDePrueba({ withUser: true });
+  const creado = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+  const link = (creado.json() as { link: { id: string; url: string } }).link;
+  const urlDe = (linkId: string, cookie = ctx.adminCookie) =>
+    ctx.app.inject({ method: 'GET', url: `/api/mailboxes/${b.mailboxId}/setup-links/${linkId}/url`, headers: { cookie } });
+
+  // Guardado cifrado, nunca en claro.
+  const fila = db.prepare('SELECT token_enc FROM setup_links WHERE id = ?').get(link.id) as { token_enc: string };
+  assert.ok(fila.token_enc.startsWith('v1:'));
+  assert.ok(!fila.token_enc.includes(tokenDe(link.url)));
+
+  const lista = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/mailboxes/${b.mailboxId}/setup-links`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal((lista.json() as { links: { recoverable: boolean }[] }).links[0]!.recoverable, true);
+
+  const otraVez = await urlDe(link.id);
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  assert.equal(otraVez.headers['cache-control'], 'no-store');
+  assert.deepEqual(
+    (otraVez.json() as { link: { url: string; hasPassword: boolean } }).link,
+    { id: link.id, url: link.url, expiresAt: (otraVez.json() as { link: { expiresAt: number } }).link.expiresAt, hasPassword: true },
+  );
+
+  // El usuario del cliente gestiona el buzón, pero no recupera enlaces.
+  const delCliente = await urlDe(link.id, b.userCookie!);
+  assert.equal(delCliente.statusCode, 403);
+
+  const registro = auditoria('mailbox.setup_link_viewed').filter((a) => a.detail.includes(b.email));
+  assert.equal(registro.length, 1);
+  assert.ok(!registro[0]!.detail.includes(tokenDe(link.url)));
+
+  // Revocado: ni se recupera ni conserva el token cifrado.
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/mailboxes/${b.mailboxId}/setup-links/${link.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal((await urlDe(link.id)).statusCode, 404);
+  const revocado = db.prepare('SELECT token_enc FROM setup_links WHERE id = ?').get(link.id) as { token_enc: string | null };
+  assert.equal(revocado.token_enc, null);
+
+  // Caducado: igual, aunque nadie lo haya revocado.
+  const otro = (await crearEnlace(b.mailboxId)).json() as { link: { id: string } };
+  db.prepare('UPDATE setup_links SET expires_at = ? WHERE id = ?').run(Date.now() - 1000, otro.link.id);
+  assert.equal((await urlDe(otro.link.id)).statusCode, 404);
+  const caducado = db.prepare('SELECT token_enc FROM setup_links WHERE id = ?').get(otro.link.id) as {
+    token_enc: string | null;
+  };
+  assert.equal(caducado.token_enc, null);
+
+  // Los enlaces creados antes de guardar el token no se pueden recuperar.
+  const antiguo = (await crearEnlace(b.mailboxId)).json() as { link: { id: string } };
+  db.prepare('UPDATE setup_links SET token_enc = NULL WHERE id = ?').run(antiguo.link.id);
+  const sinToken = await urlDe(antiguo.link.id);
+  assert.equal(sinToken.statusCode, 409);
+  assert.equal(sinToken.json().code, 'setup_link_not_recoverable');
+});

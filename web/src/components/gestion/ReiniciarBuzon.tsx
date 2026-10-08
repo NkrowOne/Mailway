@@ -10,6 +10,7 @@ import { Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { EnlaceListo } from '../ConectarBuzon';
 import { BandaAviso, BandaError, Botonera, Casilla } from './comun';
+import { useUsuario } from './consultas';
 
 /** Respuesta de POST /api/mailboxes/:id/setup-reset. */
 interface Reinicio {
@@ -54,10 +55,14 @@ export function ReiniciarBuzon({
   const [revocarApps, setRevocarApps] = useState(true);
   const [error, setError] = useState('');
   const [hecho, setHecho] = useState<Reinicio | null>(null);
+  // La administración puede volver a enviar el enlace (y con él la
+  // contraseña, si la lleva): entonces cerrar la ficha no pierde nada.
+  const esAdmin = useUsuario()?.role === 'admin';
+  const recuperable = esAdmin && hecho !== null && hecho.link.hasPassword;
 
   useEffect(() => {
-    onPendiente(hecho !== null);
-  }, [hecho, onPendiente]);
+    onPendiente(hecho !== null && !recuperable);
+  }, [hecho, recuperable, onPendiente]);
   // Al salir de la vista ya no hay nada pendiente que proteger.
   useEffect(() => () => onPendiente(false), [onPendiente]);
 
@@ -101,12 +106,14 @@ export function ReiniciarBuzon({
           enlace: al abrirlo verá las instrucciones para su dispositivo
           {hecho.link.hasPassword ? ' y la contraseña del buzón' : ''}.
         </p>
-        <EnlaceListo email={mailbox.email} enlace={hecho.link} />
+        <EnlaceListo email={mailbox.email} enlace={hecho.link} recuperable={esAdmin} />
         <Muestra rotulo="Contraseña nueva" copiar={hecho.password}>
           <p className="codigo break-all text-base text-tinta">{hecho.password}</p>
         </Muestra>
         <p className="text-sm text-tinta-3">
-          La contraseña tampoco se podrá volver a ver.
+          {recuperable
+            ? 'La contraseña va dentro del enlace, que puedes volver a enviar desde «Conectar dispositivos» mientras siga activo.'
+            : 'La contraseña no se podrá volver a ver.'}
           {hecho.linksRemoved > 0 &&
             (hecho.linksRemoved === 1
               ? ' Se ha eliminado el enlace anterior.'

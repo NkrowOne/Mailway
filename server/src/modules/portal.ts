@@ -16,7 +16,7 @@ import { withLock } from '../core/locks';
 import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
-import { requireAuth, requireClientAccess } from './auth';
+import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import {
   createAppPassword,
   listAppPasswords,
@@ -356,6 +356,7 @@ interface FilaEnlace {
   expires_at: number;
   last_opened_at: number | null;
   revoked_at: number | null;
+  token_enc: string | null;
 }
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
@@ -367,9 +368,10 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
  */
 function purgarEnlaces(): void {
   const t = now();
+  // Lo mismo con el token cifrado: un enlace muerto no se vuelve a enviar.
   db.prepare(
-    `UPDATE setup_links SET password_enc = NULL
-     WHERE password_enc IS NOT NULL AND (expires_at <= ? OR revoked_at IS NOT NULL)`,
+    `UPDATE setup_links SET password_enc = NULL, token_enc = NULL
+     WHERE (password_enc IS NOT NULL OR token_enc IS NOT NULL) AND (expires_at <= ? OR revoked_at IS NOT NULL)`,
   ).run(t);
   db.prepare('DELETE FROM setup_links WHERE expires_at < ?').run(t - RETENCION_ENLACES_MS);
 }
@@ -447,10 +449,21 @@ function insertarEnlace(
   const linkId = randomId('stl');
   const createdAt = now();
   const expiresAt = createdAt + ttlHours * 3600_000;
+  // Se busca por el hash; el token cifrado solo sirve para que la
+  // administración pueda volver a enviar el enlace (GET …/url).
   db.prepare(
-    `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(linkId, hashToken(token), titular.id, passwordEnc, req.user?.id ?? null, createdAt, expiresAt);
+    `INSERT INTO setup_links (id, token_hash, mailbox_id, password_enc, created_by, created_at, expires_at, token_enc)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    linkId,
+    hashToken(token),
+    titular.id,
+    passwordEnc,
+    req.user?.id ?? null,
+    createdAt,
+    expiresAt,
+    encryptSecret(token),
+  );
   return {
     id: linkId,
     url: `${publicBaseUrl(req)}/conectar/${token}`,
@@ -701,7 +714,50 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         lastOpenedAt: row.last_opened_at,
         revokedAt: row.revoked_at,
         hasPassword: row.password_enc !== null,
+        // La administración puede volver a verlo y enviarlo (GET …/url).
+        recoverable: row.token_enc !== null,
       })),
+    };
+  });
+
+  /*
+   * Volver a enviar un enlace que sigue activo: solo la administración. El
+   * cliente gestiona sus buzones pero no recupera enlaces ya entregados (si
+   * lo pierde, crea otro, que queda en su actividad); quien administra el
+   * servicio sí, porque es quien suele hacer de soporte del titular.
+   */
+  app.get('/api/mailboxes/:id/setup-links/:linkId/url', async (req, reply) => {
+    const { id, linkId } = req.params as { id: string; linkId: string };
+    const titular = buzonDelPanel(req, id);
+    requireAdmin(req);
+    purgarEnlaces();
+    const row = db
+      .prepare('SELECT * FROM setup_links WHERE id = ? AND mailbox_id = ?')
+      .get(linkId, titular.id) as FilaEnlace | undefined;
+    if (!row || row.revoked_at || row.expires_at <= now()) throw enlaceNoValido();
+    let token: string | null = null;
+    try {
+      token = row.token_enc ? decryptSecret(row.token_enc) : null;
+    } catch {
+      // Clave maestra cambiada: el enlace funciona, pero ya no se puede leer.
+      token = null;
+    }
+    if (!token) {
+      throw new HttpError(
+        409,
+        'Este enlace se creó antes de poder volver a enviarse. Crea uno nuevo.',
+        'setup_link_not_recoverable',
+      );
+    }
+    audit(req, 'mailbox.setup_link_viewed', { mailboxId: titular.id, email: titular.email, linkId }, titular.clientId);
+    reply.header('Cache-Control', 'no-store');
+    return {
+      link: {
+        id: row.id,
+        url: `${publicBaseUrl(req)}/conectar/${token}`,
+        expiresAt: row.expires_at,
+        hasPassword: row.password_enc !== null,
+      },
     };
   });
 
@@ -713,7 +769,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       .get(linkId, titular.id) as { id: string } | undefined;
     if (!row) throw notFound('Enlace de configuración no encontrado.');
     db.prepare(
-      'UPDATE setup_links SET revoked_at = COALESCE(revoked_at, ?), password_enc = NULL WHERE id = ?',
+      'UPDATE setup_links SET revoked_at = COALESCE(revoked_at, ?), password_enc = NULL, token_enc = NULL WHERE id = ?',
     ).run(now(), linkId);
     audit(req, 'mailbox.setup_link_revoked', { mailboxId: titular.id, email: titular.email, linkId }, titular.clientId);
     return { ok: true };

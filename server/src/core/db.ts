@@ -443,6 +443,16 @@ const migrations: { id: string; sql: string }[] = [
       );
     `,
   },
+  {
+    id: '010-enlaces-recuperables',
+    sql: `
+      -- Token del enlace de configuración cifrado con la clave maestra, para
+      -- que la administración pueda volver a enviarlo mientras siga activo.
+      -- Se sigue buscando por token_hash; este campo se vacía al caducar o
+      -- revocar el enlace. Los enlaces anteriores quedan sin él.
+      ALTER TABLE setup_links ADD COLUMN token_enc TEXT;
+    `,
+  },
 ];
 
 function runMigrations(): void {
