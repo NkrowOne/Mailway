@@ -119,7 +119,7 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 | `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended, webmailAutomatico }, webmailDomains, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. `client.webmailAutomatico` es el interruptor del webmail automático del cliente y `webmailDomains` sus webmail de marca (`{ id, hostname, status, detail, automatico, isPrimary, … }`; sección 7.1). Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
-`_`, `-`), empezando por letra o número; p. ej. `skyway:project:<id>`. Es
+`_`, `-`), empezando por letra o número; p. ej. `skyway:workspace:<id>`. Es
 única entre clientes. El nombre (`name`) tiene de 2 a 80 caracteres; si el
 *slug* ya existe se añade un sufijo (`acme-2`, `acme-3`…).
 
@@ -625,13 +625,26 @@ con un token de gestión de administración llamado «Skyway»; se repite con
 
 El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
 
-- **Activar correo**:
-  - *crear* un cliente nuevo (nombre, plan y correo de contacto opcionales):
-    Skyway llama a `POST /api/integrations/clients/ensure` con
-    `externalRef = skyway:project:<id del proyecto>`, así que repetirlo nunca
-    duplica clientes;
+- **Activar correo**: los clientes de Mailway son los **clientes de
+  Skyway** (sus espacios de trabajo), con el mismo nombre. El primer proyecto
+  de un cliente que activa el correo crea su cliente en Mailway
+  (`POST /api/integrations/clients/ensure` con
+  `externalRef = skyway:workspace:<id del espacio de trabajo>` y su nombre),
+  y los demás proyectos de ese cliente que lo activan comparten ese mismo
+  cliente: dominios, buzones y plan. Los proyectos que no lo activan (los
+  bots, por ejemplo) no crean nada. Un proyecto sin espacio de trabajo usa
+  `skyway:project:<id del proyecto>`, como antes. Repetirlo nunca duplica
+  clientes.
   - *vincular uno existente* (solo la administración de Skyway):
-    `PUT /api/integrations/clients/:id/link`.
+    `PUT /api/integrations/clients/:id/link` con la referencia del cliente de
+    Skyway.
+  - **Nombre sincronizado**: al renombrar un cliente en Skyway, Skyway
+    renombra su cliente de Mailway (`PATCH /api/clients/:id`), y lo corrige
+    también al abrir el correo de cualquiera de sus proyectos si no coincide.
+  - Los vínculos de antes (`skyway:project:<id>`) pasan solos al cliente de
+    Skyway la primera vez, sin perder nada. Si dos proyectos de un mismo
+    cliente tenían cada uno su cliente en Mailway, no se fusionan: el segundo
+    sigue con el suyo y el panel lo indica.
 - **Dominios**: añadir, ver los registros (incluido el TXT de verificación de
   la propiedad), **Configurar en Cloudflare** (vista previa de cambios y
   conflictos antes de aplicar) y verificar. Hasta que la propiedad esté
@@ -652,12 +665,24 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
   - Conectar de nuevo crea una credencial nueva, pero **no revoca la
     anterior**: retírala en Mailway (contraseñas de aplicación del buzón o
     **API de envío**) si ya no se usa.
-- **Desactivar el correo**: quita la referencia en Mailway (los datos se
-  conservan). Skyway lo hace de forma condicional
-  (`DELETE …/link?externalRef=skyway:project:<id>`, sección 2.2): si el cliente
-  ya está vinculado a otra referencia, Mailway responde
-  `409 external_ref_mismatch` y no lo toca. Borrar el proyecto en Skyway
-  también la quita.
+- **Webmail propio**: los webmail de marca del cliente (`webmail.<dominio>`)
+  con su estado y el interruptor del webmail automático
+  (`PUT /api/clients/:id/webmail-automatico`, sección 7.1). Es del cliente:
+  vale para todos sus proyectos.
+- **Enviar configuración inicial**: crea el enlace de bienvenida del cliente
+  (`POST /api/clients/:id/invites`, sección 2.1) para que su contacto cree su
+  acceso y, en la puesta en marcha, los buzones que quiera; lo muestra para
+  copiarlo o enviarlo por correo, y lista los enlaces recientes para volver a
+  verlos o revocarlos.
+- **Desactivar el correo**: quita el vínculo de ese proyecto (los datos se
+  conservan). Con un cliente de Skyway, su cliente de Mailway sigue vinculado
+  a él, para que al reactivarlo aparezca todo como estaba; solo al borrar el
+  cliente en Skyway se quita su referencia. Un proyecto sin espacio de trabajo
+  quita la suya, como antes, de forma condicional
+  (`DELETE …/link?externalRef=skyway:project:<id>`, sección 2.2): si el
+  cliente ya está vinculado a otra referencia, Mailway responde
+  `409 external_ref_mismatch` y no lo toca. Borrar el proyecto también la
+  quita.
 
 Con un usuario de Skyway que no es administrador, Skyway solo usa las cuentas
 de Cloudflare **del propio cliente** (parámetro `soloCliente=1`, sección 4.3).
