@@ -5,8 +5,10 @@ Guía para dejar Mailway funcionando en un servidor propio, junto a Skyway
 
 - el **panel de Mailway** en `https://panel.<tu dominio>`, desplegado desde
   GitHub por Skyway y con actualización automática;
-- el **motor de correo** (Stalwart) y el **webmail** (Roundcube) en un
-  docker-compose junto a Skyway, con certificado válido para IMAP y SMTP;
+- el **motor de correo** (Stalwart 0.16; las instalaciones anteriores siguen
+  en la 0.15 hasta que se migran, sección 8.3) y el **webmail** (Roundcube)
+  en un docker-compose junto a Skyway, con certificado válido para IMAP y
+  SMTP;
 - la **conexión con Skyway** para gestionar el correo de cada proyecto desde
   su botón «Correo».
 
@@ -25,10 +27,10 @@ completar (sección 2.6). La sección 6 describe el mismo proceso a mano.
   :80 / :443 ─────► │ Traefik de Skyway (skyway-traefik)                                │
                     │   ├─ panel.<dominio>    → skyway-mailway-panel:4100  (Skyway)     │
                     │   ├─ webmail.<dominio>  → mailway-webmail:80         (compose)    │
-                    │   ├─ mail.<dominio>     → mailway-mail:8080 (web del motor)       │
+                    │   ├─ mail.<dominio>     → mailway-mail:8080 (JMAP, autoconfig.)   │
                     │   └─ autoconfig., autodiscover., mta-sts., webmail de clientes    │
                     │        → rutas que publica Mailway a través del puente de Skyway  │
-  :25 :465 :587 ──► │ mailway-mail (Stalwart v0.15.5, compose)                          │
+  :25 :465 :587 ──► │ mailway-mail (Stalwart 0.16, o 0.15 si no se ha migrado)          │
   :993 :4190        │   ▲ http://mailway-mail:8080 (API de gestión; no se publica)      │
                     │   └── el panel la usa por skyway-edge; el webmail usa IMAP/SMTP   │
                     │       por mailway-internal (10.203.53.0/24)                       │
@@ -64,8 +66,9 @@ completar (sección 2.6). La sección 6 describe el mismo proceso a mano.
 6. **Opcional, pero recomendado:**
    - un **token de API de Cloudflare** si el DNS del dominio está en
      Cloudflare, con los permisos *Zona → Zona → Leer* y *Zona → DNS →
-     Editar*. El instalador crea con él los registros de la plataforma y el
-     motor obtiene su certificado por DNS;
+     Editar*. El instalador crea con él los registros de la plataforma y se
+     lo pasa al panel y a Skyway (sección 2.7); con Stalwart 0.15, además,
+     el motor obtenía su certificado por DNS;
    - solo si Skyway **no** corre en este mismo servidor: un **token de API de
      Skyway** de administrador (`sky_…`, en Skyway → Mi perfil → Tokens de
      API) para que el instalador despliegue el panel. Si Skyway corre aquí
@@ -144,16 +147,38 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
    defecto) a que los tres nombres resuelvan a la IP. Así Traefik no pide
    certificados que Let's Encrypt rechazaría.
 8. **PTR**: comprueba el DNS inverso y lo incluye en el resumen.
-9. **Motor y webmail**: levanta `mailway-mail`, espera a que esté sano y
-   después `mailway-webmail`. En núcleos sin IPv6, cambia el motor a IPv4.
-10. **Ajustes del motor**: fija `server.hostname`, `http.use-x-forwarded` y
-    la exención de la red interna (los mismos ajustes que «Aplicar ajustes
-    recomendados» del panel) y configura el certificado: con Cloudflare, ACME
-    del propio motor por DNS-01 (sección 5.1); sin Cloudflare, el certificado
-    de Traefik, que lleva al motor el extractor del perfil `tls` (sección
-    5.2). Espera a que el extractor confirme el certificado servido en 993 y
-    465. En la instalación autónoma, con un token de Cloudflare y el panel
-    sano, se lo pasa como cuenta de la instancia (sección 2.7).
+9. **Motor y webmail**: elige el motor (`MAILWAY_MOTOR` en `deploy/.env`):
+   el que ya diga `deploy/.env`; si no lo dice, el de los datos que ya hay
+   (una instalación con Stalwart 0.15 sigue en la 0.15) y, en una
+   instalación nueva, **Stalwart 0.16**. Una actualización nunca cambia de
+   motor (eso es `--migrar-motor`, sección 8.3). Levanta `mailway-mail`,
+   espera a que esté sano y después `mailway-webmail`. Con la 0.16, el
+   primer arranque se completa solo: el instalador fija el nombre del
+   servidor, deja el registro de eventos en `docker logs mailway-mail`, no
+   pide certificado ni claves DKIM al motor (los pone Mailway), lo reinicia y
+   retira la cuenta `admin@<servidor>` que crea el motor (Mailway usa su
+   administrador de recuperación, con la contraseña de `deploy/.env`). Con la
+   0.15, en núcleos sin IPv6, cambia el motor a IPv4.
+10. **Ajustes del motor**:
+    - Con **Stalwart 0.16**: el certificado es siempre el de Traefik, que
+      lleva al motor el extractor del perfil `tls` (sección 5.2); el
+      instalador espera a que lo confirme servido en 993 y 465. Con el
+      panel en marcha, le pide sus ajustes (`motor.js provisionar`, la
+      herramienta del motor del panel): nombre del servidor, IP real detrás
+      de Traefik, exención de la red interna, envío por 587 con STARTTLS
+      (que la 0.16 ya no crea por defecto) y sin el autoservicio del motor.
+      El 587 solo se abre al reiniciar el motor: si el panel lo pide, el
+      instalador lo reinicia y repite. Nada de esto interrumpe la
+      instalación; lo pendiente queda en el resumen y se completa con
+      `sudo mailway update -y --reaplicar`.
+    - Con **Stalwart 0.15**: fija `server.hostname`,
+      `http.use-x-forwarded` y la exención de la red interna (los mismos
+      ajustes que «Aplicar ajustes recomendados» del panel) y configura el
+      certificado: con Cloudflare, ACME del propio motor por DNS-01 (sección
+      5.1); sin Cloudflare, el de Traefik con el extractor (sección 5.2).
+
+    En la instalación autónoma, con un token de Cloudflare y el panel sano,
+    se lo pasa como cuenta de la instancia (sección 2.7).
 11. **Panel en Skyway**: sin `SKYWAY_TOKEN`, si Skyway corre en este
     servidor (contenedor `skyway`), crea un token de API temporal con la
     herramienta de terminal de Skyway (caduca en 60 minutos y se revoca al
@@ -208,6 +233,10 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | `--comprobar` | Diagnóstico de solo lectura: contenedores, ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail y estado del extractor (sección 13.1). Termina con código 1 si algo falla. |
 | `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, e inicia sesión desde el webmail con un único intento (sección 13.1). |
 | `--emparejar` | Repite solo el emparejado con Skyway (sección 2.6) con la configuración de `deploy/.env`, sin preguntas. Renueva siempre el token de gestión «Skyway». Termina con código 1 si no se completa. |
+| `--migrar-motor` | Pasa el motor de Stalwart 0.15 a 0.16 con vuelta atrás automática si algo falla (sección 8.3). Pide confirmación. |
+| `--revertir-motor` | Vuelve a Stalwart 0.15 tras una migración terminada (sección 8.3). Pide confirmación. |
+| `--retirar-motor-anterior` | Borra el volumen de la 0.15 que conserva la migración (sección 8.3). Pide escribir su nombre. |
+| `-y` | Sin confirmación en las tres órdenes del motor (en `--retirar-motor-anterior`, además `MAILWAY_RETIRAR_VOLUMEN=<volumen>`). |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
 ### 2.5 Ejecución desatendida
@@ -237,6 +266,8 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_DNS_REEMPLAZAR` | `1` permite cambiar, sin terminal, los registros A de `mail.`, `webmail.` y `panel.` que ya existan en Cloudflare con otra IP o con el proxy (paso 6). Sin ella, una ejecución desatendida no modifica ningún registro existente. |
 | `MAILWAY_ENV_FILE` | Ruta alternativa del fichero de configuración (por defecto `deploy/.env`). |
 | `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
+| `MAILWAY_MOTOR` | Motor de una instalación **nueva**: `stalwart-0.16` (por defecto) o `stalwart-0.15`. En una que ya existe manda `deploy/.env`; pedir otro se rechaza (para cambiar, `--migrar-motor`). |
+| `MAILWAY_MIGRACION_COLA_MAX`, `MAILWAY_MIGRACION_MINUTOS`, `MAILWAY_MIGRACION_DIR`, `MAILWAY_MIGRACION_CONSERVAR`, `MAILWAY_RETIRAR_VOLUMEN` | Órdenes del motor (sección 8.3). |
 
 Ejemplo, con el token leído sin mostrarlo y exportado (nunca escrito en la
 orden):
@@ -531,9 +562,17 @@ con `docker inspect -f '{{json .Config.Cmd}}' skyway-traefik`.
 ## 5. Certificado TLS de IMAP y SMTP
 
 Los programas de correo exigen un certificado válido en los puertos 993, 465 y
-587. Hay dos vías; elige una.
+587.
 
-### 5.1 ACME del propio motor con Cloudflare (preferida)
+- Con **Stalwart 0.16** (las instalaciones nuevas y las migradas) hay una
+  sola vía: el certificado que Traefik obtiene para `mail.<dominio>`, que
+  lleva al motor el extractor (sección 5.2). El ACME propio de la 0.16
+  obligaría a darle la gestión automática del DNS de un dominio; no se usa.
+- Con **Stalwart 0.15** hay dos; elige una: el ACME del propio motor con
+  Cloudflare (sección 5.1) o el mismo extractor (5.2). Al migrar a la 0.16,
+  el certificado pasa al extractor.
+
+### 5.1 ACME del propio motor con Cloudflare (solo Stalwart 0.15)
 
 El motor pide y renueva su certificado a Let's Encrypt con el reto DNS-01 en
 Cloudflare. No depende de Traefik ni del puerto 80, renueva 30 días antes de
@@ -553,13 +592,15 @@ La emisión tarda unos minutos. **Ajustes → Servidor de correo** muestra el
 emisor y los días de validez; el botón de recarga (`POST
 /api/engine/reload-certificate`) hace que el motor use el certificado nuevo.
 
-### 5.2 Alternativa: el certificado de Traefik, con el extractor
+### 5.2 El certificado de Traefik, con el extractor
 
 Traefik ya obtiene un certificado para `mail.<dominio>` (la web del motor va
 por Traefik). El **extractor del certificado** lo lleva al motor: es el
 servicio `certs-dumper` del perfil `tls` (contenedor `mailway-certs-dumper`,
-código en `deploy/tls/extractor.py`). El instalador lo usa cuando no hay token
-de Cloudflare. Cada 30 segundos:
+código en `deploy/tls/extractor.py`). Con Stalwart 0.16, el instalador lo
+activa siempre; con la 0.15, cuando no hay token de Cloudflare. Averigua en
+cada pasada qué versión del motor tiene delante (sirve igual antes y después
+de migrar). Cada 30 segundos:
 
 1. Lee el `acme.json` de Traefik **en solo lectura**.
 2. Elige para `MAIL_HOSTNAME` el certificado exacto o comodín que caduca más
@@ -567,15 +608,19 @@ de Cloudflare. Cada 30 segundos:
    que caduca antes.
 3. Lo valida antes de escribir nada: vigente, válido para `MAIL_HOSTNAME` y
    con la clave privada que corresponde al certificado.
-4. Escribe **solo ese par**, de forma atómica, donde lo lee
-   `certificate.mailway`: `/opt/stalwart/certs/<MAIL_HOSTNAME>/cert.pem` y
-   `key.pem`. Esa ruta es un enlace a una versión inmutable dentro de
-   `.mailway-tls/`, así que el motor nunca ve el certificado de un par y la
-   clave de otro.
-5. Si el par cambió, pide al motor `GET /api/reload/certificate` y comprueba
-   el certificado que sirve en 993 y 465 (cadena, nombre y huella). Si no es
-   el nuevo, vuelve al anterior; el renovado no se reintenta hasta pasadas 6
-   horas. Con todo en orden, repite la comprobación cada 10 minutos.
+4. Escribe **solo ese par**, de forma atómica, en el volumen de certificados
+   del motor: `/opt/stalwart/certs/<MAIL_HOSTNAME>/cert.pem` y `key.pem`.
+   Esa ruta es un enlace a una versión inmutable dentro de `.mailway-tls/`,
+   así que el motor nunca ve el certificado de un par y la clave de otro.
+   Con la 0.15 son las rutas de `certificate.mailway`. Con la 0.16, que
+   corre como el usuario 2000, los ficheros quedan con ese grupo (la clave,
+   `0640`; por eso el extractor tiene la capacidad `CHOWN`) y el propio
+   extractor crea en el motor, por JMAP, un certificado de tipo «File» con
+   esas rutas y lo deja como el certificado por defecto.
+5. Si el par cambió, pide al motor que recargue sus certificados y comprueba
+   el que sirve en 993 y 465 (cadena, nombre y huella). Si no es el nuevo,
+   vuelve al anterior; el renovado no se reintenta hasta pasadas 6 horas.
+   Con todo en orden, repite la comprobación cada 10 minutos.
 
 Si el motor obtiene su propio certificado por ACME (sección 5.1), el extractor
 no hace nada. Si además conserva `certificate.mailway`, mantiene esos ficheros
@@ -600,7 +645,8 @@ cuenta para el bloqueo automático del motor. Corre solo en
 `mailway-internal`, la red exenta de ese bloqueo, sin capacidades del núcleo y
 con el sistema de ficheros en solo lectura. Nunca registra secretos.
 
-A mano:
+A mano (con la 0.16 bastan los pasos 1, 2 y 4: el extractor crea él mismo el
+certificado en el motor):
 
 ```bash
 cd /ruta/a/Mailway
@@ -612,9 +658,10 @@ docker volume ls | grep letsencrypt
 docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d certs-dumper
 docker exec mailway-mail ls -l /opt/stalwart/certs/   # mail.miempresa.com -> .mailway-tls/…
 
-# 3) Indicar al motor (una sola vez) que use esos ficheros. El puerto 8080 del
-#    motor no está publicado: se usa un contenedor efímero en la red interna.
-#    Sustituye mail.miempresa.com por el nombre de tu servidor.
+# 3) Solo con Stalwart 0.15: indicar al motor (una sola vez) que use esos
+#    ficheros. El puerto 8080 del motor no está publicado: se usa un
+#    contenedor efímero en la red interna. Sustituye mail.miempresa.com por
+#    el nombre de tu servidor.
 read -rsp 'Contraseña del motor (STALWART_ADMIN_PASSWORD): ' PASS; echo
 docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" \
   -X POST http://mailway-mail:8080/api/settings -H 'Content-Type: application/json' \
@@ -631,7 +678,8 @@ unset PASS
 docker exec mailway-certs-dumper python /app/extractor.py estado
 ```
 
-El campo `assert_empty` es obligatorio en la API de ajustes de Stalwart 0.15:
+El campo `assert_empty` es obligatorio en la API de ajustes de Stalwart 0.15
+(la 0.16 ya no tiene esa API):
 sin él, la petición falla. `certificate.mailway.subjects.0` hace que el motor
 sustituya el certificado al recargar aunque el nuevo sea un comodín; sin él,
 conservaría en memoria el exacto anterior hasta reiniciarse. El instalador lo
@@ -656,10 +704,11 @@ openssl s_client -connect mail.miempresa.com:993 -servername mail.miempresa.com 
   | openssl x509 -noout -issuer -enddate
 ```
 
-Debe indicar Let's Encrypt. Desde el propio servidor, `sudo bash
-deploy/instalar.sh --comprobar` verifica el certificado de 993 y 465 desde el
-webmail, con el nombre público, sin depender de que el servidor se alcance a
-sí mismo por su IP pública (sección 13.1).
+Debe indicar Let's Encrypt (lo mismo con `-connect mail.miempresa.com:465` y,
+para el 587, `-connect mail.miempresa.com:587 -starttls smtp`). Desde el
+propio servidor, `sudo bash deploy/instalar.sh --comprobar` verifica el
+certificado de 993 y 465 desde el webmail, con el nombre público, sin depender
+de que el servidor se alcance a sí mismo por su IP pública (sección 13.1).
 
 El vigilante comprueba el certificado a diario y abre un aviso (`engine_tls`)
 si quedan menos de 20 días, si quedan menos de 7 (crítico), si ha caducado, si
@@ -725,10 +774,41 @@ docker ps --format '{{.Names}}\t{{.Status}}' | grep mailway   # mailway-mail (he
 
 El proyecto de Compose se llama siempre `mailway`, con independencia de la
 carpeta: contenedores `mailway-mail` y `mailway-webmail`, volúmenes
-`mailway-mail-data` y `mailway-webmail-db`, red `mailway-internal`.
+`mailway-stalwart-etc` y `mailway-stalwart-data` (Stalwart 0.16; con la 0.15,
+`mailway-mail-data`), `mailway-mail-certs` y `mailway-webmail-db`, y red
+`mailway-internal`.
 
-> La imagen de Stalwart está **fijada a v0.15.5**: la v0.16 eliminó la API
-> REST que usa Mailway. No la actualices sin leer [PLAN.md](PLAN.md).
+El motor lo elige `MAILWAY_MOTOR` en `deploy/.env` (`stalwart-0.16` en una
+instalación nueva; sin valor, la 0.15): `deploy/docker-compose.mail.yml`
+incorpora al servicio `mailway-mail` el fichero
+`deploy/motor/<motor>/compose.yml` (imagen, volúmenes, credenciales, rutas de
+Traefik y comprobación de salud). Las versiones van fijadas: nunca cambies la
+imagen a mano entre la 0.15 y la 0.16, porque cambian la gestión y el formato
+de los datos; de una a otra se pasa con la migración (sección 8.3).
+
+Con **Stalwart 0.16**, el primer arranque deja el motor en modo «bootstrap»
+(solo responde en el 8080 de la red interna) hasta que se completa. El
+instalador lo hace solo (sección 2.3, paso 9); a mano, con la contraseña de
+`deploy/.env` y sin escribirla en la orden:
+
+```bash
+read -rsp 'Contraseña del motor (STALWART_ADMIN_PASSWORD): ' PASS; echo
+printf 'user = "admin:%s"\n' "$PASS" | docker run --rm -i --network mailway-internal curlimages/curl:8.11.1 \
+  -sS -K - -H 'Content-Type: application/json' http://mailway-mail:8080/jmap -d '{
+    "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+    "methodCalls": [["x:Bootstrap/set", {"update": {"singleton": {
+      "serverHostname": "mail.miempresa.com", "defaultDomain": "mail.miempresa.com",
+      "requestTlsCertificate": false, "generateDkimKeys": false,
+      "tracer": {"@type": "Stdout", "ansi": false, "buffered": false}}}}, "b"]]}' >/dev/null
+unset PASS
+docker restart mailway-mail
+```
+
+La respuesta (que se descarta) trae la contraseña de una cuenta
+`admin@<servidor>` con todos los permisos que crea el motor y que Mailway no
+usa: bórrala en cuanto el panel esté conectado (el instalador lo hace solo).
+El dominio por defecto es el propio nombre del servidor, reservado: así
+ningún dominio de un cliente queda como el del sistema.
 
 ### 6.4 Panel en Skyway
 
@@ -786,9 +866,13 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d ma
    `https://panel.miempresa.com/setup?token=<MAILWAY_SETUP_TOKEN>`, completa
    el asistente (sección 3) y conecta Skyway a mano (sección 4.1). Al
    conectar el motor se aplican los ajustes recomendados; si fallan,
-   repítelos en **Ajustes → Servidor de correo**.
+   repítelos en **Ajustes → Servidor de correo**. Con Stalwart 0.16, el
+   envío por 587 que crean esos ajustes solo se abre al reiniciar el motor
+   (`docker restart mailway-mail`; el panel lo indica). El instalador hace
+   todo esto con `sudo mailway update -y --reaplicar`.
 2. Comprueba las rutas de Traefik (sección 4.2).
-3. Configura el certificado (sección 5).
+3. Configura el certificado (sección 5; con la 0.16, el extractor del perfil
+   `tls`).
 
 ---
 
@@ -809,11 +893,17 @@ Sin el perfil `proxy` (por ejemplo, si 80/443 ya los usa otro servidor web),
 el panel (`127.0.0.1:4100`), el webmail (`127.0.0.1:8000`) y la web del motor
 (`127.0.0.1:8080`) escuchan **solo en local**: ponles delante un proxy con
 TLS (Caddy, Nginx…). Nunca los publiques en HTTP hacia Internet: por ellos
-viajan contraseñas.
+viajan contraseñas. Con Stalwart 0.16, publica de la web del motor solo las
+rutas que deja pasar Traefik (las etiquetas de
+`deploy/motor/stalwart-0.16/compose.yml`): su administración y su
+autoservicio no deben llegar a Internet.
 
-El certificado de IMAP/SMTP se obtiene igual que en la sección 5: ACME del
-motor con Cloudflare desde **Ajustes → Servidor de correo**, o el extractor
-del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
+El certificado de IMAP/SMTP se obtiene igual que en la sección 5: con
+Stalwart 0.16, el extractor del certificado que obtiene `mailway-proxy`
+(perfil `tls`, sección 5.2), así que **sin el perfil `proxy` la 0.16 no tiene
+certificado válido** (el instalador lo avisa, y `--migrar-motor` no empieza);
+con la 0.15, también el ACME del motor con Cloudflare desde **Ajustes →
+Servidor de correo**.
 
 ---
 
@@ -849,10 +939,16 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
   lo vuelve a desplegar (con `SKYWAY_TOKEN` o, si Skyway corre en este
   servidor, con un token temporal), y empareja de nuevo solo si Skyway no
   está ya conectado con el panel.
-  Todas las imágenes van con su versión exacta (p. ej. Stalwart `v0.15.5`,
+  Todas las imágenes van con su versión exacta (p. ej. Stalwart `v0.16.25`,
   `roundcube/roundcubemail:1.7.4-apache`, `python:3.13.16-alpine`): `pull`
-  nunca trae una versión que no se haya probado ni salta a la v0.16 de
-  Stalwart. Las versiones nuevas llegan con Dependabot (más abajo).
+  nunca trae una versión que no se haya probado. Las versiones nuevas llegan
+  con Dependabot (más abajo).
+- **Motor de correo**: ninguna actualización cambia de motor. Un servidor
+  con Stalwart 0.15 sigue en la 0.15 (con sus parches 0.15.x) y `mailway
+  update` le recuerda que **deja de recibir parches de seguridad el 1 de
+  diciembre de 2026** y cómo migrar; lo mismo dicen `--comprobar` y el aviso
+  de la actualización automática. Para pasar a la 0.16: `sudo mailway
+  migrar-motor` (sección 8.3).
 - **Extractor del certificado** (perfil `tls`): `--actualizar` lo recrea con
   el código nuevo. A mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml --profile tls up -d --force-recreate
@@ -897,9 +993,10 @@ ejecuta `mailway update --auto`:
    anterior** (`git reset --hard` al commit guardado e `instalar.sh
    --actualizar`, con las imágenes exactas de antes) y la comprueba igual.
    Nunca toca los volúmenes ni restaura bases de datos: los parches de
-   Stalwart (0.15.x) no migran los datos del motor —por eso solo los parches
-   llegan solos— y el panel anterior funciona sobre las migraciones nuevas,
-   que solo añaden.
+   Stalwart (0.15.x o 0.16.x, cada servidor en su serie) no migran los datos
+   del motor —por eso solo los parches llegan solos— y el panel anterior
+   funciona sobre las migraciones nuevas, que solo añaden. Nunca cambia de
+   motor.
 6. Avisa a la administración con la herramienta del panel
    (`tools/avisar.js`; sección 10): una línea por los canales (Discord,
    Telegram o webhook) cuando actualiza, una incidencia en **Avisos** (y por
@@ -928,9 +1025,13 @@ Stalwart) y de las acciones. Solo los **parches** (x.y.Z) se fusionan solos
 todas las comprobaciones de su commit: la CI, la imagen del panel construida
 y arrancada y, si cambian los compose, la pila de correo real con Stalwart y
 Roundcube (sección 16). Las versiones menores y mayores (Roundcube 1.8,
-Node 24, Traefik 3.8…) llegan como PR que revisa una persona, y **Stalwart
-nunca pasa solo de la 0.15**: la 0.16 eliminó la API de gestión que usa
-Mailway y su migración es un proyecto aparte.
+Node 24, Traefik 3.8…) llegan como PR que revisa una persona. Los parches de
+Stalwart llegan por separado para cada serie (`deploy/motor/stalwart-0.15` y
+`stalwart-0.16`) y, además de lo anterior, tienen que pasar las pruebas con
+los motores reales: el panel contra Stalwart de verdad, la pila con cada motor
+y la migración de la 0.15 a la 0.16 con su vuelta atrás. **Stalwart nunca
+cambia de serie solo** (ni de la 0.15 a la 0.16 ni a una 0.17): de la 0.15 a
+la 0.16 se pasa con `sudo mailway migrar-motor`.
 
 **Con Skyway, el panel** lo sigue desplegando Skyway desde GitHub: la
 comprobación incluye su `/api/health`, pero la vuelta atrás de `mailway
@@ -1073,7 +1174,142 @@ Después, en el panel, **Ajustes → Servidor de correo → Aplicar ajustes
 recomendados** (nombre del servidor, proxy y exención de la red interna), y
 añade al servicio del panel en Skyway las variables nuevas de la sección 6.4
 (`MAILWAY_WEBMAIL_TOKEN`, `MAILWAY_ENGINE_TRUSTED_NETWORK`,
-`MAILWAY_SETUP_TOKEN`…).
+`MAILWAY_SETUP_TOKEN`…). Estas instalaciones siguen con Stalwart 0.15: para
+pasar a la 0.16, la sección 8.3.
+
+### 8.3 Pasar de Stalwart 0.15 a 0.16
+
+Las instalaciones nuevas ya usan Stalwart 0.16. Las anteriores siguen con la
+0.15, que **deja de recibir parches de seguridad el 1 de diciembre de 2026**,
+hasta que se migran con una orden explícita. La migración convierte los datos
+con las herramientas oficiales de Stalwart, lo comprueba todo antes de abrir
+los puertos de la 0.16 y, si algo falla, vuelve sola a la 0.15. **El volumen
+de la 0.15 nunca se modifica**: es a la vez la copia de seguridad y la vuelta
+atrás.
+
+**Antes de empezar**
+
+- Actualiza Mailway (`sudo mailway update -y`) y, junto a Skyway, deja que
+  despliegue el panel: la migración necesita su herramienta del motor
+  (`server/dist/tools/motor.js`) y lo comprueba.
+- El certificado de IMAP y SMTP de la 0.16 es el de Traefik (sección 5.2):
+  junto a Skyway, su volumen de certificados (`TRAEFIK_ACME_VOLUME`, que
+  detecta el instalador); en la instalación autónoma, el Traefik propio
+  (perfil `proxy`). Si la 0.15 usaba su propio ACME con Cloudflare, no hace
+  falta nada más: Traefik ya obtiene el certificado de `mail.<dominio>`.
+- Espacio libre para una copia de los datos de la 0.15 y algo de margen (lo
+  comprueba).
+- Un momento tranquilo: el correo se detiene unos minutos. Una copia de
+  seguridad previa (sección 13) nunca está de más, aunque la migración no
+  toque el volumen de la 0.15.
+
+```bash
+sudo mailway migrar-motor        # explica lo que va a pasar y pide confirmación
+sudo mailway migrar-motor -y     # sin preguntar (desatendida)
+```
+
+Equivale a `sudo bash deploy/instalar.sh --migrar-motor`. Comparte el cerrojo
+de `mailway update`: la actualización automática no se cruza con ella.
+
+**Qué hace, en orden**
+
+1. **Comprobaciones, sin cambiar nada**: la 0.15 en marcha y sana y su
+   contraseña (una sola petición: cada intento fallido cuenta para su
+   bloqueo automático), la cola de salida (con más de 50 mensajes no
+   empieza: suele ser un problema de entrega que conviene resolver antes;
+   `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, el
+   origen del certificado, el espacio, las imágenes, el script oficial de
+   Stalwart (`migrate_v016.py`, fijado a su versión y comprobado con su
+   sha256) y sus dependencias, y el certificado que sirve la 0.15.
+2. **Panel en mantenimiento** (hasta 120 minutos, caduca solo): mientras
+   dura, ni el panel, ni las integraciones, ni el vigilante cambian nada del
+   motor. El panel copia el hash de la contraseña de cada buzón: la 0.16 ya
+   no lo devuelve, y el panel lo usa para «Mi buzón» y el webmail.
+3. **Volcado y conversión** con el script oficial, con la 0.15 aún en marcha.
+4. **Ventana sin correo**: se paran el webmail, el extractor y la 0.15, y sus
+   datos (montados en solo lectura) se copian a dos volúmenes nuevos con la
+   fecha (`mailway-stalwart-etc-<fecha>` y `mailway-stalwart-data-<fecha>`).
+   Se comprueba que la copia tiene los mismos ficheros y bytes.
+5. **La 0.16 en modo recuperación**, solo en la red interna: prepara los
+   datos de la 0.15 y `stalwart-cli apply` crea dominios, buzones (con su
+   contraseña), alias y firmas DKIM. Tiene que terminar con 0 fallos.
+6. **Primer arranque normal, aún sin puertos públicos**: el panel aplica sus
+   ajustes (también vuelve a suspender los buzones suspendidos, que el script
+   oficial no conserva) y se reinicia el motor si hace falta; el extractor
+   pone el certificado; y se comprueba que la 0.16 tiene todos los dominios,
+   buzones, alias y firmas DKIM de la 0.15, sus escuchas y su nombre, y que
+   sirve en 993, 465 y 587 el mismo certificado válido (si la 0.15 servía
+   uno).
+7. **El motor definitivo**, con los puertos públicos (`MAILWAY_MOTOR` y los
+   volúmenes nuevos quedan en `deploy/.env`), el webmail y el extractor, y la
+   comprobación de `--comprobar`.
+8. **Tareas del panel**: renueva en la 0.16 la credencial interna de las
+   claves de API y los formularios, marca las contraseñas de aplicación que
+   dejan de valer, avisa a la administración y a cada titular afectado y sale
+   del mantenimiento.
+
+**Si algo falla** antes de que pase la comprobación del paso 7 (también con
+Ctrl+C), vuelve sola a la 0.15 y termina con código 1: `deploy/.env` como
+estaba, la 0.15 sobre su volumen de siempre, el webmail y el extractor como
+estaban y el panel fuera de mantenimiento. Lo que creó el intento se queda en
+sus volúmenes con fecha, para revisarlo (la orden dice cómo borrarlos), y una
+migración nueva nunca los reutiliza. Si el fallo llega con la 0.16 ya
+abierta (paso 7), el correo recibido desde ese momento queda en el volumen de
+la 0.16: lo avisa, con la hora. Si tampoco puede volver del todo (código 2),
+dice qué falta; el volumen de la 0.15 está intacto: con
+`MAILWAY_MOTOR='stalwart-0.15'` en `deploy/.env`, `sudo bash
+deploy/instalar.sh --actualizar` y `sudo mailway comprobar`.
+
+**Cuánto dura.** El correo se detiene del paso 4 al 7. Lo más largo es la
+copia de los datos (depende del disco) y la preparación de la 0.16; en un
+servidor pequeño, unos minutos. Los servidores remitentes reintentan, así que
+el correo que llega mientras tanto no se pierde: llega con retraso. La cola de
+salida pasa a la 0.16, que la sigue reintentando.
+
+**Qué notan los usuarios**
+
+- Las contraseñas de los buzones no cambian, ni la configuración de los
+  programas de correo (servidores, puertos, autoconfiguración).
+- Las **contraseñas de aplicación** de dispositivos y servicios dejan de
+  valer: la 0.16 no conserva las de la 0.15. El panel avisa a cada titular
+  por correo y en «Mi buzón», donde las crea de nuevo, y a la administración
+  con la lista de buzones afectados.
+- **Skyway** vuelve a conectar solo los servicios que las usaban.
+- Las **claves de API** y los formularios siguen funcionando: el panel
+  renueva su credencial interna en el paso 8.
+- La web del motor (`https://mail.<dominio>/admin`) ya no se publica: la
+  0.16 se administra desde el panel.
+
+**Registro.** `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`,
+sin secretos, y `sin-migrar.txt`: los ajustes de la 0.15 que el script
+oficial no migra (los que necesita Mailway los vuelve a aplicar el panel). El
+volcado y el plan, que llevan contraseñas cifradas y claves DKIM, se borran al
+terminar (`MAILWAY_MIGRACION_CONSERVAR=1` los conserva, con permisos 600).
+
+**Volver a la 0.15 después** (`sudo mailway revertir-motor`, con la migración
+terminada): para la 0.16 y arranca la 0.15 sobre su volumen; el panel
+reaplica sus ajustes (y dice lo que se creó después y no está en la 0.15) y
+renueva las credenciales internas. El correo recibido desde la migración se
+queda en el volumen de la 0.16 y no se ve con la 0.15; lo creado o cambiado en
+el panel desde entonces no está en la 0.15, y las contraseñas de aplicación de
+la 0.16 no valen allí. Los volúmenes de la 0.16 se conservan; para volver a la
+0.16, se migra de nuevo (a volúmenes nuevos).
+
+**Retirar la 0.15** (`sudo mailway retirar-motor-anterior`), cuando lleves unos
+días sin problemas: borra solo el volumen de la 0.15 (`mailway-mail-data`, o
+el de `MAILWAY_MAIL_VOLUME`) y solo si ningún contenedor lo usa. Pide escribir
+su nombre (sin terminal: `-y` y `MAILWAY_RETIRAR_VOLUMEN=<nombre>`) y antes
+enseña la orden para guardar una copia. Sin él ya no hay vuelta a la 0.15.
+Dice también, sin borrarlos, los volúmenes de los intentos que volvieron
+atrás.
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `MAILWAY_MIGRACION_COLA_MAX` | `50` | Mensajes en la cola de salida a partir de los cuales no empieza. |
+| `MAILWAY_MIGRACION_MINUTOS` | `120` | Duración máxima del mantenimiento del panel (se quita al terminar). |
+| `MAILWAY_MIGRACION_DIR` | `deploy/.migracion-motor` | Carpeta de trabajo y registros (permisos 700). |
+| `MAILWAY_MIGRACION_CONSERVAR` | — | `1` conserva el volcado y el plan para revisarlos. |
+| `MAILWAY_RETIRAR_VOLUMEN` | — | Nombre del volumen de la 0.15, para `retirar-motor-anterior -y`. |
 
 ---
 
@@ -1230,21 +1466,28 @@ comprobar, trata la instalación como preproducción.
 - **Datos que respaldar**:
   - volumen `/data` del panel (SQLite y clave maestra; en Skyway, el volumen
     del servicio, que se puede programar desde Skyway);
-  - volumen `mailway-mail-data` (todo el correo y la configuración del motor);
+  - los volúmenes del motor, con todo el correo y su configuración: con
+    Stalwart 0.16, `mailway-stalwart-etc` y `mailway-stalwart-data` (en una
+    instalación migrada, los de `MAILWAY_STALWART_ETC_VOLUME` y
+    `MAILWAY_STALWART_DATA_VOLUME` de `deploy/.env`); con la 0.15,
+    `mailway-mail-data` (o el de `MAILWAY_MAIL_VOLUME`, en una instalación
+    que viene de la 0.x);
   - volumen `mailway-webmail-db` (ajustes de los usuarios del webmail);
   - `deploy/.env` (secretos; guárdalo cifrado).
   ```bash
   # Se detiene el motor unos segundos: copiar su base de datos en marcha
-  # puede dejarla incoherente.
+  # puede dejarla incoherente. Stalwart 0.16 (con los nombres de deploy/.env
+  # si la instalación se migró):
   docker stop mailway-mail
-  docker run --rm -v mailway-mail-data:/origen:ro -v /root/copias:/destino alpine \
-    tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
+  docker run --rm -v mailway-stalwart-etc:/origen/etc:ro -v mailway-stalwart-data:/origen/datos:ro \
+    -v /root/copias:/destino alpine tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
   docker start mailway-mail
+  # Stalwart 0.15: -v mailway-mail-data:/origen:ro en lugar de los dos volúmenes.
   ```
-  Con una instalación migrada desde 0.x, sustituye `mailway-mail-data` por el
-  valor de `MAILWAY_MAIL_VOLUME`.
-- **Registros del motor**: `docker logs -f mailway-mail` y
-  `docker exec mailway-mail ls /opt/stalwart/logs`.
+  El resumen del instalador muestra la orden exacta para cada servidor.
+- **Registros del motor**: `docker logs -f mailway-mail` (con la 0.16, todo
+  su registro de eventos; con la 0.15, además, `docker exec mailway-mail ls
+  /opt/stalwart/logs`).
 - **Cola de salida**: visible en **Resumen → Tu servicio** (panel de administración).
 - **Contraseña de administración del panel olvidada**: en el contenedor del
   panel (con Skyway, `skyway-<proyecto>-<servicio>`; en la instalación
@@ -1281,8 +1524,11 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
   autónoma) están en marcha y sanos;
 - en el motor: el nombre del servidor, la exención de la red interna y qué
   certificado usa (ACME propio, el de Traefik con el extractor o uno a mano).
-  Hace **una sola** petición autenticada a su API: si la contraseña de
-  `deploy/.env` no es la vigente, lo dice y no reintenta;
+  Con Stalwart 0.16, además, que toma la IP real de `X-Forwarded-For`, que
+  el 587 con STARTTLS está configurado **y escucha**, y su certificado por
+  defecto; con la 0.15, recuerda su fin de soporte. Hace **una sola**
+  petición autenticada a su API: si la contraseña de `deploy/.env` no es la
+  vigente, lo dice y no reintenta;
 - el certificado que sirve el motor en 993 y 465, verificado como lo haría
   un programa de correo (cadena de confianza, nombre y vigencia). Se
   comprueba desde el webmail, por la red interna y con el nombre público;
@@ -1349,7 +1595,12 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 |---|---|---|
 | `engine_unreachable` al conectar el motor | El compose del correo no está en marcha, o el panel no está en la red `skyway-edge` | `docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml up -d`. En Skyway, el servicio del panel necesita un dominio para quedar conectado a `skyway-edge`. |
 | El paso 1 del asistente responde «El token de puesta en marcha no es correcto» | Falta `?token=` o no coincide con `MAILWAY_SETUP_TOKEN` | Usa la dirección que imprime el instalador o copia el valor de `deploy/.env`. |
-| `mailway-mail` nunca llega a *healthy* | Núcleo sin IPv6, o puertos ocupados | Vuelve a ejecutar el instalador (cambia el motor a IPv4) y revisa `docker exec mailway-mail ls /opt/stalwart/logs`. |
+| `mailway-mail` nunca llega a *healthy* | Con la 0.15: núcleo sin IPv6, o puertos ocupados. Con la 0.16: casi siempre lo explica su registro | 0.16: `docker logs mailway-mail`. 0.15: vuelve a ejecutar el instalador (cambia el motor a IPv4) y revisa `docker exec mailway-mail ls /opt/stalwart/logs`. |
+| El instalador dice que el motor 0.16 no ha completado su primer arranque | El volumen de datos de la 0.16 ya tenía otra instalación, o la contraseña de `deploy/.env` no es la de ese motor | `docker logs mailway-mail`. El instalador no toca un volumen con datos: revisa `MAILWAY_STALWART_*_VOLUME` y `STALWART_ADMIN_PASSWORD` en `deploy/.env`. |
+| `--comprobar`: «El 587 está en los ajustes del motor, pero no escucha» | La 0.16 abre una escucha nueva solo al reiniciarse | `docker restart mailway-mail` (o `sudo mailway update -y --reaplicar`, que lo hace solo). |
+| `https://mail.<dominio>/admin` (o `/account`, `/login`) responde 403 | Con Stalwart 0.16, Traefik solo publica en ese nombre lo que necesitan los programas de correo | Es lo esperado: el motor se administra desde el panel. Por la red interna sigue en `http://mailway-mail:8080`. |
+| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
+| `mailway migrar-motor` ha vuelto a la 0.15 | Un paso no ha superado su comprobación | El motivo está en la salida y en `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`. La 0.15 sigue con sus datos de siempre; repite cuando esté resuelto (sección 8.3). |
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
 | No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
 | No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
@@ -1361,7 +1612,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Un envío por API devuelve `status: "failed"` con un error de certificado | El SMTP interno no puede verificar el certificado | Emite el certificado (sección 5) o, solo mientras tanto, `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en las variables del panel. |
 | El webmail no inicia sesión | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; comprueba en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
 | El webmail no muestra «Contraseña» o no la cambia | Falta `MAILWAY_WEBMAIL_TOKEN` (en `deploy/.env` y en el panel, con el mismo valor) o `MAILWAY_PANEL_INTERNAL_URL` no apunta al contenedor real del panel | Sección 6.5; recrea `mailway-webmail`. |
-| Una IP legítima no puede conectar al motor (bloqueo automático) | Stalwart bloquea de forma permanente una IP tras demasiados fallos de autenticación | Desbloquéala: `docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" -X DELETE http://mailway-mail:8080/api/settings/server.blocked-ip.<IP>` y después `…/api/reload/server.blocked-ip`. |
+| Una IP legítima no puede conectar al motor (bloqueo automático) | Stalwart bloquea de forma permanente una IP tras demasiados fallos de autenticación | Stalwart 0.15: `docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" -X DELETE http://mailway-mail:8080/api/settings/server.blocked-ip.<IP>` y después `…/api/reload/server.blocked-ip`. Stalwart 0.16: es un objeto `x:BlockedIp`; búscalo con `x:BlockedIp/get` y bórralo con `x:BlockedIp/set` (`destroy`), por JMAP en `http://mailway-mail:8080/jmap` y con la contraseña por la entrada estándar de curl (`-K -`, como en la sección 6.3). |
 | No se pueden crear buzones: `domain_ownership_pending` | La propiedad del dominio no está comprobada | Apunta el MX a este servidor o crea el TXT `_mailway.<dominio>` de la ficha del dominio y pulsa «Medir el DNS ahora». |
 | Los nombres `autoconfig.` o la marca blanca dan 404 de Traefik | El DNS aún no apunta aquí (Mailway no los publica), o Traefik no consulta las rutas de Mailway | Pulsa «Comprobar» cuando el DNS esté listo. Con Skyway 0.34, comprueba que Mailway está conectado en Skyway (sección 4.2); en versiones anteriores, el override (sección 4.3). |
 | Ajustes → Rutas de Traefik indica «Destino del panel: Sin detectar» | El panel no se desplegó con Skyway y no define `MAILWAY_PANEL_BACKEND_URL` | Define `MAILWAY_PANEL_BACKEND_URL=http://<contenedor del panel>:4100`. Sin él no se publican los nombres de autoconfiguración ni los dominios de tipo panel. |
@@ -1385,16 +1636,32 @@ Además de `ci.yml` (compilación y pruebas del panel, y la imagen del panel
 construida con su `Dockerfile` y arrancada hasta que responde en
 `/api/health`), el workflow `.github/workflows/stack.yml` prueba el despliegue
 cuando cambia `deploy/` (también en los PR de Dependabot que suben una imagen
-de los compose), a mano y cada semana (una misma etiqueta puede volver a
-publicarse con arreglos de su sistema base). `parches-automaticos.yml` solo
-fusiona un parche de Dependabot cuando todo esto ha terminado bien en su
-commit (sección 8.1):
+de los compose o de un motor), el driver del motor o la herramienta del motor
+del panel, a mano y cada semana (una misma etiqueta puede volver a publicarse
+con arreglos de su sistema base). `parches-automaticos.yml` solo fusiona un
+parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
+8.1):
 
 1. **Sin contenedores**: pruebas unitarias del extractor
    (`python3 -m unittest discover -s deploy/tls`, con un motor de laboratorio
-   y certificados generados con openssl), sintaxis de Python, PHP y Bash,
-   `shellcheck` y `docker compose config` de los dos compose, con y sin el
-   perfil `tls`. Además, `deploy/prueba-emparejado.sh` carga las funciones
+   y certificados generados con openssl) y del ayudante de la migración
+   (`deploy/motor`, con un motor JMAP de laboratorio y un script oficial
+   simulado), sintaxis de Python, PHP, JavaScript y Bash, `shellcheck` y
+   `docker compose config` de los dos compose con cada motor, con y sin el
+   perfil `tls` (sin `MAILWAY_MOTOR`, la imagen sigue siendo la 0.15, y la
+   cabecera `Forwarded` se quita en todos los routers del motor).
+   `deploy/prueba-motor016.sh` carga las funciones del instalador con
+   `docker`, Compose, el motor y la herramienta del motor del panel
+   simulados y comprueba la elección del motor (y que una actualización
+   nunca lo cambia), el aviso del fin de soporte de la 0.15, el primer
+   arranque de la 0.16 (sin mostrar la contraseña que devuelve el motor),
+   «provisionar» con su reinicio, el diagnóstico de la 0.16 y la migración:
+   el orden de los pasos, que el panel no toca el motor en modo
+   recuperación, y la vuelta atrás según dónde falle (`deploy/.env` como
+   estaba, la 0.15 sobre su volumen, ningún volumen borrado y la contraseña
+   del motor nunca en los argumentos de un proceso), además de
+   `--revertir-motor` y `--retirar-motor-anterior`, también cuando se
+   niegan. Además, `deploy/prueba-emparejado.sh` carga las funciones
    del instalador con `docker` y la API de Skyway simulados y comprueba el
    emparejado (correo de la cuenta, avisos de la puesta en marcha, que se
    repite con Skyway ya conectado y no toca otro panel), el paso del token de
@@ -1419,18 +1686,41 @@ commit (sección 8.1):
    sin responder vuelve a la anterior (código 1), y si la vuelta atrás falla
    termina con 2; una versión fallida se reintenta una vez y después no; con
    el servidor ya enfermo, sin el Traefik de Skyway, con cambios a mano o con
-   otra actualización en curso no se toca nada; una interrumpida se retoma; y
-   `auto-update on/off/status` escribe y retira las unidades de systemd.
+   otra actualización en curso no se toca nada; una interrumpida se retoma;
+   `auto-update on/off/status` escribe y retira las unidades de systemd; y,
+   con la 0.15, `update` avisa de su fin de soporte sin migrar nunca.
    El aviso al panel (`tools/avisar.js`) se prueba en
    `server/test/avisar.test.ts`.
-2. **Con contenedores reales** (`deploy/prueba-stack.py`): monta con
-   `deploy/instalar.sh --actualizar` Stalwart v0.15.5, Roundcube y el
-   extractor con la topología de producción (subred interna fija, un Skyway
-   simulado con certificados de laboratorio y credenciales desechables) y
-   comprueba que el extractor sustituye al volcado antiguo sin dejar claves de
-   otros dominios, el TLS de 993 y 465, el inicio de sesión IMAP desde el
-   webmail y directo, la autenticación SMTP en 465 y 587 (sin enviar correo),
-   la renovación y el paso a un comodín, `--comprobar` y `--probar-acceso`.
+2. **El panel contra los motores reales**: el driver de Stalwart 0.16
+   (`server/test/motor016-real.test.ts`) y el panel de extremo a extremo
+   (`server/test/panel-motor-real.test.ts`) contra Stalwart 0.16 y 0.15 de
+   verdad, con las imágenes de `deploy/motor/*/compose.yml` (las que sube
+   Dependabot).
+3. **La pila con contenedores reales** (`deploy/prueba-stack.py --motor
+   stalwart-0.16` y `--motor stalwart-0.15`): monta con `deploy/instalar.sh
+   --actualizar` el motor, Roundcube y el extractor con la topología de
+   producción (subred interna fija, un Skyway simulado con certificados de
+   laboratorio y credenciales desechables) y comprueba el TLS de 993 y 465
+   (y el 587 con STARTTLS), el inicio de sesión IMAP desde el webmail y
+   directo, la autenticación SMTP en 465 y 587 (sin enviar correo), la
+   renovación y el paso a un comodín, `--comprobar` y `--probar-acceso`. Con
+   la 0.15, además, que el extractor sustituye al volcado antiguo sin dejar
+   claves de otros dominios. Con la 0.16, el primer arranque, los ajustes de
+   Mailway con la herramienta del motor del panel (simulada en
+   `deploy/prueba-panel-motor.js`, con el contrato de la real), que una
+   actualización no los repite y, con un Traefik real, las rutas del nombre
+   del servidor de correo (403 en la administración y el autoservicio del
+   motor) y que la cabecera `Forwarded` no llega al motor.
+4. **La migración con contenedores reales** (`deploy/prueba-stack.py
+   --migracion`): una 0.15 con dos dominios con DKIM, buzones con su
+   contraseña, uno suspendido, un alias con un destino externo y un correo
+   entregado; un intento de migración que falla a propósito (vuelve solo a la
+   0.15 sin tocar `deploy/.env` ni perder nada); la migración, con el script
+   oficial y el CLI de Stalwart de verdad (el mismo correo se lee por IMAP con
+   la misma contraseña, el suspendido no entra, el alias conserva su destino
+   externo y las firmas DKIM son las mismas); `--revertir-motor`; otra
+   migración; y `--retirar-motor-anterior`, tras el que una actualización no
+   vuelve a crear el volumen de la 0.15.
    El Skyway simulado no tiene el contenedor `skyway` ni panel desplegado:
    la prueba recorre el camino en el que el instalador no despliega el panel
    ni empareja, y comprueba que eso no interrumpe la instalación. El
@@ -1442,4 +1732,7 @@ Las pruebas unitarias se ejecutan en cualquier equipo con Python 3 y openssl.
 La prueba de la pila crea y borra contenedores, redes y volúmenes con los
 nombres de Mailway: solo se ejecuta con `MAILWAY_PRUEBA_DESECHABLE=1`, se
 niega si encuentra restos de Mailway o de Skyway y nunca debe lanzarse en un
-servidor con datos.
+servidor con datos. Para ejecutarla en un equipo de desarrollo sin tocar su
+Docker, sirve un Docker aislado (Docker dentro de Docker): con `DOCKER_HOST`
+apuntando a él y `MAILWAY_PRUEBA_DIRECCION` a la dirección por la que se
+alcanzan sus puertos.
