@@ -829,9 +829,9 @@ export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }
         <rect width="64" height="64" fill={`url(#${p}f)`} />
         <rect width="64" height="64" fill={`url(#${p}l)`} />
         <g filter={`url(#${p}h)`}>
-          {/* El sobre (su borde de arriba es la M), el pliegue de la solapa y la solapa de abajo. */}
+          {/* El sobre (su borde de arriba es la M, con la V tan redondeada como los picos), el pliegue de la solapa y la solapa de abajo. */}
           <path
-            d="M11 22a4.6 4.6 0 0 1 7.6-3.5L32 31l13.4-12.5A4.6 4.6 0 0 1 53 22v21a4.5 4.5 0 0 1-4.5 4.5h-33A4.5 4.5 0 0 1 11 43z"
+            d="M11 22a4.6 4.6 0 0 1 7.6-3.5L28.86 28.07A4.6 4.6 0 0 0 35.14 28.07L45.4 18.5A4.6 4.6 0 0 1 53 22v21a4.5 4.5 0 0 1-4.5 4.5h-33A4.5 4.5 0 0 1 11 43z"
             fill={`url(#${p}s)`}
           />
           <path

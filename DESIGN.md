@@ -376,7 +376,8 @@ por iniciales, ilustraciones ni glifos.
   agua (`#cbe9e2` → `#9dd2c7`); el pliegue de la solapa de arriba, en
   petróleo al 9 %; y una sombra suave debajo (desenfoque 1.6, al 28 %).
 - **Geometría** (caja de 64): el sobre va de 11 a 53 en horizontal y sube 1
-  sobre el centro para compensar el peso de la V. Fuente: `Logotipo` en
+  sobre el centro para compensar el peso de la V. Los dos picos y la V
+  llevan el mismo radio (4.6), para que la M se lea como una sola curva. Fuente: `Logotipo` en
   `ui/kit.tsx`, `deploy/roundcube/mailway_theme/logo.svg` y `docs/marca/`.
 - **Con nombre** (`docs/marca/`): la tesela y «Mailway» en Figtree 650 a
   trazos. `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
