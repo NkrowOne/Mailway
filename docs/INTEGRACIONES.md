@@ -612,10 +612,17 @@ al motor) y `maintenance: { active, until }` (sección 2.10).
 error: tras reiniciar el motor, volver a aplicarlos lo deja vacío. Con 0.16 los
 ajustes recomendados suben además a 100 el máximo de contraseñas de aplicación
 por buzón del motor (5 por defecto), que cubre las 25 de dispositivos, las
-credenciales SMTP de las claves de API y las de los formularios.
-`POST /api/engine/acme` responde `409 engine_unsupported` con 0.16.
+credenciales SMTP de las claves de API y las de los formularios, y quitan a
+los usuarios del motor el autoservicio de contraseñas, contraseñas de
+aplicación y claves de API. Con 0.16 aplicarlos tarda 15 segundos o más (el
+motor recarga su configuración y repite sus comprobaciones), hasta minuto y
+medio: no pongas a esta ruta, ni a `POST /api/setup/engine` y
+`POST /api/setup/instance`, que también los aplican, un tiempo de espera más
+corto. `POST /api/engine/acme` responde `409 engine_unsupported` con 0.16.
 `POST /api/settings/engine/test` y `GET /api/dashboard/admin` (`engine.api`)
-indican también la versión detectada.
+indican también la versión detectada; con 0.16, la antigüedad del mensaje más
+antiguo de la cola (`queue.oldestSeconds`) es aproximada, porque el motor solo
+ordena la cola por el próximo reintento.
 
 **Entregabilidad del servidor.** `GET /api/deliverability/server` incluye
 `hostnameIpv6` (AAAA del nombre del servidor; `null` si no se pudo consultar,
@@ -670,7 +677,7 @@ personas va a la salida de errores; nunca imprime secretos). Código de salida:
 | `capturar` | `{ ok, capturados, yaEstaban, fallidos: [direcciones] }`. Copia en el panel el hash de la contraseña de **todos** los buzones (sección 3.4 de [SEGURIDAD.md](SEGURIDAD.md)). Código 1 si falla alguno o si el motor no es Stalwart 0.15. |
 | `mantenimiento on [--minutos N]` | `{ ok, activo, hasta }`. Activa el modo mantenimiento durante `N` minutos (de 1 a 1440; 120 por defecto); repetirla fija el plazo de nuevo desde ese momento. |
 | `mantenimiento off` | `{ ok, activo, hasta }`. |
-| `provisionar` | `{ ok, api, aplicados: [textos], avisos: [textos], restartRequired: [textos], errores: [textos], suspensiones: { reaplicadas, fallidas: [direcciones] }, faltan: { dominios, buzones, alias } }`. Aplica los ajustes recomendados, vuelve a suspender en el motor los buzones suspendidos (la migración los deja activos) y comprueba que el motor tiene todos los dominios, buzones y alias del panel. Código 1 ante cualquier error o si falta algo. `restartRequired` no vacío **no** es un error: se reinicia el motor y se repite la orden, que entonces lo devuelve vacío. |
+| `provisionar` | `{ ok, api, aplicados: [textos], avisos: [textos], restartRequired: [textos], errores: [textos], suspensiones: { reaplicadas, fallidas: [direcciones] }, faltan: { dominios, buzones, alias } }`. Aplica los ajustes recomendados (con 0.16 tarda 15 segundos o más), vuelve a suspender en el motor los buzones suspendidos (la migración los deja activos) y comprueba que el motor tiene todos los dominios, buzones y alias del panel. Código 1 ante cualquier error o si falta algo. `restartRequired` no vacío **no** es un error: se reinicia el motor y se repite la orden, que entonces lo devuelve vacío. |
 | `tras-migrar` | `{ ok, api, credencialesInternas: { renovadas, fallidas: [textos] }, contrasenasInvalidadas, avisados, avisosFallidos: [direcciones], sinCopia }`. Renueva en el motor nuevo las credenciales SMTP internas de las claves de API y de los formularios, marca como invalidadas las contraseñas de aplicación creadas con el motor anterior (sección 2.6), avisa a la administración y a los titulares, y cuenta los buzones sin copia del hash (`sinCopia`: sus titulares no podrán entrar en «Mi buzón» hasta que se restablezca su contraseña). Idempotente: repetirla solo reintenta lo que falló. Código 1 si el motor no responde o falla alguna credencial interna (un aviso que no se ha podido enviar no lo es: queda en `avisosFallidos` y se reintenta al repetirla). |
 
 `capturar`, `provisionar` y `tras-migrar` funcionan con el modo mantenimiento

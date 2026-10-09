@@ -364,9 +364,10 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     bloquearía la IP del webmail o del proxy para todos y serviría de oráculo
     de contraseñas sin el límite de intentos del panel. Con 0.15, si la copia
     no coincide con lo que guarda el motor (un cambio hecho fuera del panel),
-    se vuelve a leer del motor; con 0.16, Ajustes comprueba que el
-    autoservicio del motor esté bloqueado, para que nadie la cambie fuera del
-    panel;
+    se vuelve a leer del motor; con 0.16, los ajustes recomendados quitan a
+    los usuarios del motor el autoservicio de contraseñas, contraseñas de
+    aplicación y claves de API, para que nadie las cambie fuera del panel, y
+    Ajustes comprueba que siga así;
   - el motor exime de su bloqueo **solo** la red interna `mailway-internal`
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
