@@ -35,7 +35,7 @@ A diferencia de un panel de hosting genérico o de contratar Mailgun/Google Work
 
 ## Capabilities and Constraints
 
-- Motor de correo desacoplado tras la interfaz `MailEngine` (driver Stalwart + modo demostración sin servidor real). Stalwart queda fijado en v0.15.5: la v0.16 eliminó la API REST de gestión.
+- Motor de correo desacoplado tras la interfaz `MailEngine` (drivers de Stalwart 0.15 y 0.16, que el panel elige solo, + modo demostración sin servidor real). Las instalaciones nuevas usan Stalwart 0.16.25; las anteriores siguen en 0.15.5 hasta migrar con `mailway migrar-motor`, con vuelta atrás.
 - Límites por plan: dominios, buzones, alias, cuota por buzón, envíos API por día y por minuto (compartidos por todas las claves del cliente). Las altas simultáneas no pueden superarlos.
 - DNS: si la zona está en Cloudflare, la app crea los registros por el usuario (vista previa de cambios y conflictos, sin proxy, fusionando el SPF y sin tocar MX ajenos sin confirmación). En cualquier otro proveedor el DNS es de terceros: la app muestra los registros listos para copiar, ofrece un fichero de zona y verifica la propagación en vivo.
 - Propiedad de los dominios: no se crean buzones ni alias hasta comprobar que el dominio es de quien lo da de alta (MX hacia el servidor o TXT de verificación). Nadie puede quedarse con el correo de un dominio ajeno.

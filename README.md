@@ -11,7 +11,8 @@ Mailway convierte un servidor propio en un proveedor de correo para varios
 clientes: cada cliente tiene un plan con límites, un panel donde gestiona sus
 dominios, buzones, alias y claves de API, y los titulares de los buzones
 configuran sus dispositivos con un enlace o desde su propio portal. El motor
-de correo es [Stalwart](https://stalw.art) v0.15 y el webmail,
+de correo es [Stalwart](https://stalw.art) (0.16 en las instalaciones
+nuevas; las anteriores siguen en 0.15 hasta que se migran) y el webmail,
 [Roundcube](https://roundcube.net), ambos en español.
 
 > Pensado para desplegarse junto a [Skyway](https://github.com/NkrowOne/Skyway):
@@ -132,9 +133,12 @@ npm run typecheck && npm run lint && npm test && npm run build
 
 - **Panel**: Node 20+ / TypeScript / Fastify, estado en SQLite (`/data`), web
   React + Vite + Tailwind servida por el mismo proceso en el puerto 4100.
-  Habla con el motor por su API REST de gestión.
-- **Motor**: Stalwart **v0.15.5, fijado** (SMTP, IMAP, ManageSieve, antispam,
-  DKIM). La v0.16 eliminó la API REST que usa Mailway.
+  Habla con el motor por su API de gestión: REST con la 0.15 y JMAP con la
+  0.16 (la averigua sola).
+- **Motor**: Stalwart con versión exacta (SMTP, IMAP, ManageSieve, antispam,
+  DKIM): **0.16.25** en las instalaciones nuevas y **0.15.5** en las
+  anteriores, que pasan a la 0.16 con `sudo mailway migrar-motor` (con vuelta
+  atrás). El soporte de seguridad de la 0.15 termina el 1 de diciembre de 2026.
 - **Webmail**: Roundcube 1.7, conectado al motor por una red interna.
 - **Proxy**: el Traefik de Skyway (o uno propio con `--profile proxy`) da
   HTTPS al panel, al webmail y a los nombres de autoconfiguración.

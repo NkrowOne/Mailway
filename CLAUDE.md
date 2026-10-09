@@ -15,8 +15,10 @@ Servicio de correo multi-cliente auto-alojado: el administrador da de alta
 clientes con un plan; cada cliente gestiona sus dominios (DNS guiado o en
 Cloudflare, con verificación de propiedad), buzones, alias, contraseñas de
 aplicación y claves de API; los titulares configuran sus dispositivos con un
-enlace de configuración o desde «Mi buzón». Motor Stalwart v0.15.5 (fijado),
-webmail Roundcube, panel Node + SQLite. Se despliega junto a
+enlace de configuración o desde «Mi buzón». Motor Stalwart con versión
+exacta por serie: 0.16.25 en las instalaciones nuevas y 0.15.5 en las
+anteriores hasta que se migran (`mailway migrar-motor`); webmail Roundcube,
+panel Node + SQLite. Se despliega junto a
 [Skyway](https://github.com/NkrowOne/Skyway) (≥ 0.34 lo gestiona por
 proyecto y publica sus rutas de Traefik) o de forma autónoma.
 
@@ -65,7 +67,11 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   `auto-update on|off|status`, su temporizador de systemd), pruebas de los
   scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
-  (`docker-compose.standalone.yml`), `.env.example`, configuración de
+  (`docker-compose.standalone.yml`), el motor de cada serie
+  (`motor/stalwart-0.15/compose.yml` y `motor/stalwart-0.16/compose.yml`, que
+  elige `MAILWAY_MOTOR`), el ayudante de la migración (`motor/migracion.py`),
+  las pruebas de la pila con contenedores reales (`prueba-stack.py`,
+  `prueba-motor016.sh`, `prueba-panel-motor.js`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
   (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
   del override de Traefik y punto de entrada de la imagen.
@@ -125,7 +131,8 @@ prueba que lo reproduce.
   `'altas:dominios'`) y con `assertWithinLimit` dentro del cerrojo. Buzones y
   alias exigen `assertDomainOwnership(domainId)`.
 - **Motor**: las rutas nunca hablan con Stalwart directamente, siempre vía
-  `getEngine()`. Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
+  `getEngine()`, que averigua si el motor es 0.15 (API REST) o 0.16 (JMAP) y
+  usa su driver (`engine/stalwart.ts` o `engine/stalwart016.ts`). Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
   cuerpo `{ error }`; el driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
   `engine_unreachable`). Los ajustes de Stalwart (`POST /api/settings`)
@@ -161,7 +168,8 @@ prueba que lo reproduce.
 - **Dependencias e imágenes**: versión exacta siempre (`Dockerfile` y
   compose, nunca `1.7.x` ni `22-alpine`). Dependabot (`.github/dependabot.yml`)
   propone las nuevas y `parches-automaticos.yml` fusiona solo los parches
-  cuando todo ha pasado; Stalwart se queda en 0.15.x.
+  cuando todo ha pasado. Stalwart solo recibe parches dentro de su serie;
+  cambiar de serie es una migración (`mailway migrar-motor`).
 
 ## Seguridad (imprescindible)
 

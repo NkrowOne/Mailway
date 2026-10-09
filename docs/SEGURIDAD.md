@@ -374,12 +374,13 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   - `http.use-x-forwarded=true` hace que el motor vea la IP real de quien llega
     por Traefik, en lugar de bloquear la IP de Traefik para todos;
   - Traefik **borra la cabecera `Forwarded`** antes de llegar al motor
-    (middleware `mailway-mail-sin-forwarded` de los compose). Stalwart lee
+    (middleware `mailway-mail-sin-forwarded`, en `deploy/motor/*/compose.yml`,
+    encadenado en cada router del motor). Stalwart lee
     `Forwarded: for=` antes que `X-Forwarded-For`, y Traefik solo reescribe
     las `X-Forwarded-*`: sin el middleware, cualquiera podía decir que venía de
     la red exenta y probar contraseñas sin límite contra
-    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en los dos
-    compose.
+    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en cada
+    router, con los dos motores.
 - **Pendiente con el proxy de Cloudflare**: si Traefik confía en las IP de
   Cloudflare (`forwardedHeaders.trustedIPs`), conserva el `X-Forwarded-For`
   que llega por Cloudflare, cuya primera dirección pone el cliente, y
@@ -417,7 +418,60 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     invalidadas (ya no cuentan ni se ofrecen como activas), se avisa a la
     administración y a cada titular, y se revocan sin llamar al motor;
   - las credenciales SMTP internas de las claves de API y de los formularios
-    se renuevan en el motor nuevo y se guardan cifradas, como antes.
+    se renuevan en el motor nuevo y se guardan cifradas, como antes;
+  - al volver a la 0.15 (`mailway revertir-motor`), las contraseñas de
+    aplicación de la 0.15 que el motor todavía tiene vuelven a valer, y las
+    creadas en la 0.16 se marcan como invalidadas: no existen en la 0.15.
+
+### Stalwart 0.16 y el cambio de motor
+
+- **Credencial del motor 0.16.** `STALWART_RECOVERY_ADMIN=admin:<STALWART_ADMIN_PASSWORD>`
+  en el entorno de `mailway-mail` es la credencial de administración
+  permanente del motor: la 0.16 la acepta en cada arranque, también fuera del
+  modo de recuperación. Quien lea `deploy/.env` (600, root) o
+  `docker inspect mailway-mail` (root o grupo `docker`) la tiene. Para
+  cambiarla: `deploy/.env` y las variables del panel, y recrear el motor. La
+  cuenta `admin@<servidor>` que crea el primer arranque (todos los permisos,
+  contraseña que nadie guarda) se borra en cuanto el motor arranca, si es la
+  única cuenta.
+- **`mail.<dominio>` con la 0.16.** Traefik solo deja pasar una lista de rutas
+  (`/jmap`, `/.well-known/`, `/dav/`, autoconfiguración de Thunderbird y
+  Outlook, `/healthz/`, `/robots.txt`); todo lo demás (administración
+  `/admin`, autoservicio `/account`, `/login`, `/api/…` y lo que añada un
+  parche) responde 403 con un router de prioridad mínima y una lista de IP que
+  solo admite 127.0.0.1. `/jmap` queda abierto a los titulares: lo que pueden
+  hacer con los objetos de gestión (`x:…`) depende de los permisos de su rol,
+  de los que el panel retira el autoservicio. La cabecera `Forwarded` se borra
+  en los tres routers.
+- **Suspensión en 0.16.** Se quita el permiso `authenticate`, que el motor
+  exige con cualquier credencial: contraseña, contraseña de aplicación, token
+  OAuth o clave de API (no hay un permiso aparte para OAuth, como en la 0.15).
+- **Migración (`mailway migrar-motor`).** Carpeta de trabajo
+  `deploy/.migracion-motor/` (700). El volcado y el plan llevan hashes de
+  contraseñas, claves privadas DKIM y secretos de la 0.15: ficheros 600 que se
+  borran al terminar, también si vuelve atrás (`MAILWAY_MIGRACION_CONSERVAR=1`
+  los deja); el registro no lleva secretos (la prueba de la pila lo
+  comprueba). La contraseña del motor llega al ayudante por la entrada
+  estándar y al CLI de Stalwart por el entorno, nunca en los argumentos. El
+  script oficial (`migrate_v016.py`) y sus dependencias se descargan de URL
+  fijadas y se comprueba su sha256; se ejecutan con `python -I -B` en un
+  contenedor efímero sin capacidades, sin privilegios nuevos, con el sistema
+  de ficheros de solo lectura (salvo la carpeta de trabajo) y solo en
+  `mailway-internal`.
+- **Motores temporales.** Comparten la IP fija y el alias `mailway-mail` (red
+  interna y de Traefik) pero no publican puertos ni llevan etiquetas de
+  Traefik (`exposedbydefault=false`). El de recuperación solo escucha en el
+  8080. Las suspensiones se vuelven a aplicar, por si el script oficial no las
+  conserva, ANTES de abrir los puertos de correo.
+- **Datos que se conservan.** El volumen de la 0.15 (correo, hashes y claves
+  DKIM) sigue intacto tras migrar, como vuelta atrás, hasta
+  `mailway retirar-motor-anterior` (que exige escribir su nombre). Los
+  volúmenes de intentos que volvieron atrás también conservan datos: se
+  listan, no se borran solos. Inclúyelos en la política de copias y de
+  borrado.
+- **Certificado con la 0.16.** El motor corre como el usuario 2000: el
+  extractor escribe la clave privada con ese grupo y permisos 0640 (carpetas
+  0750), para lo que conserva solo la capacidad `CHOWN`.
 
 ## 8. Rutas públicas
 
