@@ -86,10 +86,18 @@ services:
       - traefik.http.routers.mailway-mail.entrypoints=web
       - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
       - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
-      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https
+      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https,mailway-mail-sin-forwarded
       - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`)
       - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
       - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
+      # El motor (con use-x-forwarded) toma la IP del cliente de la cabecera
+      # Forwarded ANTES que de X-Forwarded-For, y Traefik deja pasar Forwarded
+      # tal cual (solo reescribe X-Forwarded-*). Sin quitarla, cualquiera podía
+      # decir que venía de la red del webmail (exenta del bloqueo automático)
+      # y probar contraseñas sin límite contra https://MAIL_HOSTNAME. Un valor
+      # vacío borra la cabecera; X-Forwarded-For sigue llegando con la IP real.
+      - traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded=
+      - traefik.http.routers.mailway-mail-secure.middlewares=mailway-mail-sin-forwarded
       - traefik.http.services.mailway-mail.loadbalancer.server.port=8080
     healthcheck:
       # La imagen (Debian slim) no trae wget ni curl: se pregunta a

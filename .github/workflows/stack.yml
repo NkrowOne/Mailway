@@ -70,6 +70,11 @@ jobs:
           for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
             docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
             docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+            # El motor no debe recibir la cabecera Forwarded del cliente: la lee
+            # antes que X-Forwarded-For y Traefik la deja pasar (ver el compose).
+            config=$(docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)
+            grep -qF 'traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded: ""' <<<"$config"
+            grep -qE 'traefik\.http\.routers\.mailway-mail-secure\.middlewares: ([^ ]*,)?mailway-mail-sin-forwarded(,|$)' <<<"$config"
           done
 
   pila:

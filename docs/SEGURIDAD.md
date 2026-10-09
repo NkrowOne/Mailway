@@ -311,7 +311,20 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
   - `http.use-x-forwarded=true` hace que el motor vea la IP real de quien llega
-    por Traefik, en lugar de bloquear la IP de Traefik para todos.
+    por Traefik, en lugar de bloquear la IP de Traefik para todos;
+  - Traefik **borra la cabecera `Forwarded`** antes de llegar al motor
+    (middleware `mailway-mail-sin-forwarded` de los compose). Stalwart lee
+    `Forwarded: for=` antes que `X-Forwarded-For`, y Traefik solo reescribe
+    las `X-Forwarded-*`: sin el middleware, cualquiera podía decir que venía de
+    la red exenta y probar contraseñas sin límite contra
+    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en los dos
+    compose.
+- **Pendiente con el proxy de Cloudflare**: si Traefik confía en las IP de
+  Cloudflare (`forwardedHeaders.trustedIPs`), conserva el `X-Forwarded-For`
+  que llega por Cloudflare, cuya primera dirección pone el cliente, y
+  Stalwart toma justo esa. Antes de confiar en Cloudflare en el Traefik que
+  sirve `MAIL_HOSTNAME`, el motor necesita delante una pasarela que calcule la
+  IP real (la última que no es de un proxy de confianza) y le pase solo esa.
 - **Compromiso conocido**: con `http.use-x-forwarded=true`, un contenedor
   conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar con
   `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
