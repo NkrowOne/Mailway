@@ -515,6 +515,15 @@ describe(`Panel contra un motor real (${API || 'sin motor'})`, { skip: omitir },
     const reactivado = esperarOk(await admin('PATCH', `/api/clients/${clientId}`, { suspended: false }), 'reactivar el cliente');
     assert.deepEqual(reactivado.suspension, { updated: 1, skipped: 1, failed: [] });
     assert.equal(await correo.imapLogin(ana.email, ana.password), 'ok');
+    // Suspender y reactivar no la saca del alias: con «set roles», Stalwart
+    // 0.15.5 sacaba al buzón de todas sus listas.
+    const asuntoAlias = `Alias tras suspender ${sufijo}`;
+    await correo.smtpEntregar({ de: REMITENTE_EXTERNO, para: ALIAS, asunto: asuntoAlias });
+    assert.equal(
+      await hasta(() => correo.imapBuscar(ana.email, ana.password, asuntoAlias), (n) => n > 0, 60_000),
+      1,
+      'el correo del alias sigue llegando a ana',
+    );
     assert.equal(await correo.imapLogin(beto.email, beto.password), 'rechazado', 'beto sigue suspendido');
 
     esperarOk(await admin('PATCH', `/api/mailboxes/${beto.id}`, { status: 'active' }), 'reactivar el buzón');

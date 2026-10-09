@@ -10,6 +10,7 @@ import { checkEngineHostname, checkEngineTls } from './engineops';
 import { mantenimientoActivo } from './mantenimiento';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
+import { repararSuspensiones } from './suspensiones';
 import {
   asegurarWebmailDeDominio,
   listClientDomains,
@@ -406,6 +407,14 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     // Las tres rápidas son independientes: en serie sumaban sus tiempos de
     // espera y, con el webmail caído, la vuelta tardaba 10 s de más.
     if (!mantenimiento) await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);
+    // La corrección única de lo que dejó la suspensión anterior, si el
+    // arranque no pudo hacerla (motor sin responder); hecha una vez, no
+    // vuelve a tocar el motor. Nunca con el motor en mantenimiento.
+    if (!mantenimiento) {
+      await paso('buzones suspendidos', async () => {
+        await repararSuspensiones();
+      }, log);
+    }
     // Las lentas van después y ya se autolimitan por frecuencia.
     await paso('listas negras', checkBlacklists, log);
     if (!mantenimiento) await paso('dns de dominios', checkDomainDns, log);

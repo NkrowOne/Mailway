@@ -2,6 +2,7 @@ import { buildApp } from './app';
 import { config } from './config';
 import { applyAdminFromEnv } from './modules/adminenv';
 import { capturarSiProcede } from './modules/credenciales';
+import { iniciarReparacionSuspensiones } from './modules/suspensiones';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -34,6 +35,10 @@ async function main(): Promise<void> {
     `Mailway escuchando en http://${config.host}:${config.port} (datos en ${config.dataDir})`,
   );
 
+  // Sin esperarla: corrige una vez en el motor lo que dejó la forma anterior
+  // de suspender (buzones que devolvían su correo y alias sin sus destinos).
+  // Si el motor aún no responde (arrancan a la vez), la reintenta el vigilante.
+  iniciarReparacionSuspensiones({ info: (msg) => app.log.info(msg), warn: (msg) => app.log.warn(msg) });
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
 
   // Con Stalwart 0.15, copia en segundo plano el hash de los buzones que aún

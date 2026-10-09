@@ -15,8 +15,10 @@ import { Stalwart015Engine } from '../src/engine/stalwart';
  * - un GET omite los campos vacíos (un buzón sin roles llega SIN «roles»);
  * - el rol «user» da los permisos de un buzón, entre ellos `authenticate`
  *   (entrar) y `email-receive` (recibir correo), y `disabledPermissions` los
- *   quita uno a uno (comprobado con el 0.15.5 real: sin el rol, el correo
- *   que llega rebota);
+ *   quita uno a uno (comprobado con el 0.15.5 real: sin el rol, el correo que
+ *   llega se devuelve al remitente);
+ * - roles, listas y grupos son una misma relación: «set roles» la reescribe
+ *   entera (el principal sale de todas sus listas) y «addItem» solo añade;
  * - un HTTP 404 solo significa «ruta desconocida»;
  * - addItem de un secreto que no es $app$ sustituye la contraseña principal.
  */
@@ -58,6 +60,13 @@ function sinVacios(p: Principal): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(p).filter(([, v]) => !(Array.isArray(v) && v.length === 0) && v !== undefined),
   );
+}
+
+/** Como «set roles» en 0.15.5: reescribe roles, listas y grupos a la vez. */
+function sacarDeLasListas(nombre: string): void {
+  for (const p of principales.values()) {
+    if (p.type === 'list' && p.members) p.members = p.members.filter((m) => m !== nombre);
+  }
 }
 
 function faltaMiembro(miembros: unknown): string | null {
@@ -147,7 +156,13 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       if (falta) return respuesta(200, { error: 'notFound', item: falta });
     }
     for (const c of cambios) {
-      if (c.action === 'set') (actual as unknown as Record<string, unknown>)[c.field] = c.value;
+      if (c.action === 'set') {
+        (actual as unknown as Record<string, unknown>)[c.field] = c.value;
+        if (c.field === 'roles') sacarDeLasListas(nombre);
+      } else if (c.action === 'addItem' && c.field === 'roles') {
+        const roles = actual.roles ?? [];
+        if (!roles.includes(c.value as string)) actual.roles = [...roles, c.value as string];
+      }
       if (c.field !== 'secrets') continue;
       const secretos = actual.secrets ?? [];
       const valor = String(c.value);
@@ -196,6 +211,16 @@ function tienePermiso(nombre: string, permiso: string): boolean {
 function buzon(nombre: string, extra: Partial<Principal> = {}): void {
   principales.set(nombre, { type: 'individual', secrets: [sha512Crypt('clave-correcta')], roles: ['user'], ...extra });
 }
+
+/** Lo que se pide al motor al suspender y al reactivar un buzón. */
+const SUSPENDER = [
+  { action: 'addItem', field: 'roles', value: 'user' },
+  { action: 'set', field: 'disabledPermissions', value: ['authenticate', 'authenticate-oauth'] },
+];
+const REACTIVAR = [
+  { action: 'addItem', field: 'roles', value: 'user' },
+  { action: 'set', field: 'disabledPermissions', value: [] },
+];
 
 /* --------------------------------- Alias ---------------------------------- */
 
@@ -320,6 +345,7 @@ test('addAppPassword devuelve el secreto propuesto y la referencia $app$ que gua
 test('suspender un buzón le impide entrar, pero el correo le sigue llegando', async () => {
   buzon('ana@acme.test');
   await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(llamadas.at(-1)?.body, SUSPENDER);
   assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false, 'no entra por IMAP, SMTP ni webmail');
   assert.equal(tienePermiso('ana@acme.test', 'authenticate-oauth'), false, 'ni con un token OAuth que tuviera');
   // Antes se le quitaba el rol «user» y con él email-receive: el correo rebotaba.
@@ -327,28 +353,87 @@ test('suspender un buzón le impide entrar, pero el correo le sigue llegando', a
   assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
 
   await motor.updateMailbox('ana@acme.test', { suspended: false });
-  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), true);
-  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true);
+  assert.deepEqual(llamadas.at(-1)?.body, REACTIVAR);
+  assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
   assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
+});
+
+test('suspender de nuevo un buzón suspendido como antes (sin el rol «user») le devuelve el correo', async () => {
+  // Así lo dejaba la versión anterior: sin el rol, el motor devolvía su correo.
+  buzon('ana@acme.test', { roles: [] });
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), false);
+
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(llamadas.at(-1)?.body, SUSPENDER);
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true);
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false);
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
 });
 
 test('un buzón suspendido como antes (sin el rol «user») se reactiva del todo', async () => {
   buzon('ana@acme.test', { roles: [] });
   assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
   await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.deepEqual(llamadas.at(-1)?.body, REACTIVAR);
   assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
 });
 
-test('adoptar un buzón huérfano suspendido lo deja activo', async () => {
+test('cambiar el nombre o la cuota no toca la suspensión', async () => {
   buzon('ana@acme.test', { disabledPermissions: ['authenticate', 'authenticate-oauth'] });
-  await motor.createMailbox({ email: 'ana@acme.test', passwordHash: sha512Crypt('nueva-clave-segura') });
-  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), true);
-  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
+  await motor.updateMailbox('ana@acme.test', { displayName: 'Ana', quotaBytes: 1024 });
+  assert.deepEqual(llamadas.at(-1)?.body, [
+    { action: 'set', field: 'description', value: 'Ana' },
+    { action: 'set', field: 'quota', value: 1024 },
+  ]);
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false);
+});
+
+test('suspender y reactivar no sacan al buzón de sus alias', async () => {
+  buzon('ana@acme.test');
+  buzon('bob@acme.test');
+  principales.set('ventas@acme.test', { type: 'list', members: ['ana@acme.test', 'bob@acme.test'], externalMembers: [] });
+
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+
+  // Un buzón sin el rol (suspendido como antes) lo recupera sin salir de nada.
+  principales.get('bob@acme.test')!.roles = [];
+  await motor.updateMailbox('bob@acme.test', { suspended: true });
+  assert.deepEqual(principales.get('bob@acme.test')?.roles, ['user']);
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+});
+
+test('adoptar un buzón huérfano suspendido, de la forma actual o de la anterior, lo deja activo y fuera de las listas que le quedaran', async () => {
+  for (const suspension of [{ disabledPermissions: ['authenticate', 'authenticate-oauth'] }, { roles: [] }]) {
+    principales.clear();
+    buzon('ana@acme.test', suspension);
+    // Una lista huérfana del motor que el panel no conoce.
+    principales.set('vieja@acme.test', { type: 'list', members: ['ana@acme.test'], externalMembers: [] });
+    const hash = sha512Crypt('nueva-clave-segura');
+    await motor.createMailbox({ email: 'ana@acme.test', passwordHash: hash });
+    assert.deepEqual(
+      (llamadas.at(-1)?.body as { field: string; value: unknown }[]).filter(
+        (c) => c.field === 'roles' || c.field === 'disabledPermissions',
+      ),
+      [
+        { action: 'set', field: 'roles', value: ['user'] },
+        { action: 'set', field: 'disabledPermissions', value: [] },
+      ],
+    );
+    assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+    const credenciales = await motor.readMailboxCredentials('ana@acme.test');
+    assert.equal(credenciales?.suspended, false);
+    assert.equal(credenciales?.passwordHash, hash);
+    assert.deepEqual(principales.get('vieja@acme.test')?.members, []);
+  }
 });
 
 /* ------------------------ readMailboxCredentials -------------------------- */
 
-test('readMailboxCredentials: hash principal, contraseñas de aplicación y suspensión sin «roles»', async () => {
+test('readMailboxCredentials: hash principal, contraseñas de aplicación y suspensión de las dos formas', async () => {
   const principal = sha512Crypt('clave-correcta');
   buzon('ana@acme.test', { secrets: [principal, '$app$mw-movil-1a2b$$6$sal$hash'] });
   assert.deepEqual(await motor.readMailboxCredentials('ana@acme.test'), {
@@ -357,9 +442,19 @@ test('readMailboxCredentials: hash principal, contraseñas de aplicación y susp
     suspended: false,
   });
 
-  // Suspendido: roles [] → el GET omite la clave.
+  // Como suspende ahora: con el rol, sin permiso para autenticarse.
+  principales.get('ana@acme.test')!.disabledPermissions = ['authenticate', 'authenticate-oauth'];
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
+
+  // Como suspendía antes: roles [] → el GET omite la clave.
+  principales.get('ana@acme.test')!.disabledPermissions = [];
   principales.get('ana@acme.test')!.roles = [];
   assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
+
+  // Otro permiso desactivado no es una suspensión.
+  principales.get('ana@acme.test')!.roles = ['user'];
+  principales.get('ana@acme.test')!.disabledPermissions = ['email-send'];
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
 
   // Un secreto que no es $6$ no se puede comprobar en el panel: «sin hash».
   buzon('bob@acme.test', { secrets: ['{SHA}otro-formato'] });

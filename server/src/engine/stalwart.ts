@@ -41,14 +41,35 @@ const CERT_FILE_KEYS = ['certificate.mailway.cert', 'certificate.default.cert'];
 
 /**
  * Permisos que se quitan a un buzón suspendido: entrar con contraseña (IMAP,
- * SMTP, webmail, HTTP) y con un token OAuth que ya tuviera. El rol «user» se
- * conserva, porque es el que da `email-receive`: sin él (roles: [], como se
- * suspendía antes) Stalwart 0.15.5 rechaza la entrega local y el correo
- * rebota al remitente (comprobado con el motor real en
- * test/panel-motor-real.test.ts). Así un buzón suspendido no entra por ningún
- * lado y el correo le sigue llegando, como en 0.16.
+ * SMTP, webmail, HTTP, también con sus contraseñas de aplicación) y con un
+ * token OAuth que ya tuviera. El rol «user» se conserva, porque es el que da
+ * `email-receive`: sin él (roles: [], como se suspendía antes) Stalwart 0.15.5
+ * acepta el mensaje en el 25 y después lo devuelve al remitente (comprobado
+ * con el motor real en test/panel-motor-real.test.ts). Así un buzón suspendido
+ * no entra por ningún lado y el correo le sigue llegando, como en 0.16.
  */
 const PERMISOS_SUSPENSION = ['authenticate', 'authenticate-oauth'];
+
+/** Lo que el panel lee de un principal (GET /api/principal/<nombre>). */
+interface PrincipalLeido {
+  type?: string;
+  secrets?: string[] | string;
+  roles?: string[];
+  disabledPermissions?: string[];
+}
+
+/**
+ * ¿Está suspendido el buzón? Sin permiso para autenticarse (como suspende
+ * Mailway) o sin el rol «user» (como se suspendía antes). Ojo: Stalwart omite
+ * los campos vacíos, así que un buzón con roles: [] llega SIN la clave
+ * «roles»: su ausencia también es suspensión.
+ */
+function principalSuspendido(data: PrincipalLeido | null): boolean {
+  const roles = data?.roles;
+  const desactivados = data?.disabledPermissions;
+  if (!Array.isArray(roles) || !roles.includes('user')) return true;
+  return Array.isArray(desactivados) && desactivados.includes('authenticate');
+}
 
 /**
  * Driver para Stalwart Mail Server v0.12–v0.15 a través de su API REST de
@@ -254,7 +275,10 @@ export class Stalwart015Engine implements MailEngine {
       // Buzón huérfano en el motor (existía allí pero no en el panel): se
       // adopta y se deja exactamente como lo pide el panel, con la contraseña
       // nueva, sin contraseñas de aplicación antiguas y activo (aunque
-      // estuviera suspendido).
+      // estuviera suspendido de cualquiera de las dos formas). «set roles»
+      // también lo saca de las listas del motor en las que siguiera (ver
+      // updateMailbox): ningún alias del panel apunta a un buzón que el panel
+      // aún no tenía.
       await this.updatePrincipal(input.email, [
         { action: 'set', field: 'description', value: input.displayName || '' },
         { action: 'set', field: 'quota', value: input.quotaBytes ?? 0 },
@@ -303,9 +327,12 @@ export class Stalwart015Engine implements MailEngine {
     }
     if (patch.suspended !== undefined) {
       // Se quita el permiso de autenticarse, no el rol (ver
-      // PERMISOS_SUSPENSION). El rol se fija en los dos sentidos: un buzón
-      // suspendido como antes (roles: []) queda igual que los demás.
-      updates.push({ action: 'set', field: 'roles', value: ['user'] });
+      // PERMISOS_SUSPENSION). El rol se añade en los dos sentidos, para que
+      // un buzón suspendido como antes (roles: []) lo recupere, pero nunca
+      // con «set»: en Stalwart 0.15.5 roles, listas y grupos son la misma
+      // relación y «set roles» la reescribe entera, así que sacaba al buzón
+      // de todos sus alias. addItem no toca nada más (y no duplica el rol).
+      updates.push({ action: 'addItem', field: 'roles', value: 'user' });
       updates.push({
         action: 'set',
         field: 'disabledPermissions',
@@ -373,12 +400,7 @@ export class Stalwart015Engine implements MailEngine {
    * autentique (cada fallo contaría para su bloqueo automático de IPs).
    */
   async readMailboxCredentials(email: string): Promise<MailboxCredentials | null> {
-    const data = await this.request<{
-      type?: string;
-      secrets?: string[] | string;
-      roles?: string[];
-      disabledPermissions?: string[];
-    } | null>('GET', `/api/principal/${encodeURIComponent(email)}`);
+    const data = await this.request<PrincipalLeido | null>('GET', `/api/principal/${encodeURIComponent(email)}`);
     // Una lista o un dominio con ese nombre no es un buzón.
     if (data?.type !== undefined && data.type !== 'individual') {
       throw new HttpError(502, `El motor de correo no tiene un buzón ${email}.`, 'engine_not_found');
@@ -402,14 +424,7 @@ export class Stalwart015Engine implements MailEngine {
     return {
       passwordHash,
       appPasswords,
-      // Suspendido: sin permiso para autenticarse (como suspende Mailway) o
-      // sin el rol "user" (como se suspendía antes). Ojo: Stalwart omite los
-      // campos vacíos, así que un buzón con roles: [] llega SIN la clave
-      // «roles»: su ausencia también es suspensión.
-      suspended:
-        !Array.isArray(data?.roles) ||
-        !data.roles.includes('user') ||
-        (Array.isArray(data?.disabledPermissions) && data.disabledPermissions.includes('authenticate')),
+      suspended: principalSuspendido(data),
     };
   }
 

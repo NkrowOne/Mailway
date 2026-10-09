@@ -763,7 +763,8 @@ interface AliasAjeno {
   domain: string;
 }
 
-function destinosDe(json: string): string[] {
+/** Destinos guardados de un alias (columna destinations_json). */
+export function destinosDe(json: string): string[] {
   try {
     const valor = JSON.parse(json) as unknown;
     return Array.isArray(valor) ? valor.filter((v): v is string => typeof v === 'string') : [];
@@ -773,7 +774,7 @@ function destinosDe(json: string): string[] {
 }
 
 /** true si la dirección es un buzón de esta instancia (destino interno de un alias). */
-function esBuzonDeLaInstancia(email: string): boolean {
+export function esBuzonDeLaInstancia(email: string): boolean {
   const at = email.lastIndexOf('@');
   if (at < 1) return false;
   return Boolean(
