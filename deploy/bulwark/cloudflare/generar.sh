@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
-# Genera deploy/bulwark/nginx/cloudflare.conf (las entradas del bloque geo de
-# la pasarela) a partir de cloudflare/rangos.txt, la única fuente de los
-# rangos de Cloudflare.
+# Genera las entradas del bloque geo de las dos pasarelas a partir de
+# cloudflare/rangos.txt, la única fuente de los rangos de Cloudflare:
+#   - deploy/bulwark/nginx/cloudflare.conf (pasarela de Bulwark);
+#   - deploy/motor/pasarela/cloudflare.conf (pasarela del motor).
+# Las dos copias son idénticas: cada pasarela monta solo su carpeta.
 #
-#   bash deploy/bulwark/cloudflare/generar.sh              # reescribe el fichero
-#   bash deploy/bulwark/cloudflare/generar.sh --comprobar  # código 1 si no está al día
+#   bash deploy/bulwark/cloudflare/generar.sh              # reescribe los ficheros
+#   bash deploy/bulwark/cloudflare/generar.sh --comprobar  # código 1 si alguno no está al día
 #
 # Un rango mal escrito detiene el script: en nginx, una línea inválida dentro
 # de geo impide arrancar la pasarela, y una que sí arrancara pero fuera
@@ -15,7 +17,7 @@ set -euo pipefail
 
 AQUI=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ORIGEN="$AQUI/rangos.txt"
-DESTINO="$AQUI/../nginx/cloudflare.conf"
+DESTINOS=("$AQUI/../nginx/cloudflare.conf" "$AQUI/../../motor/pasarela/cloudflare.conf")
 
 valido() {
   local rango=$1 ip prefijo
@@ -54,18 +56,31 @@ generar() {
   done <"$ORIGEN"
 }
 
+# Ruta del fichero relativa a la raíz del repositorio, para los mensajes.
+ruta() { local d; d=$(cd "$(dirname "$1")" && pwd); printf '%s/%s' "${d#"$RAIZ"/}" "$(basename "$1")"; }
+RAIZ=$(cd "$AQUI/../../.." && pwd)
+
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 generar >"$TMP"
 
 if [ "${1:-}" = "--comprobar" ]; then
-  if ! cmp -s "$TMP" "$DESTINO"; then
-    echo "nginx/cloudflare.conf no corresponde a cloudflare/rangos.txt: ejecuta bash deploy/bulwark/cloudflare/generar.sh" >&2
-    exit 1
-  fi
-  echo "nginx/cloudflare.conf está al día."
+  desfasados=0
+  for destino in "${DESTINOS[@]}"; do
+    if ! cmp -s "$TMP" "$destino"; then
+      echo "$(ruta "$destino") no corresponde a cloudflare/rangos.txt: ejecuta bash deploy/bulwark/cloudflare/generar.sh" >&2
+      desfasados=1
+    fi
+  done
+  [ "$desfasados" = 0 ] || exit 1
+  echo "Los rangos de Cloudflare de las dos pasarelas están al día."
   exit 0
 fi
 
-cp "$TMP" "$DESTINO"
-echo "Escrito $(cd "$(dirname "$DESTINO")" && pwd)/$(basename "$DESTINO")"
+# Legibles para todos: cada pasarela corre como el usuario 101 (con cp, un
+# fichero nuevo saldría con los permisos 600 del temporal).
+for destino in "${DESTINOS[@]}"; do
+  cat "$TMP" >"$destino"
+  chmod 644 "$destino"
+  echo "Escrito $(ruta "$destino")"
+done

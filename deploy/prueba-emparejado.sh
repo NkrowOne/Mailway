@@ -708,6 +708,37 @@ comprobar "y el resto de variables del instalador" contiene <(cuerpo_put) '"MAIL
 comprobar "no envía la clave de deploy/.env" no_contiene <(cuerpo_put) "0123456789abcdef0123456789abcdef"
 comprobar "avisa de la diferencia" contiene "$SALIDA" "se conserva la del panel"
 
+echo "# Bulwark activo (Stalwart 0.16): el panel recibe sus tres variables"
+reiniciar_panel
+detectar_respondiendo s >/dev/null 2>&1
+datos_instalacion
+ENV_FILE="$TMP/env-bulwark"
+printf "MAILWAY_BULWARK='1'\nBULWARK_ADMIN_PASSWORD='clave-de-bulwark-0123456789'\n" >"$ENV_FILE"
+(MOTOR=stalwart-0.16 && desplegar_en_skyway) >"$SALIDA" 2>&1
+comprobar "termina bien" contiene "$SALIDA" "Panel desplegado (skyway-correo-mailway)"
+comprobar "su API de administración" contiene <(cuerpo_put) '"MAILWAY_BULWARK_URL":"http://mailway-bulwark:3000"'
+comprobar "su contraseña de administración" contiene <(cuerpo_put) '"MAILWAY_BULWARK_ADMIN_PASSWORD":"clave-de-bulwark-0123456789"'
+comprobar "el destino de Traefik" contiene <(cuerpo_put) '"MAILWAY_BULWARK_BACKEND_URL":"http://mailway-bulwark-gw:8080"'
+comprobar "conserva las variables puestas a mano" contiene <(cuerpo_put) '"MI_VARIABLE":"se-conserva"'
+comprobar "sin mostrar la contraseña" no_contiene "$SALIDA" "clave-de-bulwark-0123456789"
+rm -f "$ENV_FILE"
+
+echo "# Bulwark activo pero con Stalwart 0.15, o desactivado: sus variables se quitan del panel"
+for escenario in "stalwart-0.15 1" "stalwart-0.16 0"; do
+  reiniciar_panel
+  detectar_respondiendo s >/dev/null 2>&1
+  datos_instalacion
+  ENV_FILE="$TMP/env-bulwark"
+  printf "MAILWAY_BULWARK='%s'\nBULWARK_ADMIN_PASSWORD='clave-de-bulwark-0123456789'\n" "${escenario#* }" >"$ENV_FILE"
+  FAKE_ENV_PANEL='{"vars":{"MI_VARIABLE":"se-conserva","MAILWAY_BULWARK_URL":"http://mailway-bulwark:3000","MAILWAY_BULWARK_ADMIN_PASSWORD":"antigua","MAILWAY_BULWARK_BACKEND_URL":"http://mailway-bulwark-gw:8080"}}'
+  (MOTOR=${escenario% *} && desplegar_en_skyway) >"$SALIDA" 2>&1
+  comprobar "$escenario: termina bien" contiene "$SALIDA" "Panel desplegado (skyway-correo-mailway)"
+  comprobar "$escenario: sin variables de Bulwark" no_contiene <(cuerpo_put) "MAILWAY_BULWARK_"
+  comprobar "$escenario: conserva las demás" contiene <(cuerpo_put) '"MI_VARIABLE":"se-conserva"'
+  comprobar "$escenario: lo dice" contiene "$SALIDA" "Se retiran las variables de Bulwark del panel"
+  rm -f "$ENV_FILE"
+done
+
 echo "# Sin contenedor (parado y retirado): se encuentra por el repositorio y se confirma"
 reiniciar_panel
 FAKE_CONTENEDORES="skyway-web-app"

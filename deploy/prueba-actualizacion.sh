@@ -19,7 +19,9 @@
 #     una carpeta temporal y llama a systemctl;
 #   - con Stalwart 0.15, «update» (a mano y --auto) avisa de su fin de
 #     soporte sin cambiar nunca de motor, y «migrar-motor», «revertir-motor» y
-#     «retirar-motor-anterior» pasan al instalador solo -y.
+#     «retirar-motor-anterior» pasan al instalador solo -y;
+#   - «bulwark on|off|status» llama a --activar-bulwark, --desactivar-bulwark
+#     y --estado-bulwark, y rechaza cualquier otra cosa.
 #
 #   bash deploy/prueba-actualizacion.sh     # código 1 si alguna comprobación falla
 #
@@ -537,6 +539,22 @@ ejecutar_mailway migrar-motor --reaplicar
 comprobar "otra opción: termina con 1" igual "$CODIGO" 1
 comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
 ejecutar_mailway migrar-motor -y -y
+comprobar "más de una opción: termina con 1" igual "$CODIGO" 1
+comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
+
+echo "# bulwark on, off y status: al instalador; nada más se admite"
+nuevo_escenario
+ejecutar_mailway bulwark on
+comprobar "bulwark on llega al instalador" contiene "$REGISTRO" "instalar --activar-bulwark 1.3.0"
+ejecutar_mailway bulwark off
+comprobar "bulwark off también" contiene "$REGISTRO" "instalar --desactivar-bulwark 1.3.0"
+ejecutar_mailway bulwark status
+comprobar "y bulwark status" contiene "$REGISTRO" "instalar --estado-bulwark 1.3.0"
+: >"$REGISTRO"
+ejecutar_mailway bulwark encender
+comprobar "otra orden: termina con 1" igual "$CODIGO" 1
+comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
+ejecutar_mailway bulwark on -y
 comprobar "más de una opción: termina con 1" igual "$CODIGO" 1
 comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
 
