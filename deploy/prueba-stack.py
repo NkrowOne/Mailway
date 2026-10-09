@@ -381,8 +381,14 @@ class Pila:
         registrar('OK: puesta en marcha del panel de verdad (emparejar.js), con el motor del entorno.')
 
     def guardar_estado_panel(self, estado: dict) -> None:
-        self.estado_panel.write_text(json.dumps(estado, indent=2))
-        self.estado_panel.chmod(0o666)
+        # Con un temporal y un renombrado, como la herramienta simulada: el
+        # fichero que deja ella es del usuario node del contenedor y, si la
+        # prueba no corre como root (la CI), no se puede sobrescribir, pero sí
+        # sustituir (la carpeta es 777).
+        temporal = self.estado_panel.with_name('estado.json.prueba')
+        temporal.write_text(json.dumps(estado, indent=2))
+        temporal.chmod(0o666)
+        os.replace(temporal, self.estado_panel)
 
     def leer_estado_panel(self) -> dict:
         return json.loads(self.estado_panel.read_text())
