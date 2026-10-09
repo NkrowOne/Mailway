@@ -1339,7 +1339,7 @@ function deseadoDeMarcaBlanca(destino: ClientDomain): Deseado {
  *   IP), y con esa cuenta nunca se reemplaza lo que haya (aplicarDnsMarcaBlanca).
  */
 async function resolverZonaMarcaBlanca(
-  destino: ClientDomain,
+  destino: { clientId: string; hostname: string },
   permitirInstancia: boolean,
 ): Promise<{ resolucion: Resolucion | null; motivo: string }> {
   const host = sinPunto(destino.hostname);
@@ -1400,6 +1400,38 @@ export async function aplicarDnsMarcaBlanca(
   return { ...resultado, domain, zone: resolucion.zona.name };
 }
 
+/** ¿Es este registro el del webmail: un CNAME al servidor de correo o un A a su IP? */
+function apuntaAlServidor(r: CfRegistro): boolean {
+  const inst = getInstanceSettings();
+  const mail = sinPunto(inst.mailHostname || '');
+  const ip = (inst.publicIp || '').trim();
+  return (r.type === 'CNAME' && mail !== '' && sinPunto(r.content) === mail) || (r.type === 'A' && ip !== '' && r.content.trim() === ip);
+}
+
+/**
+ * Antes del alta automática de webmail.<dominio>: ¿qué hay ya en Cloudflare
+ * con ese nombre? «libre» si nada (aunque lo responda un comodín, como el de
+ * la web), «propio» si ya apunta a este servidor, «ajeno» si es otra cosa (el
+ * cliente lo usa para otro servicio: no se toca) y null si ninguna cuenta
+ * utilizable ve la zona o Cloudflare no responde. Las cuentas son las que
+ * escribirían el registro (resolverZonaMarcaBlanca, sin las de la instancia).
+ */
+export async function estadoWebmailEnCloudflare(
+  clientId: string,
+  hostname: string,
+): Promise<'libre' | 'propio' | 'ajeno' | null> {
+  const host = sinPunto(hostname);
+  try {
+    const { resolucion } = await resolverZonaMarcaBlanca({ clientId, hostname: host }, false);
+    if (!resolucion) return null;
+    const registros = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
+    if (registros.length === 0) return 'libre';
+    return registros.every(apuntaAlServidor) ? 'propio' : 'ajeno';
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Con el proxy de Cloudflare, el DNS público devuelve IP de Cloudflare y no
  * dice adónde apunta el nombre: se pregunta a Cloudflare. true si el nombre
@@ -1409,20 +1441,12 @@ export async function aplicarDnsMarcaBlanca(
  * si un subdominio de un dominio verificado del cliente apunta aquí.
  */
 export async function registroProxyApuntaAqui(destino: ClientDomain): Promise<boolean | null> {
-  const inst = getInstanceSettings();
-  const mail = sinPunto(inst.mailHostname || '');
-  const ip = (inst.publicIp || '').trim();
   const host = sinPunto(destino.hostname);
   try {
     const { resolucion } = await resolverZonaMarcaBlanca(destino, true);
     if (!resolucion) return null;
     const registros = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
-    return registros.some(
-      (r) =>
-        r.proxied &&
-        ((r.type === 'CNAME' && mail !== '' && sinPunto(r.content) === mail) ||
-          (r.type === 'A' && ip !== '' && r.content.trim() === ip)),
-    );
+    return registros.some((r) => r.proxied && apuntaAlServidor(r));
   } catch {
     return null;
   }

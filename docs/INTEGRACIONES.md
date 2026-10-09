@@ -1056,6 +1056,28 @@ Traefik los dominios cuyo DNS ya apunta aquí, y un dominio solo pasa a «En
 servicio» cuando responde por HTTPS con un certificado válido y un código 2xx
 o 3xx (un 404 o un 5xx indican que la ruta o su destino aún no están bien).
 
+**Webmail automático de cada dominio.** No hace falta dar de alta el webmail
+de cada cliente: en cuanto un dominio de correo tiene la propiedad
+comprobada, Mailway da de alta `webmail.<dominio>` como webmail de marca
+blanca de su cliente y crea su registro en Cloudflare con proxy (abajo). Vale
+para todos los clientes y dominios que se vayan añadiendo, y el vigilante lo
+repasa cada hora: prepara los dominios que ya existían y reintenta los
+webmail que siguen esperando al DNS. Barandillas:
+
+- Solo si el nombre está libre en Cloudflare (aunque lo responda un comodín)
+  o ya apunta a este servidor. Si `webmail.<dominio>` existe y apunta a otro
+  sitio (el cliente lo usa para otra cosa), no se toca. Sin una cuenta de
+  Cloudflare que vea la zona, solo si su DNS ya apunta aquí.
+- Un nombre eliminado a mano no se vuelve a crear; darlo de alta a mano lo
+  vuelve a activar.
+- Respeta el máximo de 5 dominios propios por cliente y los nombres
+  reservados.
+- `MAILWAY_WEBMAIL_AUTOMATICO=0` lo desactiva.
+
+Cada buzón entra por el webmail de **su propio dominio** si está en servicio
+(quien tiene el correo en `b.com`, por `webmail.b.com`); si no, por el
+principal del cliente y, si no hay, por el general de la instancia.
+
 **DNS automático y proxy de Cloudflare.** Al dar de alta un dominio de tipo
 `webmail`, y al pulsar «Comprobar» mientras espera al DNS, Mailway crea su
 registro en Cloudflare si alguna cuenta utilizable ve la zona (sección 4.3,
@@ -1097,15 +1119,15 @@ webs de Skyway con proxy):
   IMAP y SMTP, y es el destino del CNAME del webmail.
 
 **Webmail principal**: si un cliente tiene varios dominios de webmail en
-servicio, el marcado como principal (`isPrimary`) es el que usan su inicio,
-los datos de conexión de sus buzones, los enlaces de configuración y la
-autoconfiguración. Sin elección expresa se usa el primero que entró en
+servicio, el marcado como principal (`isPrimary`) es el que usan su inicio y
+la API, y el de los buzones de un dominio sin webmail propio en servicio
+(datos de conexión, enlaces de configuración y autoconfiguración). Sin elección expresa se usa el primero que entró en
 servicio y, si no hay ninguno, la URL general del webmail de la instancia.
 
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/whitelabel/domains?clientId=` | `{ domains }`. |
-| `POST /api/whitelabel/domains` | `{ hostname, kind?, clientId? }` → `{ domain, instructions }` (CNAME recomendado hacia el servidor de correo o A hacia la IP). |
+| `POST /api/whitelabel/domains` | `{ hostname, kind?, clientId? }` → `{ domain, instructions }` (CNAME recomendado hacia el servidor de correo o A hacia la IP). Si el nombre ya es de ese cliente y del mismo tipo (por ejemplo, porque lo creó el alta automática), devuelve el que hay; de otro cliente o de otro tipo, `409`. |
 | `GET /api/whitelabel/domains/:id` · `POST …/:id/verify` · `DELETE …/:id` | Ficha, comprobación y baja. |
 | `POST /api/whitelabel/domains/:id/cloudflare` | Crea el registro en Cloudflare (sección 4). |
 | `POST /api/whitelabel/domains/:id/primary` | Marca el dominio como webmail principal de su cliente → `{ domain }` (`400 webmail_not_active` si no es de tipo `webmail` o no está en servicio). |

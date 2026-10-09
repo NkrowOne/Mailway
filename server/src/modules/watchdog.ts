@@ -8,7 +8,13 @@ import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
-import { listClientDomains, refreshClientDomain, type ClientDomain } from './whitelabel';
+import {
+  asegurarWebmailDeDominio,
+  listClientDomains,
+  refreshClientDomain,
+  reintentarWebmailPendiente,
+  type ClientDomain,
+} from './whitelabel';
 
 /**
  * Vigilante de fondo: comprueba periódicamente que todo sigue en pie y abre
@@ -255,6 +261,31 @@ async function checkWhitelabelDomains(): Promise<void> {
   }
 }
 
+/* ----------- Webmail automático de cada dominio (cada hora) --------------- */
+
+/**
+ * El webmail de marca de cada dominio con la propiedad comprobada
+ * (asegurarWebmailDeDominio): cubre los dominios que ya existían antes de
+ * esta función y los que no se pudieron preparar al comprobarse (Cloudflare
+ * sin respuesta, cuenta conectada después). Y los webmail que siguen
+ * esperando al DNS sin haber funcionado nunca: se reintenta crear su
+ * registro y se miden, por si el DNS se puso a mano.
+ */
+export async function checkWebmailsAutomaticos(): Promise<void> {
+  if (!config.webmailAutomatico) return;
+  if (!due('webmail-automatico', HOUR)) return;
+  markRun('webmail-automatico');
+  const dominios = db
+    .prepare('SELECT id FROM domains WHERE owner_verified_at IS NOT NULL ORDER BY created_at')
+    .all() as { id: string }[];
+  // En serie: cada uno puede llamar a Cloudflare y crear un registro.
+  for (const d of dominios) await asegurarWebmailDeDominio(d.id).catch(() => null);
+  const pendientes = listClientDomains().filter(
+    (d) => d.kind === 'webmail' && d.status === 'pending_dns' && d.activatedAt === null,
+  );
+  for (const d of pendientes) await reintentarWebmailPendiente(d.id).catch(() => null);
+}
+
 async function reviewWhitelabelDomain(domain: ClientDomain): Promise<void> {
   try {
     const updated = await refreshClientDomain(domain.id);
@@ -353,6 +384,7 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
     await paso('listas negras', checkBlacklists, log);
     await paso('dns de dominios', checkDomainDns, log);
     await paso('marca blanca', checkWhitelabelDomains, log);
+    await paso('webmail automático', checkWebmailsAutomaticos, log);
     await paso('autoconfiguración', checkAutoconfigHosts, log);
     await paso('certificado del motor', checkTlsDelMotor, log);
     await paso('nombre del motor', checkNombreDelMotor, log);

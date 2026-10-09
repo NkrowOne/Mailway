@@ -121,6 +121,14 @@ export const config = {
     certResolver: process.env.MAILWAY_TRAEFIK_CERTRESOLVER || 'le',
   },
 
+  /**
+   * Webmail de marca de cada dominio sin que nadie lo pida: al comprobarse la
+   * propiedad de un dominio de correo se da de alta webmail.<dominio> y su
+   * registro en Cloudflare (whitelabel.ts, asegurarWebmailDeDominio).
+   * MAILWAY_WEBMAIL_AUTOMATICO=0 lo desactiva; las pruebas lo apagan.
+   */
+  webmailAutomatico: process.env.MAILWAY_WEBMAIL_AUTOMATICO !== '0',
+
   /** Vigilante: cada cuántos segundos se comprueba la salud del sistema. */
   watchdogIntervalSeconds: Number(process.env.MAILWAY_WATCHDOG_INTERVAL || 60),
   /** Desactiva el vigilante (útil en desarrollo y en los tests). */

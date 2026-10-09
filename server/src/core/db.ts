@@ -521,6 +521,19 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_envios_configuracion_client ON envios_configuracion(client_id, created_at);
     `,
   },
+  {
+    id: '013-webmail-automatico',
+    sql: `
+      -- Webmail de marca que alguien eliminó a mano. El alta automática
+      -- (webmail.<dominio> de cada dominio con la propiedad comprobada) no
+      -- vuelve a crear estos nombres; darlo de alta a mano lo saca de aquí.
+      CREATE TABLE webmail_descartados (
+        hostname TEXT PRIMARY KEY,
+        client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 function runMigrations(): void {

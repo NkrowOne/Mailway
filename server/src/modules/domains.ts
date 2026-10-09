@@ -188,10 +188,18 @@ function hostsDelServidor(domain: string, records: EngineDnsRecord[]): string[] 
  * que se mueve después (migración, avería) no convierte el dominio en ajeno.
  */
 export function marcarPropiedadComprobada(domainId: string): void {
-  db.prepare('UPDATE domains SET owner_verified_at = COALESCE(owner_verified_at, ?) WHERE id = ?').run(
-    now(),
-    domainId,
-  );
+  const r = db
+    .prepare('UPDATE domains SET owner_verified_at = ? WHERE id = ? AND owner_verified_at IS NULL')
+    .run(now(), domainId);
+  // Recién comprobada: su webmail de marca (webmail.<dominio>) se prepara
+  // solo, sin esperar a que nadie lo pida. En segundo plano: no retrasa la
+  // respuesta y un fallo de Cloudflare no estropea la comprobación (el
+  // vigilante lo reintenta). Importación diferida para no crear un ciclo.
+  if (r.changes > 0) {
+    void import('./whitelabel')
+      .then((m) => m.asegurarWebmailDeDominio(domainId))
+      .catch(() => undefined);
+  }
 }
 
 /**

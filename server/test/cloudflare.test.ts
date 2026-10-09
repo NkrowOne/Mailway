@@ -20,7 +20,9 @@ import {
   registroProxyApuntaAqui,
   type Deseado,
 } from '../src/modules/cloudflare';
-import { getClientDomain } from '../src/modules/whitelabel';
+import { config } from '../src/config';
+import { asegurarWebmailDeDominio, getClientDomain } from '../src/modules/whitelabel';
+import { checkWebmailsAutomaticos } from '../src/modules/watchdog';
 import { decryptSecret } from '../src/core/crypto';
 import type { CfRegistro } from '../src/core/cloudflare';
 import { db } from '../src/core/db';
@@ -2386,4 +2388,191 @@ test('marca blanca: la excepción de la cuenta de la instancia vale solo para la
     url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
     headers: { cookie: ctx.adminCookie },
   });
+});
+
+/* --------------------- Webmail automático de cada dominio ------------------ */
+
+/** Activa el webmail automático durante la prueba (las pruebas lo tienen apagado). */
+function conWebmailAutomatico(t: { after: (fn: () => void) => void }): void {
+  config.webmailAutomatico = true;
+  t.after(() => {
+    config.webmailAutomatico = false;
+  });
+}
+
+async function esperar(cond: () => boolean, ms = 3000): Promise<void> {
+  const fin = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > fin) throw new Error('No ha ocurrido a tiempo');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** Alta de un dominio de un cliente por la administración, con su DNS en Cloudflare. */
+async function dominioAplicado(clientId: string, dominio: string): Promise<string> {
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: dominio, clientId, autoDns: true },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  return (res.json() as { domain: { id: string } }).domain.id;
+}
+
+const filaWebmail = (hostname: string) =>
+  db.prepare('SELECT id, client_id, kind FROM client_domains WHERE hostname = ?').get(hostname) as
+    | { id: string; client_id: string; kind: string }
+    | undefined;
+
+test('webmail automático: al comprobarse el dominio, webmail.<dominio> se da de alta y se crea con proxy', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx);
+  const z = cf.zona('auto-uno.es');
+  const TOKEN = 'cfut_autouno0123456789abcdefghijklmnopqrst';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Nadie da de alta el webmail: basta con que el dominio quede comprobado.
+  await dominioAplicado(cliente.clientId, 'auto-uno.es');
+  await esperar(() => cf.enZona(z.id).some((r) => r.name === 'webmail.auto-uno.es'));
+  const fila = filaWebmail('webmail.auto-uno.es');
+  assert.ok(fila);
+  assert.equal(fila!.client_id, cliente.clientId);
+  assert.equal(fila!.kind, 'webmail');
+  const registro = cf.enZona(z.id).find((r) => r.name === 'webmail.auto-uno.es')!;
+  assert.equal(registro.type, 'CNAME');
+  assert.equal(registro.content, 'mail.plataforma.es');
+  assert.equal(registro.proxied, true);
+  const actividad = db
+    .prepare("SELECT detail FROM audit_log WHERE action = 'whitelabel.domain_created' AND client_id = ?")
+    .get(cliente.clientId) as { detail: string } | undefined;
+  assert.match(actividad?.detail ?? '', /"automatico":true/);
+
+  // Pedirlo después (Skyway, el propio cliente) devuelve el mismo, sin error.
+  const otraVez = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { hostname: 'webmail.auto-uno.es', clientId: cliente.clientId },
+  });
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  assert.equal((otraVez.json() as { domain: { id: string } }).domain.id, fila!.id);
+});
+
+test('webmail automático: no toca un nombre que se usa para otra cosa, no recrea uno eliminado y obedece al interruptor', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const zAjeno = cf.zona('auto-ajeno.es');
+  const zLibre = cf.zona('auto-libre.es');
+  const zApagado = cf.zona('auto-apagado.es');
+  const TOKEN = 'cfut_autodos0123456789abcdefghijklmnopqrst';
+  cf.token(TOKEN, { zoneIds: [zAjeno.id, zLibre.id, zApagado.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Los dominios se dan de alta con el automático apagado; luego se pide a mano.
+  config.webmailAutomatico = false;
+  const ajeno = await createClient(ctx);
+  const libre = await createClient(ctx);
+  const apagado = await createClient(ctx);
+  cf.registro(zAjeno.id, { type: 'A', name: 'webmail.auto-ajeno.es', content: '198.51.100.7' });
+  const idAjeno = await dominioAplicado(ajeno.clientId, 'auto-ajeno.es');
+  const idLibre = await dominioAplicado(libre.clientId, 'auto-libre.es');
+  const idApagado = await dominioAplicado(apagado.clientId, 'auto-apagado.es');
+
+  // Apagado: nada.
+  assert.equal(await asegurarWebmailDeDominio(idApagado), null);
+  assert.equal(filaWebmail('webmail.auto-apagado.es'), undefined);
+  config.webmailAutomatico = true;
+
+  // Ya hay un webmail.<dominio> que apunta a otro sitio: ni se da de alta ni se toca.
+  cf.llamadas = [];
+  assert.equal(await asegurarWebmailDeDominio(idAjeno), null);
+  assert.equal(filaWebmail('webmail.auto-ajeno.es'), undefined);
+  assert.deepEqual(modificaciones(), []);
+  assert.equal(cf.enZona(zAjeno.id).find((r) => r.name === 'webmail.auto-ajeno.es')!.content, '198.51.100.7');
+
+  // Libre: se crea. Si alguien lo elimina, no vuelve a aparecer solo...
+  const creado = await asegurarWebmailDeDominio(idLibre);
+  assert.ok(creado);
+  assert.equal(await asegurarWebmailDeDominio(idLibre), null, 'una segunda vez no hace nada');
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/whitelabel/domains/${creado!.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(borrar.statusCode, 200, borrar.body);
+  assert.equal(await asegurarWebmailDeDominio(idLibre), null);
+  assert.equal(filaWebmail('webmail.auto-libre.es'), undefined);
+  // ...ni con el repaso del vigilante.
+  await checkWebmailsAutomaticos();
+  assert.equal(filaWebmail('webmail.auto-libre.es'), undefined);
+
+  // Darlo de alta a mano lo vuelve a querer.
+  const aMano = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { hostname: 'webmail.auto-libre.es', clientId: libre.clientId },
+  });
+  assert.equal(aMano.statusCode, 200, aMano.body);
+  assert.equal(db.prepare('SELECT 1 FROM webmail_descartados WHERE hostname = ?').get('webmail.auto-libre.es'), undefined);
+});
+
+test('webmail automático: el vigilante prepara los dominios que ya existían y reintenta los pendientes', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const z = cf.zona('auto-viejo.es');
+  const TOKEN = 'cfut_autotres0123456789abcdefghijklmnopqr';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Un dominio de antes de esta función (comprobado con el automático apagado).
+  config.webmailAutomatico = false;
+  const cliente = await createClient(ctx);
+  await dominioAplicado(cliente.clientId, 'auto-viejo.es');
+  assert.equal(filaWebmail('webmail.auto-viejo.es'), undefined);
+  config.webmailAutomatico = true;
+
+  // Y un webmail pendiente sin registro (Cloudflare falló al crearlo).
+  const otro = await createClient(ctx);
+  const zOtro = cf.zona('auto-pendiente.es');
+  cf.tokens.get(TOKEN)!.zoneIds.push(zOtro.id);
+  config.webmailAutomatico = false;
+  await dominioAplicado(otro.clientId, 'auto-pendiente.es');
+  config.webmailAutomatico = true;
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES ('wld_pendiente', ?, 'webmail.auto-pendiente.es', 'webmail', ?)`,
+  ).run(otro.clientId, Date.now());
+
+  db.prepare("DELETE FROM settings WHERE key = 'watchdog_last_webmail-automatico'").run();
+  await checkWebmailsAutomaticos();
+  assert.ok(filaWebmail('webmail.auto-viejo.es'), 'el dominio antiguo tiene ya su webmail');
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.auto-viejo.es')?.proxied, true);
+  assert.equal(cf.enZona(zOtro.id).find((r) => r.name === 'webmail.auto-pendiente.es')?.proxied, true);
 });

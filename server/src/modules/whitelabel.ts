@@ -6,10 +6,11 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
+import { clientLockKey, withLock } from '../core/locks';
 import { dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { resolveAlert } from './alerts';
-import { audit } from './audit';
+import { audit, auditSystem } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import {
   autoconfigRoutingAvailable,
@@ -807,6 +808,119 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   return applyClientDomainCheck(id, dns, resultadoHttps);
 }
 
+/* ------------------- Webmail automático de cada dominio ------------------ */
+
+/**
+ * Webmail de marca de cada dominio de correo, sin que nadie lo pida: en
+ * cuanto un dominio tiene la propiedad comprobada, webmail.<dominio> se da de
+ * alta como webmail de marca blanca de su cliente y su registro se crea en
+ * Cloudflare, con proxy. Así funciona para todos los clientes y dominios que
+ * se vayan añadiendo, y el vigilante lo repasa cada hora para los que ya
+ * existían. Barandillas:
+ * - solo si el nombre está libre en Cloudflare (aunque responda un comodín)
+ *   o ya apunta aquí: un webmail.<dominio> que el cliente usa para otra cosa
+ *   no se toca; sin Cloudflare, solo si su DNS ya apunta a este servidor;
+ * - no vuelve a crear un nombre que alguien eliminó (webmail_descartados);
+ * - respeta el máximo de dominios propios por cliente y los nombres
+ *   reservados (assertHostnameAllowed);
+ * - las cuentas de Cloudflare son las que usaría el cliente, más la
+ *   excepción de la zona que ya escribió la administración (cloudflare.ts).
+ * Devuelve el dominio creado, o null si no corresponde o no se ha podido.
+ */
+export async function asegurarWebmailDeDominio(domainId: string): Promise<ClientDomain | null> {
+  if (!config.webmailAutomatico || !kindAvailable('webmail')) return null;
+  const dominio = db
+    .prepare('SELECT client_id, domain, owner_verified_at FROM domains WHERE id = ?')
+    .get(domainId) as { client_id: string; domain: string; owner_verified_at: number | null } | undefined;
+  if (!dominio || dominio.owner_verified_at === null) return null;
+  const hostname = `webmail.${dominio.domain}`;
+  if (!HOSTNAME_RE.test(hostname)) return null;
+  const clientId = dominio.client_id;
+
+  return withLock(clientLockKey(clientId), async () => {
+    if (db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname)) return null;
+    if (db.prepare('SELECT 1 FROM webmail_descartados WHERE hostname = ?').get(hostname)) return null;
+    const { c } = db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
+      c: number;
+    };
+    if (c >= MAX_WHITELABEL_PER_CLIENT) return null;
+    try {
+      assertHostnameAllowed(clientId, hostname);
+    } catch {
+      return null;
+    }
+
+    // Importación diferida: cloudflare.ts ya importa este módulo.
+    const { aplicarDnsMarcaBlanca, estadoWebmailEnCloudflare } = await import('./cloudflare');
+    const estado = await estadoWebmailEnCloudflare(clientId, hostname);
+    if (estado === 'ajeno') return null;
+    if (estado === null) {
+      // Sin una cuenta de Cloudflare que vea la zona: solo si el registro ya
+      // está puesto a mano y apunta aquí. Si no, quedaría pendiente para
+      // siempre sin que nadie lo hubiera pedido.
+      const ip = getInstanceSettings().publicIp;
+      const ips = ip ? await lookupA(hostname) : null;
+      if (!ip || !ips || !ips.includes(ip)) return null;
+    }
+
+    const id = randomId('wld');
+    db.prepare(
+      `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+    ).run(id, clientId, hostname, now());
+    auditSystem('whitelabel.domain_created', { id, hostname, kind: 'webmail', automatico: true }, clientId);
+
+    if (estado !== null) {
+      try {
+        const r = await aplicarDnsMarcaBlanca(id, { permitirInstancia: false, replaceConflicts: false, soloCrear: true });
+        if (r.applied.length > 0) {
+          auditSystem('cloudflare.dns_applied', {
+            whitelabelDomainId: id,
+            hostname,
+            zone: r.zone,
+            applied: r.applied.length,
+            errors: r.errors.length,
+            automatico: true,
+          }, clientId);
+        }
+        return r.domain;
+      } catch {
+        // Cloudflare no ha respondido: queda pendiente y el vigilante lo
+        // reintenta (reintentarWebmailPendiente).
+      }
+    }
+    return refreshClientDomain(id).catch(() => getClientDomain(id));
+  });
+}
+
+/**
+ * Un webmail que sigue esperando al DNS (Cloudflare falló al crearlo, o se
+ * dio de alta antes de conectar la cuenta): el vigilante vuelve a intentar
+ * crear su registro (solo crear, nunca modificar) y lo comprueba.
+ */
+export async function reintentarWebmailPendiente(id: string): Promise<ClientDomain> {
+  const actual = getClientDomain(id);
+  if (actual.kind === 'webmail' && actual.status === 'pending_dns') {
+    try {
+      const { aplicarDnsMarcaBlanca } = await import('./cloudflare');
+      const r = await aplicarDnsMarcaBlanca(id, { permitirInstancia: false, replaceConflicts: false, soloCrear: true });
+      if (r.applied.length > 0) {
+        auditSystem('cloudflare.dns_applied', {
+          whitelabelDomainId: id,
+          hostname: actual.hostname,
+          zone: r.zone,
+          applied: r.applied.length,
+          errors: r.errors.length,
+          automatico: true,
+        }, actual.clientId);
+      }
+      return r.domain;
+    } catch {
+      // Sin cuenta o sin respuesta: se mide igualmente, por si el DNS se puso a mano.
+    }
+  }
+  return refreshClientDomain(id);
+}
+
 /* ------------------ Configuración dinámica para Traefik ------------------- */
 
 /**
@@ -1034,8 +1148,18 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
 
     const hostname = normalizeHostname(body.hostname);
     assertHostnameAllowed(clientId, hostname);
-    const existing = db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname);
-    if (existing) throw conflict('Ese dominio ya está dado de alta.');
+    const existing = db.prepare('SELECT * FROM client_domains WHERE hostname = ?').get(hostname) as
+      | DomainRow
+      | undefined;
+    if (existing) {
+      // El mismo nombre del mismo cliente y del mismo tipo (lo creó el alta
+      // automática, o Skyway lo pide otra vez): se devuelve el que hay, en
+      // lugar de un error que haría fallar a quien integra.
+      if (existing.client_id === clientId && existing.kind === body.kind) {
+        return { domain: toDomain(existing), instructions: dnsInstructions(hostname) };
+      }
+      throw conflict('Ese dominio ya está dado de alta.');
+    }
     const count = (
       db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
         c: number;
@@ -1053,6 +1177,8 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
       `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     ).run(id, clientId, hostname, body.kind, now());
+    // Darlo de alta a mano es pedirlo: deja de estar descartado.
+    db.prepare('DELETE FROM webmail_descartados WHERE hostname = ?').run(hostname);
     audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind }, clientId);
 
     // El webmail se apunta solo en Cloudflare cuando se puede. Después, la
@@ -1093,7 +1219,16 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
   app.delete('/api/whitelabel/domains/:id', async (req) => {
     const { id } = req.params as { id: string };
     const domain = requireDomainAccess(req, id);
-    db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
+    db.transaction(() => {
+      db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
+      // Eliminado a mano: el alta automática no lo vuelve a crear.
+      if (domain.kind === 'webmail') {
+        db.prepare(
+          `INSERT INTO webmail_descartados (hostname, client_id, created_at) VALUES (?, ?, ?)
+           ON CONFLICT(hostname) DO UPDATE SET client_id = excluded.client_id, created_at = excluded.created_at`,
+        ).run(domain.hostname, domain.clientId, now());
+      }
+    })();
     fallosSeguidos.delete(id);
     // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
     resolveAlert(`whitelabel:${id}`);

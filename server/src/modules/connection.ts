@@ -28,24 +28,36 @@ export interface ConnectionSettings {
   smtp: ServerEndpoint;
   /** Alternativa para redes que bloquean el 465. */
   smtpAlt: ServerEndpoint;
-  /** Webmail: el dominio propio del cliente si lo tiene activo; si no, el global. */
+  /**
+   * Webmail: el de marca del propio dominio si está activo; si no, el
+   * principal del cliente; si no, el global.
+   */
   webmailUrl: string;
 }
 
 /** Puertos que publica el compose del motor; son fijos por diseño. */
 export const PUERTOS = { imaps: 993, smtps: 465, submission: 587 } as const;
 
-/** Webmail con la marca del cliente, si tiene uno activo: el principal que haya elegido o, si no, el primero que se activó. */
-export function webmailPropio(clientId: string | null): string | null {
+/**
+ * Webmail con la marca del cliente, si tiene uno activo. Con `dominio` (el
+ * del buzón), primero el que cuelga de ese dominio: quien tiene el correo en
+ * b.com entra por webmail.b.com aunque el principal del cliente sea el de
+ * otro de sus dominios. Si no, el principal que haya elegido o el primero
+ * que se activó.
+ */
+export function webmailPropio(clientId: string | null, dominio = ''): string | null {
   if (!clientId) return null;
-  const row = db
+  const filas = db
     .prepare(
       `SELECT hostname FROM client_domains
        WHERE client_id = ? AND kind = 'webmail' AND status = 'active'
-       ORDER BY is_primary DESC, activated_at ASC, created_at ASC, id ASC LIMIT 1`,
+       ORDER BY is_primary DESC, activated_at ASC, created_at ASC, id ASC`,
     )
-    .get(clientId) as { hostname: string } | undefined;
-  return row ? `https://${row.hostname}` : null;
+    .all(clientId) as { hostname: string }[];
+  if (filas.length === 0) return null;
+  const base = dominio.trim().toLowerCase().replace(/\.$/, '');
+  const delDominio = base ? filas.find((f) => f.hostname.endsWith(`.${base}`)) : undefined;
+  return `https://${(delDominio ?? filas[0]!).hostname}`;
 }
 
 /** Cliente dueño de un dominio de correo gestionado, o null si no es nuestro. */
@@ -69,7 +81,7 @@ export function getConnectionSettings(domain: string, clientId?: string | null):
     imap: { host, port: PUERTOS.imaps, security: 'SSL/TLS' },
     smtp: { host, port: PUERTOS.smtps, security: 'SSL/TLS' },
     smtpAlt: { host, port: PUERTOS.submission, security: 'STARTTLS' },
-    webmailUrl: webmailPropio(owner) || instance.webmailUrl,
+    webmailUrl: webmailPropio(owner, domain) || instance.webmailUrl,
   };
 }
 

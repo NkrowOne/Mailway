@@ -311,6 +311,7 @@ edita una ya publicada.
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 | `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
 | `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado, o el que ya existía en el cliente, y revocación). |
+| `013-webmail-automatico` | `webmail_descartados`: nombres de webmail de marca eliminados a mano, que el alta automática de `webmail.<dominio>` no vuelve a crear (darlo de alta a mano lo saca de la lista). |
 | `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
 
 ```

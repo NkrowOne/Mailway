@@ -38,7 +38,7 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     titular y marca de buzón configurado),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
-    (marca blanca y `/api/traefik/config`), `transactional` (claves y
+    (marca blanca, webmail automático de cada dominio y `/api/traefik/config`), `transactional` (claves y
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `alerts`, `watchdog`, `dashboard`.
   - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.
