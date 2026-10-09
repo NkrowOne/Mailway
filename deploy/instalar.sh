@@ -3578,7 +3578,13 @@ preparar_registro_motor() {
   mkdir "$MIG_DIR" || fallo "No se puede crear la carpeta de trabajo $MIG_DIR."
   umask "$umask_previa"
   MIG_REGISTRO="$MIG_DIR/registro.log"
-  exec > >(tee -a "$MIG_REGISTRO") 2>&1
+  # Si la terminal desaparece (una sesión SSH que se corta), tee sigue
+  # escribiendo el registro en lugar de terminar y llevarse la orden con él.
+  if tee --output-error=warn </dev/null >/dev/null 2>&1; then
+    exec > >(tee -a --output-error=warn "$MIG_REGISTRO") 2>&1
+  else
+    exec > >(tee -a "$MIG_REGISTRO") 2>&1
+  fi
   # Sin colores: el registro se lee después con cualquier editor.
   C_TIT=""
   C_OK=""
@@ -3790,6 +3796,17 @@ activar_mantenimiento() {
   [ "$(hm_campo '.activo')" = true ] || fallo "El panel no confirma el modo mantenimiento. No se ha cambiado nada."
   MIG_MANTENIMIENTO=1
   ok "Panel en mantenimiento hasta las $(hora_de_ms "$(hm_campo '.hasta // empty')") como mucho (se quita al terminar): mientras dura, nada del panel cambia el motor."
+}
+
+# Prolonga el mantenimiento al empezar cada paso largo: con muchos datos, la
+# migración puede durar más que el plazo con el que se activó, y al caducar
+# el panel volvería a cambiar el motor (también el temporal). Si no puede, lo
+# dice y sigue: el plazo inicial suele bastar.
+renovar_mantenimiento() {
+  [ "$MIG_MANTENIMIENTO" = 1 ] || return 0
+  herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos "${MAILWAY_MIGRACION_MINUTOS:-120}" >/dev/null 2>&1 ||
+    aviso "No se pudo prolongar el mantenimiento del panel (caduca a la hora prevista)."
+  return 0
 }
 
 # Quita el mantenimiento del panel si lo puso esta orden. Devuelve 1 si no
@@ -4072,6 +4089,9 @@ migrar_motor() {
   titulo "Cambio de motor: Stalwart 0.15 → 0.16"
   comprobaciones_migracion
   confirmar_migracion
+  # Confirmada, una sesión SSH que se corta ya no la interrumpe: sigue (o
+  # vuelve atrás) sola, con todo en el registro.
+  trap '' HUP
   MIG_FASE=preparada
   titulo "Panel"
   activar_mantenimiento
@@ -4079,8 +4099,11 @@ migrar_motor() {
   volcar_y_convertir
   parar_015
   copiar_datos_015
+  renovar_mantenimiento
   recuperacion_016
+  renovar_mantenimiento
   previo_016
+  renovar_mantenimiento
   definitivo_016
   MIG_FASE=""
   titulo "Tareas del panel tras migrar"
@@ -4124,6 +4147,7 @@ revertir_motor() {
     [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal no se puede confirmar: añade -y (sudo mailway revertir-motor -y)."
     confirmar "¿Volver a Stalwart 0.15?" n || fallo "Cancelado: no se ha cambiado nada."
   fi
+  trap '' HUP
   if en_marcha "$PANEL_MOTOR" && panel_tiene_herramienta_motor "$PANEL_MOTOR"; then
     panel_listo=1
     if herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos 60 && [ "$(hm_campo '.activo')" = true ]; then

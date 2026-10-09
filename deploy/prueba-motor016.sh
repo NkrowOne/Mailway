@@ -677,6 +677,7 @@ comprobar "el motor queda con la 0.16" igual "$(cat "$E/imagen")" "stalwartlabs/
 comprobar "la carpeta de trabajo queda sin el volcado ni el plan" igual "$(find "$MIGRACIONES" -name '*.json' ! -name 'resumen-015.json' | wc -l)" 0
 comprobar "ni la copia de deploy/.env" igual "$(find "$MIGRACIONES" -name 'env-antes' | wc -l)" 0
 comprobar "la comprobación final no tolera un certificado malo" contiene "$REGISTRO" "comprobar_instalacion TOLERAR_CERTIFICADO=0"
+comprobar "prolonga el mantenimiento en cada paso largo" igual "$(grep -c 'motor.js mantenimiento on' "$REGISTRO")" 4
 comprobar "explica las contraseñas de aplicación" contiene "$SALIDA" "contraseñas de aplicación invalidadas: 3"
 comprobar "y cómo retirar la 0.15 después" contiene "$SALIDA" "sudo mailway retirar-motor-anterior"
 

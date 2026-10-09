@@ -47,6 +47,10 @@ MAILWAY_PRUEBA_DESECHABLE=1 (lo define .github/workflows/stack.yml).
 MAILWAY_PRUEBA_DIRECCION (127.0.0.1 por defecto) es la dirección en la que la
 prueba encuentra los puertos publicados: otra permite ejecutarla contra un
 Docker aislado (Docker dentro de Docker), cuyos puertos no están en el host.
+
+MAILWAY_PRUEBA_PANEL_IMAGEN=<imagen del panel> usa el panel de verdad en lugar
+del simulado (con su base vacía: no conoce los buzones de la prueba, así que
+en la migración no se prueban ni el intento que falla ni la suspensión).
 """
 from __future__ import annotations
 
@@ -95,6 +99,7 @@ ALIAS = f'ventas@{DOMINIO}'
 EXTERNO = 'fuera@ejemplo.org'
 
 DIRECCION = os.environ.get('MAILWAY_PRUEBA_DIRECCION', '127.0.0.1')
+PANEL_REAL = os.environ.get('MAILWAY_PRUEBA_PANEL_IMAGEN', '')
 # Los puertos de la prueba se publican en 127.0.0.1, salvo que se llegue a
 # ellos por otra dirección (un Docker aislado): entonces, en todas las suyas.
 PUBLICAR = '127.0.0.1' if DIRECCION.startswith('127.') else '0.0.0.0'
@@ -318,6 +323,19 @@ class Pila:
         self.estado_panel.parent.mkdir()
         self.estado_panel.parent.chmod(0o777)
         self.guardar_estado_panel({'dominios': [], 'buzones': [], 'alias': [], 'suspendidos': []})
+        if PANEL_REAL:
+            # El de verdad, con su base vacía y el motor del entorno.
+            clave = secrets.token_hex(32)
+            ocultar(clave)
+            docker('run', '-d', '--name', PANEL, '--network', 'skyway-edge',
+                   '-e', 'STALWART_URL=http://mailway-mail:8080', '-e', 'STALWART_ADMIN_USER=admin',
+                   '-e', 'STALWART_ADMIN_PASSWORD', '-e', 'STALWART_SMTP_HOST=mailway-mail',
+                   '-e', 'STALWART_SMTP_PORT=587', '-e', f'MAILWAY_MAIL_HOSTNAME={MAIL}',
+                   '-e', f'MAILWAY_ENGINE_TRUSTED_NETWORK={SUBRED}', '-e', 'MAILWAY_SECRET',
+                   '-v', 'mailway-prueba-panel:/data', PANEL_REAL,
+                   entorno={'STALWART_ADMIN_PASSWORD': self.clave_admin, 'MAILWAY_SECRET': clave})
+            registrar(f'OK: panel de verdad en marcha ({PANEL_REAL}).')
+            return
         docker('run', '-d', '--name', PANEL, '--network', 'skyway-edge', '-w', '/app',
                '-e', 'STALWART_URL=http://mailway-mail:8080', '-e', 'STALWART_ADMIN_PASSWORD',
                '-e', f'MAILWAY_MAIL_HOSTNAME={MAIL}', '-e', f'MAILWAY_ENGINE_TRUSTED_NETWORK={SUBRED}',
@@ -720,6 +738,11 @@ class Pila:
         assert self.correo_entregado(), f'{que}: el correo no está en el buzón'
         with self.imap(SEGUNDO, self.clave_segundo):
             pass
+        if PANEL_REAL:
+            # El panel de verdad no conoce los buzones de la prueba: no puede
+            # volver a suspender el que el script oficial no conserva.
+            registrar(f'OK: {que}: el correo se lee por IMAP con la misma contraseña y el otro dominio funciona.')
+            return
         try:
             self.imap(SUSPENDIDO, self.clave_suspendido).logout()
         except imaplib.IMAP4.error:
@@ -747,7 +770,10 @@ class Pila:
         assert not (carpeta / 'dependencias').exists(), f'quedan las dependencias en {carpeta}'
 
     def sin_mantenimiento(self) -> None:
-        assert not (self.leer_estado_panel().get('mantenimiento') or {}).get('hasta'), 'el panel sigue en mantenimiento'
+        """Lo que dice la herramienta del motor del panel (la simulada o la de verdad)."""
+        r = docker('exec', '-u', 'node', PANEL, 'node', 'server/dist/tools/motor.js', 'estado', comprobar=False)
+        estado = json.loads(r.stdout.strip().splitlines()[-1])
+        assert estado['mantenimiento']['activo'] is False, f'el panel sigue en mantenimiento: {estado}'
 
     def migrar_con_fallo(self) -> None:
         antes = self.env.read_bytes()
@@ -833,6 +859,9 @@ class Pila:
                             str(DEPLOY / 'docker-compose.mail.yml'), '-f', str(self.extra), '--profile', 'tls',
                             'down', '-v', '--remove-orphans', '--timeout', '5'],
                            capture_output=True, env={**os.environ, 'MAILWAY_MOTOR': motor})
+        if PANEL_REAL:
+            r = docker('logs', '--tail', '40', PANEL, comprobar=False)
+            registrar(f'--- docker logs {PANEL} (final)\n{r.stdout}{r.stderr}')
         docker('rm', '-f', 'skyway-traefik', PANEL, TRAEFIK_RUTAS, *TEMPORALES, comprobar=False)
         docker('network', 'rm', 'skyway-edge', comprobar=False)
         # La prueba empieza sin volúmenes de Mailway (comprobar_entorno): los
@@ -907,7 +936,10 @@ def prueba_migracion(pila: Pila) -> None:
     pila.sembrar_015()
     pila.entregar()
     pila.comprobar_datos('con la 0.15')
-    pila.migrar_con_fallo()
+    if PANEL_REAL:
+        registrar('(Con el panel de verdad no se provoca el fallo: la vuelta atrás se prueba con el simulado.)')
+    else:
+        pila.migrar_con_fallo()
     pila.migrar()
     pila.comprobar_imap_webmail()
     pila.comprobar_imap_y_smtp_directos()

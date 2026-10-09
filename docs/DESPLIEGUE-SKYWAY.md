@@ -1209,7 +1209,10 @@ sudo mailway migrar-motor -y     # sin preguntar (desatendida)
 ```
 
 Equivale a `sudo bash deploy/instalar.sh --migrar-motor`. Comparte el cerrojo
-de `mailway update`: la actualización automática no se cruza con ella.
+de `mailway update`: la actualización automática no se cruza con ella. Una
+vez confirmada, si la sesión SSH se corta sigue sola (o vuelve atrás) y lo
+deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
+`screen`.
 
 **Qué hace, en orden**
 
@@ -1221,9 +1224,9 @@ de `mailway update`: la actualización automática no se cruza con ella.
    origen del certificado, el espacio, las imágenes, el script oficial de
    Stalwart (`migrate_v016.py`, fijado a su versión y comprobado con su
    sha256) y sus dependencias, y el certificado que sirve la 0.15.
-2. **Panel en mantenimiento** (hasta 120 minutos, caduca solo): mientras
-   dura, ni el panel, ni las integraciones, ni el vigilante cambian nada del
-   motor. El panel copia el hash de la contraseña de cada buzón: la 0.16 ya
+2. **Panel en mantenimiento** (120 minutos que se prolongan en cada paso
+   largo; caduca solo si la orden no termina): mientras dura, ni el panel,
+   ni las integraciones, ni el vigilante cambian nada del motor. El panel copia el hash de la contraseña de cada buzón: la 0.16 ya
    no lo devuelve, y el panel lo usa para «Mi buzón» y el webmail.
 3. **Volcado y conversión** con el script oficial, con la 0.15 aún en marcha.
 4. **Ventana sin correo**: se paran el webmail, el extractor y la 0.15, y sus
