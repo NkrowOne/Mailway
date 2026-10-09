@@ -1385,8 +1385,10 @@ cambia sus **webmail propios** (sección 7.1): la dirección general del webmail
 sigue siendo Roundcube. Lo que se gana y se pierde frente a Roundcube está en
 `deploy/bulwark/README.md` («Frente a Roundcube») y en la propia ficha.
 
-**Requisitos.** Bulwark instalado junto al panel, con las tres variables del
-panel (sin las tres, no está disponible):
+**Requisitos.** Bulwark instalado junto al panel (`sudo mailway bulwark on`,
+solo con Stalwart 0.16; ver
+[DESPLIEGUE-SKYWAY.md, sección 11.1](DESPLIEGUE-SKYWAY.md#111-bulwark-el-correo-web-beta)),
+con las tres variables del panel (sin las tres, no está disponible):
 
 | Variable | Qué es |
 |---|---|

@@ -73,15 +73,19 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
 - `deploy/` — `instalar.sh` (instalador idempotente), `mailway.sh` (la orden
   `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`;
-  `update --auto`, con comprobación antes y después y vuelta atrás, y
-  `auto-update on|off|status`, su temporizador de systemd), pruebas de los
+  `update --auto`, con comprobación antes y después y vuelta atrás,
+  `auto-update on|off|status`, su temporizador de systemd, y
+  `bulwark on|off|status`, el correo web beta), pruebas de los
   scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), el motor de cada serie
   (`motor/stalwart-0.15/compose.yml` y `motor/stalwart-0.16/compose.yml`, que
-  elige `MAILWAY_MOTOR`), el ayudante de la migración (`motor/migracion.py`),
-  las pruebas de la pila con contenedores reales (`prueba-stack.py`,
-  `prueba-motor016.sh`, `prueba-panel-motor.js`), `.env.example`, configuración de
+  elige `MAILWAY_MOTOR`), la pasarela HTTP del motor (`motor/pasarela`: nginx
+  con la IP real, delante de sus rutas de Traefik), el ayudante de la
+  migración (`motor/migracion.py`), Bulwark y su pasarela (`bulwark/`, ver su
+  README), las pruebas de la pila con contenedores reales (`prueba-stack.py`,
+  también con `--bulwark`; `prueba-pasarela.sh`, `prueba-motor016.sh`,
+  `prueba-panel-motor.js`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
   (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
   del override de Traefik y punto de entrada de la imagen.

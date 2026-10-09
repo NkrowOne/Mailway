@@ -52,7 +52,8 @@ multi-cliente**:
 | Panel (`server/` + `web/`) | Fastify + React; toda la lógica multi-cliente | Skyway desde GitHub (o `docker-compose.standalone.yml`) | Es una web normal: un puerto, TLS de Traefik, despliegue por cambio de rama |
 | Motor (Stalwart 0.16; 0.15 en las instalaciones sin migrar) | SMTP, IMAP, ManageSieve, antispam, DKIM | `deploy/docker-compose.mail.yml` con `deploy/motor/<motor>/compose.yml` | Necesita cinco puertos del host; Skyway publica uno por servicio |
 | Webmail (Roundcube 1.7) | Cliente web IMAP en español | Mismo compose | Imagen oficial con parches de seguridad activos |
-| Correo web nuevo (Bulwark 1.13, beta) | Webmail JMAP con calendario, contactos y la marca de cada cliente, elegido por cliente | Con su pasarela nginx (`deploy/bulwark/README.md`) | Solo funciona con Stalwart 0.16; el panel lo configura por su API de administración |
+| Pasarela HTTP del motor (nginx) | Calcula la IP real (redes de Docker y rangos de Cloudflare) y se la pasa al motor como única dirección | Mismo compose (`deploy/motor/pasarela`), con los dos motores | Traefik puede confiar en Cloudflare sin que el cliente elija la IP que ve el motor |
+| Correo web nuevo (Bulwark 1.13, beta) | Webmail JMAP con calendario, contactos y la marca de cada cliente, elegido por cliente | Perfil `bulwark` del mismo compose con su pasarela nginx, solo con `sudo mailway bulwark on` (`deploy/bulwark/README.md`) | Solo funciona con Stalwart 0.16; el panel lo configura por su API de administración |
 
 El servidor se organiza en `server/src/modules/` (un módulo por área),
 `server/src/engine/` (drivers del motor) y `server/src/core/` (base de datos,
