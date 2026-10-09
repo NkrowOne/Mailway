@@ -323,15 +323,18 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 - La actividad nunca guarda secretos; las acciones hechas con un token llevan
   su nombre (`via: token:<nombre>`).
 - `deploy/.env` contiene todos los secretos del despliegue: permisos 600 y
-  copia de seguridad cifrada.
+  copia de seguridad cifrada. Con Bulwark, también sus dos secretos (sección
+  7, «Bulwark»).
 
 ## 7. El motor de correo
 
 - **API de gestión**: el puerto 8080 no se publica en el host; el panel la usa
   por la red `skyway-edge` y el instalador por la red interna. Traefik publica
-  la web del motor en `https://mail.<dominio>`, protegida por la contraseña de
-  administración del motor: usa una larga y aleatoria (el instalador la
-  genera).
+  la web del motor en `https://mail.<dominio>` a través de la pasarela del
+  motor (más abajo), protegida por la contraseña de administración del motor:
+  usa una larga y aleatoria (el instalador la genera). En la instalación
+  autónoma sin proxy propio, lo publicado en `127.0.0.1:8080` también es la
+  pasarela.
 - **Conexión del panel con el motor**: conectarlo, cambiarlo o probarlo
   (`POST /api/setup/engine`, `PUT /api/settings/engine`,
   `POST /api/settings/engine/test`) exige la sesión de un administrador, no
@@ -372,25 +375,55 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
   - `http.use-x-forwarded=true` hace que el motor vea la IP real de quien llega
-    por Traefik, en lugar de bloquear la IP de Traefik para todos;
-  - Traefik **borra la cabecera `Forwarded`** antes de llegar al motor
-    (middleware `mailway-mail-sin-forwarded`, en `deploy/motor/*/compose.yml`,
-    encadenado en cada router del motor). Stalwart lee
-    `Forwarded: for=` antes que `X-Forwarded-For`, y Traefik solo reescribe
-    las `X-Forwarded-*`: sin el middleware, cualquiera podía decir que venía de
-    la red exenta y probar contraseñas sin límite contra
-    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en cada
-    router, con los dos motores.
-- **Pendiente con el proxy de Cloudflare**: si Traefik confía en las IP de
-  Cloudflare (`forwardedHeaders.trustedIPs`), conserva el `X-Forwarded-For`
-  que llega por Cloudflare, cuya primera dirección pone el cliente, y
-  Stalwart toma justo esa. Antes de confiar en Cloudflare en el Traefik que
-  sirve `MAIL_HOSTNAME`, el motor necesita delante una pasarela que calcule la
-  IP real (la última que no es de un proxy de confianza) y le pase solo esa.
+    por Traefik, en lugar de bloquear la IP de Traefik para todos. Stalwart
+    toma la **primera** dirección de `X-Forwarded-For` (y antes, la de
+    `Forwarded: for=`), que es la que escribe el cliente si nadie la
+    sustituye: por eso el motor no recibe nunca esas cabeceras tal como
+    llegan (los dos puntos siguientes);
+  - **la pasarela del motor** (`mailway-mail-gw`, nginx, `deploy/motor/pasarela`,
+    con las dos series del motor) se pone entre Traefik y todas las rutas HTTP
+    del motor: el servicio de Traefik del motor apunta a ella
+    (`loadbalancer.server.url`), no al motor. Calcula la IP real como la
+    pasarela de Bulwark (tabla de abajo) y entrega al motor **una sola**
+    dirección en `X-Forwarded-For` y en `X-Real-IP`, sin `Forwarded`,
+    `CF-Connecting-IP` ni `True-Client-IP`. Así el motor ve la IP real aunque
+    Traefik conserve la cabecera que trae la petición, que es lo que hace si
+    confía en los rangos de Cloudflare (`forwardedHeaders.trustedIPs`, para
+    que las aplicaciones de Skyway vean al visitante): sin la pasarela, una
+    petición enviada a través de Cloudflare con
+    `X-Forwarded-For: <IP de la red interna>` se hacía pasar por la red exenta
+    y podía probar contraseñas sin límite (`deploy/prueba-pasarela.sh` lo
+    reproduce sin la pasarela y comprueba que con ella el motor bloquea la IP
+    real, con un Traefik que confía en Cloudflare y otro que no). Solo está
+    en la red de Traefik: nunca entra al motor por la red exenta. Todo lo
+    demás pasa tal cual (rutas, DAV, subidas de JMAP sin tope propio, el push
+    por EventSource y WebSocket); solo anota las respuestas de error, con la
+    IP real y sin la cadena de consulta ni cabeceras;
+
+    | Petición que llega de Traefik | IP para el motor |
+    |---|---|
+    | Último salto ajeno a Cloudflare | ese salto (lo escribe Traefik) |
+    | Último salto de Cloudflare con un salto anterior (Traefik con `trustedIPs`) | el salto anterior (lo añade Cloudflare); nada de su izquierda |
+    | Último salto de Cloudflare, sin salto anterior (Traefik de Skyway) | `CF-Connecting-IP` |
+    | Último salto de Cloudflare sin datos del visitante | el nodo de Cloudflare |
+    | Conexión desde fuera de las redes de Docker | la suya, sin creer cabeceras |
+
+    Queda el límite habitual de fiarse de los rangos de Cloudflare: quien
+    llegue desde una IP de Cloudflare (un Worker u otra zona apuntada al
+    servidor) aparece con esa IP de Cloudflare, nunca con una de la red
+    exenta;
+  - Traefik **borra además la cabecera `Forwarded`** antes de llegar a la
+    pasarela (middleware `mailway-mail-sin-forwarded`, en
+    `deploy/motor/*/compose.yml`, encadenado en cada router del motor), como
+    defensa en profundidad: Traefik solo reescribe las `X-Forwarded-*`. La CI
+    comprueba que el middleware sigue en cada router y que el servicio del
+    motor es la pasarela, con los dos motores.
 - **Compromiso conocido**: con `http.use-x-forwarded=true`, un contenedor
-  conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar con
-  `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
-  Stalwart.
+  conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar
+  directamente con `mailway-mail:8080` (el panel llega al motor por esa red),
+  o con la pasarela, que trata como Traefik a cualquier contenedor de las
+  redes de Docker. La mejora prevista es una red dedicada entre Traefik, la
+  pasarela y Stalwart.
 - **TLS**: IMAP y SMTP con certificado de Let's Encrypt (ACME del motor, solo
   con 0.15, o certificado de Traefik copiado por el extractor del perfil
   `tls`, que solo lleva al volumen del motor el par del servidor de correo,
@@ -473,6 +506,87 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   extractor escribe la clave privada con ese grupo y permisos 0640 (carpetas
   0750), para lo que conserva solo la capacidad `CHOWN`.
 
+### Bulwark (correo web beta)
+
+Bulwark es el correo web JMAP que el panel ofrece por cliente, opcional
+(`sudo mailway bulwark on`, solo con Stalwart 0.16) y en beta. Detalle en
+[deploy/bulwark/README.md](../deploy/bulwark/README.md) («Riesgos conocidos»).
+
+- **Dos contenedores sin puertos publicados**: Bulwark (en la red interna y en
+  la de Traefik) y su pasarela (nginx, solo en la de Traefik), los dos con la
+  raíz en solo lectura, sin capacidades y sin privilegios nuevos. Traefik
+  solo llega a la pasarela, con los nombres que publica el panel; la API de
+  administración de Bulwark (el panel la usa directamente, sin la pasarela)
+  da 404 por la pasarela, igual que su asistente, la suplantación con JWT, el paso a los
+  métodos `x:` del motor y las acciones de servidor de Next.js. Otro
+  contenedor de la red de Traefik sí llega a Bulwark directamente: su
+  administración la protege `ADMIN_PASSWORD` (5 intentos por IP y 50 en total
+  cada 15 minutos).
+- **CORS global del motor**: el navegador habla JMAP con el motor desde
+  `webmail.<dominio>`, otro origen, así que el motor responde
+  `Access-Control-Allow-Origin: *` (`Http.usePermissiveCors`) para todos los
+  orígenes, **sin** `Access-Control-Allow-Credentials`: ninguna cookie viaja
+  a otro origen y JMAP se autentica con la cabecera `Authorization` (el riesgo
+  es el de cualquier cliente JMAP en el navegador). El panel lo abre **solo
+  mientras algún cliente usa Bulwark** y lo cierra cuando el último vuelve a
+  Roundcube. Si se quitan las variables de Bulwark con el CORS abierto
+  (`sudo mailway bulwark off`), sigue abierto hasta volver a aplicar los
+  ajustes recomendados: Ajustes → Servidor de correo lo muestra pendiente.
+- **Red exenta**: Bulwark comprueba las contraseñas desde el servidor (antes
+  del acceso y al crear su sesión) contra `https://MAIL_HOSTNAME`, que en su
+  contenedor apunta a la IP interna del motor (`extra_hosts`) y a su 443 con
+  el certificado de `MAIL_HOSTNAME`. Esas comprobaciones salen de la red
+  exenta: el motor no bloquea a Bulwark ni cuenta esos fallos para el buzón.
+  Los límites son entonces los de Bulwark y su pasarela; los del navegador
+  (JMAP directo, por la pasarela del motor) sí cuentan, con la IP real.
+- **Oráculo de contraseñas y su límite**: `/api/auth/stalwart-context` y
+  `/api/auth/session` responden 200 o 401 a cada contraseña sin ningún límite
+  propio en Bulwark 1.13 (el ensayo lo comprueba: 40 de 40). La pasarela de
+  Bulwark lo frena: 20 comprobaciones por minuto y ráfagas de 40 por IP real
+  (calculada como la del motor), y 180 por minuto en toda la instancia, solo
+  en `POST` y `PUT` de `/api/auth/*`.
+- **Cabeceras de IP**: la pasarela de Bulwark entrega una sola IP real y
+  retira `Forwarded`, `CF-Connecting-IP` y `True-Client-IP`; la del motor
+  hace lo mismo con el JMAP del navegador.
+- **Caducidad del bloqueo**: con Bulwark, los usuarios llegan al motor desde
+  su IP real, y una pestaña abierta tras cambiar la contraseña reintenta con
+  la anterior (hasta unos 30 fallos por minuto en el ensayo). El panel fija
+  en todas las instalaciones con la 0.16 un bloqueo por fallos que caduca a la
+  **hora** (`Security.authBanPeriod`), y «Mi buzón» avisa de cerrar el correo
+  web abierto tras cambiar la contraseña. En las instalaciones 0.16 que ya
+  existían, Ajustes lo muestra pendiente hasta volver a aplicar los ajustes
+  recomendados; `--comprobar` lo avisa con Bulwark activo.
+- **Secretos**: `BULWARK_SESSION_SECRET` (64 caracteres hexadecimales) cifra
+  las cookies de sesión, que llevan dentro la contraseña del buzón, y los
+  ajustes sincronizados de los usuarios: quien tenga el secreto y una cookie
+  robada recupera la contraseña. `BULWARK_ADMIN_PASSWORD` abre la
+  administración de Bulwark (marca y política de toda la instancia); en el
+  panel es `MAILWAY_BULWARK_ADMIN_PASSWORD` y solo vive en su entorno, nunca
+  en la base de datos, los registros ni la actividad. Los dos los genera el
+  instalador una vez, en `deploy/.env` (600); nunca se muestran. Desactivar
+  Bulwark los conserva; rotar el de sesión cierra las sesiones y deja
+  ilegibles los ajustes sincronizados.
+- **Imágenes de la marca de cada cliente**: el panel solo acepta PNG, JPEG y
+  WebP, reconocidos por su contenido (nunca por el tipo declarado ni la
+  extensión), de hasta 512 KB y entre 16 y 4096 píxeles de lado, y las sube a
+  Bulwark con un nombre que sale de su contenido. Ni SVG ni HTML: se servirían
+  como código desde el origen del correo web.
+- **Peticiones a terceros**: sin telemetría, comprobación de versiones,
+  conectores ni indexación (`bulwark.env`). La pasarela corta `/api/favicon`
+  (el servidor pediría el icono de cada dominio que escribe a un buzón: el
+  remitente sabría cuándo se lee su correo) y `/api/translate` (MyMemory).
+  Quien activa las notificaciones del navegador las recibe por el relé de
+  notificaciones de Bulwark (`notifications.relay.bulwarkmail.org`), que ve la
+  suscripción y los identificadores de lo que cambia, no el contenido; con
+  uno propio (`pushRelayUrl` de la política), no.
+- **Licencia AGPL-3.0**: la imagen se usa sin modificar y solo se configura;
+  cualquier parche obligaría a ofrecer su código a los usuarios
+  (`SOURCE_CODE_URL`).
+- **Madurez**: versiones semanales y avisos de seguridad recientes; la
+  contraseña del buzón está en la memoria de la pestaña (un XSS la expondría;
+  la CSP con nonce y el correo HTML aislado lo mitigan). Por eso Dependabot
+  solo propone sus parches y no se fusionan solos (sección 11).
+
 ## 8. Rutas públicas
 
 - **Autodiscover** responde siempre `200` y **nunca lee** la cabecera
@@ -526,6 +640,11 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   quedarse con el tráfico de otras aplicaciones.
 - El token de Traefik solo se entrega a la administración
   (`/api/integrations/info`, `/api/whitelabel/setup`).
+- Las rutas del nombre del servidor de correo (etiquetas del motor) llevan a
+  la pasarela del motor, nunca al motor (sección 7). Los webmail de los
+  clientes con Bulwark los publica el panel hacia su pasarela
+  (`http://mailway-bulwark-gw:8080`), que el puente de Skyway admite como
+  cualquier destino `mailway-*`.
 
 ## 10. Contenedor del panel
 
@@ -567,7 +686,12 @@ Los parches de seguridad llegan solos, pero solo después de probarse:
   dependencias suben solo un parche y han terminado bien todas las
   comprobaciones del commit: la CI, la imagen del panel construida y
   arrancada y, si cambian los compose, la pila de correo real. Las versiones
-  menores y mayores, y Stalwart fuera de la 0.15, las revisa una persona.
+  menores y mayores, y Stalwart fuera de su serie, las revisa una persona.
+  Bulwark solo recibe parches y en un PR propio que tampoco se fusiona solo:
+  su pasarela bloquea solo las rutas que conoce, y cada versión pasa por la
+  lista «Actualizar Bulwark» de `deploy/bulwark/README.md` (la CI ensaya la
+  imagen nueva). nginx, la imagen de las dos pasarelas, se fusiona como las
+  demás tras probar las dos con contenedores reales.
 - **El workflow con permisos no ejecuta el código del PR.** Corre por
   `workflow_run` con la configuración de la rama principal y permiso de
   escritura, así que nunca hace checkout ni ejecuta nada del PR: solo consulta

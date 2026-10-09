@@ -126,7 +126,9 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
    volúmenes (sección 8.2).
 4. **Secretos**: genera los que falten (`MAILWAY_SECRET`,
    `ROUNDCUBE_DES_KEY`, `MAILWAY_TRAEFIK_TOKEN`, `MAILWAY_SETUP_TOKEN`,
-   `MAILWAY_WEBMAIL_TOKEN` y la contraseña del motor).
+   `MAILWAY_WEBMAIL_TOKEN` y la contraseña del motor) y, solo con Bulwark
+   activo, los suyos (`BULWARK_SESSION_SECRET` y `BULWARK_ADMIN_PASSWORD`,
+   sección 11.1).
 5. **`deploy/.env`**: lo escribe con permisos 600 y los valores entre
    comillas simples (Compose no interpreta `$`, `#` ni los espacios). Guarda
    el modo de instalación (`MAILWAY_INSTALACION`), conserva las claves que se
@@ -152,7 +154,9 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
    (una instalación con Stalwart 0.15 sigue en la 0.15) y, en una
    instalación nueva, **Stalwart 0.16**. Una actualización nunca cambia de
    motor (eso es `--migrar-motor`, sección 8.3). Levanta `mailway-mail`,
-   espera a que esté sano y después `mailway-webmail`. Con la 0.16, el
+   espera a que esté sano y después la pasarela del motor
+   (`mailway-mail-gw`, sección 4.4), `mailway-webmail` y, con Bulwark activo,
+   `mailway-bulwark` y su pasarela (sección 11.1). Con la 0.16, el
    primer arranque se completa solo: el instalador fija el nombre del
    servidor, deja el registro de eventos en `docker logs mailway-mail`, no
    pide certificado ni claves DKIM al motor (los pone Mailway), lo reinicia y
@@ -196,7 +200,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     se hayan añadido a mano; lanza el despliegue y espera a que termine. Después enlaza el webmail con
     el contenedor real del panel (`MAILWAY_PANEL_INTERNAL_URL`). Si el motor
     ya tiene certificado, retira `MAILWAY_SMTP_ALLOW_SELF_SIGNED` de las
-    variables del panel (sección 5.4).
+    variables del panel (sección 5.4). Con Bulwark activo le añade sus tres
+    variables y, desactivado, las retira (sección 11.1).
 12. **Traefik**: con Skyway 0.34 o posterior no instala nada, porque el
     puente ya viene incluido (sección 4.2); si encuentra un
     `docker-compose.override.yml` de Mailway (el que generó una versión
@@ -239,6 +244,8 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | `--migrar-motor` | Pasa el motor de Stalwart 0.15 a 0.16 con vuelta atrás automática si algo falla (sección 8.3). Pide confirmación. |
 | `--revertir-motor` | Vuelve a Stalwart 0.15 tras una migración terminada (sección 8.3). Pide confirmación. |
 | `--retirar-motor-anterior` | Borra el volumen de la 0.15 que conserva la migración (sección 8.3). Pide escribir su nombre. |
+| `--activar-bulwark`, `--desactivar-bulwark` | Activa o desactiva Bulwark, el correo web beta (sección 11.1), y aplica como `--actualizar`. Activarlo exige Stalwart 0.16; desactivarlo no borra sus datos. |
+| `--estado-bulwark` | Estado de Bulwark, de solo lectura: contenedores, volúmenes, secretos (sin mostrarlos) y si el panel tiene sus variables. |
 | `-y` | Sin confirmación en las tres órdenes del motor (en `--retirar-motor-anterior`, además `MAILWAY_RETIRAR_VOLUMEN=<volumen>`). |
 | `--ayuda` | Muestra la ayuda con todas las variables. |
 
@@ -560,6 +567,53 @@ Compose **reemplaza** `command` entero, no lo fusiona: el bloque repite los
 parámetros que ya traía Traefik. Si actualizas Skyway y cambian, compáralos
 con `docker inspect -f '{{json .Config.Cmd}}' skyway-traefik`.
 
+### 4.4 La pasarela HTTP del motor
+
+Traefik no llega al motor directamente: las rutas del nombre del servidor de
+correo (las etiquetas de `deploy/motor/<motor>/compose.yml`: JMAP, DAV,
+autoconfiguración y, con la 0.15, su web) van a **`mailway-mail-gw`**, un
+nginx entre Traefik y `mailway-mail:8080`, con las dos series del motor. El
+servicio está en `deploy/docker-compose.mail.yml` (y en el autónomo), solo en
+la red de Traefik, sin puertos publicados (en la instalación autónoma, el
+`127.0.0.1:8080` es el suyo), con la raíz en solo lectura y sin
+capacidades. Su configuración es `deploy/motor/pasarela/nginx.conf`.
+
+**Por qué.** El motor, detrás de Traefik, toma la IP del cliente de la
+**primera** dirección de `X-Forwarded-For`, y esa la escribe quien hace la
+petición si Traefik conserva la cabecera que le llega, como hace cuando
+confía en los rangos de Cloudflare (`forwardedHeaders.trustedIPs`). Una
+petición enviada a través de Cloudflare con `X-Forwarded-For: 10.203.53.20`
+se haría pasar por la red interna, exenta del bloqueo automático, y podría
+probar contraseñas sin límite. La pasarela calcula la IP real como la de
+Bulwark (el último salto que no es un proxy de confianza: las redes de
+Docker y los rangos de Cloudflare) y el motor recibe **solo** esa, sin
+`Forwarded`, `CF-Connecting-IP` ni `True-Client-IP`. El cálculo y su tabla,
+en [SEGURIDAD.md](SEGURIDAD.md#7-el-motor-de-correo).
+
+Todo lo demás pasa tal cual: rutas, métodos de DAV, cuerpos sin guardarlos
+(adjuntos de JMAP), respuestas sin búfer (el push de JMAP por EventSource),
+WebSocket y conexiones de hasta una hora. Qué rutas se publican lo siguen
+decidiendo las etiquetas del motor en Traefik (con la 0.16, la
+administración y el autoservicio dan 403).
+
+- **Registro**: `docker logs mailway-mail-gw`, una línea JSON por cada
+  respuesta de error (4xx y 5xx) con la IP real (`ip`) y quién conectó
+  (`par`, Traefik). Solo la ruta, sin la cadena de consulta ni cabeceras.
+- **Rangos de Cloudflare**: `deploy/bulwark/cloudflare/rangos.txt` es la
+  fuente única de las dos pasarelas; `bash deploy/bulwark/cloudflare/generar.sh`
+  regenera sus `cloudflare.conf` y `--comprobar` dice si están al día. Una
+  actualización recrea la pasarela cuando cambia su carpeta (etiqueta
+  `mailway.mail-gw-config` con su huella).
+- **Si no está sana**, `https://mail.<dominio>` responde 502 o 504 (IMAP y
+  SMTP no pasan por ella): `docker logs mailway-mail-gw`, y `sudo mailway
+  update -y --reaplicar` la recrea.
+- **Migración del motor**: se para en la ventana sin correo, con la 0.15
+  (los motores temporales llevan el nombre `mailway-mail`), y la vuelve a
+  levantar el motor definitivo o la vuelta atrás (sección 8.3).
+
+`deploy/prueba-pasarela.sh` la ensaya con contenedores reales y cada motor
+(sección 16).
+
 ---
 
 ## 5. Certificado TLS de IMAP y SMTP
@@ -776,7 +830,8 @@ docker ps --format '{{.Names}}\t{{.Status}}' | grep mailway   # mailway-mail (he
 ```
 
 El proyecto de Compose se llama siempre `mailway`, con independencia de la
-carpeta: contenedores `mailway-mail` y `mailway-webmail`, volúmenes
+carpeta: contenedores `mailway-mail`, `mailway-mail-gw` (la pasarela del
+motor, sección 4.4) y `mailway-webmail`, volúmenes
 `mailway-stalwart-etc` y `mailway-stalwart-data` (Stalwart 0.16; con la 0.15,
 `mailway-mail-data`), `mailway-mail-certs` y `mailway-webmail-db`, y red
 `mailway-internal`.
@@ -894,12 +949,15 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.standalone.yml --
 
 Sin el perfil `proxy` (por ejemplo, si 80/443 ya los usa otro servidor web),
 el panel (`127.0.0.1:4100`), el webmail (`127.0.0.1:8000`) y la web del motor
-(`127.0.0.1:8080`) escuchan **solo en local**: ponles delante un proxy con
-TLS (Caddy, Nginx…). Nunca los publiques en HTTP hacia Internet: por ellos
-viajan contraseñas. Con Stalwart 0.16, publica de la web del motor solo las
-rutas que deja pasar Traefik (las etiquetas de
-`deploy/motor/stalwart-0.16/compose.yml`): su administración y su
-autoservicio no deben llegar a Internet.
+(`127.0.0.1:8080`, a través de su pasarela, sección 4.4) escuchan **solo en
+local**: ponles delante un proxy con TLS (Caddy, Nginx…). Nunca los publiques
+en HTTP hacia Internet: por ellos viajan contraseñas. Con Stalwart 0.16,
+publica de la web del motor solo las rutas que deja pasar Traefik (las
+etiquetas de `deploy/motor/stalwart-0.16/compose.yml`): su administración y
+su autoservicio no deben llegar a Internet. Ese proxy debe escribir la IP del
+visitante en `X-Forwarded-For`; la pasarela solo la cree si llega por una red
+de Docker o desde el propio servidor. Bulwark (sección 11.1) necesita el
+Traefik del perfil `proxy`: el panel publica allí sus nombres.
 
 El certificado de IMAP/SMTP se obtiene igual que en la sección 5: con
 Stalwart 0.16, el extractor del certificado que obtiene `mailway-proxy`
@@ -958,6 +1016,9 @@ abrir el 587 (sección 2.3, paso 10).
   diciembre de 2026** y cómo migrar; lo mismo dicen `--comprobar` y el aviso
   de la actualización automática. Para pasar a la 0.16: `sudo mailway
   migrar-motor` (sección 8.3).
+- **Bulwark** (sección 11.1): una actualización nunca lo activa; con él
+  activo, lo mantiene (recrea su pasarela cuando cambia su configuración) y,
+  desactivado, retira sus contenedores si quedara alguno.
 - **Extractor del certificado** (perfil `tls`): `--actualizar` lo recrea con
   el código nuevo. A mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml --profile tls up -d --force-recreate
@@ -1040,7 +1101,10 @@ Stalwart llegan por separado para cada serie (`deploy/motor/stalwart-0.15` y
 los motores reales: el panel contra Stalwart de verdad, la pila con cada motor
 y la migración de la 0.15 a la 0.16 con su vuelta atrás. **Stalwart nunca
 cambia de serie solo** (ni de la 0.15 a la 0.16 ni a una 0.17): de la 0.15 a
-la 0.16 se pasa con `sudo mailway migrar-motor`.
+la 0.16 se pasa con `sudo mailway migrar-motor`. **Bulwark** solo recibe sus
+parches, en un PR propio que nunca se fusiona solo: cada versión pasa por la
+lista «Actualizar Bulwark» de `deploy/bulwark/README.md`, y la CI la ensaya
+con su pasarela.
 
 **Con Skyway, el panel** lo sigue desplegando Skyway desde GitHub: la
 comprobación incluye su `/api/health`, pero la vuelta atrás de `mailway
@@ -1238,7 +1302,8 @@ deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
    ni las integraciones, ni el vigilante cambian nada del motor. El panel copia el hash de la contraseña de cada buzón: la 0.16 ya
    no lo devuelve, y el panel lo usa para «Mi buzón» y el webmail.
 3. **Volcado y conversión** con el script oficial, con la 0.15 aún en marcha.
-4. **Ventana sin correo**: se paran el webmail, el extractor y la 0.15, y sus
+4. **Ventana sin correo**: se paran el webmail, el extractor, la pasarela del
+   motor (sección 4.4) y la 0.15, y sus
    datos (montados en solo lectura) se copian a dos volúmenes nuevos con la
    fecha (`mailway-stalwart-etc-<fecha>` y `mailway-stalwart-data-<fecha>`).
    Se comprueba que la copia tiene los mismos ficheros y bytes.
@@ -1305,7 +1370,9 @@ renueva las credenciales internas. El correo recibido desde la migración se
 queda en el volumen de la 0.16 y no se ve con la 0.15; lo creado o cambiado en
 el panel desde entonces no está en la 0.15, y las contraseñas de aplicación de
 la 0.16 no valen allí. Los volúmenes de la 0.16 se conservan; para volver a la
-0.16, se migra de nuevo (a volúmenes nuevos).
+0.16, se migra de nuevo (a volúmenes nuevos). Si Bulwark estaba activo, queda
+desactivado (con sus datos): necesita la 0.16. Tras migrar de nuevo, `sudo
+mailway bulwark on`.
 
 **Retirar la 0.15** (`sudo mailway retirar-motor-anterior`), cuando lleves unos
 días sin problemas: borra solo el volumen de la 0.15 (`mailway-mail-data`, o
@@ -1417,6 +1484,87 @@ muestra nunca sus URL ni sus tokens.
 
 Detalle y reglas en [INTEGRACIONES.md](INTEGRACIONES.md).
 
+### 11.1 Bulwark, el correo web beta
+
+Además de Roundcube (el predeterminado), el panel puede servir a cada cliente
+**Bulwark**, un correo web JMAP con calendario y contactos, en sus webmail
+propios. Está en **beta** y es **opcional**: hay que activarlo en el servidor
+y después elegirlo cliente a cliente en el panel (cómo, en
+[INTEGRACIONES.md](INTEGRACIONES.md)). Solo funciona con **Stalwart 0.16**: el
+navegador habla JMAP con el motor.
+
+```bash
+sudo mailway bulwark on       # o: sudo bash deploy/instalar.sh --activar-bulwark
+sudo mailway bulwark status   # o: --estado-bulwark (no cambia nada)
+sudo mailway bulwark off      # o: --desactivar-bulwark
+```
+
+- **`on`** deja `MAILWAY_BULWARK=1` en `deploy/.env` y aplica como
+  `--actualizar`. Con la 0.15 se niega sin cambiar nada y remite a `sudo
+  mailway migrar-motor` (sección 8.3). La primera vez genera sus dos
+  secretos, que se guardan en `deploy/.env` y nunca se muestran:
+  `BULWARK_SESSION_SECRET` (64 caracteres hexadecimales; cifra las sesiones
+  y los ajustes de los usuarios) y `BULWARK_ADMIN_PASSWORD` (la de su
+  administración, que solo usa el panel).
+- **Dos contenedores** (perfil `bulwark` de los compose; el instalador lo
+  añade a cada orden de Compose solo mientras está activo), sin puertos
+  publicados, con la raíz en solo lectura y sin capacidades:
+
+  | Contenedor | Redes | Qué es |
+  |---|---|---|
+  | `mailway-bulwark` | `mailway-internal` y la de Traefik | Bulwark (Next.js, puerto 3000). El panel llega a su API de administración directamente, sin pasar por la pasarela; comprueba las contraseñas en el 443 interno del motor (`https://MAIL_HOSTNAME`, que en el contenedor apunta a la IP interna), exento del bloqueo automático. |
+  | `mailway-bulwark-gw` | la de Traefik | Su pasarela (nginx, puerto 8080): el destino de Traefik para los webmail de los clientes con Bulwark. Bloquea lo que no debe llegar a Internet (su administración, entre otras rutas), limita las comprobaciones de contraseña por IP real y pasa la marca de cada cliente. |
+
+  Volúmenes: `mailway-bulwark-ajustes` (ajustes sincronizados de los
+  usuarios), `mailway-bulwark-admin` (marca, política y la administración;
+  el panel sube ahí las imágenes de cada cliente) y `mailway-bulwark-estado`.
+- **Tres variables del panel**: sin las tres, el panel no ofrece Bulwark.
+  Junto a Skyway, el instalador las pone en las variables del servicio del
+  panel y lo vuelve a desplegar; en la instalación autónoma llegan por el
+  compose:
+
+  | Variable del panel | Valor |
+  |---|---|
+  | `MAILWAY_BULWARK_URL` | `http://mailway-bulwark:3000` (su API de administración, nunca la pasarela) |
+  | `MAILWAY_BULWARK_ADMIN_PASSWORD` | la de `BULWARK_ADMIN_PASSWORD` de `deploy/.env`; solo vive en el entorno del panel |
+  | `MAILWAY_BULWARK_BACKEND_URL` | `http://mailway-bulwark-gw:8080` (destino de Traefik) |
+
+  Si el instalador no despliega el panel (Skyway en otro servidor, o sin su
+  API), ponlas a mano con esos valores: el resumen lo recuerda.
+- **Rutas**: el panel publica los webmail de esos clientes hacia
+  `mailway-bulwark-gw:8080` (servicio `mailway-bulwark` de sus rutas), y el
+  puente de Skyway lo admite como cualquier destino `mailway-*`. En la
+  instalación autónoma hace falta el Traefik del perfil `proxy`.
+- **El motor**: el panel aplica en la 0.16 lo que Bulwark necesita con sus
+  ajustes recomendados: el CORS (abierto solo mientras algún cliente usa
+  Bulwark) y que el bloqueo por fallos de acceso caduque a la hora. **En las
+  instalaciones con la 0.16 que ya existían**, la comprobación
+  `authBanExpiry` de **Ajustes → Servidor de correo** sale pendiente hasta
+  volver a aplicar los ajustes recomendados: `sudo mailway update -y
+  --reaplicar` (que llama a `provisionar`) o el botón de esa misma pantalla.
+  `--comprobar` lo avisa mientras Bulwark esté activo. El certificado del 443
+  interno es el de `MAIL_HOSTNAME` que pone el extractor (sección 5.2).
+- **`off`** deja `MAILWAY_BULWARK=0`, quita las tres variables del panel (sus
+  clientes vuelven a Roundcube) y retira los dos contenedores. **No borra
+  nada**: los volúmenes y los secretos se conservan, y un `on` posterior lo
+  recupera todo. El CORS del motor que hubiera abierto el panel sigue
+  abierto hasta volver a aplicar los ajustes recomendados; Ajustes lo
+  muestra pendiente.
+- **Actualizaciones**: ninguna lo activa (sección 8.1). Volver a la 0.15
+  (`sudo mailway revertir-motor`) lo desactiva, con sus datos.
+- **Diagnóstico**: `--comprobar` revisa, con Bulwark activo, sus dos
+  contenedores, su salud a través de la pasarela, el certificado que ve en el
+  443 interno del motor, que el motor escucha ahí y si su bloqueo caduca;
+  `sudo mailway bulwark status`, además, si el panel tiene las tres
+  variables (sin mostrarlas). Registros: `docker logs mailway-bulwark` y
+  `docker logs mailway-bulwark-gw` (una línea JSON por cada petición
+  rechazada, con la IP real).
+- **Copias de seguridad**: sus tres volúmenes y `deploy/.env` (sección 13).
+
+Pasarela, marca, política, riesgos conocidos y cómo se actualiza, en
+[deploy/bulwark/README.md](../deploy/bulwark/README.md); su modelo de
+seguridad, en [SEGURIDAD.md](SEGURIDAD.md#bulwark-correo-web-beta).
+
 ---
 
 ## 12. Entregabilidad
@@ -1485,6 +1633,9 @@ comprobar, trata la instalación como preproducción.
     `mailway-mail-data` (o el de `MAILWAY_MAIL_VOLUME`, en una instalación
     que viene de la 0.x);
   - volumen `mailway-webmail-db` (ajustes de los usuarios del webmail);
+  - con Bulwark (sección 11.1), sus volúmenes `mailway-bulwark-ajustes`,
+    `mailway-bulwark-admin` y `mailway-bulwark-estado` (los ajustes de los
+    usuarios solo se leen con el `BULWARK_SESSION_SECRET` de `deploy/.env`);
   - `deploy/.env` (secretos; guárdalo cifrado).
   ```bash
   # Se detiene el motor unos segundos: copiar su base de datos en marcha
@@ -1495,6 +1646,13 @@ comprobar, trata la instalación como preproducción.
     -v /root/copias:/destino alpine tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
   docker start mailway-mail
   # Stalwart 0.15: -v mailway-mail-data:/origen:ro en lugar de los dos volúmenes.
+
+  # Bulwark (se detiene unos segundos):
+  docker stop mailway-bulwark
+  docker run --rm -v mailway-bulwark-ajustes:/origen/ajustes:ro -v mailway-bulwark-admin:/origen/admin:ro \
+    -v mailway-bulwark-estado:/origen/estado:ro -v /root/copias:/destino \
+    alpine tar czf /destino/mailway-bulwark-$(date +%F).tar.gz -C /origen .
+  docker start mailway-bulwark
   ```
   El resumen del instalador muestra la orden exacta para cada servidor.
 - **Registros del motor**: `docker logs -f mailway-mail` (con la 0.16, todo
@@ -1532,8 +1690,8 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
 
 **`--comprobar`** revisa, con los datos de `deploy/.env` y sin preguntar nada:
 
-- que `mailway-mail` y `mailway-webmail` (y `mailway-panel` en la instalación
-  autónoma) están en marcha y sanos;
+- que `mailway-mail`, su pasarela (`mailway-mail-gw`) y `mailway-webmail`
+  (y `mailway-panel` en la instalación autónoma) están en marcha y sanos;
 - en el motor: el nombre del servidor, la exención de la red interna y qué
   certificado usa (ACME propio, el de Traefik con el extractor o uno a mano).
   Con Stalwart 0.16, además, que toma la IP real de `X-Forwarded-For`, que
@@ -1547,7 +1705,11 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
 - la conexión IMAP y SMTP del webmail con el motor, con la configuración
   efectiva de Roundcube (`imap_conn_options` y `smtp_conn_options` de
   `deploy/roundcube/mailway.php`) y sin credenciales;
-- el estado del extractor del certificado, si está en marcha.
+- el estado del extractor del certificado, si está en marcha;
+- con Bulwark activo (sección 11.1): sus dos contenedores, sus secretos, su
+  salud a través de su pasarela, que el motor sirve HTTPS en su 443 interno
+  con el certificado de `MAIL_HOSTNAME` (verificado desde Bulwark) y si el
+  bloqueo por fallos del motor caduca (esto último solo como aviso).
 
 Termina con código 0 si todo es correcto y 1 si algo falla. No cubre el DNS
 público, el PTR, los puertos vistos desde Internet ni la entrega a otros
@@ -1588,6 +1750,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `MAILWAY_TRAEFIK_TOKEN` | se genera | Token de `/api/traefik/config` (cabecera `X-Mailway-Token`). |
 | `MAILWAY_PANEL_BACKEND_URL` | `http://skyway-<SKYWAY_PROJECT>-<SKYWAY_SERVICE>:<PORT>` | Contenedor del panel para Traefik (autoconfiguración y dominios de tipo panel). |
 | `MAILWAY_WEBMAIL_BACKEND_URL` | `http://mailway-webmail:80` | Contenedor del webmail para Traefik (marca blanca). |
+| `MAILWAY_BULWARK_URL`, `MAILWAY_BULWARK_ADMIN_PASSWORD`, `MAILWAY_BULWARK_BACKEND_URL` | — | Bulwark (sección 11.1): su API de administración (`http://mailway-bulwark:3000`), su contraseña de administración (la `BULWARK_ADMIN_PASSWORD` de `deploy/.env`) y el destino de Traefik para sus webmail (`http://mailway-bulwark-gw:8080`). Hacen falta las tres; las pone y las quita el instalador. |
 | `MAILWAY_TRAEFIK_CERTRESOLVER` | `le` | Nombre del emisor de certificados de Traefik. |
 | `MAILWAY_WEBMAIL_AUTOMATICO` | — | Valor inicial del interruptor general del webmail de marca automático de cada dominio (`webmail.<dominio>`); `0` lo deja apagado. Después manda lo que se elija en **Ajustes** (docs/INTEGRACIONES.md, sección 7.1). |
 | `MAILWAY_ENGINE_TRUSTED_NETWORK` | `10.203.53.0/24` | Rangos que el motor exime de su bloqueo automático (separados por comas; vacío lo desactiva). Debe coincidir con `MAILWAY_INTERNAL_SUBNET`. |
@@ -1610,9 +1773,14 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `mailway-mail` nunca llega a *healthy* | Con la 0.15: núcleo sin IPv6, o puertos ocupados. Con la 0.16: casi siempre lo explica su registro | 0.16: `docker logs mailway-mail`. 0.15: vuelve a ejecutar el instalador (cambia el motor a IPv4) y revisa `docker exec mailway-mail ls /opt/stalwart/logs`. |
 | El instalador dice que el motor 0.16 no ha completado su primer arranque | El volumen de datos de la 0.16 ya tenía otra instalación, o la contraseña de `deploy/.env` no es la de ese motor | `docker logs mailway-mail`. El instalador no toca un volumen con datos: revisa `MAILWAY_STALWART_*_VOLUME` y `STALWART_ADMIN_PASSWORD` en `deploy/.env`. |
 | `--comprobar`: «El 587 está en los ajustes del motor, pero no escucha» | La 0.16 abre una escucha nueva solo al reiniciarse | `docker restart mailway-mail` (o `sudo mailway update -y --reaplicar`, que lo hace solo). |
+| `https://mail.<dominio>` responde 502 o 504 | La pasarela del motor (`mailway-mail-gw`) no está en marcha o no llega al motor | `docker logs mailway-mail-gw` y `sudo mailway update -y --reaplicar` (sección 4.4). IMAP y SMTP no dependen de ella. |
 | `https://mail.<dominio>/admin` (o `/account`, `/login`) responde 403 | Con Stalwart 0.16, Traefik solo publica en ese nombre lo que necesitan los programas de correo | Es lo esperado: el motor se administra desde el panel. Por la red interna sigue en `http://mailway-mail:8080`. |
 | `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
 | `mailway migrar-motor` ha vuelto a la 0.15 | Un paso no ha superado su comprobación | El motivo está en la salida y en `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`. La 0.15 sigue con sus datos de siempre; repite cuando esté resuelto (sección 8.3). |
+| `sudo mailway bulwark on` responde que Bulwark necesita Stalwart 0.16 | El servidor sigue con la 0.15 | Migra el motor (`sudo mailway migrar-motor`, sección 8.3) y repite. No se ha cambiado nada. |
+| El panel no deja elegir Bulwark para un cliente | Al panel le falta alguna de sus tres variables, o Bulwark no está sano | `sudo mailway bulwark status` dice qué falta; `sudo mailway update -y --reaplicar` se las vuelve a dar (sección 11.1). |
+| `--comprobar`: «Bulwark no puede verificar el certificado de mail.… en el 443 interno del motor» | El motor aún no tiene el certificado de Traefik, o no escucha HTTPS en su 443 | El acceso sigue funcionando (el navegador comprueba la contraseña por su cuenta), pero sin la red exenta. El certificado lo pone el extractor (sección 5.2); `docker logs mailway-certs-dumper`. |
+| Un usuario de Bulwark no puede entrar tras cambiar su contraseña | Una pestaña abierta con la contraseña anterior ha hecho que el motor bloquee su IP | El bloqueo caduca a la hora si los ajustes recomendados están aplicados (sección 11.1); antes, bórralo como se indica más abajo («Una IP legítima…»). |
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
 | No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
 | No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
@@ -1658,16 +1826,22 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    (`python3 -m unittest discover -s deploy/tls`, con un motor de laboratorio
    y certificados generados con openssl) y del ayudante de la migración
    (`deploy/motor`, con un motor JMAP de laboratorio y un script oficial
-   simulado), sintaxis de Python, PHP, JavaScript y Bash, `shellcheck` y
-   `docker compose config` de los dos compose con cada motor, con y sin el
-   perfil `tls` (sin `MAILWAY_MOTOR`, la imagen sigue siendo la 0.15, y la
-   cabecera `Forwarded` se quita en todos los routers del motor).
+   simulado), sintaxis de Python, PHP, JavaScript y Bash, `shellcheck`
+   (también de `deploy/bulwark/`), `nginx -t` de las dos pasarelas (con sus
+   rangos de Cloudflare al día) y `docker compose config` de los dos compose
+   con cada motor, con y sin los perfiles `tls` y `bulwark` (sin
+   `MAILWAY_MOTOR`, la imagen sigue siendo la 0.15; la cabecera `Forwarded`
+   se quita en todos los routers del motor, que llevan a su pasarela; Bulwark
+   solo existe con su perfil, y todas las imágenes van fijadas por digest).
    `deploy/prueba-motor016.sh` carga las funciones del instalador con
    `docker`, Compose, el motor y la herramienta del motor del panel
    simulados y comprueba la elección del motor (y que una actualización
    nunca lo cambia), el aviso del fin de soporte de la 0.15, el primer
    arranque de la 0.16 (sin mostrar la contraseña que devuelve el motor),
-   «provisionar» con su reinicio, el diagnóstico de la 0.16 y la migración:
+   «provisionar» con su reinicio, el diagnóstico de la 0.16, Bulwark (se
+   niega con la 0.15; genera sus secretos una sola vez y sin mostrarlos; su
+   perfil solo mientras está activo; desactivarlo conserva secretos y
+   volúmenes, y volver a la 0.15 lo desactiva) y la migración:
    el orden de los pasos, que el panel no toca el motor en modo
    recuperación, y la vuelta atrás según dónde falle (`deploy/.env` como
    estaba, la 0.15 sobre su volumen, ningún volumen borrado y la contraseña
@@ -1682,7 +1856,8 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    herramienta en Skyway, avisa y sigue; sin token, no llama a ninguna) y el
    paso «Panel en Skyway» cuando su API no responde (token temporal revocado, IP del
    contenedor, sin interrumpir la instalación) y con un panel que Skyway ya
-   despliega (se actualiza sin duplicarlo ni cambiar su clave maestra). Solo
+   despliega (se actualiza sin duplicarlo ni cambiar su clave maestra), con
+   las tres variables de Bulwark solo mientras está activo. Solo
    necesita bash y `jq`. `deploy/prueba-migracion.sh`, igual, comprueba la
    migración desde la 0.x (sección 8.2): el certificado del volcador pasa al
    extractor, los usuarios del webmail cambian de servidor sobre una base
@@ -1699,8 +1874,10 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    termina con 2; una versión fallida se reintenta una vez y después no; con
    el servidor ya enfermo, sin el Traefik de Skyway, con cambios a mano o con
    otra actualización en curso no se toca nada; una interrumpida se retoma;
-   `auto-update on/off/status` escribe y retira las unidades de systemd; y,
-   con la 0.15, `update` avisa de su fin de soporte sin migrar nunca.
+   `auto-update on/off/status` escribe y retira las unidades de systemd;
+   `mailway bulwark on/off/status` llama a la opción del instalador que
+   corresponde; y, con la 0.15, `update` avisa de su fin de soporte sin
+   migrar nunca.
    El aviso al panel (`tools/avisar.js`) se prueba en
    `server/test/avisar.test.ts`.
 2. **El panel contra los motores reales**: el driver de Stalwart 0.16
@@ -1723,7 +1900,9 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    actualización no repite el primer arranque ni reinicia el motor y, con un
    Traefik real, las rutas del nombre
    del servidor de correo (403 en la administración y el autoservicio del
-   motor) y que la cabecera `Forwarded` no llega al motor.
+   motor). Con los dos motores, que Traefik llega al motor por su pasarela y
+   que un `X-Forwarded-For` o un `Forwarded` falsos no llegan al motor; con
+   la 0.15, además, que `--activar-bulwark` se niega sin cambiar nada.
 4. **La migración con contenedores reales** (`deploy/prueba-stack.py
    --migracion`): una 0.15 con dos dominios con DKIM, buzones con su
    contraseña, uno suspendido, un alias con un destino externo y un correo
@@ -1740,10 +1919,32 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    emparejado se prueba en `deploy/prueba-emparejado.sh` (el instalador),
    `server/test/emparejar.test.ts` (la herramienta del panel) y las pruebas
    de las herramientas de Skyway.
+5. **Bulwark con contenedores reales**: `deploy/prueba-stack.py --bulwark`
+   lo activa con el instalador sobre la pila con la 0.16 y un panel simulado
+   y comprueba sus dos contenedores (sanos, en sus redes, sin puertos, en
+   solo lectura), que su administración solo responde por la red interna (404
+   por la pasarela), que comprueba contraseñas por la red exenta y el 443 del
+   motor, `--comprobar` y `bulwark status`, que una actualización no lo
+   recrea y que desactivarlo conserva volúmenes y secretos. En los PR que
+   cambian `deploy/bulwark/`, sus compose o `server/src/modules/bulwark.ts`,
+   además, el ensayo `deploy/bulwark/prueba.sh` (el correo web de verdad
+   contra una 0.16, con su pasarela, la marca, la política y el panel).
+6. **La pasarela del motor** (`deploy/prueba-pasarela.sh --motor
+   stalwart-0.16` y `--motor stalwart-0.15`): con un Traefik real que confía
+   en los rangos de Cloudflare y una red que hace de Cloudflare, comprueba la
+   IP que recibe el motor en cada caso de la tabla de
+   [SEGURIDAD.md](SEGURIDAD.md#7-el-motor-de-correo) (directo, por
+   Cloudflare, con `X-Forwarded-For`, `Forwarded` o `CF-Connecting-IP`
+   falsos), que el motor bloquea la IP real tras los fallos de contraseña,
+   también con un `X-Forwarded-For` falso que dice ser de la red interna, y
+   que todo lo demás funciona igual que sin ella: sesión y descubrimiento de
+   JMAP, subidas grandes, push por EventSource, WebSocket, DAV y
+   autoconfiguración.
 
 Las pruebas unitarias se ejecutan en cualquier equipo con Python 3 y openssl.
-La prueba de la pila crea y borra contenedores, redes y volúmenes con los
-nombres de Mailway: solo se ejecuta con `MAILWAY_PRUEBA_DESECHABLE=1`, se
+La prueba de la pasarela usa nombres propios (`mwp-`, o los de
+`MWP_PREFIJO`) y no toca nada de Mailway. La prueba de la pila crea y borra
+contenedores, redes y volúmenes con los nombres de Mailway: solo se ejecuta con `MAILWAY_PRUEBA_DESECHABLE=1`, se
 niega si encuentra restos de Mailway o de Skyway y nunca debe lanzarse en un
 servidor con datos. Para ejecutarla en un equipo de desarrollo sin tocar su
 Docker, sirve un Docker aislado (Docker dentro de Docker): con `DOCKER_HOST`
