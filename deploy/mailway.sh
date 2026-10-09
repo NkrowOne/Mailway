@@ -12,6 +12,7 @@
 #   mailway auto-update on      # «update --auto» cada noche (temporizador de systemd)
 #   mailway comprobar           # diagnóstico de solo lectura (instalar.sh --comprobar)
 #   mailway probar-acceso       # abre un buzón desde el webmail (instalar.sh --probar-acceso)
+#   mailway migrar-motor        # Stalwart 0.15 → 0.16, con vuelta atrás (instalar.sh --migrar-motor)
 #   mailway version
 #
 # «update» = «git pull» + «instalar.sh --actualizar»: el panel junto a Skyway
@@ -27,6 +28,10 @@
 #   0  actualizado y comprobado, o nada que hacer;
 #   1  no se ha aplicado o se ha vuelto atrás: sigue la versión anterior;
 #   2  ha fallado y la vuelta atrás también: hay que revisarlo a mano.
+#
+# Ninguna actualización cambia de motor de correo: con Stalwart 0.15 avisa de
+# su fin de soporte y de cómo migrar, que es una orden aparte y explícita
+# («mailway migrar-motor»), con su propia comprobación y vuelta atrás.
 # ============================================================================
 set -euo pipefail
 
@@ -49,6 +54,10 @@ SYSTEMD_DIR="${MAILWAY_SYSTEMD_DIR:-/etc/systemd/system}"
 # falla, volver atrás (con Skyway, compilando el panel) cabe de sobra antes:
 # nunca coinciden, ni siquiera cuando una de las dos vuelve atrás.
 HORA_AUTO="03:00"
+# Fin del soporte de seguridad de Stalwart 0.15 (fechas ISO: se comparan
+# como texto).
+FIN_SOPORTE_015="2026-12-01"
+FIN_SOPORTE_015_TEXTO="1 de diciembre de 2026"
 # Tras recrear los contenedores, el webmail tarda en volver a estar sano: la
 # comprobación se repite cada SALUD_INTERVALO segundos durante SALUD_ESPERA.
 SALUD_ESPERA=180
@@ -105,8 +114,21 @@ Uso: mailway <orden> [opciones]
   comprobar                  Diagnóstico de solo lectura (instalar.sh --comprobar).
   probar-acceso              Inicia sesión con un buzón desde el webmail
                              (instalar.sh --probar-acceso).
+  migrar-motor [-y]          Pasa el motor de Stalwart 0.15 a 0.16: comprueba
+                             antes, convierte los datos con las herramientas
+                             oficiales, verifica antes de abrir los puertos y,
+                             si algo falla, vuelve sola a la 0.15, cuyo volumen
+                             no se toca. Unos minutos sin correo; las contraseñas
+                             de aplicación hay que crearlas de nuevo.
+  revertir-motor [-y]        Vuelve a la 0.15 tras una migración terminada (el
+                             correo recibido desde entonces queda en la 0.16).
+  retirar-motor-anterior     Borra el volumen de la 0.15 que la migración
+                             conserva como vuelta atrás (pide su nombre).
   version                    Versión instalada y carpeta de Mailway.
   ayuda                      Muestra esta ayuda.
+
+Ni «update» ni «update --auto» cambian de motor: con Stalwart 0.15 (fin de
+su soporte de seguridad: 1 de diciembre de 2026) avisan de cómo migrar.
 
 Los secretos que acepta el instalador (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN…)
 se pasan igual que con instalar.sh, por el entorno y nunca en la orden. Lo
@@ -146,7 +168,7 @@ como_root() {
   if [ "$(id -u)" != 0 ]; then
     command -v sudo >/dev/null 2>&1 || fallo "Ejecuta «mailway» como root."
     # Los secretos del instalador viajan por el entorno: se conservan.
-    exec sudo --preserve-env=CLOUDFLARE_API_TOKEN,SKYWAY_TOKEN,STALWART_ADMIN_PASSWORD,SKYWAY_URL,MAILWAY_PANEL_SERVICIO bash "$SCRIPT" "$@"
+    exec sudo --preserve-env=CLOUDFLARE_API_TOKEN,SKYWAY_TOKEN,STALWART_ADMIN_PASSWORD,SKYWAY_URL,MAILWAY_PANEL_SERVICIO,MAILWAY_MIGRACION_COLA_MAX,MAILWAY_MIGRACION_DIR,MAILWAY_MIGRACION_MINUTOS,MAILWAY_MIGRACION_CONSERVAR,MAILWAY_RETIRAR_VOLUMEN bash "$SCRIPT" "$@"
   fi
 }
 
@@ -168,6 +190,25 @@ leer_clave() {
 }
 leer_env() { leer_clave "$ENV_FILE" "$1"; }
 leer_estado() { leer_clave "$ESTADO" "$1"; }
+
+# Motor de correo de la instalación (MAILWAY_MOTOR de deploy/.env). Sin
+# valor, es una instalación de antes de la 0.16: Stalwart 0.15.
+motor_instalado() {
+  local m
+  m=$(leer_env MAILWAY_MOTOR)
+  printf '%s' "${m:-stalwart-0.15}"
+}
+
+# Con Stalwart 0.15, una línea sobre su fin de soporte y cómo migrar (o nada).
+texto_fin_soporte_015() {
+  [ "$(motor_instalado)" = stalwart-0.15 ] || return 0
+  if [[ $(date -u +%F) < "$FIN_SOPORTE_015" ]]; then
+    printf 'El motor sigue en Stalwart 0.15, que deja de recibir parches de seguridad el %s.' "$FIN_SOPORTE_015_TEXTO"
+  else
+    printf 'El motor sigue en Stalwart 0.15, que ya no recibe parches de seguridad (desde el %s).' "$FIN_SOPORTE_015_TEXTO"
+  fi
+  printf ' Ninguna actualización cambia de motor: para pasar a la 0.16 (unos minutos sin correo; vuelve atrás sola si algo falla), sudo mailway migrar-motor.'
+}
 
 # Número entero o 0 (lo que se lee de un fichero puede venir roto).
 numero() { case "$1" in '' | *[!0-9]*) printf '0' ;; *) printf '%s' "$1" ;; esac; }
@@ -424,6 +465,9 @@ actualizar() {
     fallo "--auto no se combina con --reaplicar: la actualización automática solo aplica versiones nuevas."
   fi
   if [ "$MODO_AUTO" = 1 ]; then info "Actualización automática de Mailway ($(date '+%Y-%m-%d %H:%M %Z'))."; fi
+  local fin_soporte
+  fin_soporte=$(texto_fin_soporte_015)
+  if [ -n "$fin_soporte" ]; then aviso "$fin_soporte"; fi
 
   command -v git >/dev/null 2>&1 || parar sin-git "Falta git en este servidor."
   git_mw rev-parse --git-dir >/dev/null 2>&1 || parar sin-git "$RAIZ no es una copia de git de Mailway."
@@ -539,7 +583,8 @@ actualizar() {
 #   actualizar_auto <upstream> <reanudar 0|1> <anterior guardado>
 actualizar_auto() {
   local upstream=$1 reanudar=$2 objetivo anterior version_anterior version_objetivo
-  local intentos codigo=0 motivo detalle sha_nueva sha_anterior aplicados resto
+  local intentos codigo=0 motivo detalle sha_nueva sha_anterior aplicados resto fin_soporte
+  fin_soporte=$(texto_fin_soporte_015)
   objetivo=$(git_mw rev-parse "$upstream^{commit}")
   anterior=$(git_mw rev-parse HEAD)
   if [ "$reanudar" = 1 ]; then anterior=$3; fi
@@ -601,7 +646,7 @@ Detalle: $SALUD_DETALLE" \
         titulo="Mailway actualizado a la versión $version_objetivo"
       fi
       notificar info "actualizacion:aplicada" "$titulo" \
-        "La actualización automática ha aplicado $aplicados de GitHub ($sha_anterior → $sha_nueva) y el servidor supera la comprobación."
+        "La actualización automática ha aplicado $aplicados de GitHub ($sha_anterior → $sha_nueva) y el servidor supera la comprobación.${fin_soporte:+ $fin_soporte}"
       exit 0
     fi
     motivo="no ha superado la comprobación tras aplicarse"
@@ -802,6 +847,12 @@ main() {
     probar-acceso)
       como_root probar-acceso "$@"
       exec bash "$RAIZ/deploy/instalar.sh" --probar-acceso
+      ;;
+    migrar-motor | revertir-motor | retirar-motor-anterior)
+      como_root "$orden" "$@"
+      # -y es lo único que pasa al instalador: el resto, por el entorno.
+      case "$#:${1:-}" in 0: | 1:-y | 1:--si) ;; *) fallo "La orden $orden solo admite -y (mira «mailway ayuda»)." ;; esac
+      exec bash "$RAIZ/deploy/instalar.sh" "--$orden" "$@"
       ;;
     instalar-comando)
       como_root instalar-comando
