@@ -273,6 +273,23 @@ if [ "$MOTOR" = stalwart-0.16 ]; then
   # interna exenta. Umbral de bloqueo bajo para alcanzarlo en la prueba.
   R=$(jmap "[[\"x:Http/set\",{\"update\":{\"singleton\":{\"useXForwarded\":true}}},\"a\"],[\"x:AllowedIp/set\",{\"create\":{\"i\":{\"address\":\"$SUBRED_INTERNA\",\"reason\":\"Red interna de Mailway\"}}},\"b\"],[\"x:Security/set\",{\"update\":{\"singleton\":{\"authBanRate\":{\"count\":$UMBRAL,\"period\":86400000}}}},\"c\"],[\"x:Action/set\",{\"create\":{\"r\":{\"@type\":\"ReloadSettings\"}}},\"d\"]]")
   no_contiene "motor: X-Forwarded-For, red exenta y umbral de $UMBRAL fallos" "$R" 'notUpdated'
+  # Diagnóstico: cómo ha terminado la recarga y si el motor ya toma la IP de
+  # X-Forwarded-For (con ella activa, cada petición sin esa cabecera anota
+  # «http.x-forwarded-missing»). En la CI, con salida a Internet, el motor
+  # recién arrancado descarga sus bases de ASN y países y su web, y la
+  # recarga puede no aplicarse aún.
+  echo "# recarga de los ajustes: $(python3 -c 'import json,sys; r=json.load(sys.stdin)["methodResponses"]; print(json.dumps([x[1] for x in r if x[2]=="d"]))' <<<"$R" 2>/dev/null || echo "sin respuesta legible")"
+  curl -s -o /dev/null --max-time 10 "http://127.0.0.1:$PUERTO_MOTOR/healthz/live" || true
+  sleep 1
+  if docker logs "${P}motor" 2>&1 | grep -q 'x-forwarded-missing'; then
+    echo '# X-Forwarded-For en uso tras la recarga: sí'
+  else
+    echo '# X-Forwarded-For en uso tras la recarga: no'
+  fi
+  # Esta prueba es de la pasarela y del bloqueo, no de cuándo aplica el motor
+  # una recarga: se reinicia para que arranque con los ajustes ya guardados.
+  docker restart "${P}motor" >/dev/null
+  esperar 'el motor (con los ajustes)' curl -fsS "http://127.0.0.1:$PUERTO_MOTOR/healthz/ready"
 else
   # Como server/test/motor015-arrancar.sh: la configuración inicial y, sin
   # IPv6 en el núcleo, las escuchas en IPv4.
