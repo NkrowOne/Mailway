@@ -173,6 +173,14 @@ def principal_nombre(p: dict) -> str:
     return ''
 
 
+def suspendido_015(principal: dict) -> bool:
+    """¿Buzón suspendido en la 0.15? Sin el permiso de autenticarse (como
+    suspende el panel) o sin el rol «user» (como suspendían sus versiones
+    anteriores, si su corrección única aún no se ha hecho)."""
+    return ('authenticate' in (principal.get('disabledPermissions') or [])
+            or 'user' not in (principal.get('roles') or []))
+
+
 def resumen_015(ajustes: dict, principales: list) -> dict:
     """Lo que debe aparecer en la 0.16: dominios, buzones, alias y firmas DKIM.
 
@@ -183,7 +191,7 @@ def resumen_015(ajustes: dict, principales: list) -> dict:
     buzones = sorted({principal_nombre(p).lower() for p in principales if p.get('type') == 'individual'} - {''})
     alias = sorted({principal_nombre(p).lower() for p in principales if p.get('type') == 'list'} - {''})
     suspendidos = sorted(principal_nombre(p).lower() for p in principales
-                         if p.get('type') == 'individual' and 'user' not in (p.get('roles') or []))
+                         if p.get('type') == 'individual' and suspendido_015(p))
     firmas: dict[str, dict] = {}
     for clave, valor in ajustes.items():
         if not clave.startswith('signature.'):

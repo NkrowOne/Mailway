@@ -515,11 +515,13 @@ class Pila:
         self.api('POST', '/api/principal', {'type': 'domain', 'name': dominio, 'description': 'Prueba',
                                             'secrets': [], 'emails': [], 'roles': [], **self.VACIO_015})
 
-    def crear_buzon_015(self, email: str, clave: str, roles=('user',)) -> None:
-        # Sin el rol «user», suspendido: así lo hace el panel con la 0.15.
+    def crear_buzon_015(self, email: str, clave: str, suspendido: bool = False) -> None:
+        # Suspendido como lo deja el panel con la 0.15: sin los permisos de
+        # autenticarse y con el rol «user», que es el que le deja recibir correo.
+        sin_permisos = ['authenticate', 'authenticate-oauth'] if suspendido else []
         self.api('POST', '/api/principal', {'type': 'individual', 'name': email, 'description': f'Buzón {email}',
-                                            'secrets': [cifrar(clave)], 'emails': [email], 'roles': list(roles),
-                                            **self.VACIO_015})
+                                            'secrets': [cifrar(clave)], 'emails': [email], 'roles': ['user'],
+                                            **self.VACIO_015, 'disabledPermissions': sin_permisos})
 
     def comprobar_imap_webmail(self) -> None:
         def entrar():
@@ -693,7 +695,7 @@ class Pila:
             for algoritmo in ('Ed25519', 'Rsa'):
                 self.api('POST', '/api/dkim', {'id': None, 'algorithm': algoritmo, 'domain': dominio, 'selector': None})
         self.crear_buzon_015(SEGUNDO, self.clave_segundo)
-        self.crear_buzon_015(SUSPENDIDO, self.clave_suspendido, roles=())
+        self.crear_buzon_015(SUSPENDIDO, self.clave_suspendido, suspendido=True)
         self.api('POST', '/api/principal', {'type': 'list', 'name': ALIAS, 'description': 'Alias', 'secrets': [],
                                             'emails': [ALIAS], 'roles': [],
                                             **{**self.VACIO_015, 'members': [BUZON], 'externalMembers': [EXTERNO]}})

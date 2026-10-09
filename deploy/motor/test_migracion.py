@@ -56,6 +56,16 @@ class Resumen(unittest.TestCase):
         self.assertEqual(r['suspendidos'], ['eva@b.ejemplo.test'])
         self.assertEqual(r['nombre'], NOMBRE)
 
+    def test_suspendidos_de_las_dos_formas(self):
+        principales = [
+            {'type': 'individual', 'name': 'ana@a.ejemplo.test', 'roles': ['user'], 'disabledPermissions': []},
+            {'type': 'individual', 'name': 'eva@a.ejemplo.test', 'roles': []},
+            {'type': 'individual', 'name': 'leo@a.ejemplo.test', 'roles': ['user'],
+             'disabledPermissions': ['authenticate', 'authenticate-oauth']},
+        ]
+        r = migracion.resumen_015({}, principales)
+        self.assertEqual(r['suspendidos'], ['eva@a.ejemplo.test', 'leo@a.ejemplo.test'])
+
     def test_selectores_dkim_sin_rsa_sha1_ni_claves(self):
         r = migracion.resumen_015(AJUSTES_015, PRINCIPALES_015)
         self.assertEqual(r['dkim'], [['a.ejemplo.test', '202610e'], ['a.ejemplo.test', '202610r']])
