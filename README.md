@@ -1,4 +1,9 @@
-# Mailway
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/marca/mailway-oscuro.svg">
+    <img src="docs/marca/mailway.svg" alt="Mailway" height="56">
+  </picture>
+</h1>
 
 **Servicio de correo multi-cliente y auto-alojado, sobre Docker.**
 

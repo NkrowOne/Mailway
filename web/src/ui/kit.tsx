@@ -776,27 +776,74 @@ export function AvisoError({
 /* ------------------------------- Logotipo --------------------------------- */
 
 /**
- * Marca de la instancia: un sobre blanco en una tesela petróleo. Es la
- * misma forma que la tesela de los estados vacíos, en su versión llena.
+ * Marca de la instancia: un sobre blanco cuya silueta forma la M de Mailway,
+ * con la solapa de abajo en degradado, sobre la tesela de los estados vacíos
+ * en su versión llena (petróleo con degradado y luz arriba a la izquierda).
+ * La geometría (caja de 64) es la de `deploy/roundcube/mailway_theme/logo.svg`
+ * y de `docs/marca/`; el favicon agranda el sobre.
  */
 export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }) {
+  // Los degradados se referencian por id y la marca aparece varias veces en
+  // la misma página; useId da ids únicos (sin «:», que estorban en url(#…)).
+  const p = useId().replace(/:/g, '');
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center bg-petroleo text-white ${
+      className={`flex shrink-0 overflow-hidden bg-petroleo ${
         tamano === 'grande' ? 'h-11 w-11 rounded-[13px]' : 'h-9 w-9 rounded-[11px]'
       }`}
     >
-      <svg viewBox="0 0 24 24" className={tamano === 'grande' ? 'h-6 w-6' : 'h-5 w-5'}>
-        <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
-        <path
-          d="m4.5 7.5 6.3 4.7a2 2 0 0 0 2.4 0l6.3-4.7"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+      <svg viewBox="0 0 64 64" className="h-full w-full">
+        <defs>
+          <linearGradient id={`${p}f`} x1="0" y1="0" x2=".85" y2="1">
+            <stop offset="0" stopColor="#2fa59a" />
+            <stop offset=".52" stopColor="#0f6567" />
+            <stop offset="1" stopColor="#073c3f" />
+          </linearGradient>
+          <radialGradient id={`${p}l`} cx=".28" cy="-.05" r=".85">
+            <stop offset="0" stopColor="#fff" stopOpacity=".2" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id={`${p}s`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#fff" />
+            <stop offset="1" stopColor="#e2f3ef" />
+          </linearGradient>
+          <linearGradient id={`${p}b`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#cbe9e2" />
+            <stop offset="1" stopColor="#9dd2c7" />
+          </linearGradient>
+          <filter id={`${p}h`} x="-20%" y="-20%" width="140%" height="150%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="1.6" />
+            <feOffset dy="1.6" />
+            <feComponentTransfer>
+              <feFuncA type="linear" slope=".28" />
+            </feComponentTransfer>
+            <feFlood floodColor="#03292b" />
+            <feComposite operator="in" in2="SourceAlpha" />
+            <feMerge>
+              <feMergeNode />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <rect width="64" height="64" fill={`url(#${p}f)`} />
+        <rect width="64" height="64" fill={`url(#${p}l)`} />
+        <g filter={`url(#${p}h)`}>
+          {/* El sobre (su borde de arriba es la M, con la V tan redondeada como los picos), el pliegue de la solapa y la solapa de abajo. */}
+          <path
+            d="M11 22a4.6 4.6 0 0 1 7.6-3.5L28.86 28.07A4.6 4.6 0 0 0 35.14 28.07L45.4 18.5A4.6 4.6 0 0 1 53 22v21a4.5 4.5 0 0 1-4.5 4.5h-33A4.5 4.5 0 0 1 11 43z"
+            fill={`url(#${p}s)`}
+          />
+          <path
+            d="M11.2 20.6 28.6 36.2a5.1 5.1 0 0 0 6.8 0L52.8 20.6l.2 1.4v1.8L36 39.4a6 6 0 0 1-8 0L11 23.8V22z"
+            fill="#0b5355"
+            opacity=".09"
+          />
+          <path
+            d="M12.2 45.9 28.4 35.4a6.6 6.6 0 0 1 7.2 0l16.2 10.5A4.5 4.5 0 0 1 48.5 47.5h-33a4.5 4.5 0 0 1-3.3-1.6z"
+            fill={`url(#${p}b)`}
+          />
+        </g>
       </svg>
     </span>
   );
@@ -807,7 +854,7 @@ export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }
 /**
  * Icono de una vista dentro de una tesela redondeada en petróleo tenue. Es
  * el único motivo gráfico del sistema: lo usan los estados vacíos, con el
- * icono de lo que falta, y la marca de la instancia, con el sobre.
+ * icono de lo que falta, y la marca de la instancia, con el sobre-M.
  */
 export function Tesela({
   icono: Icono,

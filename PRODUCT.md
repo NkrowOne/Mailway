@@ -47,7 +47,7 @@ A diferencia de un panel de hosting genérico o de contratar Mailgun/Google Work
 
 ## Evidence on Hand
 
-- No hay logo ni identidad previa de Mailway: no inventar testimonios, clientes ni métricas.
+- Identidad propia: el sobre cuya silueta forma la M, en tesela petróleo con degradado (`Logotipo`, `docs/marca/`). No inventar testimonios, clientes ni métricas.
 - Existe el precedente visual de Skyway (React+Tailwind, oscuro, español) como referencia de familia, no como imposición.
 
 ## Product Principles
