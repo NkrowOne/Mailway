@@ -47,7 +47,16 @@ updates:
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
 
-  # Webmail, extractor y Traefik propio (deploy/docker-compose.*.yml).
+  # Webmail, extractor, Traefik propio, las pasarelas (nginx) y Bulwark
+  # (deploy/docker-compose.*.yml).
+  #
+  # Bulwark solo recibe parches (1.13.x), en un PR propio que no se fusiona
+  # solo (el grupo no es «parches-…»): publica versiones cada semana y su
+  # pasarela solo cierra las rutas que conoce, así que cada versión pasa por
+  # la lista «Actualizar Bulwark» de deploy/bulwark/README.md (CHANGELOG,
+  # rutas nuevas, README, prueba.sh y su prueba del servidor). La CI ensaya
+  # la imagen nueva (deploy/bulwark/prueba.sh y la pila con Bulwark). Una
+  # versión menor (1.14) se sube a mano, con la misma lista.
   - package-ecosystem: docker-compose
     directory: /deploy
     schedule:
@@ -56,9 +65,15 @@ updates:
       time: '04:00'
       timezone: Europe/Madrid
     groups:
+      bulwark:
+        patterns: ['ghcr.io/bulwarkmail/*']
+        update-types: [patch]
       parches-compose:
+        exclude-patterns: ['ghcr.io/bulwarkmail/*']
         update-types: [patch]
     ignore:
+      - dependency-name: 'ghcr.io/bulwarkmail/webmail'
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
 

@@ -1,6 +1,7 @@
 # Rangos del proxy de Cloudflare (https://www.cloudflare.com/ips/), IPv4 e
-# IPv6. Fuente ÚNICA para la pasarela de Bulwark: nginx/cloudflare.conf se
-# genera a partir de aquí con generar.sh. Las pruebas del servidor
+# IPv6. Fuente ÚNICA para las dos pasarelas: la de Bulwark
+# (nginx/cloudflare.conf) y la del motor (deploy/motor/pasarela/cloudflare.conf)
+# se generan a partir de aquí con generar.sh. Las pruebas del servidor
 # (server/test/bulwark.test.ts) exigen que esta lista sea la misma que usan
 # deploy/roundcube/mailway.php (IPv4 e IPv6) y RANGOS_CLOUDFLARE de
 # server/src/modules/whitelabel.ts (solo IPv4): si Cloudflare publica un

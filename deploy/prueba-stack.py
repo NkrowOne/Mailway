@@ -20,6 +20,16 @@ un Traefik de Skyway simulado del que solo se usa su volumen de certificados
                           nombre del servidor de correo (solo lo que necesitan
                           los programas de correo; la administración y el
                           autoservicio del motor, 403).
+  --bulwark               la de --motor stalwart-0.16 más Bulwark activado con
+                          «instalar.sh --activar-bulwark»: sus dos contenedores
+                          sanos, solo en las redes internas y sin puertos
+                          publicados; la API de administración solo por dentro
+                          (404 por la pasarela); el acceso con un buzón por la
+                          red exenta y el certificado del 443 interno; los
+                          secretos generados una vez y nunca a la vista;
+                          --comprobar y --estado-bulwark; una actualización no
+                          lo recrea; desactivarlo conserva volúmenes y secretos
+                          y activarlo de nuevo recupera la misma administración.
   --migracion             un servidor con Stalwart 0.15 y datos (dos dominios
                           con DKIM, buzones con su contraseña, uno suspendido,
                           un alias con un destino externo y un correo
@@ -30,6 +40,11 @@ un Traefik de Skyway simulado del que solo se usa su volumen de certificados
                           se lee por IMAP con la misma contraseña; alias,
                           firmas DKIM y suspensión intactos), --revertir-motor,
                           otra migración y --retirar-motor-anterior.
+
+Con los dos motores, además, Traefik (proveedor Docker, con las etiquetas de
+verdad) llega al motor por su pasarela (mailway-mail-gw): el servicio de
+Traefik apunta a ella, las respuestas salen de ella y un X-Forwarded-For o un
+Forwarded falsos no le llegan al motor (la pasarela anota la IP real).
 
 En los dos primeros modos se comprueban además el certificado servido en 993 y
 465 (cadena, nombre y huella), el inicio de sesión IMAP desde el webmail
@@ -290,6 +305,11 @@ class Pila:
     healthcheck:
       interval: 5s
       start_period: 20s
+  mailway-bulwark:
+    environment:
+      NODE_EXTRA_CA_CERTS: /prueba/ca.pem
+    volumes:
+      - {ca}:/prueba/ca.pem:ro
 """)
         self.contexto = ssl.create_default_context(cafile=str(ca))
         self.estado_panel = carpeta / 'panel' / 'estado.json'
@@ -646,8 +666,14 @@ class Pila:
         registrar('OK: Stalwart 0.16 con su nombre, el certificado, X-Forwarded-For, la red interna exenta, el 587 '
                   'con STARTTLS, el registro en docker logs y sin la cuenta admin@ del primer arranque.')
 
-    def comprobar_rutas_016(self) -> None:
-        """Con un Traefik real (proveedor Docker): en el nombre del servidor de correo, solo lo de los programas."""
+    def comprobar_rutas(self) -> None:
+        """Con un Traefik real (proveedor Docker y las etiquetas de verdad): el motor, por su pasarela.
+
+        Con la 0.16, además, en el nombre del servidor de correo solo lo de los
+        programas. Traefik conserva aquí el X-Forwarded-For que le llega
+        (forwardedHeaders.insecure), como cuando confía en Cloudflare: la
+        primera dirección la escribe el cliente y la pasarela no debe creerla.
+        """
         carpeta = self.carpeta / 'traefik'
         carpeta.mkdir()
         (carpeta / 'cert.pem').write_bytes(self.primero.cadena)
@@ -657,11 +683,13 @@ class Pila:
         for fichero in carpeta.iterdir():
             fichero.chmod(0o644)
         # El emisor «le» existe (las rutas lo nombran) pero no llega a ninguna
-        # CA: Traefik sirve el certificado de laboratorio por defecto.
+        # CA: Traefik sirve el certificado de laboratorio por defecto. Su API,
+        # solo dentro del contenedor, para ver adónde lleva cada servicio.
         docker('run', '-d', '--name', TRAEFIK_RUTAS, '--network', 'skyway-edge',
                '-v', '/var/run/docker.sock:/var/run/docker.sock:ro', '-v', f'{carpeta}:/dinamico:ro',
                '-p', f'{PUBLICAR}:{PUERTO_TRAEFIK}:443', IMAGEN_TRAEFIK,
                '--entrypoints.web.address=:80', '--entrypoints.websecure.address=:443',
+               '--entrypoints.websecure.forwardedHeaders.insecure=true', '--api.insecure=true',
                '--providers.docker=true', '--providers.docker.exposedbydefault=false',
                '--providers.docker.network=skyway-edge', '--providers.file.directory=/dinamico',
                f'--certificatesresolvers.le.acme.email=sistemas@{DOMINIO}',
@@ -669,7 +697,7 @@ class Pila:
                '--certificatesresolvers.le.acme.caserver=https://127.0.0.1:9/directory',
                '--certificatesresolvers.le.acme.tlschallenge=true')
 
-        def codigo(ruta: str, cuerpo: str | None = None, cabeceras: dict | None = None) -> int:
+        def pedir(ruta: str, cuerpo: str | None = None, cabeceras: dict | None = None):
             conexion = http.client.HTTPSConnection(MAIL, PUERTO_TRAEFIK, context=self.contexto, timeout=10)
             # A la dirección de la prueba, con el nombre del servidor (SNI y Host).
             conexion.sock = self.contexto.wrap_socket(
@@ -677,41 +705,290 @@ class Pila:
             try:
                 conexion.request('GET' if cuerpo is None else 'POST', ruta, body=cuerpo,
                                  headers={'Host': MAIL, 'Content-Type': 'application/json', **(cabeceras or {})})
-                return conexion.getresponse().status
+                respuesta = conexion.getresponse()
+                respuesta.read()
+                return respuesta.status, {k.lower(): v for k, v in respuesta.getheaders()}
             finally:
                 conexion.close()
 
+        def codigo(ruta: str, cuerpo: str | None = None, cabeceras: dict | None = None) -> int:
+            return pedir(ruta, cuerpo, cabeceras)[0]
+
         esperar(lambda: codigo('/healthz/live') == 200, 'que Traefik publique el motor', segundos=90)
-        for ruta in ('/', '/admin', '/admin/', '/account', '/login', '/api/principal'):
-            assert codigo(ruta) == 403, f'{ruta} no está bloqueada (HTTP {codigo(ruta)})'
-        # JMAP pasa, pero sin credenciales el motor no hace nada.
-        sin_credenciales = codigo('/jmap', '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[]}')
-        assert sin_credenciales == 401, f'POST /jmap sin credenciales: HTTP {sin_credenciales}'
-        for ruta in ('/jmap/session', '/.well-known/jmap', '/.well-known/mta-sts.txt',
-                     f'/mail/config-v1.1.xml?emailaddress={BUZON}', '/dav/card'):
-            assert codigo(ruta) != 403, f'{ruta} está bloqueada'
-        registrar('OK: Traefik deja pasar JMAP, los .well-known, DAV, la autoconfiguración y la salud del motor, '
-                  'y responde 403 a su administración y a su autoservicio.')
+        servicio = json.loads(docker('exec', TRAEFIK_RUTAS, 'wget', '-qO-',
+                                     'http://127.0.0.1:8080/api/http/services/mailway-mail@docker').stdout)
+        destinos = [s.get('url') for s in (servicio.get('loadBalancer') or {}).get('servers') or []]
+        assert destinos == ['http://mailway-mail-gw:8080'], f'el servicio del motor en Traefik va a {destinos}'
+        _, cabeceras = pedir('/healthz/live')
+        assert cabeceras.get('server') == 'nginx', f'la respuesta no sale de la pasarela: {cabeceras}'
+        registrar('OK: el servicio del motor en Traefik (etiquetas de verdad) es su pasarela, mailway-mail-gw, y '
+                  'las respuestas salen de ella.')
 
-        # La cabecera Forwarded del cliente no llega al motor, que la leería
-        # antes que X-Forwarded-For: quien dijera venir de la red interna
-        # (exenta del bloqueo automático) podría probar contraseñas sin
-        # límite. El motor solo anota los inicios de sesión que salen bien:
-        # uno con el buzón de prueba debe quedar con la IP real.
+        if self.motor == MOTOR_016:
+            for ruta in ('/', '/admin', '/admin/', '/account', '/login', '/api/principal'):
+                assert codigo(ruta) == 403, f'{ruta} no está bloqueada (HTTP {codigo(ruta)})'
+            # JMAP pasa, pero sin credenciales el motor no hace nada.
+            sin_credenciales = codigo('/jmap', '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[]}')
+            assert sin_credenciales == 401, f'POST /jmap sin credenciales: HTTP {sin_credenciales}'
+            for ruta in ('/jmap/session', '/.well-known/jmap', '/.well-known/mta-sts.txt',
+                         f'/mail/config-v1.1.xml?emailaddress={BUZON}', '/dav/card'):
+                assert codigo(ruta) != 403, f'{ruta} está bloqueada'
+            registrar('OK: Traefik deja pasar JMAP, los .well-known, DAV, la autoconfiguración y la salud del motor, '
+                      'y responde 403 a su administración y a su autoservicio.')
+
+        # Un cliente que dice venir de la red interna (exenta del bloqueo
+        # automático) con X-Forwarded-For y con Forwarded (que el motor lee
+        # antes). Traefik conserva su X-Forwarded-For y añade la IP real; la
+        # pasarela entrega al motor solo esa (y la anota, al ser un acceso
+        # rechazado). Un solo fallo: cuenta para el bloqueo de esa IP.
         falsa = '10.203.53.250'
-        desde = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
-        sesion = codigo('/jmap', '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[]}',
-                        {'Authorization': basica(BUZON, self.clave_buzon), 'Forwarded': f'for={falsa}'})
-        assert sesion == 200, f'POST /jmap con el buzón de prueba: HTTP {sesion}'
+        rechazo = codigo('/jmap/session', None, {'Authorization': basica('nadie@' + DOMINIO, 'mala'),
+                                                 'X-Forwarded-For': falsa, 'Forwarded': f'for={falsa}'})
+        assert rechazo == 401, f'acceso con una contraseña mala: HTTP {rechazo}'
 
-        def anotado():
-            r = docker('logs', '--since', desde, 'mailway-mail', comprobar=False)
-            lineas = [linea for linea in (r.stdout + r.stderr).splitlines() if 'auth.success' in linea and BUZON in linea]
+        def anotado_en_pasarela():
+            lineas = [json.loads(linea) for linea in docker('logs', 'mailway-mail-gw', comprobar=False).stdout.splitlines()
+                      if linea.startswith('{') and '"/jmap/session"' in linea and '"estado":401' in linea]
             return lineas[-1] if lineas else None
-        linea = esperar(anotado, 'que el motor anote el inicio de sesión', segundos=30, pausa=1)
-        vista = re.search(r'remoteIp = ([0-9a-fA-F.:]+)', linea)
-        assert vista and vista.group(1) != falsa, f'el motor ha tomado la IP de la cabecera Forwarded: {linea}'
-        registrar(f'OK: Traefik quita la cabecera Forwarded: el motor anota la IP real del cliente ({vista.group(1)}).')
+        linea = esperar(anotado_en_pasarela, 'que la pasarela anote el acceso rechazado', segundos=30, pausa=1)
+        traefik = docker('inspect', '-f', '{{(index .NetworkSettings.Networks "skyway-edge").IPAddress}}',
+                         TRAEFIK_RUTAS).stdout.strip()
+        assert linea['par'] == traefik, f'la pasarela no recibe la petición de Traefik: {linea}'
+        assert linea['ip'] != falsa and not linea['ip'].startswith('10.203.53.'), \
+            f'la pasarela ha creído el X-Forwarded-For del cliente: {linea}'
+        registrar(f'OK: con un X-Forwarded-For y un Forwarded falsos, la pasarela entrega al motor la IP real '
+                  f'({linea["ip"]}), no la de la red exenta.')
+
+        if self.motor == MOTOR_016:
+            # El motor anota el acceso correcto con la IP de quien conecta: la
+            # pasarela, nunca Traefik (la IP reenviada solo aparece en sus
+            # bloqueos; la de cada caso la prueba deploy/prueba-pasarela.sh).
+            pasarela = docker('inspect', '-f', '{{(index .NetworkSettings.Networks "skyway-edge").IPAddress}}',
+                              'mailway-mail-gw').stdout.strip()
+            desde = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+            sesion = codigo('/jmap', '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[]}',
+                            {'Authorization': basica(BUZON, self.clave_buzon), 'Forwarded': f'for={falsa}'})
+            assert sesion == 200, f'POST /jmap con el buzón de prueba: HTTP {sesion}'
+
+            def anotado():
+                r = docker('logs', '--since', desde, 'mailway-mail', comprobar=False)
+                lineas = [linea for linea in (r.stdout + r.stderr).splitlines()
+                          if 'auth.success' in linea and BUZON in linea]
+                return lineas[-1] if lineas else None
+            linea = esperar(anotado, 'que el motor anote el inicio de sesión', segundos=30, pausa=1)
+            vista = re.search(r'remoteIp = ([0-9a-fA-F.:]+)', linea)
+            assert vista and vista.group(1) == pasarela, f'el motor no recibe la conexión de la pasarela: {linea}'
+            registrar(f'OK: el motor recibe las conexiones de la pasarela ({pasarela}), no de Traefik.')
+
+    # -- Bulwark
+
+    def en_red(self, red: str, guion: str, entorno: dict | None = None) -> dict:
+        """Un guion de Python en un contenedor efímero en esa red; los secretos, por el entorno. Devuelve su JSON."""
+        nombres = [arg for nombre in (entorno or {}) for arg in ('-e', nombre)]
+        r = docker('run', '--rm', '-i', '--network', red, *nombres, IMAGEN_AUX, 'python', '-I', '-', entrada=guion,
+                   entorno=entorno)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def admin_bulwark(self) -> dict:
+        """Como el panel: por la red de Traefik, directo a la API de administración (sin la pasarela)."""
+        return self.en_red('skyway-edge', r"""
+import json, os, urllib.request, urllib.error
+abrir = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+def pedir(metodo, ruta, cuerpo=None, galleta=None):
+    peticion = urllib.request.Request('http://mailway-bulwark:3000' + ruta, method=metodo,
+        data=None if cuerpo is None else json.dumps(cuerpo).encode(),
+        headers={'Content-Type': 'application/json', **({'Cookie': galleta} if galleta else {})})
+    try:
+        with abrir(peticion, timeout=20) as r:
+            return r.status, r.headers.get('Set-Cookie') or '', r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, '', e.read().decode()
+estado, galleta, _ = pedir('POST', '/api/admin/auth', {'password': os.environ['CLAVE']})
+config = pedir('GET', '/api/admin/config', galleta=galleta.split(';')[0])[0] if estado == 200 else 0
+print(json.dumps({'acceso': estado, 'config': config}))
+""", {'CLAVE': self.leer_env()['BULWARK_ADMIN_PASSWORD']})
+
+    def subir_marca_bulwark(self) -> dict:
+        """Como el panel: sube una imagen de marca (multipart) a la API de administración, sin la pasarela."""
+        return self.en_red('skyway-edge', r"""
+import hashlib, json, os, struct, urllib.request, urllib.error, uuid, zlib
+abrir = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+def trozo(tipo, datos):
+    return struct.pack('>I', len(datos)) + tipo + datos + struct.pack('>I', zlib.crc32(tipo + datos))
+# Un PNG de 16 x 16 de verdad (Bulwark lo sirve tal cual).
+filas = b''.join(b'\x00' + b'\x0f\x76\x6e' * 16 for _ in range(16))
+png = (b'\x89PNG\r\n\x1a\n' + trozo(b'IHDR', struct.pack('>IIBBBBB', 16, 16, 8, 2, 0, 0, 0))
+       + trozo(b'IDAT', zlib.compress(filas)) + trozo(b'IEND', b''))
+host = 'mw-' + hashlib.sha256(png).hexdigest()[:32]
+def pedir(metodo, ruta, datos=None, tipo='application/json', galleta=None):
+    peticion = urllib.request.Request('http://mailway-bulwark:3000' + ruta, method=metodo, data=datos,
+        headers={'Content-Type': tipo, **({'Cookie': galleta} if galleta else {})})
+    try:
+        with abrir(peticion, timeout=20) as r:
+            return r.status, r.headers.get('Set-Cookie') or '', r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, '', e.read().decode()
+estado, galleta, _ = pedir('POST', '/api/admin/auth', json.dumps({'password': os.environ['CLAVE']}).encode())
+subida = 0
+if estado == 200:
+    limite = uuid.uuid4().hex
+    partes = []
+    for nombre, valor in (('slot', 'faviconUrl'), ('host', host)):
+        partes.append(f'--{limite}\r\nContent-Disposition: form-data; name="{nombre}"\r\n\r\n{valor}\r\n'.encode())
+    partes.append(f'--{limite}\r\nContent-Disposition: form-data; name="file"; filename="favicon.png"\r\n'
+                  'Content-Type: image/png\r\n\r\n'.encode() + png + b'\r\n')
+    partes.append(f'--{limite}--\r\n'.encode())
+    subida = pedir('POST', '/api/admin/branding', b''.join(partes), f'multipart/form-data; boundary={limite}',
+                   galleta.split(';')[0])[0]
+print(json.dumps({'acceso': estado, 'subida': subida, 'fichero': f'domain__{host}__faviconUrl.png',
+                  'sha256': hashlib.sha256(png).hexdigest()}))
+""", {'CLAVE': self.leer_env()['BULWARK_ADMIN_PASSWORD']})
+
+    def marca_por_pasarela(self, fichero: str) -> dict:
+        """Lo que haría un navegador por Traefik: la imagen de marca subida, por la pasarela de Bulwark."""
+        return self.en_red('skyway-edge', r"""
+import hashlib, json, os, urllib.request, urllib.error
+abrir = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+ruta = 'http://mailway-bulwark-gw:8080/api/admin/branding/' + os.environ['FICHERO']
+def pedir(metodo, datos=None):
+    peticion = urllib.request.Request(ruta, method=metodo, data=datos,
+        headers={'Host': 'webmail.mailway.test', 'X-Forwarded-Proto': 'https'})
+    try:
+        with abrir(peticion, timeout=20) as r:
+            return r.status, r.headers.get('Content-Type') or '', r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, '', e.read()
+estado, tipo, datos = pedir('GET')
+print(json.dumps({'estado': estado, 'tipo': tipo, 'sha256': hashlib.sha256(datos).hexdigest(),
+                  'cabeza': pedir('HEAD')[0], 'borrar': pedir('DELETE')[0], 'subir': pedir('POST', b'x')[0]}))
+""", {'FICHERO': fichero})
+
+    def por_pasarela_bulwark(self, clave: str) -> dict:
+        """Lo que haría Traefik: a la pasarela de Bulwark con el nombre de un webmail."""
+        return self.en_red('skyway-edge', r"""
+import json, os, urllib.request, urllib.error
+abrir = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+def pedir(metodo, ruta, cuerpo=None):
+    peticion = urllib.request.Request('http://mailway-bulwark-gw:8080' + ruta, method=metodo,
+        data=None if cuerpo is None else json.dumps(cuerpo).encode(),
+        headers={'Host': 'webmail.mailway.test', 'X-Forwarded-Proto': 'https', 'Content-Type': 'application/json'})
+    try:
+        with abrir(peticion, timeout=30) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+verifica = lambda clave: json.loads(pedir('POST', '/api/auth/verify', {
+    'serverUrl': 'https://' + os.environ['MAIL'], 'username': os.environ['BUZON'], 'password': clave})[1]).get('result')
+print(json.dumps({
+    'salud': pedir('GET', '/api/health')[1],
+    'admin': pedir('GET', '/api/admin/config')[0],
+    'acceso_admin': pedir('POST', '/api/admin/auth', {'password': 'x'})[0],
+    'buena': verifica(os.environ['CLAVE']),
+    'mala': verifica('no-es-esta'),
+}))
+""", {'CLAVE': clave, 'MAIL': MAIL, 'BUZON': BUZON})
+
+    def bulwark_sano(self) -> None:
+        for contenedor in ('mailway-bulwark', 'mailway-bulwark-gw'):
+            esperar(lambda c=contenedor: docker('inspect', '-f', '{{.State.Health.Status}}', c,
+                                                comprobar=False).stdout.strip() == 'healthy',
+                    f'que {contenedor} esté sano', segundos=180)
+
+    def comprobar_bulwark(self) -> None:
+        salida = self.instalador('--activar-bulwark')
+        env = self.leer_env()
+        sesion, admin = env.get('BULWARK_SESSION_SECRET', ''), env.get('BULWARK_ADMIN_PASSWORD', '')
+        ocultar(*[v for v in (sesion, admin) if v])
+        assert env.get('MAILWAY_BULWARK') == '1', env.get('MAILWAY_BULWARK')
+        assert len(sesion) >= 32 and len(admin) >= 32, 'faltan los secretos de Bulwark en deploy/.env'
+        assert sesion not in salida and admin not in salida, 'el instalador muestra un secreto de Bulwark'
+        assert env.get('MAILWAY_BULWARK_URL') == 'http://mailway-bulwark:3000', env.get('MAILWAY_BULWARK_URL')
+        assert env.get('MAILWAY_BULWARK_BACKEND_URL') == 'http://mailway-bulwark-gw:8080'
+        self.bulwark_sano()
+        registrar('OK: --activar-bulwark: Bulwark y su pasarela sanos, con sus dos secretos generados (sin '
+                  'mostrarlos) y las direcciones del panel en deploy/.env.')
+
+        def redes(contenedor: str) -> set:
+            return set(json.loads(docker('inspect', '-f', '{{json .NetworkSettings.Networks}}', contenedor).stdout))
+
+        def publicados(contenedor: str) -> str:
+            return docker('inspect', '-f', '{{json .HostConfig.PortBindings}}', contenedor).stdout.strip()
+        assert redes('mailway-bulwark') == {'mailway-internal', 'skyway-edge'}, redes('mailway-bulwark')
+        assert redes('mailway-bulwark-gw') == {'skyway-edge'}, redes('mailway-bulwark-gw')
+        for contenedor in ('mailway-bulwark', 'mailway-bulwark-gw'):
+            assert publicados(contenedor) in ('{}', 'null'), f'{contenedor} publica puertos: {publicados(contenedor)}'
+            assert docker('inspect', '-f', '{{.HostConfig.ReadonlyRootfs}}', contenedor).stdout.strip() == 'true'
+        huella = docker('inspect', '-f', '{{index .Config.Labels "mailway.bulwark-gw-config"}}',
+                        'mailway-bulwark-gw').stdout.strip()
+        assert re.fullmatch(r'[0-9a-f]{16}', huella), f'sin la huella de la configuración de la pasarela: {huella!r}'
+        registrar('OK: Bulwark solo en la red interna y la de Traefik, su pasarela solo en la de Traefik, sin '
+                  'puertos publicados, con la raíz en solo lectura y la huella de su configuración.')
+
+        datos = self.admin_bulwark()
+        assert datos == {'acceso': 200, 'config': 200}, f'API de administración por dentro: {datos}'
+        datos = self.por_pasarela_bulwark(self.clave_buzon)
+        assert '"healthy"' in datos['salud'], datos
+        assert datos['admin'] == 404 and datos['acceso_admin'] == 404, f'administración por la pasarela: {datos}'
+        assert datos['buena'] == 'ok' and datos['mala'] == 'unauthorized', f'acceso con el buzón: {datos}'
+        registrar('OK: la API de administración de Bulwark responde directamente (como al panel) y da 404 '
+                  'por la pasarela; Bulwark comprueba el buzón por la red exenta y el 443 interno del motor '
+                  '(contraseña buena «ok», mala «unauthorized»).')
+
+        # La marca de cada cliente: el panel sube sus imágenes a /app/data/admin
+        # (volumen mailway-bulwark-admin, escribible con la raíz en solo
+        # lectura) y el navegador las lee por la pasarela, que no deja cambiarlas.
+        marca = self.subir_marca_bulwark()
+        assert marca['acceso'] == 200 and marca['subida'] == 200, f'subida de una imagen de marca: {marca}'
+        leida = self.marca_por_pasarela(marca['fichero'])
+        assert leida['estado'] == 200 and leida['tipo'].startswith('image/png') and leida['sha256'] == marca['sha256'], \
+            f'la imagen de marca por la pasarela: {leida}'
+        assert leida['cabeza'] == 200 and leida['borrar'] == 404 and leida['subir'] == 404, \
+            f'métodos de la marca por la pasarela: {leida}'
+        registrar('OK: el panel sube una imagen de marca a Bulwark (volumen de administración escribible) y la '
+                  'pasarela la sirve con GET y HEAD, sin dejar borrarla ni sustituirla.')
+
+        salida = self.instalador('--comprobar')
+        for texto in ('Bulwark responde a través de su pasarela', 'Bulwark verifica el certificado de',
+                      'El motor sirve HTTPS en su 443 interno'):
+            assert texto in salida, f'--comprobar no dice «{texto}»'
+        salida = self.instalador('--estado-bulwark', codigo=1)
+        assert 'mailway-bulwark: en marcha y sano' in salida and 'mailway-bulwark-gw: en marcha y sano' in salida
+        # El Skyway simulado no despliega el panel: no tiene sus variables, y se dice.
+        assert 'no tiene las tres variables de Bulwark' in salida, '--estado-bulwark no mira el panel'
+        registrar('OK: --comprobar revisa Bulwark (salud, certificado del 443 interno) y --estado-bulwark dice qué '
+                  'falta en el panel.')
+
+        antes = docker('inspect', '-f', '{{.Id}}', 'mailway-bulwark').stdout.strip()
+        self.instalar()
+        assert docker('inspect', '-f', '{{.Id}}', 'mailway-bulwark').stdout.strip() == antes, \
+            'una actualización sin cambios recrea Bulwark'
+        env = self.leer_env()
+        assert (env.get('BULWARK_SESSION_SECRET'), env.get('BULWARK_ADMIN_PASSWORD')) == (sesion, admin), \
+            'una actualización cambia los secretos de Bulwark'
+        registrar('OK: una actualización conserva Bulwark (mismo contenedor) y sus secretos.')
+
+        self.instalador('--desactivar-bulwark')
+        for contenedor in ('mailway-bulwark', 'mailway-bulwark-gw'):
+            assert docker('inspect', contenedor, comprobar=False).returncode != 0, f'{contenedor} sigue tras desactivarlo'
+        for volumen in ('mailway-bulwark-ajustes', 'mailway-bulwark-admin', 'mailway-bulwark-estado'):
+            assert docker('volume', 'inspect', volumen, comprobar=False).returncode == 0, f'se ha borrado {volumen}'
+        env = self.leer_env()
+        assert env.get('MAILWAY_BULWARK') == '0' and 'MAILWAY_BULWARK_URL' not in env, env.get('MAILWAY_BULWARK')
+        assert (env.get('BULWARK_SESSION_SECRET'), env.get('BULWARK_ADMIN_PASSWORD')) == (sesion, admin)
+        self.instalar()
+        assert docker('inspect', 'mailway-bulwark', comprobar=False).returncode != 0, \
+            'una actualización vuelve a levantar Bulwark desactivado'
+        registrar('OK: --desactivar-bulwark retira sus contenedores y las direcciones del panel, y conserva sus '
+                  'volúmenes y sus secretos; una actualización no lo vuelve a levantar.')
+
+        self.instalador('--activar-bulwark')
+        self.bulwark_sano()
+        datos = self.admin_bulwark()
+        assert datos == {'acceso': 200, 'config': 200}, f'API de administración tras reactivarlo: {datos}'
+        leida = self.marca_por_pasarela(marca['fichero'])
+        assert leida['estado'] == 200 and leida['sha256'] == marca['sha256'], f'la marca tras reactivarlo: {leida}'
+        registrar('OK: activado de nuevo, Bulwark conserva su administración (la misma contraseña), la marca '
+                  'subida y sus secretos.')
 
     # -- migración
 
@@ -897,7 +1174,8 @@ class Pila:
     def diagnostico(self) -> None:
         registrar('== Diagnóstico')
         registrar(docker('ps', '-a', comprobar=False).stdout)
-        for contenedor in ('mailway-mail', 'mailway-webmail', 'mailway-certs-dumper', *TEMPORALES, TRAEFIK_RUTAS):
+        for contenedor in ('mailway-mail', 'mailway-mail-gw', 'mailway-webmail', 'mailway-certs-dumper',
+                           'mailway-bulwark', 'mailway-bulwark-gw', *TEMPORALES, TRAEFIK_RUTAS):
             r = docker('logs', '--tail', '80', contenedor, comprobar=False)
             registrar(f'--- docker logs {contenedor}\n{r.stdout}{r.stderr}')
         if 'v0.15' in docker('inspect', '-f', '{{.Config.Image}}', 'mailway-mail', comprobar=False).stdout:
@@ -909,7 +1187,7 @@ class Pila:
         for motor in (MOTOR_016, MOTOR_015):
             subprocess.run(['docker', 'compose', '--env-file', str(self.env), '-f',
                             str(DEPLOY / 'docker-compose.mail.yml'), '-f', str(self.extra), '--profile', 'tls',
-                            'down', '-v', '--remove-orphans', '--timeout', '5'],
+                            '--profile', 'bulwark', 'down', '-v', '--remove-orphans', '--timeout', '5'],
                            capture_output=True, env={**os.environ, 'MAILWAY_MOTOR': motor})
         if PANEL_REAL:
             r = docker('logs', '--tail', '40', PANEL, comprobar=False)
@@ -949,8 +1227,16 @@ def prueba_015(pila: Pila) -> None:
     pila.comprobar_tema_webmail()
     pila.comprobar_contrasena_incorrecta()
     pila.comprobar_imap_y_smtp_directos()
+    pila.comprobar_rutas()
     renovacion(pila)
     pila.comprobar_instalador()
+    # Bulwark necesita la 0.16: con la 0.15, activarlo se niega sin tocar nada.
+    antes = pila.env.read_bytes()
+    salida = pila.instalador('--activar-bulwark', codigo=1)
+    assert 'Bulwark necesita Stalwart 0.16' in salida, 'no explica por qué no se activa Bulwark'
+    assert pila.env.read_bytes() == antes, 'deploy/.env ha cambiado al negarse a activar Bulwark'
+    assert docker('inspect', 'mailway-bulwark', comprobar=False).returncode != 0, 'hay un contenedor de Bulwark'
+    registrar('OK: con Stalwart 0.15, --activar-bulwark se niega sin cambiar nada.')
 
 
 def prueba_016(pila: Pila) -> None:
@@ -971,7 +1257,7 @@ def prueba_016(pila: Pila) -> None:
     pila.comprobar_tema_webmail()
     pila.comprobar_contrasena_incorrecta()
     pila.comprobar_imap_y_smtp_directos()
-    pila.comprobar_rutas_016()
+    pila.comprobar_rutas()
     renovacion(pila)
     pila.comprobar_instalador()
     # Una actualización sobre lo instalado: sin primer arranque ni reinicio.
@@ -980,6 +1266,18 @@ def prueba_016(pila: Pila) -> None:
     assert 'necesita reiniciarse' not in salida, 'la actualización vuelve a pedir un reinicio del motor'
     pila.comprobar_imap_y_smtp_directos()
     registrar('OK: una actualización sobre la 0.16 instalada no repite el primer arranque ni reinicia el motor.')
+
+
+def prueba_bulwark(pila: Pila) -> None:
+    pila.preparar(volcado_antiguo=False)
+    salida = pila.instalar()
+    assert 'Bulwark (beta):      desactivado' in salida, 'el resumen no dice que Bulwark está desactivado'
+    assert docker('inspect', 'mailway-bulwark', comprobar=False).returncode != 0, \
+        'una instalación levanta Bulwark sin pedirlo'
+    pila.extractor_correcto(pila.primero)
+    pila.crear_buzon()
+    pila.comprobar_bulwark()
+    pila.comprobar_imap_webmail()
 
 
 def prueba_migracion(pila: Pila) -> None:
@@ -1015,9 +1313,10 @@ def main() -> int:
     modo.add_argument('--motor', choices=(MOTOR_015, MOTOR_016), default=MOTOR_015,
                       help='motor de la instalación (por defecto, stalwart-0.15)')
     modo.add_argument('--migracion', action='store_true', help='de Stalwart 0.15 a 0.16, con sus vueltas atrás')
+    modo.add_argument('--bulwark', action='store_true', help='Stalwart 0.16 con Bulwark activado y desactivado')
     opciones = argumentos.parse_args()
     comprobar_entorno()
-    motor = MOTOR_015 if opciones.migracion else opciones.motor
+    motor = MOTOR_016 if opciones.bulwark else (MOTOR_015 if opciones.migracion else opciones.motor)
     with tempfile.TemporaryDirectory(prefix='mailway-pila-') as temporal:
         carpeta = Path(temporal)
         carpeta.chmod(0o755)
@@ -1026,6 +1325,9 @@ def main() -> int:
             if opciones.migracion:
                 prueba_migracion(pila)
                 registrar('OK: migración de Stalwart 0.15 a 0.16 comprobada con contenedores reales.')
+            elif opciones.bulwark:
+                prueba_bulwark(pila)
+                registrar('OK: Bulwark activado y desactivado por el instalador, comprobado con contenedores reales.')
             elif motor == MOTOR_016:
                 prueba_016(pila)
                 registrar('OK: pila de correo con Stalwart 0.16 comprobada con contenedores reales.')

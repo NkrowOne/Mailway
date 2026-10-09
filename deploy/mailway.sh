@@ -13,6 +13,7 @@
 #   mailway comprobar           # diagnóstico de solo lectura (instalar.sh --comprobar)
 #   mailway probar-acceso       # abre un buzón desde el webmail (instalar.sh --probar-acceso)
 #   mailway migrar-motor        # Stalwart 0.15 → 0.16, con vuelta atrás (instalar.sh --migrar-motor)
+#   mailway bulwark on|off|status  # correo web «beta» por cliente (instalar.sh --activar-bulwark…)
 #   mailway version
 #
 # «update» = «git pull» + «instalar.sh --actualizar»: el panel junto a Skyway
@@ -124,11 +125,20 @@ Uso: mailway <orden> [opciones]
                              correo recibido desde entonces queda en la 0.16).
   retirar-motor-anterior     Borra el volumen de la 0.15 que la migración
                              conserva como vuelta atrás (pide su nombre).
+  bulwark on                 Activa Bulwark, el correo web «beta» que el panel
+                             ofrece por cliente (Roundcube sigue siendo el
+                             predeterminado). Solo con Stalwart 0.16. Aplica la
+                             configuración como «update --reaplicar», sin git pull.
+  bulwark off                Lo desactiva: sus clientes vuelven a Roundcube. Sus
+                             volúmenes y sus secretos se conservan.
+  bulwark status             Si está activo, sus contenedores y lo que recibe el
+                             panel. No cambia nada.
   version                    Versión instalada y carpeta de Mailway.
   ayuda                      Muestra esta ayuda.
 
 Ni «update» ni «update --auto» cambian de motor: con Stalwart 0.15 (fin de
-su soporte de seguridad: 1 de diciembre de 2026) avisan de cómo migrar.
+su soporte de seguridad: 1 de diciembre de 2026) avisan de cómo migrar. Ni
+activan Bulwark: solo «mailway bulwark on».
 
 Los secretos que acepta el instalador (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN…)
 se pasan igual que con instalar.sh, por el entorno y nunca en la orden. Lo
@@ -853,6 +863,15 @@ main() {
       # -y es lo único que pasa al instalador: el resto, por el entorno.
       case "$#:${1:-}" in 0: | 1:-y | 1:--si) ;; *) fallo "La orden $orden solo admite -y (mira «mailway ayuda»)." ;; esac
       exec bash "$RAIZ/deploy/instalar.sh" "--$orden" "$@"
+      ;;
+    bulwark)
+      como_root bulwark "$@"
+      case "$#:${1:-}" in
+        1:on | 1:activar) exec bash "$RAIZ/deploy/instalar.sh" --activar-bulwark ;;
+        1:off | 1:desactivar) exec bash "$RAIZ/deploy/instalar.sh" --desactivar-bulwark ;;
+        1:status | 1:estado | 0:) exec bash "$RAIZ/deploy/instalar.sh" --estado-bulwark ;;
+        *) fallo "Uso: mailway bulwark on | off | status" ;;
+      esac
       ;;
     instalar-comando)
       como_root instalar-comando
