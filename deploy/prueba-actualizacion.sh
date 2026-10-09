@@ -447,7 +447,7 @@ ejecutar_mailway auto-update on
 comprobar "termina con 0" igual "$CODIGO" 0
 comprobar "servicio de un solo disparo" contiene "$SERVICIO" "Type=oneshot"
 comprobar "que ejecuta update --auto con la orden del PATH" contiene "$SERVICIO" "ExecStart=$TMP/enlace/mailway update --auto"
-comprobar "a las 04:50 por defecto" contiene "$TEMPORIZADOR" "OnCalendar=*-*-* 04:50:00"
+comprobar "a las 03:00 por defecto" contiene "$TEMPORIZADOR" "OnCalendar=*-*-* 03:00:00"
 comprobar "con margen aleatorio" contiene "$TEMPORIZADOR" "RandomizedDelaySec=5min"
 comprobar "y persistente" contiene "$TEMPORIZADOR" "Persistent=true"
 comprobar "recarga systemd" contiene "$REGISTRO" "systemctl daemon-reload"

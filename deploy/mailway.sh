@@ -44,8 +44,11 @@ UNIDAD="mailway-auto-update"
 # Carpeta de las unidades de systemd. La variable solo existe para las
 # pruebas (deploy/prueba-actualizacion.sh).
 SYSTEMD_DIR="${MAILWAY_SYSTEMD_DIR:-/etc/systemd/system}"
-# Después de la actualización nocturna de Skyway (04:30): nunca a la vez.
-HORA_AUTO="04:50"
+# Hora por defecto: hora y media antes de la actualización nocturna de Skyway
+# (04:30) y de sus copias de seguridad (04:00). Aplicar, comprobar y, si
+# falla, volver atrás (con Skyway, compilando el panel) cabe de sobra antes:
+# nunca coinciden, ni siquiera cuando una de las dos vuelve atrás.
+HORA_AUTO="03:00"
 # Tras recrear los contenedores, el webmail tarda en volver a estar sano: la
 # comprobación se repite cada SALUD_INTERVALO segundos durante SALUD_ESPERA.
 SALUD_ESPERA=180
@@ -95,7 +98,7 @@ Uso: mailway <orden> [opciones]
                              2: la vuelta atrás también ha fallado.
   auto-update on [--hora HH:MM]
                              Ejecuta «update --auto» cada día con un temporizador de
-                             systemd (por defecto a las 04:50, después del de Skyway).
+                             systemd (por defecto a las 03:00, antes del de Skyway).
   auto-update off            Retira el temporizador.
   auto-update status         Si está activo, la próxima ejecución, el último
                              resultado y el registro (journalctl).
@@ -663,8 +666,8 @@ UNIDAD_SERVICIO
 Description=Actualización automática diaria de Mailway
 
 [Timer]
-# Por defecto a las $HORA_AUTO, después de la actualización nocturna de Skyway
-# (04:30): nunca a la vez. Si el servidor estaba apagado, al arrancar.
+# Por defecto a las $HORA_AUTO, con margen antes de la actualización nocturna
+# de Skyway (04:30): nunca a la vez. Si el servidor estaba apagado, al arrancar.
 OnCalendar=*-*-* $hora:00
 RandomizedDelaySec=5min
 Persistent=true
@@ -696,7 +699,7 @@ activar_auto() {
   done
   [[ $hora =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || fallo "Hora no válida: «$hora». Usa HH:MM en 24 horas (p. ej. $HORA_AUTO)."
   command -v systemctl >/dev/null 2>&1 ||
-    fallo "Este servidor no usa systemd. Programa «$ENLACE update --auto» con cron (p. ej. en /etc/cron.d/mailway: 50 4 * * * root $ENLACE update --auto)."
+    fallo "Este servidor no usa systemd. Programa «$ENLACE update --auto» con cron (p. ej. en /etc/cron.d/mailway: 0 3 * * * root $ENLACE update --auto)."
   if ! command -v git >/dev/null 2>&1 || ! git_mw rev-parse --git-dir >/dev/null 2>&1; then
     fallo "$RAIZ no es una copia de git de Mailway: la actualización automática trae las versiones nuevas con git."
   fi

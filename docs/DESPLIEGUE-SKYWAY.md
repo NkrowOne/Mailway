@@ -870,8 +870,8 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
 Una vez por servidor:
 
 ```bash
-sudo mailway auto-update on               # cada día a las 04:50, después de la de Skyway (04:30)
-sudo mailway auto-update on --hora 03:15  # a otra hora
+sudo mailway auto-update on               # cada día a las 03:00, con margen antes de la de Skyway (04:30)
+sudo mailway auto-update on --hora 02:15  # a otra hora
 sudo mailway auto-update status           # si está activa, próxima ejecución, último resultado y registro
 sudo mailway auto-update off              # la retira
 ```
@@ -936,6 +936,12 @@ Mailway y su migración es un proyecto aparte.
 comprobación incluye su `/api/health`, pero la vuelta atrás de `mailway
 update --auto` devuelve a su versión anterior el motor, el webmail y su
 configuración, no el panel.
+
+**Parches del sistema operativo.** Junto a Skyway, los gestiona `sudo skyway
+auto-update on --sistema`: solo actualizaciones de seguridad y, si un parche
+lo exige, un reinicio una hora después de la actualización de Skyway (05:30
+por defecto), cuando la de Mailway (03:00) ya ha terminado. En una
+instalación autónoma, activa `unattended-upgrades` del sistema.
 
 ### 8.2 Migrar desde una versión 0.x
 
