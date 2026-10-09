@@ -1,0 +1,44 @@
+{
+  "sinCredenciales": {
+    "status": 401,
+    "body": {
+      "type": "about:blank",
+      "status": 401,
+      "title": "Unauthorized",
+      "detail": "You have to authenticate first."
+    }
+  },
+  "rutaDesconocida": {
+    "status": 404,
+    "body": {
+      "type": "about:blank",
+      "status": 404,
+      "title": "Not Found",
+      "detail": "The requested resource does not exist on this server."
+    }
+  },
+  "capacidadDesconocida": {
+    "status": 400,
+    "body": {
+      "type": "urn:ietf:params:jmap:error:notRequest",
+      "status": 400,
+      "detail": "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:mailway:inexistente\"],\"methodCalls\":[[\"x:Domain/query\",{},\"c\"]]}"
+    }
+  },
+  "metodoDesconocido": {
+    "status": 200,
+    "body": {
+      "methodResponses": [
+        [
+          "error",
+          {
+            "type": "unknownMethod",
+            "description": "x:NoExiste/get"
+          },
+          "c"
+        ]
+      ],
+      "sessionState": "7f6521dc"
+    }
+  }
+}

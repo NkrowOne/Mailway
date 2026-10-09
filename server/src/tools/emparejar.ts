@@ -180,7 +180,12 @@ function asegurarAdministrador(email: string, nombre: string): { admin: AuthedUs
 }
 
 function avisoRecomendados(outcome: RecommendedOutcome): string | null {
-  if (outcome.applied) return null;
+  if (outcome.applied) {
+    // Stalwart 0.16 guarda algunos cambios (un puerto nuevo) que solo aplica al reiniciar.
+    return outcome.restartRequired.length > 0
+      ? `El motor necesita reiniciarse para aplicar: ${outcome.restartRequired.join('; ')}.`
+      : null;
+  }
   const motivo = outcome.error || outcome.errors.join('; ');
   return `El motor no aceptó todos los ajustes recomendados${motivo ? ` (${motivo})` : ''}. Repítelo en Ajustes → Servidor de correo.`;
 }

@@ -33,6 +33,7 @@ import {
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
+import { HojaWebmailAutomatico } from '../components/WebmailAutomatico';
 
 const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: string; pista: string }> = {
   pending_dns: {
@@ -147,6 +148,9 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
     (a, b) => ORDEN[a.status] - ORDEN[b.status] || a.hostname.localeCompare(b.hostname),
   );
   const principales = webmailsPrincipales(lista);
+  // El interruptor del webmail automático es de un cliente concreto: el de la
+  // ficha, el elegido en el filtro o, para un cliente, el suyo.
+  const clienteDelInterruptor = clienteFijo || (isAdmin ? filtro : (me.data?.user?.clientId ?? ''));
   // El ejemplo es del lector si es un cliente y de un tercero si es la administración.
   const ejemploDominio = isAdmin ? 'sucliente.com' : 'tuempresa.com';
 
@@ -195,6 +199,8 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
           )}
         </Hoja>
       )}
+
+      {clienteDelInterruptor && <HojaWebmailAutomatico clientId={clienteDelInterruptor} isAdmin={isAdmin} />}
 
       {me.isError || domains.isError ? (
         <AvisoError
@@ -490,7 +496,12 @@ function FichaDominio({
   const toast = useToast();
   const [confirmar, setConfirmar] = useState(false);
   const meta = estadoMeta[domain.status];
-  const cuenta = domain.status === 'pending_dns' ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname) : undefined;
+  // El webmail va con el proxy de Cloudflare: el botón sigue a mano también en
+  // servicio, para activárselo a un registro que se creó sin él.
+  const cuenta =
+    domain.status === 'pending_dns' || domain.kind === 'webmail'
+      ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname)
+      : undefined;
 
   // Activar, elegir o quitar un dominio cambia el webmail que ven el resumen
   // del cliente y los datos de conexión de sus buzones.
@@ -547,8 +558,12 @@ function FichaDominio({
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
       if (data.errors.length > 0) {
         toast('error', `Cloudflare ha rechazado el registro: ${data.errors[0]!.error}`);
+      } else if (data.applied.length > 0) {
+        toast('ok', 'Se ha configurado el registro en Cloudflare. La comprobación se repetirá en unos minutos.');
+      } else if ((data.skipped ?? []).length > 0) {
+        toast('error', data.skipped[0]!.reason);
       } else {
-        toast('ok', 'Se ha creado el registro en Cloudflare. La comprobación se repetirá en unos minutos.');
+        toast('ok', 'El registro ya estaba configurado en Cloudflare.');
       }
     },
     onError: (err) => {
@@ -581,6 +596,7 @@ function FichaDominio({
         <div className="min-w-0">
           <span className="valor block break-all text-md text-tinta">{domain.hostname}</span>
           {cliente && <span className="block text-sm text-tinta-3">{cliente}</span>}
+          {domain.automatico && <span className="block text-sm text-tinta-3">Creado automáticamente</span>}
           {principal && (
             <span className="mt-1 block text-sm text-tinta-2">
               {domain.isPrimary ? 'Webmail principal' : 'Webmail principal: el primero que entró en servicio'}
@@ -641,7 +657,7 @@ function FichaDominio({
             {cuenta && (
               <p className="text-sm text-tinta-2">
                 La zona está en Cloudflare ({cuenta.label}): «Configurar en Cloudflare» crea el registro
-                sin pasar por su panel.
+                sin pasar por su panel{domain.kind === 'webmail' ? ', con el proxy de Cloudflare activo' : ''}.
               </p>
             )}
             {instrucciones.map((i) => (

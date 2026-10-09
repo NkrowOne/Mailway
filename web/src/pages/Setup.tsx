@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type SetupStatus, type User } from '../lib/api';
 import {
+  nombreMotor,
   notaEnEjecucion,
   ORDEN_VEREDICTO,
   resumenTls,
@@ -14,10 +15,11 @@ import {
   type RecommendedResult,
 } from '../lib/motor';
 import { BandaError, FilaEstado, type Fila } from '../components/HojaServidorCorreo';
+import { BandaAviso } from '../components/gestion/comun';
 import type { CuentaCloudflare } from '../lib/cloudflare';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { Cargando, Hoja, Logotipo, Marca, Membrete, Muestra } from '../ui/kit';
+import { AvisoEspera, Cargando, Hoja, Logotipo, Marca, Membrete, Muestra } from '../ui/kit';
 import { useToast } from '../ui/toast';
 
 /**
@@ -37,6 +39,8 @@ interface ResultadoRecomendados {
   hostname: string;
   errors: string[];
   warnings: string[];
+  /** Lo que el motor solo aplica al reiniciar su contenedor (Stalwart 0.16). */
+  restartRequired?: string[];
   error?: string;
 }
 
@@ -102,7 +106,13 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
 
   function avisarRecomendados(resultado: ResultadoRecomendados | null | undefined) {
     if (!resultado) return;
-    if (resultado.applied) {
+    if (resultado.applied && resultado.restartRequired && resultado.restartRequired.length > 0) {
+      // Guardado, pero un puerto nuevo solo se abre al reiniciar el contenedor.
+      toast(
+        'error',
+        `Ajustes guardados en el motor. Reinícialo para aplicar: ${resultado.restartRequired.join('; ')}.`,
+      );
+    } else if (resultado.applied) {
       toast('ok', `Nombre del servidor ${resultado.hostname} aplicado en el motor.`);
     } else {
       toast(
@@ -362,7 +372,9 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                         entorno del panel y no sale del servidor.
                       </p>
                     </Muestra>
-                    {conectarEntorno.isPending && <Cargando label="Comprobando la conexión con el motor…" />}
+                    {conectarEntorno.isPending && (
+                      <Cargando label="Comprobando la conexión con el motor y aplicando los ajustes recomendados (puede tardar un minuto o más)…" />
+                    )}
                     {conectarEntorno.isError && (
                       <BandaError
                         texto={
@@ -462,6 +474,10 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                     >
                       {engineKind === 'stalwart' ? 'Probar la conexión y continuar' : 'Continuar en demostración'}
                     </Button>
+                    <AvisoEspera activo={busy && engineKind === 'stalwart'}>
+                      Comprobando la conexión y aplicando los ajustes recomendados en el motor. Puede tardar un minuto
+                      o más.
+                    </AvisoEspera>
                   </form>
                 )}
               </div>
@@ -528,6 +544,9 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                 <Button type="submit" variant="principal" busy={busy} className="self-start">
                   Guardar y continuar
                 </Button>
+                <AvisoEspera activo={busy}>
+                  Guardando y aplicando el nombre del servidor en el motor. Puede tardar un minuto o más.
+                </AvisoEspera>
               </form>
             )}
 
@@ -617,7 +636,9 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
     mutationFn: () => api.post<RecommendedResult>('/api/engine/recommended'),
     onSuccess: (res) => {
       if (res.errors.length > 0) toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
-      else if (res.running && res.running !== res.hostname) {
+      else if (res.restartRequired && res.restartRequired.length > 0) {
+        toast('error', `Ajustes guardados. Reinicia el motor para aplicar: ${res.restartRequired.join('; ')}.`);
+      } else if (res.running && res.running !== res.hostname) {
         toast('error', `Ajustes aplicados, pero el motor sigue anunciándose como ${res.running}. Revisa su configuración local.`);
       } else toast('ok', `Nombre del servidor ${res.hostname} aplicado en el motor.`);
       void queryClient.invalidateQueries({ queryKey: ['engine-status'] });
@@ -630,7 +651,14 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
     const m = motor.data;
     filas.push({
       concepto: 'Motor de correo',
-      valor: m.engine.kind === 'stalwart' ? 'Stalwart' : m.engine.kind === 'demo' ? 'Demostración' : 'Sin conectar',
+      valor:
+        m.engine.kind === 'stalwart'
+          ? m.api
+            ? nombreMotor(m.api)
+            : 'Stalwart'
+          : m.engine.kind === 'demo'
+            ? 'Demostración'
+            : 'Sin conectar',
       veredicto: m.engine.error ? 'fuera' : m.engine.kind === 'stalwart' ? 'normal' : 'vigilar',
       nota: m.engine.error ?? (m.engine.kind === 'demo' ? 'Sin servidor de correo real: no se entrega ni se envía correo.' : undefined),
     });
@@ -660,7 +688,9 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
           ? m.tls.error
           : m.tls.ok
             ? undefined
-            : 'Emítelo desde Ajustes → Servidor de correo; hasta entonces los programas de correo muestran un aviso de seguridad.',
+            : m.acmeSupported
+              ? 'Emítelo desde Ajustes → Servidor de correo; hasta entonces los programas de correo muestran un aviso de seguridad.'
+              : 'Con Stalwart 0.16 lo copia al motor el extractor de Traefik; hasta entonces los programas de correo muestran un aviso de seguridad.',
       });
     }
   }
@@ -723,6 +753,14 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
         <BandaError texto="Parte de la comprobación no se ha podido completar. Puedes repetirla o continuar y revisarla en Ajustes." />
       )}
 
+      {motor.data && motor.data.restartRequired.length > 0 && (
+        <BandaAviso>
+          <strong className="font-semibold">El motor necesita reiniciarse</strong> para aplicar lo que tiene guardado:{' '}
+          {motor.data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo, «docker restart mailway-mail») y
+          pulsa «Comprobar de nuevo».
+        </BandaAviso>
+      )}
+
       {!cargando && (
         <div className="flex flex-wrap gap-2">
           {motor.data?.engine.kind === 'stalwart' &&
@@ -743,6 +781,9 @@ function Comprobacion({ error, busy, onFinish }: { error: string; busy: boolean;
           </Button>
         </div>
       )}
+      <AvisoEspera activo={aplicar.isPending}>
+        Aplicando los ajustes en el motor y recargándolo. Puede tardar un minuto o más.
+      </AvisoEspera>
 
       <div>
         <h3 className="rotulo mb-1">Próximos pasos</h3>

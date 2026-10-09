@@ -31,6 +31,7 @@ import {
   type NivelZona,
 } from './zonefile';
 import { lookupMx, lookupTxt, type MxRecord } from '../core/dns';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { getInstanceSettings } from './settings';
 
 /** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
@@ -183,15 +184,37 @@ function hostsDelServidor(domain: string, records: EngineDnsRecord[]): string[] 
     .filter((h) => h && h !== dominio && !h.endsWith(`.${dominio}`));
 }
 
+/** Webmail de marca que se están preparando en segundo plano (ver marcarPropiedadComprobada). */
+const webmailsEnPreparacion = new Set<Promise<unknown>>();
+
+/**
+ * Espera a que terminen los webmail de marca que se preparan en segundo plano.
+ * Para las pruebas: sin esto, uno que acaba tarde (con la máquina cargada)
+ * se cruza con lo que la prueba hace después.
+ */
+export async function esperarWebmailsEnPreparacion(): Promise<void> {
+  await Promise.allSettled([...webmailsEnPreparacion]);
+}
+
 /**
  * Deja constancia de que la propiedad quedó probada. Nunca se borra: un MX
  * que se mueve después (migración, avería) no convierte el dominio en ajeno.
  */
 export function marcarPropiedadComprobada(domainId: string): void {
-  db.prepare('UPDATE domains SET owner_verified_at = COALESCE(owner_verified_at, ?) WHERE id = ?').run(
-    now(),
-    domainId,
-  );
+  const r = db
+    .prepare('UPDATE domains SET owner_verified_at = ? WHERE id = ? AND owner_verified_at IS NULL')
+    .run(now(), domainId);
+  // Recién comprobada: su webmail de marca (webmail.<dominio>) se prepara
+  // solo, sin esperar a que nadie lo pida. En segundo plano: no retrasa la
+  // respuesta y un fallo de Cloudflare no estropea la comprobación (el
+  // vigilante lo reintenta). Importación diferida para no crear un ciclo.
+  if (r.changes > 0) {
+    const tarea: Promise<unknown> = import('./whitelabel')
+      .then((m) => m.asegurarWebmailDeDominio(domainId))
+      .catch(() => undefined)
+      .finally(() => webmailsEnPreparacion.delete(tarea));
+    webmailsEnPreparacion.add(tarea);
+  }
 }
 
 /**
@@ -495,9 +518,10 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   /**
    * Registros DNS que hay que crear (tabla para copiar y pegar, o para que
    * una integración los cree). Pasan por la misma selección que la
-   * comprobación y Cloudflare: sin SRV de puertos cerrados, sin TLSA y sin
-   * nombres de otras zonas; al final va el TXT de verificación de la
-   * propiedad (categoría «verificacion»).
+   * comprobación y Cloudflare: sin SRV de puertos cerrados, sin TLSA ni CAA,
+   * sin los de Stalwart 0.16 que Mailway no enruta y sin nombres de otras
+   * zonas; al final va el TXT de verificación de la propiedad (categoría
+   * «verificacion»).
    */
   app.get('/api/domains/:id/dns', async (req) => {
     const { id } = req.params as { id: string };
@@ -641,6 +665,9 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         'needs_confirmation',
       );
     }
+    // Cada elemento falla por separado (y se informa como borrado a medias):
+    // durante el mantenimiento del motor fallarían todos, mejor un 503 claro.
+    exigirSinMantenimiento();
     const engine = getEngine();
     const fallidos: string[] = [];
 

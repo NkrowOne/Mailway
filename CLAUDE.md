@@ -15,8 +15,10 @@ Servicio de correo multi-cliente auto-alojado: el administrador da de alta
 clientes con un plan; cada cliente gestiona sus dominios (DNS guiado o en
 Cloudflare, con verificación de propiedad), buzones, alias, contraseñas de
 aplicación y claves de API; los titulares configuran sus dispositivos con un
-enlace de configuración o desde «Mi buzón». Motor Stalwart v0.15.5 (fijado),
-webmail Roundcube, panel Node + SQLite. Se despliega junto a
+enlace de configuración o desde «Mi buzón». Motor Stalwart con versión
+exacta por serie: 0.16.25 en las instalaciones nuevas y 0.15.5 en las
+anteriores hasta que se migran (`mailway migrar-motor`); webmail Roundcube,
+panel Node + SQLite. Se despliega junto a
 [Skyway](https://github.com/NkrowOne/Skyway) (≥ 0.34 lo gestiona por
 proyecto y publica sus rutas de Traefik) o de forma autónoma.
 
@@ -38,7 +40,7 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     titular y marca de buzón configurado),
     `connection` (datos de conexión y generadores de autoconfiguración),
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
-    (marca blanca y `/api/traefik/config`), `transactional` (claves y
+    (marca blanca, webmail automático de cada dominio y `/api/traefik/config`), `transactional` (claves y
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `alerts`, `watchdog`, `dashboard`, `suspensiones` (corrección única, al
     arrancar o desde el vigilante, de lo que dejó la suspensión anterior:
@@ -52,16 +54,24 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
     una línea JSON por la salida estándar), que usa el instalador. Los pasos
     del asistente que comparte viven en `modules/setup.ts`.
+    `src/tools/avisar.ts`: aviso a la administración (incidencia en Avisos y
+    canales) desde la terminal, que usa `mailway update --auto`.
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
   `src/pages/admin/`; la ficha del cliente, con sus pestañas, en
   `ClienteDetalle.tsx` y `src/pages/admin/cliente/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
 - `deploy/` — `instalar.sh` (instalador idempotente), `mailway.sh` (la orden
-  `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`),
-  compose del motor y el
+  `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`;
+  `update --auto`, con comprobación antes y después y vuelta atrás, y
+  `auto-update on|off|status`, su temporizador de systemd), pruebas de los
+  scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
-  (`docker-compose.standalone.yml`), `.env.example`, configuración de
+  (`docker-compose.standalone.yml`), el motor de cada serie
+  (`motor/stalwart-0.15/compose.yml` y `motor/stalwart-0.16/compose.yml`, que
+  elige `MAILWAY_MOTOR`), el ayudante de la migración (`motor/migracion.py`),
+  las pruebas de la pila con contenedores reales (`prueba-stack.py`,
+  `prueba-motor016.sh`, `prueba-panel-motor.js`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
   (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
   del override de Traefik y punto de entrada de la imagen.
@@ -81,8 +91,11 @@ npm run reset-password -w server -- correo@ejemplo.com NuevaContraseña
 ```
 
 **`npm run typecheck`, `npm run lint`, `npm test` y `npm run build`** son la
-verificación mínima; la CI (`.github/workflows/ci.yml`) ejecuta los cuatro y
-comprueba la sintaxis de `deploy/*.sh` (`bash -n`).
+verificación mínima; la CI (`.github/workflows/ci.yml`) ejecuta los cuatro,
+comprueba la sintaxis de `deploy/*.sh` (`bash -n`) y construye y arranca la
+imagen del panel. Si tocas `deploy/`, ejecuta también sus `prueba-*.sh`
+(`bash deploy/prueba-actualizacion.sh`…), que corren en
+`.github/workflows/stack.yml` con `shellcheck` y la pila de correo real.
 
 Las pruebas viven en `server/test/*.test.ts` y se ejecutan con `node --test`.
 `test/env.ts` da a cada fichero una carpeta de datos temporal propia, activa
@@ -118,7 +131,8 @@ prueba que lo reproduce.
   `'altas:dominios'`) y con `assertWithinLimit` dentro del cerrojo. Buzones y
   alias exigen `assertDomainOwnership(domainId)`.
 - **Motor**: las rutas nunca hablan con Stalwart directamente, siempre vía
-  `getEngine()`. Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
+  `getEngine()`, que averigua si el motor es 0.15 (API REST) o 0.16 (JMAP) y
+  usa su driver (`engine/stalwart.ts` o `engine/stalwart016.ts`). Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
   cuerpo `{ error }`; el driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
   `engine_unreachable`). Los ajustes de Stalwart (`POST /api/settings`)
@@ -151,6 +165,11 @@ prueba que lo reproduce.
 - **Versión**: `config.version`, los tres `package.json`,
   `VERSION_INSTALADOR` de `deploy/instalar.sh` y la cabecera de
   `docs/PLAN.md` van sincronizados.
+- **Dependencias e imágenes**: versión exacta siempre (`Dockerfile` y
+  compose, nunca `1.7.x` ni `22-alpine`). Dependabot (`.github/dependabot.yml`)
+  propone las nuevas y `parches-automaticos.yml` fusiona solo los parches
+  cuando todo ha pasado. Stalwart solo recibe parches dentro de su serie;
+  cambiar de serie es una migración (`mailway migrar-motor`).
 
 ## Seguridad (imprescindible)
 

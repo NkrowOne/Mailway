@@ -1,0 +1,110 @@
+name: Parches automáticos
+
+# Fusiona los PR de Dependabot de los grupos de parches («parches-…» y
+# «seguridad-…», ver .github/dependabot.yml) cuando TODAS las comprobaciones
+# de su commit han terminado bien: CI (ci.yml) y, si tocan deploy/, la pila de
+# correo con contenedores reales (stack.yml). Se lanza cada vez que termina uno
+# de esos dos workflows: mientras quede alguna comprobación en marcha no hace
+# nada, y fusiona la ejecución que llega cuando ya ha terminado la última.
+#
+# Corre con permiso de escritura y con la configuración de la rama principal
+# (workflow_run), así que NUNCA descarga ni ejecuta el código del PR: ni
+# checkout, ni npm, ni scripts del repositorio; solo consulta la API con gh.
+# Lo que llega del evento pasa por variables de entorno, nunca dentro del
+# script. Solo fusiona si el PR sale de una rama de este repositorio hacia la
+# principal, es de Dependabot, su último commit es de Dependabot y es
+# exactamente el probado, pertenece a un grupo de parches, todas sus
+# dependencias suben solo un parche y todas las comprobaciones han pasado. Si
+# no, termina sin error y dice por qué.
+
+on:
+  workflow_run:
+    workflows: ['CI', 'Pila de correo']
+    types: [completed]
+
+permissions:
+  contents: write # fusionar y borrar la rama
+  pull-requests: write # fusionar el PR
+  checks: read # comprobaciones del commit
+  statuses: read # estados del commit (integraciones externas)
+  actions: read # ejecuciones de workflows del commit
+
+# Las ejecuciones de un mismo PR (al terminar CI y al terminar la pila) no se
+# cruzan: la segunda encuentra el PR ya fusionado y no hace nada.
+concurrency:
+  group: parches-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  fusionar:
+    name: Fusionar el parche si todo ha pasado
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Comprobar y fusionar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRINCIPAL: ${{ github.event.repository.default_branch }}
+          RAMA: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # Cada línea empieza por este texto: nada de lo que llega del PR
+          # puede quedar al principio de una línea como orden del runner.
+          saltar() { printf 'No se fusiona: %s\n' "$*"; exit 0; }
+
+          # 1. El PR abierto de esa rama, de este repositorio, de Dependabot
+          #    (en la API REST, el usuario «dependabot[bot]», de tipo Bot) y en
+          #    el commit que se acaba de probar.
+          cabeza=$(jq -rn --arg v "${GH_REPO%%/*}:$RAMA" '$v | @uri')
+          pr=$(gh api "repos/$GH_REPO/pulls?state=open&head=$cabeza&per_page=10" \
+            --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)] | first // empty')
+          [ -n "$pr" ] || saltar "no hay ningún PR abierto desde la rama $RAMA."
+          numero=$(jq -r '.number' <<<"$pr")
+          [ "$(jq -r '"\(.user.login) \(.user.type)"' <<<"$pr")" = 'dependabot[bot] Bot' ] ||
+            saltar "el PR #$numero no es de Dependabot."
+          [ "$(jq -r '.base.ref' <<<"$pr")" = "$PRINCIPAL" ] || saltar "el PR #$numero no va a $PRINCIPAL."
+          [ "$(jq -r '.head.sha' <<<"$pr")" = "$SHA" ] ||
+            saltar "el PR #$numero ya no está en el commit probado ($SHA): lo fusionará la ejecución de su commit nuevo."
+          [ "$(gh api "repos/$GH_REPO/pulls/$numero" --jq '.mergeable_state')" != dirty ] ||
+            saltar "el PR #$numero tiene conflictos: Dependabot lo rehará."
+
+          # 2. De un grupo de parches: «Bump the parches-npm group with 3
+          #    updates», también con «in /deploy» o «across 1 directory».
+          titulo=$(jq -r '.title' <<<"$pr")
+          re='(^|[^[:alnum:]_-])((parches|seguridad)-[[:alnum:]_-]+) group([^[:alnum:]_-]|$)'
+          [[ $titulo =~ $re ]] || saltar "el PR #$numero no es de un grupo de parches («$titulo»)."
+          grupo=${BASH_REMATCH[2]}
+
+          #    Y por si un grupo se configurase mal: el commit es de
+          #    Dependabot y todas sus dependencias suben solo un parche (los
+          #    metadatos que Dependabot deja en el mensaje del commit).
+          commit=$(gh api "repos/$GH_REPO/commits/$SHA")
+          [ "$(jq -r '.author.login // empty' <<<"$commit")" = 'dependabot[bot]' ] ||
+            saltar "el último commit del PR #$numero no es de Dependabot."
+          tipos=$(jq -r '.commit.message' <<<"$commit" |
+            sed -n -E 's/^[[:space:]]*update-type:[[:space:]]*//p' | sort -u)
+          [ "$tipos" = 'version-update:semver-patch' ] ||
+            saltar "el PR #$numero no es solo de parches (update-type: $(tr '\n' ' ' <<<"${tipos:-sin datos}"))."
+
+          # 3. Todas las comprobaciones del commit, terminadas y bien. Una
+          #    ejecución cuyos trabajos aún no han empezado (la pila espera a
+          #    su primera fase) puede no tener todavía comprobación: también
+          #    se mira cada ejecución entera.
+          filtro='select(.status != "completed" or (.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")) | "\(.name): \(.status) \(.conclusion // "")"'
+          pendientes=$(gh api --paginate "repos/$GH_REPO/commits/$SHA/check-runs?per_page=100" --jq ".check_runs[] | $filtro")
+          [ -z "$pendientes" ] || saltar "comprobaciones de $SHA en marcha o sin pasar: $(tr '\n' ';' <<<"$pendientes")"
+          pendientes=$(gh api --paginate "repos/$GH_REPO/actions/runs?head_sha=$SHA&per_page=100" --jq ".workflow_runs[] | $filtro")
+          [ -z "$pendientes" ] || saltar "workflows de $SHA en marcha o sin pasar: $(tr '\n' ';' <<<"$pendientes")"
+          estado=$(gh api "repos/$GH_REPO/commits/$SHA/status" --jq 'if .total_count == 0 then "success" else .state end')
+          [ "$estado" = success ] || saltar "los estados del commit $SHA están en «$estado»."
+
+          # 4. Fusionar exactamente el commit probado.
+          echo "Fusionando el PR #$numero ($grupo, $SHA): todas las comprobaciones han pasado."
+          gh pr merge "$numero" --merge --delete-branch --match-head-commit "$SHA"

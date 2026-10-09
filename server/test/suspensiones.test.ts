@@ -6,6 +6,7 @@ import { config } from '../src/config';
 import { db } from '../src/core/db';
 import { mailboxStateLockKey, withLock } from '../src/core/locks';
 import { listAudit } from '../src/modules/audit';
+import { activarMantenimiento, desactivarMantenimiento } from '../src/modules/mantenimiento';
 import { setEngineSettings } from '../src/modules/settings';
 import {
   AJUSTE_HECHA,
@@ -368,6 +369,26 @@ test('el vigilante hace la corrección que quedó pendiente', async () => {
 
   caido = false;
   recibidas.length = 0;
+  await runWatchdogOnce();
+  assert.equal(reparacionSuspensionesHecha(), true);
+  assert.deepEqual(rutasDe(parches()), [...SUSPENDIDOS, ...ALIAS].sort());
+});
+
+test('con el motor en mantenimiento queda pendiente, sin tocarlo ni avisar, y se hace al terminar', async () => {
+  olvidarCorreccion();
+  activarMantenimiento(5);
+  try {
+    const registro: string[] = [];
+    iniciarReparacionSuspensiones({ info: (msg) => registro.push(msg), warn: (msg) => registro.push(msg) });
+    assert.equal((await repararSuspensiones()).estado, 'pendiente');
+    await runWatchdogOnce();
+    assert.equal(reparacionSuspensionesHecha(), false);
+    assert.equal(parches().length, 0, 'ningún cambio llega al motor durante el mantenimiento');
+    assert.deepEqual(registro, [], 'el mantenimiento es a propósito: no es un fallo que avisar');
+  } finally {
+    desactivarMantenimiento();
+  }
+
   await runWatchdogOnce();
   assert.equal(reparacionSuspensionesHecha(), true);
   assert.deepEqual(rutasDe(parches()), [...SUSPENDIDOS, ...ALIAS].sort());

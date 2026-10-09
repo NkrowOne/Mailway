@@ -521,6 +521,68 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX idx_envios_configuracion_client ON envios_configuracion(client_id, created_at);
     `,
   },
+  {
+    id: '013-webmail-automatico',
+    sql: `
+      -- Webmail de marca que alguien eliminó a mano. El alta automática
+      -- (webmail.<dominio> de cada dominio con la propiedad comprobada) no
+      -- vuelve a crear estos nombres; darlo de alta a mano lo saca de aquí.
+      CREATE TABLE webmail_descartados (
+        hostname TEXT PRIMARY KEY,
+        client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL
+      );
+
+      -- Interruptor por cliente del webmail automático (activado por
+      -- defecto). Desactivarlo retira los que se crearon solos.
+      ALTER TABLE clients ADD COLUMN webmail_automatico INTEGER NOT NULL DEFAULT 1;
+
+      -- 1 = lo dio de alta el webmail automático, no una persona: son los
+      -- que se retiran al desactivar el interruptor del cliente.
+      ALTER TABLE client_domains ADD COLUMN automatico INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    id: '014-credenciales-locales',
+    sql: `
+      -- Copia propia del hash $6$ de la contraseña principal de cada buzón.
+      -- Stalwart 0.16 devuelve los secretos enmascarados: sin esta copia el
+      -- panel no podría comprobar contraseñas («Mi buzón», enlaces, webmail)
+      -- sin pedirle al motor que autentique, y cada fallo contaría para su
+      -- bloqueo automático de IPs. Va cifrada con la clave maestra: un hash
+      -- de una contraseña elegida por una persona se puede atacar sin
+      -- conexión. source: 'panel' (la fijó el panel) o 'motor' (copiada de
+      -- Stalwart 0.15).
+      CREATE TABLE credenciales_buzon (
+        mailbox_id TEXT PRIMARY KEY REFERENCES mailboxes(id) ON DELETE CASCADE,
+        password_hash_enc TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('panel', 'motor')),
+        updated_at INTEGER NOT NULL
+      );
+
+      -- Contraseñas de aplicación: stored_secret pasa a ser la referencia
+      -- opaca con la que el motor la retira (en 0.15, el $app$…$<hash> que
+      -- guarda). verifier es el $6$ del secreto, que no se puede revertir:
+      -- con él «Mi buzón» reconoce una contraseña de aplicación sin el motor
+      -- (las anteriores no lo tienen: el hash va dentro de stored_secret).
+      -- engine_api es la API del motor en que se creó (NULL = antes de esta
+      -- versión, es decir, Stalwart 0.15) e invalidated_at, cuándo dejó de
+      -- funcionar porque el motor cambió de versión. invalidation_notified_at
+      -- marca las que ya se avisaron por correo al titular.
+      ALTER TABLE app_passwords ADD COLUMN verifier TEXT;
+      ALTER TABLE app_passwords ADD COLUMN engine_api TEXT;
+      ALTER TABLE app_passwords ADD COLUMN invalidated_at INTEGER;
+      ALTER TABLE app_passwords ADD COLUMN invalidation_notified_at INTEGER;
+
+      -- Lo mismo para la credencial SMTP interna de cada clave de API y de
+      -- cada formulario: en qué API del motor se creó y, si la migración no
+      -- pudo renovarla, desde cuándo no funciona.
+      ALTER TABLE api_keys ADD COLUMN smtp_engine_api TEXT;
+      ALTER TABLE api_keys ADD COLUMN smtp_invalidated_at INTEGER;
+      ALTER TABLE forms ADD COLUMN smtp_engine_api TEXT;
+      ALTER TABLE forms ADD COLUMN smtp_invalidated_at INTEGER;
+    `,
+  },
 ];
 
 function runMigrations(): void {

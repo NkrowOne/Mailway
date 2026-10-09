@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
 import { db } from '../src/core/db';
+import { verifySha512Crypt } from '../src/core/sha512crypt';
+import { getEngine } from '../src/engine';
 
 /**
  * Utilidades comunes para probar las rutas reales con `app.inject()`.
@@ -150,4 +152,18 @@ export async function createMailbox(
   if (res.statusCode !== 200) throw new Error(`No se pudo crear el buzón: ${res.body}`);
   const body = res.json() as { mailbox: { id: string; email: string }; password: string };
   return { mailboxId: body.mailbox.id, email: body.mailbox.email, password: body.password };
+}
+
+/**
+ * ¿Aceptaría el motor esta contraseña para el buzón (o la cuenta)? Lo mira en
+ * lo que guarda el motor de demostración, como haría Stalwart 0.15: el hash
+ * de la principal o el de una contraseña de aplicación, y sin suspensión.
+ * Comprueba que al motor le llega lo que debe; lo que acepta el PANEL se
+ * comprueba con verificarContrasenaBuzon (modules/credenciales.ts).
+ */
+export async function motorAcepta(email: string, password: string): Promise<boolean> {
+  const credenciales = await getEngine().readMailboxCredentials(email);
+  if (!credenciales || credenciales.suspended) return false;
+  if (credenciales.passwordHash && verifySha512Crypt(password, credenciales.passwordHash)) return true;
+  return credenciales.appPasswords.some((app) => app.hash.startsWith('$6$') && verifySha512Crypt(password, app.hash));
 }

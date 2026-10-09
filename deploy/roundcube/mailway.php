@@ -68,13 +68,82 @@ $config['login_autocomplete'] = 1;
 $config['session_lifetime'] = 30;
 
 // Detrás de Traefik: se aceptan X-Forwarded-For y X-Forwarded-Proto solo de
-// las redes de Docker. Así el límite de intentos fallidos de Roundcube
-// (login_rate_limit, por IP) cuenta la IP real del visitante y las cookies
-// se marcan como seguras al servirse por HTTPS.
+// las redes de Docker. Así Roundcube toma la IP real del visitante, no la de
+// Traefik, y las cookies se marcan como seguras al servirse por HTTPS. El
+// límite de intentos fallidos (login_rate_limit) no depende de la IP:
+// Roundcube lo lleva por usuario.
 $config['proxy_whitelist'] = array_values(array_filter(array_map(
     'trim',
     explode(',', $mailwayEnv('MAILWAY_PROXY_WHITELIST', '172.16.0.0/12,192.168.0.0/16,10.0.0.0/8'))
 )));
+
+// Webmail con el proxy de Cloudflare (nube naranja): quien conecta con
+// Traefik es un nodo de Cloudflare, y Roundcube anotaría su IP en la sesión
+// y en los registros en lugar de la del visitante, que llega en
+// CF-Connecting-IP. La cabecera solo se cree si la petición ha pasado de
+// verdad por Cloudflare, porque la IP del servidor es pública y cualquiera
+// puede conectar sin pasar por él y escribirla: tiene que llegar de Traefik
+// (REMOTE_ADDR en proxy_whitelist) y el último elemento de X-Forwarded-For,
+// que Traefik fija siempre con la IP que le conectó, tiene que ser de
+// Cloudflare. Entonces X-Forwarded-For se queda solo con la IP del
+// visitante, la que elige Roundcube (la primera fuera de proxy_whitelist
+// empezando por la derecha). En cualquier otro caso no se toca nada.
+//
+// Rangos publicados en https://www.cloudflare.com/ips/ (IPv4 e IPv6).
+$mailwayCloudflare = [
+    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
+    '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
+    '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+    '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+    '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32',
+    '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32',
+];
+// ¿Está la IP en alguno de los rangos (CIDR o dirección suelta)? Compara los
+// bytes de inet_pton, así vale igual para IPv4 que para IPv6 sin bibliotecas.
+// Una IP o un rango mal escritos nunca coinciden.
+$mailwayEnRango = static function (string $ip, array $rangos): bool {
+    if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+        return false;
+    }
+    $direccion = inet_pton($ip);
+    foreach ($rangos as $rango) {
+        $partes = explode('/', trim((string) $rango), 2);
+        if (filter_var($partes[0], FILTER_VALIDATE_IP) === false) {
+            continue;
+        }
+        $red = inet_pton($partes[0]);
+        $bits = strlen($red) * 8;
+        if (isset($partes[1])) {
+            if (!preg_match('/^\d{1,3}$/', $partes[1]) || (int) $partes[1] > $bits) {
+                continue;
+            }
+            $bits = (int) $partes[1];
+        }
+        if (strlen($red) !== strlen($direccion)) {
+            continue;
+        }
+        $bytes = intdiv($bits, 8);
+        $resto = $bits % 8;
+        if (
+            substr($direccion, 0, $bytes) === substr($red, 0, $bytes)
+            && ($resto === 0 || ((ord($direccion[$bytes]) ^ ord($red[$bytes])) >> (8 - $resto)) === 0)
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+};
+$mailwaySaltos = explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
+$mailwayVisitante = trim((string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
+if (
+    $mailwayEnRango((string) ($_SERVER['REMOTE_ADDR'] ?? ''), $config['proxy_whitelist'])
+    && $mailwayEnRango(trim(end($mailwaySaltos)), $mailwayCloudflare)
+    && filter_var($mailwayVisitante, FILTER_VALIDATE_IP) !== false
+) {
+    $_SERVER['HTTP_X_FORWARDED_FOR'] = $mailwayVisitante;
+}
+unset($mailwayCloudflare, $mailwayEnRango, $mailwaySaltos, $mailwayVisitante);
 
 /* ------------------------- Conexión con el motor ---------------------------- */
 

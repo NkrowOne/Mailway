@@ -10,11 +10,14 @@ import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
 import { assertClientActive, getClient } from './clients';
+import { esDeOtroMotor } from './credenciales';
 import { publicBaseUrl, xmlEscape } from './connection';
 import { assertDomainOwnership } from './domains';
 import { getMailbox, type Mailbox } from './mailboxes';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { getEngineSettings, getInstanceSettings } from './settings';
 import {
+  cifrarCredencialSmtp,
   describeSmtpError,
   forgetTransport,
   getTransport,
@@ -95,6 +98,10 @@ interface FormRow {
   allowed_origins_json: string;
   subject: string;
   smtp_password_enc: string;
+  /** API del motor en que se creó la credencial SMTP (NULL = Stalwart 0.15, antes de guardarla). */
+  smtp_engine_api: string | null;
+  /** La credencial SMTP dejó de funcionar al cambiar de motor y no se pudo renovar. */
+  smtp_invalidated_at: number | null;
   turnstile_site_key: string | null;
   turnstile_secret_enc: string | null;
   enabled: number;
@@ -789,28 +796,30 @@ export function registerFormRoutes(app: FastifyInstance): void {
       assertDomainOwnership(buzon.domainId);
 
       // Credencial SMTP propia, como las claves de API: el formulario envía
-      // sin conocer la contraseña del buzón y se retira al eliminarlo.
+      // sin conocer la contraseña del buzón y se retira al eliminarlo. El
+      // motor puede imponer su propio secreto: se guarda el que devuelve.
       const id = randomId('frm');
-      const smtpPassword = generateMailboxPassword(24);
       const engine = getEngine();
-      const stored = await engine.addAppPassword(buzon.email, smtpPassword, `mailway-form-${id.slice(4, 12)}`);
+      const smtp = await engine.addAppPassword(buzon.email, `mailway-form-${id.slice(4, 12)}`, generateMailboxPassword(24));
+      const smtpApi = await engine.detectApi().catch(() => null);
       const publicKey = `mwf_${crypto.randomBytes(16).toString('base64url')}`;
       const t = now();
       try {
         db.prepare(
           `INSERT INTO forms (id, client_id, name, public_key, recipient_mailbox_id, allowed_origins_json,
-             subject, smtp_password_enc, turnstile_site_key, turnstile_secret_enc, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             subject, smtp_password_enc, smtp_engine_api, turnstile_site_key, turnstile_secret_enc, created_by,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           id, clientId, body.name, publicKey, buzon.id, JSON.stringify(allowedOrigins), body.subject,
-          encryptSecret(JSON.stringify({ plain: smtpPassword, stored })),
+          cifrarCredencialSmtp(smtp.secret, smtp.ref), smtpApi,
           body.turnstileSiteKey ?? null,
           body.turnstileSecret ? encryptSecret(body.turnstileSecret) : null,
           user.id, t, t,
         );
       } catch (err) {
         // Sin fila, la credencial quedaría en el motor sin que nadie pudiera retirarla.
-        await engine.removeAppPassword(buzon.email, stored).catch((rollbackErr: unknown) => {
+        await engine.removeAppPassword(buzon.email, smtp.ref).catch((rollbackErr: unknown) => {
           req.log.error({ err: rollbackErr }, 'No se pudo retirar la credencial tras fallar el alta del formulario');
         });
         throw err;
@@ -890,13 +899,19 @@ export function registerFormRoutes(app: FastifyInstance): void {
     requireAuth(req);
     const row = filaPorId(id);
     requireClientAccess(req, row.client_id);
+    // La credencial se retira del motor después de borrar la fila: durante el
+    // mantenimiento del motor no se podría, y quedaría viva sin formulario.
+    exigirSinMantenimiento();
     db.prepare('DELETE FROM forms WHERE id = ?').run(id);
     forgetTransport(id);
     // La credencial SMTP del formulario se retira del motor: sin formulario,
-    // nadie la necesita.
+    // nadie la necesita. Una de otra versión del motor ya no existe en este.
     try {
       const { stored } = credencialSmtp(row);
-      if (stored) await getEngine().removeAppPassword(getMailbox(row.recipient_mailbox_id).email, stored);
+      const engine = getEngine();
+      if (stored && !esDeOtroMotor(row.smtp_engine_api, await engine.detectApi())) {
+        await engine.removeAppPassword(getMailbox(row.recipient_mailbox_id).email, stored);
+      }
     } catch (err) {
       req.log.warn({ err }, 'No se pudo retirar la credencial SMTP al eliminar el formulario');
     }

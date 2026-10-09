@@ -5,19 +5,24 @@ import { encryptSecret } from '../src/core/crypto';
 import { db, now } from '../src/core/db';
 import { getEngine } from '../src/engine';
 import { listAlerts } from '../src/modules/alerts';
+import type { AcmeInput } from '../src/engine/types';
+import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
 import {
   checkEngineTls,
   evaluateTlsAlerts,
-  recommendedEngineSettings,
+  MAX_CONTRASENAS_APLICACION_MOTOR,
+  recommendedInput,
+  trustedEngineNetworks,
   type EngineTlsStatus,
 } from '../src/modules/engineops';
+import { MAX_FORMULARIOS_POR_CLIENTE } from '../src/modules/forms';
 import { setInstanceSettings } from '../src/modules/settings';
 import { adminContext, createClient, type TestContext } from './helpers';
 
 /*
  * Operaciones del servidor de correo contra el motor de demostración, que
- * guarda en memoria lo que se le escribe: así se comprueba qué claves llegan
- * al motor sin un Stalwart real ni red.
+ * guarda en memoria lo que se le aplica: así se comprueba qué le llega al
+ * motor sin un Stalwart real ni red.
  */
 
 const HOST = 'mail.mailway.test';
@@ -90,21 +95,16 @@ test('aplicar los ajustes recomendados los escribe en el motor', async () => {
     headers: { cookie: ctx.adminCookie },
   });
   assert.equal(res.statusCode, 200, res.body);
-  const body = res.json() as { applied: string[]; hostname: string; errors: string[] };
+  const body = res.json() as { applied: string[]; hostname: string; errors: string[]; restartRequired: string[] };
   assert.equal(body.hostname, HOST);
   assert.deepEqual(body.errors, []);
-  assert.ok(body.applied.includes('server.allowed-ip.10.203.53.0/24'));
+  assert.deepEqual(body.restartRequired, []);
+  assert.ok(body.applied.includes('Red exenta del bloqueo automático: 10.203.53.0/24'), body.applied.join(' | '));
 
-  const stored = await getEngine().getServerSettings([
-    'server.hostname',
-    'http.use-x-forwarded',
-    'server.allowed-ip.10.203.53.0/24',
-  ]);
-  assert.deepEqual(stored, {
-    'server.hostname': HOST,
-    'http.use-x-forwarded': 'true',
-    'server.allowed-ip.10.203.53.0/24': '',
-  });
+  const stored = await getEngine().getSettingsStatus({ trustedNetworks: ['10.203.53.0/24'] });
+  assert.equal(stored.hostname, HOST);
+  assert.equal(stored.forwardedHeaders, true);
+  assert.deepEqual(stored.trustedNetworks, ['10.203.53.0/24']);
 
   const audited = db
     .prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action = 'engine.recommended_applied'")
@@ -116,13 +116,10 @@ test('el rango exento se puede cambiar por entorno y descarta valores no válido
   const previous = process.env.MAILWAY_ENGINE_TRUSTED_NETWORK;
   process.env.MAILWAY_ENGINE_TRUSTED_NETWORK = '10.9.8.0/24, no-es-una-red, fd00:5e::/64';
   try {
-    const values = recommendedEngineSettings(HOST);
-    assert.deepEqual(
-      Object.keys(values).filter((k) => k.startsWith('server.allowed-ip.')),
-      ['server.allowed-ip.10.9.8.0/24', 'server.allowed-ip.fd00:5e::/64'],
-    );
+    assert.deepEqual(trustedEngineNetworks(), ['10.9.8.0/24', 'fd00:5e::/64']);
+    assert.deepEqual(recommendedInput(HOST).trustedNetworks, ['10.9.8.0/24', 'fd00:5e::/64']);
     process.env.MAILWAY_ENGINE_TRUSTED_NETWORK = '';
-    assert.ok(!Object.keys(recommendedEngineSettings(HOST)).some((k) => k.startsWith('server.allowed-ip.')));
+    assert.deepEqual(recommendedInput(HOST).trustedNetworks, []);
   } finally {
     if (previous === undefined) delete process.env.MAILWAY_ENGINE_TRUSTED_NETWORK;
     else process.env.MAILWAY_ENGINE_TRUSTED_NETWORK = previous;
@@ -170,9 +167,23 @@ test('sin nombre del servidor, los ajustes recomendados se rechazan', async () =
   }
 });
 
-test('emitir el certificado con Cloudflare escribe las claves ACME en el motor', async () => {
+test('el límite de contraseñas de aplicación del motor cubre las del panel, los formularios y claves de API', () => {
+  assert.equal(recommendedInput(HOST).maxAppPasswords, MAX_CONTRASENAS_APLICACION_MOTOR);
+  // 25 de dispositivos y Skyway + una por formulario (máximo por cliente) y
+  // sitio de sobra para las claves de API que usan el mismo buzón.
+  assert.ok(MAX_CONTRASENAS_APLICACION_MOTOR >= MAX_ACTIVE_APP_PASSWORDS + MAX_FORMULARIOS_POR_CLIENTE + 50);
+});
+
+test('emitir el certificado con Cloudflare configura el ACME del motor', async () => {
   insertCloudflareAccount('cf-instancia', null);
   const calls = mockCloudflare('mailway.test');
+  const engine = getEngine();
+  const original = engine.configureAcme.bind(engine);
+  const recibidos: AcmeInput[] = [];
+  engine.configureAcme = async (input) => {
+    recibidos.push(input);
+    return original(input);
+  };
   try {
     const res = await ctx.app.inject({
       method: 'POST',
@@ -192,28 +203,19 @@ test('emitir el certificado con Cloudflare escribe las claves ACME en el motor',
     assert.match(calls[0]!.url, /name=mail\.mailway\.test/);
   } finally {
     mock.restoreAll();
+    engine.configureAcme = original;
   }
 
-  const stored = await getEngine().getServerSettings([
-    'acme.mailway.directory',
-    'acme.mailway.challenge',
-    'acme.mailway.provider',
-    'acme.mailway.secret',
-    'acme.mailway.contact.0',
-    'acme.mailway.domains.0',
-    'acme.mailway.origin',
-    'acme.mailway.default',
+  // Al motor le llega la operación completa, con el token para el reto DNS-01.
+  assert.deepEqual(recibidos, [
+    {
+      directory: 'https://acme-v02.api.letsencrypt.org/directory',
+      token: CF_TOKEN,
+      contact: 'postmaster@mailway.test',
+      hostname: HOST,
+      zone: 'mailway.test',
+    },
   ]);
-  assert.deepEqual(stored, {
-    'acme.mailway.directory': 'https://acme-v02.api.letsencrypt.org/directory',
-    'acme.mailway.challenge': 'dns-01',
-    'acme.mailway.provider': 'cloudflare',
-    'acme.mailway.secret': CF_TOKEN,
-    'acme.mailway.contact.0': 'postmaster@mailway.test',
-    'acme.mailway.domains.0': HOST,
-    'acme.mailway.origin': 'mailway.test',
-    'acme.mailway.default': 'true',
-  });
 
   const audit = db
     .prepare("SELECT detail FROM audit_log WHERE action = 'engine.acme_configured'")

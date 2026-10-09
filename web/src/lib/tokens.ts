@@ -112,6 +112,13 @@ const ETIQUETAS: Record<string, string> = {
   'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',
   'engine.acme_configured': 'Emisión del certificado configurada',
   'engine.certificate_reloaded': 'Certificado del motor recargado',
+  'engine.maintenance_on': 'Mantenimiento del motor activado',
+  'engine.maintenance_off': 'Mantenimiento del motor desactivado',
+  'engine.credentials_captured': 'Contraseñas copiadas del motor antes de migrarlo',
+  'engine.provisioned': 'Motor preparado tras su actualización',
+  'engine.post_migration': 'Tareas posteriores a la actualización del motor',
+  'engine.app_passwords_invalidated': 'Contraseñas de aplicación invalidadas por la actualización del motor',
+  'engine.app_passwords_restored': 'Contraseñas de aplicación recuperadas al volver a la versión anterior del motor',
   'engine.suspensions_repaired': 'Buzones suspendidos y alias corregidos en el motor',
   // Planes y clientes
   'plan.created': 'Plan creado',

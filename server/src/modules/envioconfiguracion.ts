@@ -4,9 +4,9 @@ import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret, generateMailboxPassword, randomId } from '../core/crypto';
 import { HttpError, badRequest, forbidden, tooMany } from '../core/errors';
 import { withLock } from '../core/locks';
-import { getEngine } from '../engine';
 import { audit } from './audit';
 import { getClient } from './clients';
+import { cambiarContrasenaBuzon } from './credenciales';
 import { publicBaseUrl } from './connection';
 import { assertDomainOwnership } from './domains';
 import {
@@ -167,7 +167,7 @@ async function enlaceNuevo(
 ): Promise<EnlaceParaEnviar> {
   if (!conContrasena) return { ...insertarEnlace(req, titular, null, ttlHours), reused: false };
   const password = generateMailboxPassword();
-  await getEngine().setMailboxPassword(titular.email, password);
+  await cambiarContrasenaBuzon(titular, password);
   alCambiarContrasenaBuzon(titular.id);
   olvidarBuzonConfigurado(titular.id);
   return { ...insertarEnlace(req, titular, encryptSecret(password), ttlHours), reused: false };

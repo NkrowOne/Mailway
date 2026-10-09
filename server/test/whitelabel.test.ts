@@ -111,10 +111,25 @@ test('máximo de 5 dominios propios por cliente', async () => {
   assert.equal((sexto.json() as { code: string }).code, 'whitelabel_limit');
 });
 
-test('un nombre ya dado de alta devuelve 409', async () => {
-  assert.equal((await crear(clientA.userCookie!, { hostname: 'correo.empresa-a.test' })).statusCode, 200);
-  const res = await crear(clientA.userCookie!, { hostname: 'correo.empresa-a.test' });
-  assert.equal(res.statusCode, 409);
+test('un nombre ya dado de alta: el mismo cliente y tipo recibe el que hay; con otro tipo, 409', async () => {
+  // El alta automática puede haberlo creado antes que quien lo pide (Skyway,
+  // el propio cliente): pedirlo otra vez no es un error.
+  const primero = await crear(clientA.userCookie!, { hostname: 'correo.empresa-a.test' });
+  assert.equal(primero.statusCode, 200, primero.body);
+  const otraVez = await crear(clientA.userCookie!, { hostname: 'correo.empresa-a.test' });
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  assert.equal(
+    (otraVez.json() as { domain: { id: string } }).domain.id,
+    (primero.json() as { domain: { id: string } }).domain.id,
+  );
+  const original = config.traefik.panelBackend;
+  config.traefik.panelBackend = 'http://mailway-panel:4100';
+  try {
+    const comoPanel = await crear(clientA.userCookie!, { hostname: 'correo.empresa-a.test', kind: 'panel' });
+    assert.equal(comoPanel.statusCode, 409);
+  } finally {
+    config.traefik.panelBackend = original;
+  }
 });
 
 test('el administrador tiene que indicar el cliente y se le aplica la misma regla', async () => {

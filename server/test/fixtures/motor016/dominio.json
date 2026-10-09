@@ -1,0 +1,111 @@
+{
+  "dominio": {
+    "name": "m016-74124c.test",
+    "aliases": {},
+    "isEnabled": true,
+    "createdAt": "2026-10-09T15:15:19Z",
+    "description": "Dominio gestionado por Mailway",
+    "logo": null,
+    "certificateManagement": {
+      "@type": "Manual"
+    },
+    "dkimManagement": {
+      "algorithms": {
+        "Dkim1Ed25519Sha256": true,
+        "Dkim1RsaSha256": true
+      },
+      "selectorTemplate": "v{version}-{algorithm}-{date-%Y%m%d}",
+      "rotateAfter": 7776000000,
+      "retireAfter": 604800000,
+      "deleteAfter": 2592000000,
+      "@type": "Automatic"
+    },
+    "dnsManagement": {
+      "@type": "Manual"
+    },
+    "memberTenantId": null,
+    "directoryId": null,
+    "catchAllAddress": null,
+    "subAddressing": {
+      "@type": "Enabled"
+    },
+    "allowRelaying": false,
+    "reportAddressUri": "mailto:postmaster",
+    "allowScimProvisioning": false,
+    "dnsZoneFile": "v1-ed25519-20261009._domainkey.m016-74124c.test. IN TXT \"v=DKIM1; k=ed25519; h=sha256; p=MQBDOvx5NtbWkWdWrgdXJucdFDTzyxixrGgYAvncOfI=\"\nv1-rsa-20261009._domainkey.m016-74124c.test. IN TXT (\n    \"v=DKIM1; k=rsa; h=sha256; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDYQTyTpzuP7jIfr92vBTYTY81xyns75uH96R3L3O0OM+NRkMKvpjxoM3cguqp0bsuNn9tQOKhWJ25xsavIN5UqRfPfkn19+lInFOyC793LDX2PnMC123LaNLzwNj0pzUQwPwp8UZluFLHO1UlnR4MEmEVwgUpho1J7d51TotbzcI5B+9r5WgAJ\"\n    \"vRHtFGfr2YVUs9DDCoPgtjfmmTrs7ryliP4in5VUYFKdJQWiMyqnbUKhJ9rAEzkTVh0gT4lBpubyG9lNs8oaJ7ZluGLKSS9bNxsDENfa6qbClLGTTC+cTD2mxncNvpdINml9tbYAsJhyYLmf77uzDtvhqVy/gSwIDAQAB\"\n)\nm016-74124c.test. IN TXT \"v=spf1 mx -all\"\nm016-74124c.test. IN MX 10 mail.mailway.test.\n_dmarc.m016-74124c.test. IN TXT \"v=DMARC1; p=reject; rua=mailto:postmaster@m016-74124c.test\"\n_caldavs._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.\n_carddavs._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.\n_imaps._tcp.m016-74124c.test. IN SRV 0 1 993 mail.mailway.test.\n_jmap._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.\n_pop3s._tcp.m016-74124c.test. IN SRV 0 1 995 mail.mailway.test.\n_submission._tcp.m016-74124c.test. IN SRV 0 1 587 mail.mailway.test.\n_submissions._tcp.m016-74124c.test. IN SRV 0 1 465 mail.mailway.test.\nmta-sts.m016-74124c.test. IN CNAME mail.mailway.test.\n_mta-sts.m016-74124c.test. IN TXT \"v=STSv1; id=5588838779322310716\"\n_smtp._tls.m016-74124c.test. IN TXT \"v=TLSRPTv1; rua=mailto:postmaster@m016-74124c.test\"\nua-auto-config.m016-74124c.test. IN CNAME mail.mailway.test.\n_ua-auto-config.m016-74124c.test. IN TXT \"v=UAAC1; a=sha256; d=9DHaf7TOsfEsYjqeY+0G5chST/gU6+uqX4QsoaLeBZE=\"\nautoconfig.m016-74124c.test. IN CNAME mail.mailway.test.\nautodiscover.m016-74124c.test. IN CNAME mail.mailway.test.\n",
+    "id": "d"
+  },
+  "firmas": [
+    {
+      "auid": null,
+      "canonicalization": "relaxed/relaxed",
+      "expire": null,
+      "headers": {
+        "From": true,
+        "To": true,
+        "Date": true,
+        "Subject": true,
+        "Message-ID": true
+      },
+      "privateKey": {
+        "secret": "****",
+        "@type": "Text"
+      },
+      "report": true,
+      "thirdParty": null,
+      "thirdPartyHash": null,
+      "domainId": "d",
+      "memberTenantId": null,
+      "selector": "v1-rsa-20261009",
+      "createdAt": "2026-10-09T15:15:19Z",
+      "nextTransitionAt": null,
+      "stage": "active",
+      "@type": "Dkim1RsaSha256",
+      "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDYQTyTpzuP7jIfr92vBTYTY81xyns75uH96R3L3O0OM+NRkMKvpjxoM3cguqp0bsuNn9tQOKhWJ25xsavIN5UqRfPfkn19+lInFOyC793LDX2PnMC123LaNLzwNj0pzUQwPwp8UZluFLHO1UlnR4MEmEVwgUpho1J7d51TotbzcI5B+9r5WgAJvRHtFGfr2YVUs9DDCoPgtjfmmTrs7ryliP4in5VUYFKdJQWiMyqnbUKhJ9rAEzkTVh0gT4lBpubyG9lNs8oaJ7ZluGLKSS9bNxsDENfa6qbClLGTTC+cTD2mxncNvpdINml9tbYAsJhyYLmf77uzDtvhqVy/gSwIDAQAB",
+      "id": "jivynyjsaaqa"
+    },
+    {
+      "auid": null,
+      "canonicalization": "relaxed/relaxed",
+      "expire": null,
+      "headers": {
+        "From": true,
+        "To": true,
+        "Date": true,
+        "Subject": true,
+        "Message-ID": true
+      },
+      "privateKey": {
+        "secret": "****",
+        "@type": "Text"
+      },
+      "report": true,
+      "thirdParty": null,
+      "thirdPartyHash": null,
+      "domainId": "d",
+      "memberTenantId": null,
+      "selector": "v1-ed25519-20261009",
+      "createdAt": "2026-10-09T15:15:19Z",
+      "nextTransitionAt": null,
+      "stage": "active",
+      "@type": "Dkim1Ed25519Sha256",
+      "publicKey": "MQBDOvx5NtbWkWdWrgdXJucdFDTzyxixrGgYAvncOfI=",
+      "id": "jivynxx7aaaa"
+    }
+  ],
+  "duplicado": {
+    "accountId": "d333333",
+    "notCreated": {
+      "d": {
+        "type": "primaryKeyViolation",
+        "properties": [
+          "name"
+        ],
+        "objectId": {
+          "object": "Domain",
+          "id": "d"
+        }
+      }
+    }
+  }
+}

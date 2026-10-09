@@ -6,6 +6,7 @@ import type { MailEngine } from '../engine/types';
 import { auditSystem } from './audit';
 import { runLimited } from './clients';
 import { destinosDe, esBuzonDeLaInstancia } from './domains';
+import { mantenimientoActivo } from './mantenimiento';
 import { getEngineSettings, getSetting, setJsonSetting } from './settings';
 
 /*
@@ -33,6 +34,12 @@ import { getEngineSettings, getSetting, setJsonSetting } from './settings';
  * Se lanza al arrancar el servidor, sin esperarla, y, si el motor no
  * respondía, la repite el vigilante hasta que sale bien. Las dos cosas dejan
  * lo mismo si se repiten, así que un intento a medias se repite entero.
+ *
+ * Vale para cualquier versión del motor: la migración oficial a Stalwart 0.16
+ * copia las listas tal y como están, así que un alias que perdió destinos en
+ * 0.15 sigue sin ellos en 0.16 si la corrección no llegó a hacerse antes de
+ * migrar. Nunca durante el mantenimiento del motor (su cambio de versión): se
+ * deja pendiente, sin avisar, y la hace el vigilante al terminar.
  */
 
 /** Ajuste que recuerda que la corrección ya se hizo: no se repite en cada arranque. */
@@ -192,6 +199,9 @@ async function intentar(): Promise<ResultadoReparacion> {
     // Sin un Stalwart conectado no hay nada que corregir todavía. No se da
     // por hecha: se hará cuando se conecte.
     if (getEngineSettings()?.kind !== 'stalwart') return { ...resultado, estado: 'omitida' };
+    // El motor se está cambiando de versión: ningún cambio debe llegarle
+    // (el guardián respondería engine_maintenance a cada buzón).
+    if (mantenimientoActivo()) return resultado;
     if (Date.now() < noAntesDe) return resultado;
 
     const suspendidos = (suspendidosStmt.all() as { id: string; local_part: string; domain: string }[]).map(
