@@ -65,11 +65,35 @@ function csrfGuard(req: FastifyRequest, reply: FastifyReply, done: () => void): 
   });
 }
 
+/**
+ * Un DELETE u OPTIONS sin Content-Length ni Transfer-Encoding no lleva cuerpo
+ * (HTTP/1.1), aunque traiga Content-Type. Fastify 4 no intentaba leerlo;
+ * Fastify 5 sí, y con `Content-Type: application/json` responde 400 por
+ * cuerpo vacío (o 415 si es un tipo que la API no lee). Hay clientes de la
+ * API que mandan esa cabecera en todas sus peticiones (un curl copiado de un
+ * POST, envoltorios de fetch), y detrás de Traefik un DELETE sin cuerpo llega
+ * siempre sin Content-Length: se retira la cabecera para que sigan
+ * funcionando como antes. Si hay cuerpo, se lee y se valida igual que siempre.
+ */
+function ignorarTipoSinCuerpo(req: FastifyRequest, _reply: FastifyReply, done: () => void): void {
+  if (
+    (req.method === 'DELETE' || req.method === 'OPTIONS') &&
+    req.headers['content-type'] !== undefined &&
+    req.headers['content-length'] === undefined &&
+    req.headers['transfer-encoding'] === undefined
+  ) {
+    delete req.headers['content-type'];
+  }
+  done();
+}
+
 export interface BuildAppOptions {
   /** Registro de Fastify; en las pruebas se desactiva para no ensuciar la salida. */
   logger?: boolean;
   /** Sirve la web compilada si existe. Las pruebas no la necesitan. */
   serveWeb?: boolean;
+  /** Carpeta de la web compilada; las pruebas la cambian por una de prueba. */
+  webDist?: string;
 }
 
 /**
@@ -85,6 +109,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   await app.register(cookie, { secret: config.secret });
+  app.addHook('onRequest', ignorarTipoSinCuerpo);
   app.addHook('onRequest', csrfGuard);
   app.addHook('onRequest', sessionHook);
 
@@ -158,7 +183,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerCorreoWebRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
-  const webDist = path.resolve(__dirname, '../../web/dist');
+  const webDist = options.webDist ?? path.resolve(__dirname, '../../web/dist');
   if (options.serveWeb !== false && fs.existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
