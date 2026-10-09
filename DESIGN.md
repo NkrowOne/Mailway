@@ -272,6 +272,7 @@ Dos niveles y nada más:
 
 - **Sin brillos ni cristal.** Nada de `backdrop-blur`, resplandores ni sombras
   de color.
+  La excepción es el `Logotipo`, que lleva sus degradados y su sombra.
 
 ## Shapes
 
@@ -360,27 +361,29 @@ obligatorio y cada vista pasa el de lo que falta:
 
 ### Signature Component — `Logotipo`
 
-La M de Mailway trazada como una línea de metro, en blanco sobre una tesela
-llena de petróleo (36 px; 44 px en grande). La línea sale de una parada llena
-(el origen), sube, baja en una V honda que recuerda la solapa de un sobre y
-llega a una parada en anillo (el destino): el correo que sale y llega. Las
-esquinas son curvas de plano de metro, no ángulos. Va en la barra lateral, la
-barra superior móvil, la portada de acceso, el portal y el asistente de
-puesta en marcha. Es la única marca gráfica: no se sustituye por iniciales,
-ilustraciones ni glifos.
+Un sobre blanco cuya silueta forma la M de Mailway (los dos picos de arriba y
+la V central son la letra), sobre una tesela llena de petróleo (36 px; 44 px
+en grande). Es la única pieza de la interfaz con degradados y sombra, y por
+eso destaca sin un segundo color: todo sale de la familia del petróleo. Va en
+la barra lateral, la barra superior móvil, la portada de acceso, el portal y
+el asistente de puesta en marcha. Es la única marca gráfica: no se sustituye
+por iniciales, ilustraciones ni glifos.
 
-- **Geometría** (caja de 64): trazo de 5.2, parada de origen de radio 5.6,
-  anillo de radio 4.5 con trazo de 4. La línea se detiene en el anillo sin
-  entrar en su hueco, así que el anillo va sin relleno y la marca funciona
-  en blanco sobre petróleo o en petróleo sobre blanco. Fuente: `Logotipo`
-  en `ui/kit.tsx` y `deploy/roundcube/mailway_theme/logo.svg`.
+- **Tesela**: degradado lineal en diagonal, con luz arriba a la izquierda
+  (`#2fa59a` → `#0f6567` → `#073c3f`), y un brillo radial blanco al 20 %
+  arriba.
+- **Sobre**: blanco que baja a `#e2f3ef`; la solapa de abajo, en verde
+  agua (`#cbe9e2` → `#9dd2c7`); el pliegue de la solapa de arriba, en
+  petróleo al 9 %; y una sombra suave debajo (desenfoque 1.6, al 28 %).
+- **Geometría** (caja de 64): el sobre va de 11 a 53 en horizontal y sube 1
+  sobre el centro para compensar el peso de la V. Fuente: `Logotipo` en
+  `ui/kit.tsx`, `deploy/roundcube/mailway_theme/logo.svg` y `docs/marca/`.
 - **Con nombre** (`docs/marca/`): la tesela y «Mailway» en Figtree 650 a
-  trazos, con el punto de la «i» convertido en el anillo de destino.
-  `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
+  trazos. `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
   `mailway-isotipo.svg` solo la tesela. Dentro del producto el nombre que
   acompaña a la tesela es el de la instancia (marca blanca), en texto.
-- **No se hace**: girarla, recolorear la tesela fuera del petróleo, cambiar
-  el anillo por otra parada llena ni añadirle sombras o contornos.
+- **No se hace**: girarla, recolorear la tesela fuera del petróleo, añadir
+  colores al degradado, contornos ni más sombras.
 
 ### `Membrete` (cabecera de página)
 
@@ -432,11 +435,11 @@ diálogos y avisos, cajón móvil en 220 ms y el giro del aro de carga. Con
 
 ### Superficies del navegador
 
-Favicon: el `Logotipo` (la M de metro en tesela petróleo, algo mayor y con
-un trazo de 5.6 para leerse a 16 px). `web/public/favicon.svg` es la fuente;
+Favicon: el `Logotipo` (el sobre-M en tesela petróleo, con el sobre un 10 %
+mayor para leerse a 16 px). `web/public/favicon.svg` es la fuente;
 `favicon.ico` (16, 32 y 48 px) y `apple-touch-icon.png` (180 px, a sangre,
-con la M del panel) se generan a partir de él; el de 16 px del ICO lleva la
-M ajustada a la rejilla de píxeles para que no se emborrone. El webmail usa los mismos ficheros desde
+con el sobre del panel) se generan a partir de él; el de 16 px del ICO lleva
+el sobre ajustado a la rejilla de píxeles para que no se emborrone. El webmail usa los mismos ficheros desde
 `mailway_theme`.
 
 `theme-color` es el fondo (`#f4f6f4`) en la portada y el portal, y blanco
