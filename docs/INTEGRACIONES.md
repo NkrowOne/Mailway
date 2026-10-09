@@ -1045,6 +1045,15 @@ Traefik los dominios cuyo DNS ya apunta aquí, y un dominio solo pasa a «En
 servicio» cuando responde por HTTPS con un certificado válido y un código 2xx
 o 3xx (un 404 o un 5xx indican que la ruta o su destino aún no están bien).
 
+El nombre necesita **registro propio y sin proxy** (nube gris en
+Cloudflare): un CNAME hacia el servidor de correo o un A hacia la IP. Si
+resuelve a las IP de Cloudflare, el detalle del dominio dice cuál de los dos
+casos es: que no tiene registro y responde el comodín del dominio
+(`*.sucliente.com`, normalmente el de la web, con proxy), o que su registro
+tiene el proxy activo. Mientras tanto no se publica en Traefik (el nombre
+responde «404 page not found») y el panel, los enlaces y la API siguen dando
+el webmail general de la instancia.
+
 **Webmail principal**: si un cliente tiene varios dominios de webmail en
 servicio, el marcado como principal (`isPrimary`) es el que usan su inicio,
 los datos de conexión de sus buzones, los enlaces de configuración y la

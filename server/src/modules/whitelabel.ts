@@ -296,6 +296,88 @@ export interface DnsCheckResult {
 }
 
 /**
+ * Rangos IPv4 del proxy de Cloudflare (https://www.cloudflare.com/ips-v4).
+ * Un nombre que resuelve a ellos tiene la nube naranja: el tráfico llega a
+ * Cloudflare y no directamente a este servidor.
+ */
+const RANGOS_CLOUDFLARE: readonly [string, number][] = [
+  ['173.245.48.0', 20], ['103.21.244.0', 22], ['103.22.200.0', 22], ['103.31.4.0', 22],
+  ['141.101.64.0', 18], ['108.162.192.0', 18], ['190.93.240.0', 20], ['188.114.96.0', 20],
+  ['197.234.240.0', 22], ['198.41.128.0', 17], ['162.158.0.0', 15], ['104.16.0.0', 13],
+  ['104.24.0.0', 14], ['172.64.0.0', 13], ['131.0.72.0', 22],
+];
+
+function ipANumero(ip: string): number | null {
+  const partes = ip.split('.');
+  if (partes.length !== 4) return null;
+  let n = 0;
+  for (const parte of partes) {
+    const octeto = Number(parte);
+    if (!/^\d{1,3}$/.test(parte) || octeto > 255) return null;
+    n = n * 256 + octeto;
+  }
+  return n;
+}
+
+export function esIpDeCloudflare(ip: string): boolean {
+  const n = ipANumero(ip);
+  if (n === null) return false;
+  return RANGOS_CLOUDFLARE.some(([base, bits]) => {
+    const tamano = 2 ** (32 - bits);
+    const inicio = ipANumero(base)!;
+    return n >= inicio && n < inicio + tamano;
+  });
+}
+
+/**
+ * Por qué un dominio de marca blanca resuelve a otras IP. «Apunta a … en
+ * lugar de a …» despista en los dos casos más comunes con Cloudflare: que el
+ * nombre no tenga registro propio y responda el comodín del dominio (el de
+ * la web, casi siempre con proxy), o que el registro esté bien pero con la
+ * nube naranja. En ninguno de los dos hay un valor que corregir en el
+ * registro: hay que crearlo o quitarle el proxy.
+ */
+export function detalleIpAjena(opts: {
+  hostname: string;
+  ips: string[];
+  publicIp: string;
+  mailHostname: string;
+  /** El nombre lo responde un comodín (*.padre), no un registro propio. */
+  comodin: boolean;
+}): string {
+  const { hostname, ips, publicIp, mailHostname, comodin } = opts;
+  const conProxy = ips.length > 0 && ips.every(esIpDeCloudflare);
+  const padre = hostname.split('.').slice(1).join('.');
+  const registro = mailHostname
+    ? `un registro CNAME para ${hostname} que apunte a ${mailHostname}`
+    : `un registro A para ${hostname} con la IP ${publicIp}`;
+  if (comodin && conProxy) {
+    return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que tiene activo el proxy de Cloudflare (nube naranja). Crea ${registro}, sin proxy (solo DNS, nube gris).`;
+  }
+  if (comodin) {
+    return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que apunta a ${ips.join(', ')}. Crea ${registro}.`;
+  }
+  if (conProxy) {
+    return `El registro de ${hostname} tiene activo el proxy de Cloudflare (nube naranja): el tráfico no llega directamente a este servidor y no se puede emitir el certificado. Desactiva el proxy (solo DNS, nube gris).`;
+  }
+  return `El dominio apunta a ${ips.join(', ')} en lugar de a ${publicIp}. Corrige el registro.`;
+}
+
+/**
+ * ¿Responde un comodín por este nombre? Se pregunta por un nombre hermano
+ * que no puede existir: si resuelve a las mismas IP, no hay registro propio.
+ * Ante la duda (sin red, nombre de primer nivel) se responde que no.
+ */
+async function respondeComodin(hostname: string, ips: string[]): Promise<boolean> {
+  const padre = hostname.split('.').slice(1).join('.');
+  if (!padre.includes('.')) return false;
+  const sonda = await lookupA(`mailway-sonda-${crypto.randomBytes(4).toString('hex')}.${padre}`);
+  if (!sonda || sonda.length === 0) return false;
+  const vistas = new Set(sonda);
+  return ips.length === vistas.size && ips.every((ip) => vistas.has(ip));
+}
+
+/**
  * El dominio debe resolver a la IP de este servidor. `resolve4` sigue la
  * cadena de CNAME, así que esto cubre las dos formas de apuntarlo.
  */
@@ -331,7 +413,13 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
   if (!ips.includes(instance.publicIp)) {
     return {
       status: 'failed',
-      detail: `El dominio apunta a ${ips.join(', ')} en lugar de a ${instance.publicIp}. Corrige el registro.`,
+      detail: detalleIpAjena({
+        hostname,
+        ips,
+        publicIp: instance.publicIp,
+        mailHostname: instance.mailHostname,
+        comodin: await respondeComodin(hostname, ips),
+      }),
     };
   }
   return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
