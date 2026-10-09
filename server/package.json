@@ -10,6 +10,7 @@
     "reset-password": "tsx src/tools/reset-password.ts",
     "emparejar": "tsx src/tools/emparejar.ts",
     "cloudflare": "tsx src/tools/cloudflare.ts",
+    "motor": "tsx src/tools/motor.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx --import ./test/env.ts test/*.test.ts"
   },
