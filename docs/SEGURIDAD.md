@@ -254,6 +254,14 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   parte de `X-Forwarded-For` se cree. Con `true`, cualquiera podría elegir su
   IP en cada intento y esquivar los límites. Cámbialo solo si hay más proxies
   delante.
+- Con un número de saltos se da por bueno lo que diga quien conecta con el
+  panel, sea cual sea su IP: su `X-Forwarded-For` y también
+  `X-Forwarded-Proto` y `X-Forwarded-Host`, de donde sale la URL pública
+  cuando no está configurada. Por eso el puerto del panel no se expone fuera
+  de Traefik: con Skyway no se publica y el despliegue autónomo lo publica en
+  `127.0.0.1`. Si tuviera que quedar accesible desde fuera, indica en su lugar
+  la IP o la red del proxy (`MAILWAY_TRUST_PROXY=172.18.0.0/16`, p. ej.): así
+  esas cabeceras solo valen cuando llegan de él.
 
 ## 6. Secretos
 
