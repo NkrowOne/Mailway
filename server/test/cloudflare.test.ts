@@ -13,6 +13,7 @@ import {
 import {
   comentarioPropio,
   construirLote,
+  cubiertoPorCertificadoCloudflare,
   deseadosDeInstancia,
   ejecutarPlan,
   fusionarSpf,
@@ -1112,6 +1113,36 @@ test('marca blanca: el webmail propio se apunta con un CNAME al servidor, con el
     payload: {},
   });
   assert.equal(ajeno.statusCode, 403);
+});
+
+test('marca blanca: un webmail a dos niveles de la zona va sin proxy (el certificado gratuito de Cloudflare no lo cubre)', async () => {
+  assert.equal(cubiertoPorCertificadoCloudflare('marca.es', 'marca.es'), true);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.marca.es.', 'Marca.es'), true);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.correo.marca.es', 'marca.es'), false);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.otra.es', 'marca.es'), false);
+  assert.equal(cubiertoPorCertificadoCloudflare('xmarca.es', 'marca.es'), false);
+
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('nivel.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const id = 'wld_prueba_nivel';
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+  ).run(id, cliente.clientId, 'webmail.correo.nivel.es', Date.now());
+
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${id}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: {},
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const cname = cf.enZona(z.id).find((r) => r.name === 'webmail.correo.nivel.es')!;
+  assert.equal(cname.type, 'CNAME');
+  assert.equal(cname.content, 'mail.plataforma.es');
+  assert.equal(cname.proxied, false);
 });
 
 /* -------------------- soloCliente (Skyway con token de admin) ------------- */

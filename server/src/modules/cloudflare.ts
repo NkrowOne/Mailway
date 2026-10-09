@@ -1302,6 +1302,22 @@ function asociacionDelDominioPadre(
 }
 
 /** Registro que debe tener un dominio de marca blanca: CNAME al servidor de correo o, sin nombre, A a la IP. */
+/**
+ * ¿Cubre el certificado gratuito de Cloudflare (Universal SSL) este nombre?
+ * Solo la zona y un nivel de subdominio (`ejemplo.com` y `*.ejemplo.com`):
+ * con el proxy, uno más profundo (`webmail.correo.ejemplo.com`, el webmail de
+ * un dominio de correo que ya es un subdominio) daría un error de certificado
+ * a los visitantes, salvo con un certificado avanzado de pago. Ese va sin
+ * proxy, como antes.
+ */
+export function cubiertoPorCertificadoCloudflare(hostname: string, zona: string): boolean {
+  const host = sinPunto(hostname).toLowerCase();
+  const raiz = sinPunto(zona).toLowerCase();
+  if (host === raiz) return true;
+  if (!host.endsWith(`.${raiz}`)) return false;
+  return !host.slice(0, -(raiz.length + 1)).includes('.');
+}
+
 function deseadoDeMarcaBlanca(destino: ClientDomain): Deseado {
   const inst = getInstanceSettings();
   const mail = sinPunto(inst.mailHostname || '');
@@ -1379,9 +1395,14 @@ export async function aplicarDnsMarcaBlanca(
   opts: { permitirInstancia: boolean; replaceConflicts: boolean; soloCrear: boolean },
 ): Promise<ResultadoAplicacion & { domain: ClientDomain; zone: string }> {
   const destino = getClientDomain(id);
-  const deseado = deseadoDeMarcaBlanca(destino);
+  const base = deseadoDeMarcaBlanca(destino);
   const { resolucion, motivo } = await resolverZonaMarcaBlanca(destino, opts.permitirInstancia);
   if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
+  // El proxy, solo si el certificado gratuito de Cloudflare cubre el nombre.
+  const deseado: Deseado = {
+    ...base,
+    proxied: base.proxied === true && cubiertoPorCertificadoCloudflare(base.name, resolucion.zona.name),
+  };
   // Con la cuenta de la instancia en nombre de quien no puede usarla (la
   // excepción de resolverZonaMarcaBlanca) no se reemplaza nada: un conflicto
   // se informa y se resuelve a mano.

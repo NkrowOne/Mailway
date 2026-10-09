@@ -797,7 +797,7 @@ printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
 |---|---|
 | `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required }], summary }`. `?includeRecommended=false` limita a los obligatorios. |
 | `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
-| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`; el de tipo `webmail`, con el proxy de Cloudflare (a uno existente que apunta aquí se le activa). `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para activarle el proxy. Usa también la cuenta con la que se aplicó el DNS del dominio de correo del que cuelga, aunque sea de la instancia (sección 4.3). |
+| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`; el de tipo `webmail`, con el proxy de Cloudflare (a uno existente que apunta aquí se le activa) si el certificado gratuito de Cloudflare cubre el nombre, es decir, la zona y un nivel de subdominio; uno más profundo, como el webmail de un dominio de correo que ya es un subdominio, va sin proxy. `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para activarle el proxy. Usa también la cuenta con la que se aplicó el DNS del dominio de correo del que cuelga, aunque sea de la instancia (sección 4.3). |
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
 Si la zona está pendiente de activación en Cloudflare, `zone.nameServers`
@@ -865,7 +865,10 @@ indica los servidores de nombres que debes poner en tu registrador.
 - Todos los registros del correo van **sin proxy** (nube gris): el proxy de
   Cloudflare rompe SMTP e IMAP. Un registro con proxy se corrige. La
   excepción es el **webmail de marca blanca**, que va con proxy (sección 7.1):
-  es solo una página web y el correo va al nombre del servidor.
+  es solo una página web y el correo va al nombre del servidor. Solo si el
+  certificado gratuito de Cloudflare cubre el nombre (la zona y un nivel de
+  subdominio): con el proxy, `webmail.correo.ejemplo.com` daría un error de
+  certificado a los visitantes, así que ese va sin proxy.
 - **SPF**: si ya existe uno, se fusiona (se añade `mx` delante del primer
   `all`) en lugar de crear un segundo, que invalidaría ambos. Un `mx` escrito
   detrás de `all` no cuenta, igual que en la comprobación DNS. Con dos SPF no
