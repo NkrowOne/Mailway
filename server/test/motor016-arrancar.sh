@@ -7,6 +7,14 @@
 #   cd server && node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts
 #   docker rm -f "$MAILWAY_TEST_STALWART016_CONTENEDOR"
 #
+# Escribe también las de la prueba del panel contra un motor real
+# (MAILWAY_TEST_MOTOR_*, las mismas que server/test/motor015-arrancar.sh):
+#
+#   cd server && node --test --import tsx --import ./test/env.ts \
+#     --import ./test/env-real.ts test/panel-motor-real.test.ts
+#
+# Cada prueba deja sus datos en el motor: mejor un contenedor para cada una.
+#
 # Todo lo demás (progreso y errores) va a la salida de errores. La puesta en
 # marcha es la de una instalación nueva, sin pasos interactivos:
 #   1. Sin config.json el motor arranca en modo «bootstrap» (solo el 8080).
@@ -126,4 +134,14 @@ export MAILWAY_TEST_STALWART016_SUBMISSION='${PUERTO_SUBMISSION}'
 export MAILWAY_TEST_STALWART016_IMAPS='${PUERTO_IMAPS}'
 export MAILWAY_TEST_STALWART016_HOSTNAME='${NOMBRE_SERVIDOR}'
 export MAILWAY_TEST_STALWART016_CONTENEDOR='${CONTENEDOR}'
+export MAILWAY_TEST_MOTOR_URL='${URL}'
+export MAILWAY_TEST_MOTOR_USER='admin'
+export MAILWAY_TEST_MOTOR_PASSWORD='${CLAVE}'
+export MAILWAY_TEST_MOTOR_API='jmap016'
+export MAILWAY_TEST_MOTOR_HOST='${IP}'
+export MAILWAY_TEST_MOTOR_SMTP='${PUERTO_SMTP}'
+export MAILWAY_TEST_MOTOR_SMTPS='${PUERTO_SMTPS}'
+export MAILWAY_TEST_MOTOR_SUBMISSION='${PUERTO_SUBMISSION}'
+export MAILWAY_TEST_MOTOR_IMAPS='${PUERTO_IMAPS}'
+export MAILWAY_TEST_MOTOR_CONTENEDOR='${CONTENEDOR}'
 VARIABLES
