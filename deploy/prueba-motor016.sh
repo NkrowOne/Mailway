@@ -822,7 +822,7 @@ preparar_revertir() {
   printf '%s\n' '{"ok":true,"activo":true,"hasta":1760000000000}' >"$E/panel/mantenimiento-on"
   printf '%s\n' '{"ok":true,"activo":false,"hasta":null}' >"$E/panel/mantenimiento-off"
   printf '%s\n' "$PROVISION_OK" >"$E/panel/provisionar"
-  printf '%s\n' '{"ok":true,"api":"rest015","credencialesInternas":{"renovadas":2,"fallidas":[]},"contrasenasInvalidadas":1,"avisados":1,"avisosFallidos":[],"sinCopia":0}' >"$E/panel/tras-migrar"
+  printf '%s\n' '{"ok":true,"api":"rest015","credencialesInternas":{"renovadas":2,"fallidas":[]},"contrasenasInvalidadas":1,"contrasenasRecuperadas":4,"avisados":1,"avisosFallidos":[],"sinCopia":0}' >"$E/panel/tras-migrar"
 }
 
 echo "# --revertir-motor: la 0.15 sobre su volumen, con el panel al día"
@@ -838,6 +838,7 @@ comprobar "conserva los volúmenes de la 0.16 en deploy/.env" igual "$(valor_env
 comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
 comprobar "no se borra ningún volumen" sin_borrar_volumenes
 comprobar "avisa del correo que se queda en la 0.16" contiene "$SALIDA" "se queda en el volumen de la 0.16 (mailway-stalwart-data-20261001-101010)"
+comprobar "dice cuántas contraseñas de aplicación de la 0.15 vuelven a valer" contiene "$SALIDA" "de la 0.15 que vuelven a valer: 4"
 
 echo "# --revertir-motor sin migración previa, en la 0.15 o sin el volumen de la 0.15: se niega"
 preparar_revertir

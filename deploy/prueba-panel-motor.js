@@ -313,6 +313,7 @@ async function ejecutar(argv, io) {
         api,
         credencialesInternas: { renovadas: 0, fallidas: [] },
         contrasenasInvalidadas: 0,
+        contrasenasRecuperadas: 0,
         avisados: 0,
         avisosFallidos: [],
         sinCopia: 0,
