@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="256" height="256"><title>Mailway</title>
+  <rect width="64" height="64" rx="16" fill="#0d5c5e"/>
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round"><path d="M14 44L14 28.11Q14 16 22.1 25L27.54 31.04Q32 36 36.46 31.04L43.17 23.59Q50 16 50 26.22L50 38.7" stroke-width="5.2"/><circle cx="50" cy="44" r="4.5" stroke-width="4"/></g><circle cx="14" cy="44" r="5.6" fill="#fff"/>
+</svg>

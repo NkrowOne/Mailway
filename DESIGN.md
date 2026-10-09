@@ -360,10 +360,27 @@ obligatorio y cada vista pasa el de lo que falta:
 
 ### Signature Component — `Logotipo`
 
-Sobre blanco de línea en una tesela llena de petróleo (36 px; 44 px en
-grande). Va en la barra lateral, la barra superior móvil, la portada de
-acceso, el portal y el asistente de puesta en marcha. Es la única marca
-gráfica: no se sustituye por iniciales, ilustraciones ni glifos.
+La M de Mailway trazada como una línea de metro, en blanco sobre una tesela
+llena de petróleo (36 px; 44 px en grande). La línea sale de una parada llena
+(el origen), sube, baja en una V honda que recuerda la solapa de un sobre y
+llega a una parada en anillo (el destino): el correo que sale y llega. Las
+esquinas son curvas de plano de metro, no ángulos. Va en la barra lateral, la
+barra superior móvil, la portada de acceso, el portal y el asistente de
+puesta en marcha. Es la única marca gráfica: no se sustituye por iniciales,
+ilustraciones ni glifos.
+
+- **Geometría** (caja de 64): trazo de 5.2, parada de origen de radio 5.6,
+  anillo de radio 4.5 con trazo de 4. La línea se detiene en el anillo sin
+  entrar en su hueco, así que el anillo va sin relleno y la marca funciona
+  en blanco sobre petróleo o en petróleo sobre blanco. Fuente: `Logotipo`
+  en `ui/kit.tsx` y `deploy/roundcube/mailway_theme/logo.svg`.
+- **Con nombre** (`docs/marca/`): la tesela y «Mailway» en Figtree 650 a
+  trazos, con el punto de la «i» convertido en el anillo de destino.
+  `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
+  `mailway-isotipo.svg` solo la tesela. Dentro del producto el nombre que
+  acompaña a la tesela es el de la instancia (marca blanca), en texto.
+- **No se hace**: girarla, recolorear la tesela fuera del petróleo, cambiar
+  el anillo por otra parada llena ni añadirle sombras o contornos.
 
 ### `Membrete` (cabecera de página)
 
@@ -415,10 +432,11 @@ diálogos y avisos, cajón móvil en 220 ms y el giro del aro de carga. Con
 
 ### Superficies del navegador
 
-Favicon: el `Logotipo` (sobre blanco en tesela petróleo, con el sobre algo
-más grande para leerse a 16 px). `web/public/favicon.svg` es la fuente;
-`favicon.ico` (16, 32 y 48 px) y `apple-touch-icon.png` (180 px, a sangre)
-se generan a partir de él. El webmail usa los mismos ficheros desde
+Favicon: el `Logotipo` (la M de metro en tesela petróleo, algo mayor y con
+un trazo de 5.6 para leerse a 16 px). `web/public/favicon.svg` es la fuente;
+`favicon.ico` (16, 32 y 48 px) y `apple-touch-icon.png` (180 px, a sangre,
+con la M del panel) se generan a partir de él; el de 16 px del ICO lleva la
+M ajustada a la rejilla de píxeles para que no se emborrone. El webmail usa los mismos ficheros desde
 `mailway_theme`.
 
 `theme-color` es el fondo (`#f4f6f4`) en la portada y el portal, y blanco

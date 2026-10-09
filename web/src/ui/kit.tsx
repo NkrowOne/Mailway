@@ -776,27 +776,30 @@ export function AvisoError({
 /* ------------------------------- Logotipo --------------------------------- */
 
 /**
- * Marca de la instancia: un sobre blanco en una tesela petróleo. Es la
- * misma forma que la tesela de los estados vacíos, en su versión llena.
+ * Marca de la instancia: la M de Mailway trazada como una línea de metro, que
+ * sale de una parada llena (origen) y llega a una en anillo (destino), con la
+ * V central honda como la solapa de un sobre. Va en blanco sobre la tesela de
+ * los estados vacíos, en su versión llena. La geometría (caja de 64) es la de
+ * `deploy/roundcube/mailway_theme/logo.svg`; el favicon la engruesa.
  */
 export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }) {
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center bg-petroleo text-white ${
+      className={`flex shrink-0 bg-petroleo text-white ${
         tamano === 'grande' ? 'h-11 w-11 rounded-[13px]' : 'h-9 w-9 rounded-[11px]'
       }`}
     >
-      <svg viewBox="0 0 24 24" className={tamano === 'grande' ? 'h-6 w-6' : 'h-5 w-5'}>
-        <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
-        <path
-          d="m4.5 7.5 6.3 4.7a2 2 0 0 0 2.4 0l6.3-4.7"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+      <svg viewBox="0 0 64 64" className="h-full w-full">
+        {/* La línea se detiene en el anillo, sin entrar en su hueco. */}
+        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+          <path
+            d="M14 44L14 28.11Q14 16 22.1 25L27.54 31.04Q32 36 36.46 31.04L43.17 23.59Q50 16 50 26.22L50 38.7"
+            strokeWidth="5.2"
+          />
+          <circle cx="50" cy="44" r="4.5" strokeWidth="4" />
+        </g>
+        <circle cx="14" cy="44" r="5.6" fill="currentColor" />
       </svg>
     </span>
   );
@@ -807,7 +810,7 @@ export function Logotipo({ tamano = 'normal' }: { tamano?: 'normal' | 'grande' }
 /**
  * Icono de una vista dentro de una tesela redondeada en petróleo tenue. Es
  * el único motivo gráfico del sistema: lo usan los estados vacíos, con el
- * icono de lo que falta, y la marca de la instancia, con el sobre.
+ * icono de lo que falta, y la marca de la instancia, con la M de metro.
  */
 export function Tesela({
   icono: Icono,
