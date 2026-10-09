@@ -1,0 +1,22 @@
+v1-ed25519-20261009._domainkey.m016-74124c.test. IN TXT "v=DKIM1; k=ed25519; h=sha256; p=MQBDOvx5NtbWkWdWrgdXJucdFDTzyxixrGgYAvncOfI="
+v1-rsa-20261009._domainkey.m016-74124c.test. IN TXT (
+    "v=DKIM1; k=rsa; h=sha256; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDYQTyTpzuP7jIfr92vBTYTY81xyns75uH96R3L3O0OM+NRkMKvpjxoM3cguqp0bsuNn9tQOKhWJ25xsavIN5UqRfPfkn19+lInFOyC793LDX2PnMC123LaNLzwNj0pzUQwPwp8UZluFLHO1UlnR4MEmEVwgUpho1J7d51TotbzcI5B+9r5WgAJ"
+    "vRHtFGfr2YVUs9DDCoPgtjfmmTrs7ryliP4in5VUYFKdJQWiMyqnbUKhJ9rAEzkTVh0gT4lBpubyG9lNs8oaJ7ZluGLKSS9bNxsDENfa6qbClLGTTC+cTD2mxncNvpdINml9tbYAsJhyYLmf77uzDtvhqVy/gSwIDAQAB"
+)
+m016-74124c.test. IN TXT "v=spf1 mx -all"
+m016-74124c.test. IN MX 10 mail.mailway.test.
+_dmarc.m016-74124c.test. IN TXT "v=DMARC1; p=reject; rua=mailto:postmaster@m016-74124c.test"
+_caldavs._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.
+_carddavs._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.
+_imaps._tcp.m016-74124c.test. IN SRV 0 1 993 mail.mailway.test.
+_jmap._tcp.m016-74124c.test. IN SRV 0 1 443 mail.mailway.test.
+_pop3s._tcp.m016-74124c.test. IN SRV 0 1 995 mail.mailway.test.
+_submission._tcp.m016-74124c.test. IN SRV 0 1 587 mail.mailway.test.
+_submissions._tcp.m016-74124c.test. IN SRV 0 1 465 mail.mailway.test.
+mta-sts.m016-74124c.test. IN CNAME mail.mailway.test.
+_mta-sts.m016-74124c.test. IN TXT "v=STSv1; id=5588838779322310716"
+_smtp._tls.m016-74124c.test. IN TXT "v=TLSRPTv1; rua=mailto:postmaster@m016-74124c.test"
+ua-auto-config.m016-74124c.test. IN CNAME mail.mailway.test.
+_ua-auto-config.m016-74124c.test. IN TXT "v=UAAC1; a=sha256; d=9DHaf7TOsfEsYjqeY+0G5chST/gU6+uqX4QsoaLeBZE="
+autoconfig.m016-74124c.test. IN CNAME mail.mailway.test.
+autodiscover.m016-74124c.test. IN CNAME mail.mailway.test.

@@ -14,6 +14,10 @@
 #   sudo bash deploy/instalar.sh --comprobar     # diagnóstico de solo lectura
 #   sudo bash deploy/instalar.sh --probar-acceso # abrir un buzón desde el webmail
 #   sudo bash deploy/instalar.sh --emparejar     # repetir solo el emparejado con Skyway
+#   sudo bash deploy/instalar.sh --migrar-motor  # pasar de Stalwart 0.15 a 0.16 (con vuelta atrás)
+#   sudo bash deploy/instalar.sh --activar-bulwark     # correo web «beta» por cliente (Stalwart 0.16)
+#   sudo bash deploy/instalar.sh --desactivar-bulwark  # sin borrar sus datos
+#   sudo bash deploy/instalar.sh --estado-bulwark      # solo lectura
 #   bash deploy/instalar.sh --ayuda
 #
 # Ejecución desatendida: todas las preguntas se pueden responder con
@@ -24,7 +28,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-VERSION_INSTALADOR="1.3.0"
+VERSION_INSTALADOR="1.4.0"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$RAIZ/deploy"
 ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"
@@ -35,9 +39,37 @@ IMAGEN_CURL="curlimages/curl:8.11.1"
 # compose la usa para que Compose lo recree cuando cambia mailway.php.
 MAILWAY_ROUNDCUBE_CONFIG_HASH=$(sha256sum "$DEPLOY_DIR/roundcube/mailway.php" 2>/dev/null | cut -c1-16 || true)
 export MAILWAY_ROUNDCUBE_CONFIG_HASH
+# Huella de una carpeta (nombres y contenido de sus ficheros) para las
+# etiquetas de los compose: las pasarelas (nginx) no releen su configuración
+# y Bulwark (Next.js) solo sirve los ficheros de su marca que había al
+# arrancar. Si cambia tras un «git pull», Compose recrea el contenedor.
+huella_carpeta() {
+  { (cd "$1" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum) 2>/dev/null || true; } |
+    sha256sum | cut -c1-16
+}
+MAILWAY_MAIL_GW_HASH=$(huella_carpeta "$DEPLOY_DIR/motor/pasarela")
+MAILWAY_BULWARK_GW_HASH=$(huella_carpeta "$DEPLOY_DIR/bulwark/nginx")
+MAILWAY_BULWARK_MARCA_HASH=$(huella_carpeta "$DEPLOY_DIR/bulwark/marca/mailway")
+export MAILWAY_MAIL_GW_HASH MAILWAY_BULWARK_GW_HASH MAILWAY_BULWARK_MARCA_HASH
 IMAGEN_JQ="ghcr.io/jqlang/jq:1.7.1"
+# Motor de correo (MAILWAY_MOTOR en deploy/.env): elige el fichero
+# motor/<motor>/compose.yml que completa el servicio mailway-mail.
+MOTOR_015="stalwart-0.15"
+MOTOR_016="stalwart-0.16"
+MOTOR=""
+COMPOSE_MOTOR_016="$DEPLOY_DIR/motor/stalwart-0.16/compose.yml"
+# Último día con parches de seguridad de Stalwart 0.15 (SECURITY.md de la 0.16).
+FIN_SOPORTE_015="2026-12-01"
+FIN_SOPORTE_015_TEXTO="1 de diciembre de 2026"
 # Diagnóstico del webmail: deploy/roundcube/diagnostico, que los compose montan en /opt/mailway.
 COMPROBAR_PHP="/opt/mailway/comprobar.php"
+# Bulwark, el correo web «beta» por cliente (perfil «bulwark» de los compose,
+# deploy/bulwark/README.md): lo que recibe el panel mientras está activo
+# (MAILWAY_BULWARK_URL y MAILWAY_BULWARK_BACKEND_URL; contrato con el panel,
+# server/src/config.ts) y sus volúmenes.
+BULWARK_URL_PANEL="http://mailway-bulwark:3000"
+BULWARK_DESTINO_TRAEFIK="http://mailway-bulwark-gw:8080"
+BULWARK_VOLUMENES=(mailway-bulwark-ajustes mailway-bulwark-admin mailway-bulwark-estado)
 LE_DIRECTORIO="https://acme-v02.api.letsencrypt.org/directory"
 
 CON_SKYWAY=1
@@ -46,6 +78,15 @@ ACTUALIZAR=0
 COMPROBAR=0
 PROBAR_ACCESO=0
 EMPAREJAR=0
+MIGRAR_MOTOR=0
+REVERTIR_MOTOR=0
+RETIRAR_MOTOR_ANTERIOR=0
+# --activar-bulwark, --desactivar-bulwark o --estado-bulwark: activar,
+# desactivar o estado.
+BULWARK_ORDEN=""
+# -y: sin confirmación en las órdenes del motor (las demás no preguntan nada
+# que no se pueda responder con variables de entorno).
+SIN_CONFIRMAR=0
 INTERACTIVO=0
 if [ -t 0 ] && [ -t 1 ]; then INTERACTIVO=1; fi
 
@@ -58,6 +99,7 @@ RESUMEN_CERT="pendiente"
 RESUMEN_PTR="sin comprobar"
 RESUMEN_P25="sin comprobar"
 RESUMEN_DNS="sin comprobar"
+RESUMEN_AJUSTES=""
 RESUMEN_SKYWAY="no se ha desplegado el panel"
 MIGRAR_CONTENEDORES=0
 ENV_COPIADO=0
@@ -142,14 +184,38 @@ Opciones:
                     Mantiene el modo de la instalación (junto a Skyway o autónoma).
                     Ejecuta antes «git pull» en la carpeta de Mailway.
   --comprobar       Diagnóstico de solo lectura: contenedores, ajustes y certificado del
-                    motor (993 y 465), conexión IMAP y SMTP desde el webmail y extractor
-                    del certificado. No cambia nada. Código de salida 1 si algo falla.
+                    motor (993 y 465; con la 0.16, también el 587), conexión IMAP y SMTP
+                    desde el webmail y extractor del certificado. No cambia nada. Código de
+                    salida 1 si algo falla.
   --probar-acceso   Pide la dirección y la contraseña de un buzón (sin mostrarla ni
                     guardarla) e inicia sesión desde el webmail: un único intento, porque
                     cada contraseña incorrecta cuenta para el bloqueo automático del motor.
   --emparejar       Repite solo el emparejado del panel con Skyway con la configuración de
                     deploy/.env: crea el administrador del panel si aún no existe, completa su
                     puesta en marcha y conecta Skyway con un token de gestión nuevo.
+  --migrar-motor    Pasa el motor de Stalwart 0.15 a 0.16 (las instalaciones nuevas ya usan
+                    la 0.16): comprueba antes, copia y convierte los datos con las
+                    herramientas oficiales, verifica antes de abrir los puertos y, si algo
+                    falla, vuelve sola a la 0.15, cuyo volumen no se toca. Pide confirmación.
+                    Unos minutos sin correo; las contraseñas de aplicación hay que crearlas de
+                    nuevo (sección 8.3 de docs/DESPLIEGUE-SKYWAY.md).
+  --revertir-motor  Vuelve a Stalwart 0.15 tras una migración terminada. El correo recibido
+                    desde entonces se queda en el volumen de la 0.16. Pide confirmación.
+  --retirar-motor-anterior
+                    Borra el volumen de Stalwart 0.15 que la migración conserva como vuelta
+                    atrás. Pide escribir su nombre. Sin vuelta atrás.
+  --activar-bulwark Activa Bulwark, el correo web «beta» que el panel ofrece por cliente
+                    (Roundcube sigue siendo el predeterminado). Solo con Stalwart 0.16: con la
+                    0.15 se niega sin cambiar nada. Genera una vez sus dos secretos, levanta
+                    Bulwark y su pasarela (perfil «bulwark») y da al panel sus variables; el
+                    resto, como --actualizar. Ninguna actualización lo activa sola.
+  --desactivar-bulwark
+                    Lo desactiva: retira sus contenedores y las variables del panel (sus
+                    clientes vuelven a Roundcube). Conserva sus volúmenes y sus secretos.
+  --estado-bulwark  Si está activo, sus contenedores, sus volúmenes y lo que recibe el panel.
+                    No cambia nada.
+  -y, --si          Sin confirmación en --migrar-motor y --revertir-motor (en
+                    --retirar-motor-anterior, además MAILWAY_RETIRAR_VOLUMEN=<volumen>).
   --ayuda           Muestra esta ayuda.
 
 Junto a Skyway, el instalador termina emparejando el panel con Skyway: crea la cuenta de
@@ -209,6 +275,23 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_COMPOSE_EXTRA     Fichero de Compose adicional que se aplica sobre el del instalador
                             (ajustes locales; lo usa la prueba de la pila en la CI).
   MAILWAY_CLOUDFLARE_API    Base de la API de Cloudflare (solo para pruebas).
+  MAILWAY_MOTOR             Motor de una instalación NUEVA: stalwart-0.16 (por defecto) o
+                            stalwart-0.15. En una que ya existe manda deploy/.env: para cambiar
+                            de motor, --migrar-motor.
+  MAILWAY_MIGRACION_DIR     Carpeta de trabajo y registro de --migrar-motor (por defecto
+                            deploy/.migracion-motor).
+  MAILWAY_MIGRACION_COLA_MAX
+                            Mensajes en la cola de salida a partir de los cuales --migrar-motor no
+                            empieza (por defecto 50): pasan a la 0.16, pero una cola grande suele
+                            ser un problema de entrega que conviene resolver antes.
+  MAILWAY_MIGRACION_MINUTOS Duración máxima del mantenimiento del panel durante --migrar-motor
+                            (por defecto 120; se quita al terminar, y caduca solo).
+  MAILWAY_MIGRACION_CONSERVAR
+                            1 = no borra de la carpeta de trabajo el volcado y el plan de la
+                            migración (llevan contraseñas cifradas y claves DKIM): para revisarlos.
+  MAILWAY_RETIRAR_VOLUMEN   Con --retirar-motor-anterior -y: el nombre del volumen de la 0.15.
+  MAILWAY_TLS_CA_FILE       CA adicional para verificar el certificado del motor al migrar (solo
+                            para pruebas con certificados de laboratorio).
 
 Los nombres del servidor de correo, del webmail y del panel cuelgan directamente
 del dominio base (un solo nivel: correo.miempresa.com, no a.b.miempresa.com).
@@ -223,6 +306,13 @@ while [ $# -gt 0 ]; do
     --comprobar) COMPROBAR=1 ;;
     --probar-acceso) PROBAR_ACCESO=1 ;;
     --emparejar) EMPAREJAR=1 ;;
+    --migrar-motor) MIGRAR_MOTOR=1 ;;
+    --revertir-motor) REVERTIR_MOTOR=1 ;;
+    --retirar-motor-anterior) RETIRAR_MOTOR_ANTERIOR=1 ;;
+    --activar-bulwark) BULWARK_ORDEN=activar ;;
+    --desactivar-bulwark) BULWARK_ORDEN=desactivar ;;
+    --estado-bulwark) BULWARK_ORDEN=estado ;;
+    -y | --si | --yes) SIN_CONFIRMAR=1 ;;
     --ayuda | -h | --help)
       ayuda
       exit 0
@@ -232,12 +322,20 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO + EMPAREJAR))" -gt 1 ]; then
-  fallo "Las opciones --actualizar, --comprobar, --probar-acceso y --emparejar no se combinan: usa una."
+ORDEN_BULWARK=0
+if [ -n "$BULWARK_ORDEN" ]; then ORDEN_BULWARK=1; fi
+if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO + EMPAREJAR + MIGRAR_MOTOR + REVERTIR_MOTOR + RETIRAR_MOTOR_ANTERIOR + ORDEN_BULWARK))" -gt 1 ]; then
+  fallo "Las opciones --actualizar, --comprobar, --probar-acceso, --emparejar, --migrar-motor, --revertir-motor, --retirar-motor-anterior y las de Bulwark no se combinan: usa una."
+fi
+if [ "$SIN_CONFIRMAR" = 1 ] && [ "$((MIGRAR_MOTOR + REVERTIR_MOTOR + RETIRAR_MOTOR_ANTERIOR))" = 0 ]; then
+  fallo "-y solo sirve con --migrar-motor, --revertir-motor o --retirar-motor-anterior."
 fi
 if [ "$EMPAREJAR" = 1 ] && [ "$CON_SKYWAY" = 0 ]; then
   fallo "El emparejado solo existe junto a Skyway: --emparejar no se combina con --sin-skyway."
 fi
+# Activar o desactivar Bulwark es una actualización con ese cambio en
+# deploy/.env: tampoco pregunta nada.
+if [ "$BULWARK_ORDEN" = activar ] || [ "$BULWARK_ORDEN" = desactivar ]; then ACTUALIZAR=1; fi
 # --emparejar usa lo que ya está en deploy/.env: no pregunta nada.
 if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then INTERACTIVO=0; fi
 if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ] && [ ! -f "$MAILWAY_COMPOSE_EXTRA" ]; then
@@ -251,9 +349,34 @@ tiene() { command -v "$1" >/dev/null 2>&1; }
 # Al salir, también tras un fallo o una interrupción: sin ficheros temporales,
 # sin el token temporal de Skyway y sin perder la contraseña del administrador
 # que acaba de crear el emparejado (si el resumen no llegó a mostrarla).
+# Con una migración del motor a medias (--migrar-motor), además, la vuelta
+# atrás: a la 0.15 si ya se había parado (código 1, o 2 si tampoco se puede
+# volver), o solo el fin del mantenimiento si aún no se había tocado nada.
 al_salir() {
+  local codigo=$?
   if [ -n "$ENV_TMP" ]; then rm -f "$ENV_TMP"; fi
   if [ -n "$ERR_TMP" ]; then rm -f "$ERR_TMP"; fi
+  case "${MIG_FASE:-}" in
+    parado | abierto)
+      if volver_a_015; then codigo=1; else codigo=2; fi
+      ;;
+    preparada)
+      MIG_FASE=""
+      set +e
+      desactivar_mantenimiento
+      limpiar_trabajo_migracion
+      info "No se ha cambiado nada del motor: sigue Stalwart 0.15."
+      ;;
+    '')
+      # Otra orden del motor que no termina (o una comprobación previa que
+      # falla): sin mantenimiento que dure de más ni descargas sueltas.
+      if [ -n "${MIG_DIR:-}" ] && [ "$codigo" != 0 ]; then
+        set +e
+        desactivar_mantenimiento
+        limpiar_trabajo_migracion
+      fi
+      ;;
+  esac
   revocar_token_temporal_skyway || true
   if [ -n "$EMPAREJADO_ADMIN_PASSWORD" ]; then
     printf '\n'
@@ -262,6 +385,7 @@ al_salir() {
     info "  Contraseña: $EMPAREJADO_ADMIN_PASSWORD"
     EMPAREJADO_ADMIN_PASSWORD=""
   fi
+  exit "$codigo"
 }
 trap al_salir EXIT
 trap 'exit 130' INT
@@ -520,6 +644,79 @@ motor_cambios() {
   return 0
 }
 
+# Cuerpo de una petición de gestión de Stalwart 0.16 (JMAP en /jmap) con las
+# llamadas $1, una lista JSON. Sin la capacidad urn:stalwart:jmap en «using»,
+# los métodos x:… no existen.
+jmap_cuerpo() { printf '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":%s}' "$1"; }
+
+# Petición JMAP a la gestión del motor 0.16, como motor_api: desde un
+# contenedor efímero en la red interna y con la credencial por la entrada
+# estándar de curl. Deja la respuesta en RESP_CODE y RESP_BODY. Los errores
+# de cada llamada llegan con HTTP 200 (RFC 8620): hay que mirar el cuerpo.
+#   jmap_motor <cuerpo> [host del motor en la red interna]
+jmap_motor() {
+  local salida
+  salida=$(
+    {
+      printf 'user = "admin:%s"\n' "$(escapar_curl "$STALWART_ADMIN_PASSWORD")"
+      printf 'header = "Content-Type: application/json"\n'
+      printf 'data = "%s"\n' "$(escapar_curl "$1")"
+    } | docker run -i --rm --network mailway-internal "$IMAGEN_CURL" \
+      -sS --max-time 60 -X POST -w '\n%{http_code}' -K - "http://${2:-mailway-mail}:8080/jmap" 2>/dev/null
+  ) || {
+    RESP_CODE="000"
+    RESP_BODY=""
+    return 0
+  }
+  RESP_CODE=${salida##*$'\n'}
+  RESP_BODY=${salida%$'\n'*}
+}
+
+# Primer error de una respuesta JMAP (de la petición o de una llamada), o nada.
+jmap_error() {
+  if [ "$RESP_CODE" != 200 ]; then
+    printf 'HTTP %s' "$RESP_CODE"
+    return 0
+  fi
+  campo_json 'first((.methodResponses // [])[] | select(.[0] == "error") | .[1] | "\(.type)\(if .description then ": \(.description)" else "" end)") // empty'
+}
+
+# Imagen (con su versión exacta) de un compose: la que mantiene Dependabot.
+#   imagen_compose <fichero> <inicio de la imagen, p. ej. python:>
+imagen_compose() {
+  sed -n -E "s#^[[:space:]]*image:[[:space:]]*($2[^[:space:]]+)[[:space:]]*\$#\1#p" "$1" | head -n 1
+}
+
+# Cambia (o añade) claves de deploy/.env sin tocar las demás: lo usan las
+# órdenes del motor, que no tienen todos los datos de una instalación para
+# reescribirlo entero. Un valor vacío quita la clave. Se escribe aparte y se
+# renombra: un corte a medias no deja un fichero roto.
+#   fijar_en_env CLAVE valor [CLAVE valor…]
+fijar_en_env() {
+  local tmp linea clave umask_previa i
+  local -a pares=("$@")
+  umask_previa=$(umask)
+  umask 077
+  tmp=$(mktemp "$(dirname "$ENV_FILE")/.env.XXXXXX")
+  ENV_TMP=$tmp
+  {
+    while IFS= read -r linea || [ -n "$linea" ]; do
+      clave=${linea%%=*}
+      for ((i = 0; i < ${#pares[@]}; i += 2)); do
+        if [ "$clave" = "${pares[i]}" ]; then continue 2; fi
+      done
+      printf '%s\n' "$linea"
+    done <"$ENV_FILE"
+    for ((i = 0; i < ${#pares[@]}; i += 2)); do
+      if [ -n "${pares[i + 1]}" ]; then linea_env "${pares[i]}" "${pares[i + 1]}"; fi
+    done
+  } >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ENV_FILE"
+  ENV_TMP=""
+  umask "$umask_previa"
+}
+
 # Estado de salud (o de ejecución, si no tiene healthcheck) de un contenedor.
 estado_contenedor() {
   docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || printf 'ausente'
@@ -555,14 +752,19 @@ resuelve_a() {
 
 # Compose da prioridad al entorno sobre --env-file: sin quitarla, una
 # LETSENCRYPT_EMAIL exportada para responder al instalador ganaría al valor
-# elegido y guardado en deploy/.env. MAILWAY_COMPOSE_EXTRA añade un fichero
-# que se aplica encima (ajustes locales; la prueba de la pila de la CI lo usa
-# para la CA de laboratorio).
+# elegido y guardado en deploy/.env. Por lo mismo, el motor (MAILWAY_MOTOR,
+# que elige motor/<motor>/compose.yml) se pasa siempre: es el que ha decidido
+# el instalador, nunca uno que llegue exportado. MAILWAY_COMPOSE_EXTRA añade
+# un fichero que se aplica encima (ajustes locales; la prueba de la pila de la
+# CI lo usa para la CA de laboratorio). Con Bulwark activo (y solo entonces),
+# el perfil «bulwark»: así cualquier «up» lo levanta y ninguno lo crea sin
+# que se haya pedido.
 compose() {
   local ficheros=(-f "$COMPOSE_MAIL")
   if [ "$CON_SKYWAY" = 0 ]; then ficheros=(-f "$COMPOSE_SOLO"); fi
   if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ]; then ficheros+=(-f "$MAILWAY_COMPOSE_EXTRA"); fi
-  env -u LETSENCRYPT_EMAIL docker compose --env-file "$ENV_FILE" "${ficheros[@]}" "$@"
+  if bulwark_activo; then ficheros+=(--profile bulwark); fi
+  env -u LETSENCRYPT_EMAIL MAILWAY_MOTOR="${MOTOR:-$MOTOR_015}" docker compose --env-file "$ENV_FILE" "${ficheros[@]}" "$@"
 }
 
 # Compose sin su barra de progreso; la salida completa solo si falla.
@@ -808,10 +1010,96 @@ comprobar_subred() {
   ok "Subred interna $INTERNAL_SUBNET libre (motor en $MAIL_INTERNAL_IP)."
 }
 
-# Volumen con los datos del motor, si ya existe (lo fija la detección de
-# instalaciones anteriores, que se ejecuta antes).
+# ------------------------------------------------------- motor de correo --
+
+nombre_motor() { if [ "$1" = "$MOTOR_016" ]; then printf 'Stalwart 0.16'; else printf 'Stalwart 0.15'; fi; }
+
+# Volúmenes de cada motor: el de la 0.15 (MAILWAY_MAIL_VOLUME, que también fija
+# la detección de las instalaciones anteriores a la 1.0) y los dos de la 0.16
+# (los que fija la migración, o los de una instalación nueva).
+volumen_015() { printf '%s' "${MAILWAY_MAIL_VOLUME:-mailway-mail-data}"; }
+volumen_016_etc() { printf '%s' "${MAILWAY_STALWART_ETC_VOLUME:-mailway-stalwart-etc}"; }
+volumen_016_datos() { printf '%s' "${MAILWAY_STALWART_DATA_VOLUME:-mailway-stalwart-data}"; }
+
+# Las fechas ISO se comparan como texto.
+aviso_fin_soporte_015() {
+  if [[ $(date -u +%F) < "$FIN_SOPORTE_015" ]]; then
+    aviso "Stalwart 0.15 deja de recibir parches de seguridad el $FIN_SOPORTE_015_TEXTO. Para pasar a la 0.16, con vuelta atrás si algo falla: sudo mailway migrar-motor (sección 8.3 de docs/DESPLIEGUE-SKYWAY.md)."
+  else
+    aviso "Stalwart 0.15 ya no recibe parches de seguridad (desde el $FIN_SOPORTE_015_TEXTO). Pasa a la 0.16 cuanto antes, con vuelta atrás si algo falla: sudo mailway migrar-motor (sección 8.3 de docs/DESPLIEGUE-SKYWAY.md)."
+  fi
+}
+
+# Motor de la instalación según deploy/.env. Sin valor (instalaciones de antes
+# de la 0.16), el del contenedor del motor y, si no lo hay, la 0.15: la que
+# tenían todas.
+motor_configurado() {
+  local m
+  m=$(leer_env MAILWAY_MOTOR)
+  case "$m" in
+    "$MOTOR_015" | "$MOTOR_016") printf '%s' "$m" ;;
+    *)
+      case "$(docker inspect --type container -f '{{.Config.Image}}' mailway-mail 2>/dev/null || true)" in
+        *stalwart:v0.16*) printf '%s' "$MOTOR_016" ;;
+        *) printf '%s' "$MOTOR_015" ;;
+      esac
+      ;;
+  esac
+}
+
+# Elige el motor al instalar o actualizar:
+#   1. El de deploy/.env, si lo dice (una actualización nunca lo cambia).
+#   2. Si no, el de los datos que ya hay: un motor 0.15 (su volumen o su
+#      contenedor) sigue en la 0.15; uno 0.16, en la 0.16.
+#   3. Sin datos de ningún motor, la instalación es nueva: la 0.16, salvo que
+#      MAILWAY_MOTOR pida la 0.15.
+# MAILWAY_MOTOR solo elige en una instalación nueva: en una que ya existe,
+# pedir otro motor se rechaza (el cambio es --migrar-motor, que convierte los
+# datos y vuelve atrás si falla).
+elegir_motor() {
+  local guardado entorno=${MAILWAY_MOTOR:-} hay015=0 hay016=0
+  MAILWAY_STALWART_ETC_VOLUME=$(leer_env MAILWAY_STALWART_ETC_VOLUME)
+  MAILWAY_STALWART_DATA_VOLUME=$(leer_env MAILWAY_STALWART_DATA_VOLUME)
+  MAILWAY_MOTOR_MIGRADO=$(leer_env MAILWAY_MOTOR_MIGRADO)
+  case "$entorno" in
+    '' | "$MOTOR_015" | "$MOTOR_016") ;;
+    *) fallo "MAILWAY_MOTOR debe ser $MOTOR_016 o $MOTOR_015 (no «$entorno»)." ;;
+  esac
+  guardado=$(leer_env MAILWAY_MOTOR)
+  case "$guardado" in
+    '') ;;
+    "$MOTOR_015" | "$MOTOR_016") MOTOR=$guardado ;;
+    *) fallo "MAILWAY_MOTOR no es válido en $ENV_FILE («$guardado»): debe ser $MOTOR_016 o $MOTOR_015." ;;
+  esac
+  if [ -z "$MOTOR" ]; then
+    case "$(docker inspect --type container -f '{{.Config.Image}}' mailway-mail 2>/dev/null || true)" in
+      *stalwart:v0.15*) hay015=1 ;;
+      *stalwart:v0.16*) hay016=1 ;;
+    esac
+    if docker volume inspect "$(volumen_015)" >/dev/null 2>&1; then hay015=1; fi
+    if docker volume inspect "$(volumen_016_datos)" >/dev/null 2>&1; then hay016=1; fi
+    if [ "$hay015" = 1 ] && [ "$hay016" = 1 ]; then
+      fallo "Hay datos de Stalwart 0.15 y de 0.16 y $ENV_FILE no dice cuál usa esta instalación: indícalo con MAILWAY_MOTOR='$MOTOR_015' o MAILWAY_MOTOR='$MOTOR_016' en $ENV_FILE."
+    elif [ "$hay015" = 1 ]; then
+      MOTOR=$MOTOR_015
+    elif [ "$hay016" = 1 ]; then
+      MOTOR=$MOTOR_016
+    else
+      MOTOR=${entorno:-$MOTOR_016}
+    fi
+  fi
+  if [ -n "$entorno" ] && [ "$entorno" != "$MOTOR" ]; then
+    fallo "Esta instalación usa $(nombre_motor "$MOTOR") y MAILWAY_MOTOR pide $(nombre_motor "$entorno"). Una actualización nunca cambia de motor: para pasar de la 0.15 a la 0.16, sudo bash deploy/instalar.sh --migrar-motor"
+  fi
+  ok "Motor de correo: $(nombre_motor "$MOTOR")."
+  if [ "$MOTOR" = "$MOTOR_015" ]; then aviso_fin_soporte_015; fi
+}
+
+# Volumen con los datos del motor elegido, si ya existe (lo fija la detección
+# de instalaciones anteriores, que se ejecuta antes).
 volumen_datos_motor() {
-  local v=${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
+  local v
+  if [ "$MOTOR" = "$MOTOR_016" ]; then v=$(volumen_016_datos); else v=$(volumen_015); fi
   if docker volume inspect "$v" >/dev/null 2>&1; then printf '%s' "$v"; fi
   return 0
 }
@@ -857,10 +1145,12 @@ preparar_secretos() {
   if [ -z "$MAILWAY_SETUP_TOKEN" ]; then MAILWAY_SETUP_TOKEN=$(aleatorio_hex 16); fi
   if [ -z "$MAILWAY_WEBMAIL_TOKEN" ]; then MAILWAY_WEBMAIL_TOKEN=$(aleatorio_hex 24); fi
 
-  # La contraseña del motor solo se aplica en su PRIMER arranque. Si ya hay
-  # datos del motor, generar otra dejaría al panel sin acceso: se reutiliza
-  # la guardada o se pide. La del panel solo sirve para un motor que ya
-  # existe (es la que el panel usa con él); un motor nuevo estrena la suya.
+  # Con Stalwart 0.15 la contraseña del motor solo se aplica en su PRIMER
+  # arranque; con la 0.16 se aplica en cada uno, pero el panel guarda la que
+  # usa. En los dos casos, si ya hay datos del motor, generar otra dejaría al
+  # panel sin acceso: se reutiliza la guardada o se pide. La del panel solo
+  # sirve para un motor que ya existe (es la que el panel usa con él); un
+  # motor nuevo estrena la suya.
   local previa volumen
   volumen=$(volumen_datos_motor)
   previa=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
@@ -1062,8 +1352,14 @@ escribir_env() {
     linea_env MAILWAY_BRAND "$MARCA"
     linea_env LETSENCRYPT_EMAIL "$LE_EMAIL"
     if [ -n "$ADMIN_EMAIL" ]; then linea_env MAILWAY_ADMIN_EMAIL "$ADMIN_EMAIL"; fi
-    printf '\n# Motor: contraseña VIGENTE del administrador. El motor solo la toma en su primer\n'
-    printf '# arranque; si la cambias en el motor, cámbiala también aquí (la usa el extractor).\n'
+    printf '\n# Motor de correo (%s). Para pasar de la 0.15 a la 0.16: sudo mailway migrar-motor.\n' "$(nombre_motor "$MOTOR")"
+    if [ -n "$MOTOR" ]; then linea_env MAILWAY_MOTOR "$MOTOR"; fi
+    if [ -n "${MAILWAY_STALWART_ETC_VOLUME:-}" ]; then linea_env MAILWAY_STALWART_ETC_VOLUME "$MAILWAY_STALWART_ETC_VOLUME"; fi
+    if [ -n "${MAILWAY_STALWART_DATA_VOLUME:-}" ]; then linea_env MAILWAY_STALWART_DATA_VOLUME "$MAILWAY_STALWART_DATA_VOLUME"; fi
+    if [ -n "${MAILWAY_MOTOR_MIGRADO:-}" ]; then linea_env MAILWAY_MOTOR_MIGRADO "$MAILWAY_MOTOR_MIGRADO"; fi
+    printf '# Contraseña VIGENTE del administrador del motor (la usan el panel, el instalador y el\n'
+    printf '# extractor). Stalwart 0.16 la toma de aquí en cada arranque; la 0.15, solo en el primero:\n'
+    printf '# si la cambias en el motor, cámbiala también aquí.\n'
     linea_env STALWART_ADMIN_PASSWORD "$STALWART_ADMIN_PASSWORD"
     printf '\n# Webmail\n'
     linea_env ROUNDCUBE_DES_KEY "$ROUNDCUBE_DES_KEY"
@@ -1092,14 +1388,16 @@ escribir_env() {
     if [ -n "$MAILWAY_MAIL_VOLUME" ]; then linea_env MAILWAY_MAIL_VOLUME "$MAILWAY_MAIL_VOLUME"; fi
     if [ -n "$MAILWAY_WEBMAIL_DB_VOLUME" ]; then linea_env MAILWAY_WEBMAIL_DB_VOLUME "$MAILWAY_WEBMAIL_DB_VOLUME"; fi
     if [ -n "$MAILWAY_PANEL_VOLUME" ]; then linea_env MAILWAY_PANEL_VOLUME "$MAILWAY_PANEL_VOLUME"; fi
+    escribir_env_bulwark
   } >"$tmp"
 
   # Las claves añadidas a mano se conservan.
   claves=" MAILWAY_INSTALACION MAIL_HOSTNAME WEBMAIL_HOSTNAME PANEL_HOSTNAME MAILWAY_PUBLIC_IP MAILWAY_BRAND LETSENCRYPT_EMAIL"
-  claves+=" MAILWAY_ADMIN_EMAIL"
+  claves+=" MAILWAY_ADMIN_EMAIL MAILWAY_MOTOR MAILWAY_STALWART_ETC_VOLUME MAILWAY_STALWART_DATA_VOLUME MAILWAY_MOTOR_MIGRADO"
   claves+=" STALWART_ADMIN_PASSWORD ROUNDCUBE_DES_KEY MAILWAY_PANEL_URL MAILWAY_WEBMAIL_URL MAILWAY_PANEL_INTERNAL_URL"
   claves+=" MAILWAY_SECRET MAILWAY_SETUP_TOKEN MAILWAY_TRAEFIK_TOKEN MAILWAY_WEBMAIL_TOKEN MAILWAY_INTERNAL_SUBNET"
-  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME "
+  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME"
+  claves+=" MAILWAY_BULWARK BULWARK_SESSION_SECRET BULWARK_ADMIN_PASSWORD MAILWAY_BULWARK_URL MAILWAY_BULWARK_BACKEND_URL "
   if [ -f "$ENV_FILE" ]; then
     local extra=""
     while IFS= read -r linea || [ -n "$linea" ]; do
@@ -1123,6 +1421,30 @@ escribir_env() {
   ENV_TMP=""
   umask "$umask_previa"
   ok "Escrito $ENV_FILE (permisos 600)."
+}
+
+# Bloque de Bulwark de deploy/.env. Los secretos se escriben siempre que
+# existan (también desactivado: activarlo de nuevo recupera las sesiones, los
+# ajustes de los usuarios y la administración); si esta ejecución no los ha
+# leído, los de deploy/.env, para no perderlos nunca. Las dos direcciones del
+# panel, solo mientras está activo: el compose autónomo se las pasa al panel
+# (vacías, el panel no ofrece Bulwark).
+escribir_env_bulwark() {
+  local pedido=${MAILWAY_BULWARK-$(leer_env MAILWAY_BULWARK)} sesion admin
+  sesion=${BULWARK_SESSION_SECRET:-$(leer_env BULWARK_SESSION_SECRET)}
+  admin=${BULWARK_ADMIN_PASSWORD:-$(leer_env BULWARK_ADMIN_PASSWORD)}
+  [ -n "$pedido$sesion$admin" ] || return 0
+  printf '\n# Bulwark, el correo web «beta» por cliente (necesita Stalwart 0.16): sudo mailway bulwark on|off.\n'
+  printf '# Desactivarlo conserva estos secretos y sus volúmenes. Cambiar BULWARK_SESSION_SECRET cierra las\n'
+  printf '# sesiones y deja ilegibles los ajustes sincronizados; BULWARK_ADMIN_PASSWORD la comparte el panel.\n'
+  if [ -n "$pedido" ]; then linea_env MAILWAY_BULWARK "$pedido"; fi
+  if [ -n "$sesion" ]; then linea_env BULWARK_SESSION_SECRET "$sesion"; fi
+  if [ -n "$admin" ]; then linea_env BULWARK_ADMIN_PASSWORD "$admin"; fi
+  if [ "$pedido" = 1 ] && [ "${MOTOR:-}" = "$MOTOR_016" ]; then
+    printf '# Lo que recibe el panel mientras Bulwark está activo (las escribe el instalador).\n'
+    linea_env MAILWAY_BULWARK_URL "$BULWARK_URL_PANEL"
+    linea_env MAILWAY_BULWARK_BACKEND_URL "$BULWARK_DESTINO_TRAEFIK"
+  fi
 }
 
 # ------------------------------------------------------------------- DNS --
@@ -1341,6 +1663,189 @@ comprobar_ptr() {
   fi
 }
 
+# ---------------------------------------------------------------- Bulwark --
+#
+# Bulwark (deploy/bulwark/README.md) es el correo web «beta» que el panel
+# ofrece por cliente; Roundcube sigue siendo el predeterminado. Lo decide
+# MAILWAY_BULWARK en deploy/.env: 1 activo, 0 o nada desactivado. Solo se
+# cambia con --activar-bulwark y --desactivar-bulwark (sudo mailway bulwark
+# on|off): una actualización nunca lo activa sola. Necesita Stalwart 0.16: con
+# la 0.15, --activar-bulwark se niega y cualquier otra orden lo deja
+# desactivado. Desactivarlo retira sus contenedores y las variables del panel,
+# pero conserva sus volúmenes y sus secretos.
+
+# ¿Activo y posible? Se lee deploy/.env en cada llamada: las órdenes del motor
+# cambian MOTOR y deploy/.env sobre la marcha.
+bulwark_activo() { [ "${MOTOR:-}" = "$MOTOR_016" ] && [ "$(leer_env MAILWAY_BULWARK)" = 1 ]; }
+
+# Lo que pide deploy/.env, comprobado contra el motor, y sus dos secretos
+# (generados una sola vez; nunca se muestran). Con la 0.15, o sin secretos
+# válidos, queda desactivado y lo dice: escribir_env guarda el resultado.
+preparar_bulwark() {
+  MAILWAY_BULWARK=$(leer_env MAILWAY_BULWARK)
+  BULWARK_SESSION_SECRET=$(leer_env BULWARK_SESSION_SECRET)
+  BULWARK_ADMIN_PASSWORD=$(leer_env BULWARK_ADMIN_PASSWORD)
+  case "$MAILWAY_BULWARK" in
+    1) ;;
+    '' | 0) return 0 ;;
+    *)
+      aviso "MAILWAY_BULWARK no es válido en $ENV_FILE (1 lo activa y 0 lo desactiva): Bulwark queda desactivado."
+      MAILWAY_BULWARK=0
+      return 0
+      ;;
+  esac
+  titulo "Bulwark (correo web beta)"
+  if [ "$MOTOR" != "$MOTOR_016" ]; then
+    aviso "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: queda desactivado (MAILWAY_BULWARK=0). Tras migrar el motor (sudo mailway migrar-motor), actívalo con sudo mailway bulwark on."
+    MAILWAY_BULWARK=0
+    return 0
+  fi
+  if [ -z "$BULWARK_SESSION_SECRET" ]; then
+    # Cifra las sesiones y los ajustes sincronizados: uno nuevo deja
+    # ilegibles los que hubiera.
+    if volumen_con_datos mailway-bulwark-ajustes; then
+      aviso "$ENV_FILE no guarda BULWARK_SESSION_SECRET y Bulwark ya tiene ajustes de usuarios: con el secreto nuevo, esos ajustes no se podrán leer y las sesiones abiertas se cierran."
+    fi
+    BULWARK_SESSION_SECRET=$(aleatorio_hex 32)
+    ok "Secreto de sesión de Bulwark generado (se guarda en $ENV_FILE)."
+  elif [ "${#BULWARK_SESSION_SECRET}" -lt 32 ] || tiene_control "$BULWARK_SESSION_SECRET"; then
+    aviso "BULWARK_SESSION_SECRET de $ENV_FILE tiene menos de 32 caracteres: Bulwark queda desactivado. Pon uno largo (openssl rand -hex 32) y repite con sudo mailway bulwark on (cambiarlo cierra las sesiones y deja ilegibles los ajustes sincronizados)."
+    MAILWAY_BULWARK=0
+    return 0
+  fi
+  if [ -z "$BULWARK_ADMIN_PASSWORD" ]; then
+    # La del panel, si ya la tiene (Bulwark guarda su hash en el primer
+    # arranque y después ignora la variable).
+    BULWARK_ADMIN_PASSWORD=$(valor_panel MAILWAY_BULWARK_ADMIN_PASSWORD)
+    if [ -n "$BULWARK_ADMIN_PASSWORD" ]; then
+      ok "Se reutiliza la contraseña de administración de Bulwark que ya usa el panel."
+    else
+      BULWARK_ADMIN_PASSWORD=$(aleatorio_hex 24)
+      ok "Contraseña de administración de Bulwark generada (solo la conocen el panel y Bulwark)."
+      olvidar_admin_bulwark
+    fi
+  fi
+  ok "Bulwark activo: lo levanta el perfil «bulwark» y el panel recibe sus variables."
+}
+
+# ¿Existe el volumen y tiene algo dentro? (Se mira desde un contenedor
+# efímero sin red: el volumen es de root.)
+volumen_con_datos() {
+  docker volume inspect "$1" >/dev/null 2>&1 || return 1
+  [ -n "$(docker run --rm --network none -v "$1:/v:ro" "$(imagen_compose "$COMPOSE_MAIL" 'python:')" \
+    find /v -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
+}
+
+# Con una contraseña de administración nueva, el admin.json que guardó Bulwark
+# en su primer arranque (con el hash de la anterior) se retira: si no, Bulwark
+# seguiría con la anterior y el panel no entraría (bulwark_credenciales).
+olvidar_admin_bulwark() {
+  docker volume inspect mailway-bulwark-admin >/dev/null 2>&1 || return 0
+  if docker run --rm --network none -v mailway-bulwark-admin:/a "$(imagen_compose "$COMPOSE_MAIL" 'python:')" \
+    sh -c 'if [ -f /a/admin.json ]; then rm -f /a/admin.json && echo retirado; fi' 2>/dev/null | grep -q retirado; then
+    info "Retirado el admin.json anterior de Bulwark: al arrancar tomará la contraseña nueva."
+  fi
+  return 0
+}
+
+# Bulwark desactivado (o con Stalwart 0.15): fuera sus contenedores, si los
+# hay, sin tocar sus volúmenes.
+retirar_bulwark() {
+  local c hay=0
+  for c in mailway-bulwark mailway-bulwark-gw; do
+    if docker inspect --type container "$c" >/dev/null 2>&1; then hay=1; fi
+  done
+  [ "$hay" = 1 ] || return 0
+  if compose_q --profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw; then
+    ok "Bulwark desactivado: contenedores retirados; sus volúmenes (${BULWARK_VOLUMENES[*]}) y sus secretos se conservan."
+  else
+    aviso "No se pudieron retirar los contenedores de Bulwark. A mano: docker rm -f mailway-bulwark mailway-bulwark-gw"
+  fi
+}
+
+# Espera a que Bulwark y su pasarela estén sanos, si está activo.
+comprobar_bulwark_levantado() {
+  bulwark_activo || return 0
+  if esperar_sano mailway-bulwark 180 && esperar_sano mailway-bulwark-gw 60; then
+    ok "Bulwark en marcha (mailway-bulwark y su pasarela, mailway-bulwark-gw)."
+  else
+    aviso "Bulwark aún no está sano. Revisa: docker logs mailway-bulwark y docker logs mailway-bulwark-gw"
+  fi
+}
+
+# --activar-bulwark y --desactivar-bulwark: el cambio en deploy/.env y, a
+# continuación, la actualización de siempre (--actualizar), que levanta o
+# retira los contenedores y pone o quita las variables del panel. Con la 0.15,
+# activarlo se niega sin cambiar nada.
+cambiar_bulwark() {
+  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
+  tomar_cerrojo_motor
+  MOTOR=$(motor_configurado)
+  if [ "$1" = activar ]; then
+    if [ "$MOTOR" != "$MOTOR_016" ]; then
+      fallo "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: no se ha cambiado nada. Pasa antes a la 0.16 (con vuelta atrás si algo falla) con sudo mailway migrar-motor y después activa Bulwark con sudo mailway bulwark on."
+    fi
+    fijar_en_env MAILWAY_BULWARK 1
+    info "Activando Bulwark (MAILWAY_BULWARK=1 en $ENV_FILE); a continuación se aplica como --actualizar."
+  else
+    fijar_en_env MAILWAY_BULWARK 0
+    info "Desactivando Bulwark (MAILWAY_BULWARK=0 en $ENV_FILE): sus clientes vuelven a Roundcube; sus volúmenes y sus secretos se conservan."
+  fi
+  MOTOR=""
+}
+
+# --estado-bulwark: solo lectura.
+estado_bulwark() {
+  local pedido c estado panel v vols="" fallos=0
+  pedido=$(leer_env MAILWAY_BULWARK)
+  titulo "Bulwark (correo web beta)"
+  if bulwark_activo; then
+    ok "Activo (MAILWAY_BULWARK=1, $(nombre_motor "$MOTOR"))."
+  elif [ "$pedido" = 1 ]; then
+    aviso "MAILWAY_BULWARK=1, pero el motor es $(nombre_motor "$MOTOR"): Bulwark necesita la 0.16."
+    fallos=$((fallos + 1))
+  else
+    info "Desactivado. Para activarlo (con Stalwart 0.16): sudo mailway bulwark on"
+  fi
+  for c in mailway-bulwark mailway-bulwark-gw; do
+    estado=$(estado_contenedor "$c")
+    if bulwark_activo; then
+      if [ "$estado" = healthy ]; then ok "$c: en marcha y sano."; else
+        aviso "$c: $estado. Revisa: docker logs $c"
+        fallos=$((fallos + 1))
+      fi
+    elif [ "$estado" != ausente ]; then
+      aviso "$c: $estado, con Bulwark desactivado. Lo retira sudo mailway update -y --reaplicar."
+    fi
+  done
+  for v in "${BULWARK_VOLUMENES[@]}"; do
+    if docker volume inspect "$v" >/dev/null 2>&1; then vols+=" $v"; fi
+  done
+  if [ -n "$vols" ]; then info "Volúmenes:$vols"; else info "Sin volúmenes de Bulwark."; fi
+  if [ -n "$(leer_env BULWARK_SESSION_SECRET)" ] && [ -n "$(leer_env BULWARK_ADMIN_PASSWORD)" ]; then
+    info "Secretos: en $ENV_FILE (BULWARK_SESSION_SECRET y BULWARK_ADMIN_PASSWORD)."
+  elif bulwark_activo; then
+    aviso "Faltan sus secretos en $ENV_FILE: repite sudo mailway bulwark on."
+    fallos=$((fallos + 1))
+  fi
+  # Qué tiene el panel (solo si las variables están, nunca sus valores).
+  panel=$(contenedor_panel_conocido)
+  if en_marcha "$panel"; then
+    v=$(entorno_contenedor "$panel" | grep -cE '^MAILWAY_BULWARK_(URL|ADMIN_PASSWORD|BACKEND_URL)=.' || true)
+    if bulwark_activo && [ "$v" != 3 ]; then
+      aviso "El panel ($panel) no tiene las tres variables de Bulwark: no lo ofrece. Repite sudo mailway update -y --reaplicar (junto a Skyway, redespliega el panel)."
+      fallos=$((fallos + 1))
+    elif bulwark_activo; then
+      ok "El panel ($panel) tiene las variables de Bulwark."
+    elif [ "$v" != 0 ]; then
+      aviso "El panel ($panel) aún tiene variables de Bulwark: repite sudo mailway update -y --reaplicar."
+    fi
+  else
+    info "El panel ($panel) no está en marcha en este servidor: no se comprueban sus variables."
+  fi
+  return "$fallos"
+}
+
 # ------------------------------------------------------------ contenedores --
 
 levantar_servicios() {
@@ -1359,7 +1864,9 @@ levantar_servicios() {
   fi
   # Primero el motor: el webmail (y el panel) esperan a que esté sano.
   compose_q ${perfiles[@]+"${perfiles[@]}"} up -d --remove-orphans mailway-mail
-  if ! esperar_sano mailway-mail 150; then
+  if [ "$MOTOR" = "$MOTOR_016" ]; then
+    preparar_motor_016
+  elif ! esperar_sano mailway-mail 150; then
     # Núcleos sin IPv6: la configuración por defecto escucha en [::] y
     # Stalwart no abre ningún puerto. Se pasa a IPv4.
     if docker exec mailway-mail sh -c 'grep -qs "Address family not supported" /opt/stalwart/logs/*' 2>/dev/null; then
@@ -1371,20 +1878,155 @@ levantar_servicios() {
       fallo "El motor no arranca. Revisa: docker logs mailway-mail y docker exec mailway-mail ls /opt/stalwart/logs"
     fi
   fi
-  ok "Motor en marcha (mailway-mail)."
+  ok "Motor en marcha (mailway-mail, $(nombre_motor "$MOTOR"))."
   compose_q ${perfiles[@]+"${perfiles[@]}"} up -d --remove-orphans
+  if esperar_sano mailway-mail-gw 60; then
+    ok "Pasarela del motor en marcha (mailway-mail-gw): Traefik llega al motor por ella."
+  else
+    aviso "La pasarela del motor aún no está sana: sin ella, https://$MAIL_HOSTNAME no responde. Revisa: docker logs mailway-mail-gw"
+  fi
   if esperar_sano mailway-webmail 180; then
     ok "Webmail en marcha (mailway-webmail)."
   else
     aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
   fi
+  comprobar_bulwark_levantado
   if [ "$CON_SKYWAY" = 0 ]; then
     if esperar_sano mailway-panel 120; then ok "Panel en marcha (mailway-panel)."; else aviso "El panel aún no está sano. Revisa: docker logs mailway-panel"; fi
   fi
 }
 
+# ------------------------------------------------------ Stalwart 0.16 --
+
+# ¿Responde el motor 0.16 en /healthz/<live|ready>? Desde dentro de su
+# contenedor (la imagen trae curl), sin credenciales.
+#   motor_responde <contenedor> [live|ready]
+motor_responde() {
+  docker exec "$1" curl -fsS -o /dev/null --max-time 5 -H 'X-Forwarded-For: 127.0.0.1' \
+    "http://127.0.0.1:8080/healthz/${2:-live}" >/dev/null 2>&1
+}
+
+# ¿Acepta conexiones el motor en ese puerto? Dentro de su contenedor, sin
+# credenciales: una escucha nueva de la 0.16 (el 587) solo se abre al
+# reiniciarlo, aunque ya figure en sus ajustes.
+#   puerto_abierto_motor <contenedor> <puerto>
+puerto_abierto_motor() {
+  docker exec "$1" bash -c "exec 3<>/dev/tcp/127.0.0.1/$2" >/dev/null 2>&1
+}
+
+# Espera a que el motor 0.16 responda; se rinde antes si su contenedor se para
+# (un arranque que aborta no se arregla esperando).
+#   esperar_motor_016 <contenedor> <segundos> [live|ready]
+esperar_motor_016() {
+  local contenedor=$1 max=$2 punto=${3:-live} t=0
+  while [ "$t" -lt "$max" ]; do
+    if motor_responde "$contenedor" "$punto"; then return 0; fi
+    if ! en_marcha "$contenedor"; then return 1; fi
+    sleep 3
+    t=$((t + 3))
+  done
+  return 1
+}
+
+# Motor 0.16 recién levantado por Compose: si aún no tiene configuración
+# (/etc/stalwart/config.json), es su primer arranque y está en modo
+# «bootstrap» (solo el puerto 8080); se completa y se reinicia. Con ella, solo
+# se espera a que esté sano.
+preparar_motor_016() {
+  esperar_motor_016 mailway-mail 120 live ||
+    fallo "El motor no arranca. Revisa: docker logs mailway-mail"
+  if ! docker exec mailway-mail test -f /etc/stalwart/config.json; then
+    arranque_inicial_016
+  fi
+  if ! { esperar_motor_016 mailway-mail 150 ready && esperar_sano mailway-mail 150; }; then
+    fallo "El motor no arranca. Revisa: docker logs mailway-mail"
+  fi
+}
+
+# Primer arranque de una instalación nueva con Stalwart 0.16, sin asistente:
+# el objeto Bootstrap por JMAP, con el administrador de recuperación
+# (STALWART_RECOVERY_ADMIN, la contraseña de deploy/.env). Nombre del
+# servidor; como dominio por defecto, uno reservado con ese mismo nombre (así
+# ningún dominio de un cliente queda como el del sistema, que el motor no deja
+# borrar); sin certificado ni DKIM propios del motor (el certificado lo lleva
+# el extractor desde Traefik; las claves DKIM de cada dominio, el panel) y el
+# registro de eventos en la salida estándar (docker logs). El motor escribe
+# config.json, pero no se reinicia solo.
+arranque_inicial_016() {
+  local cuerpo detalle
+  info "Primer arranque de Stalwart 0.16: nombre del servidor $MAIL_HOSTNAME y registro en «docker logs mailway-mail»…"
+  docker image inspect "$IMAGEN_CURL" >/dev/null 2>&1 || docker pull -q "$IMAGEN_CURL" >/dev/null
+  cuerpo=$(jmap_cuerpo "[[\"x:Bootstrap/set\",{\"update\":{\"singleton\":{\"serverHostname\":\"$MAIL_HOSTNAME\",\"defaultDomain\":\"$MAIL_HOSTNAME\",\"requestTlsCertificate\":false,\"generateDkimKeys\":false,\"tracer\":{\"@type\":\"Stdout\",\"ansi\":false,\"buffered\":false}}}},\"b\"]]")
+  jmap_motor "$cuerpo"
+  # Si va bien, la respuesta trae la contraseña de una cuenta de
+  # administración que crea el motor (admin@<nombre>): no se muestra ni se
+  # guarda, y la cuenta se retira después (Mailway usa la de recuperación).
+  if [ "$RESP_CODE" != 200 ] || [ -z "$(campo_json '.methodResponses[0][1].updated.singleton // empty | keys | join(",")')" ]; then
+    detalle=$(jmap_error)
+    if [ -z "$detalle" ]; then
+      detalle=$(campo_json '.methodResponses[0][1].notUpdated.singleton // empty | "\(.type)\(if .description then ": \(.description)" else "" end)"')
+    fi
+    RESP_BODY=""
+    if [ "$RESP_CODE" = 401 ]; then
+      fallo "El motor rechaza la contraseña de $ENV_FILE (STALWART_ADMIN_PASSWORD) en su primer arranque."
+    fi
+    fallo "El motor no ha completado su primer arranque (${detalle:-sin detalle}). Si su volumen ya tenía datos de otra instalación, no se toca: revisa docker logs mailway-mail."
+  fi
+  RESP_BODY=""
+  docker restart mailway-mail >/dev/null
+  esperar_motor_016 mailway-mail 150 ready || fallo "El motor no vuelve tras su primer arranque. Revisa: docker logs mailway-mail"
+  ok "Stalwart 0.16 configurado: $MAIL_HOSTNAME, sin certificado ni claves DKIM propios y registro en docker logs."
+  retirar_admin_del_arranque
+}
+
+# El primer arranque crea admin@<nombre del servidor> con rol de
+# administración y una contraseña aleatoria que nadie guarda: una cuenta con
+# todos los permisos que no usa nadie. Se borra (aún vacía), solo si es la
+# única cuenta del motor. Si no se puede, se avisa y se sigue.
+retirar_admin_del_arranque() {
+  local ids
+  jmap_motor "$(jmap_cuerpo '[["x:Account/query",{},"q"],["x:Account/get",{"#ids":{"resultOf":"q","name":"x:Account/query","path":"/ids"},"properties":["emailAddress","roles"]},"g"]]')"
+  ids=$(campo_json --arg a "admin@$MAIL_HOSTNAME" '(.methodResponses[1][1].list // []) as $l | if ($l | length) == 1 then ($l[] | select(.emailAddress == $a and .roles["@type"] == "Admin") | .id) else empty end')
+  if [ -z "$ids" ] || ! id_simple "$ids"; then return 0; fi
+  jmap_motor "$(jmap_cuerpo "[[\"x:Account/set\",{\"destroy\":[\"$ids\"]},\"d\"]]")"
+  if [ -n "$(campo_json --arg i "$ids" '.methodResponses[0][1].destroyed // [] | map(select(. == $i)) | .[0] // empty')" ]; then
+    ok "Retirada la cuenta admin@$MAIL_HOSTNAME que crea el primer arranque (Mailway usa el administrador de recuperación)."
+  else
+    aviso "No se pudo retirar la cuenta admin@$MAIL_HOSTNAME que crea el primer arranque del motor ($(jmap_error)): no tiene uso y nadie conoce su contraseña."
+  fi
+}
+
+# Ajustes del motor 0.16 que dependen del instalador: el certificado. Lo demás
+# (nombre del servidor, X-Forwarded-For, exención de la red interna, envío por
+# 587…) lo aplica el panel con su herramienta en cuanto está en marcha
+# (aplicar_ajustes_mailway). El certificado de IMAP/SMTP es siempre el que
+# Traefik obtiene para el nombre del servidor de correo: el ACME propio de la
+# 0.16 obligaría a darle la gestión automática del DNS de un dominio.
+configurar_motor_016() {
+  if [ -n "$CF_TOKEN" ]; then
+    info "Con Stalwart 0.16 el certificado de IMAP/SMTP es el de Traefik: el token de Cloudflare sirve para el DNS y para el panel."
+  fi
+  if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
+    RESUMEN_CERT="SIN CERTIFICADO: no se encuentra el volumen de certificados de Traefik (TRAEFIK_ACME_VOLUME en deploy/.env)"
+    aviso "No se encontró el volumen de certificados de Traefik: sin él, el motor no tiene certificado para IMAP y SMTP. Indica TRAEFIK_ACME_VOLUME en deploy/.env y repite con --actualizar."
+    return 0
+  fi
+  if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
+    RESUMEN_CERT="SIN CERTIFICADO: sin el Traefik propio (puertos 80/443 ocupados), el motor no tiene de dónde obtenerlo"
+    aviso "Sin el Traefik propio (80/443 ocupados), el motor no tiene certificado para IMAP y SMTP: los programas de correo avisarán. Libera 80/443 y repite con --actualizar (sección 7 de docs/DESPLIEGUE-SKYWAY.md)."
+    return 0
+  fi
+  info "Extrayendo el certificado que obtiene Traefik para $MAIL_HOSTNAME…"
+  CERT_CONFIGURADO=1
+  aplicar_extractor
+}
+
 configurar_motor() {
   titulo "Ajustes del motor"
+  if [ "$MOTOR" = "$MOTOR_016" ]; then
+    configurar_motor_016
+    return 0
+  fi
   docker image inspect "$IMAGEN_CURL" >/dev/null 2>&1 || docker pull -q "$IMAGEN_CURL" >/dev/null
   # Nombre del servidor, confianza en el proxy y exención de la red interna:
   # lo mismo que aplica el panel con «Aplicar ajustes recomendados».
@@ -1624,6 +2266,151 @@ extractor_con_acme() {
     ok "El motor usa su propio ACME: sin extractor del certificado y con el volumen de certificados limpio."
   else
     aviso "No se pudo limpiar el volumen de certificados del motor. A mano: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
+  fi
+}
+
+# --------------------------------------------- herramienta del motor (panel) --
+#
+# El panel trae una herramienta de terminal para el motor (dentro de su
+# contenedor y como el usuario «node»): node server/dist/tools/motor.js
+# <orden>. Una línea JSON por la salida estándar y el texto para las personas
+# por la de errores; código 0 bien, 1 problema (JSON con ok:false y error) y
+# 2 uso incorrecto. El instalador la usa para lo que sabe el panel y no el
+# motor: los ajustes de Mailway en la 0.16 (provisionar) y, al migrar, el
+# modo mantenimiento, las contraseñas guardadas y las tareas de después.
+
+HM_SALIDA=""
+
+# Contenedor del panel según deploy/.env: el autónomo es mailway-panel; junto
+# a Skyway, el de MAILWAY_PANEL_INTERNAL_URL (o skyway-mailway-panel).
+contenedor_panel_conocido() {
+  local interna re='^http://(skyway-[a-z0-9][a-z0-9_.-]*):[0-9]{1,5}$'
+  if [ "$CON_SKYWAY" = 0 ]; then
+    printf 'mailway-panel'
+    return 0
+  fi
+  interna=$(leer_env MAILWAY_PANEL_INTERNAL_URL)
+  if [[ $interna =~ $re ]]; then printf '%s' "${BASH_REMATCH[1]}"; else printf 'skyway-mailway-panel'; fi
+}
+
+panel_tiene_herramienta_motor() { docker exec "$1" test -f server/dist/tools/motor.js 2>/dev/null; }
+
+# Ejecuta la herramienta y deja su línea JSON en HM_SALIDA. Su texto (salida
+# de errores) se muestra tal cual, como información; las líneas «Aviso:» o
+# «Error:», como avisos.
+#   herramienta_motor <contenedor del panel> <segundos máximos> <orden> [opciones]
+herramienta_motor() {
+  local panel=$1 espera=$2 codigo=0 linea
+  shift 2
+  preparar_errores_herramienta
+  HM_SALIDA=$(timeout "$espera" docker exec -i -u node "$panel" node server/dist/tools/motor.js "$@" </dev/null 2>"$ERR_TMP") || codigo=$?
+  while IFS= read -r linea || [ -n "$linea" ]; do
+    case "$linea" in
+      '') ;;
+      Aviso:* | Error:*) aviso "${linea#*: }" ;;
+      *) info "$linea" ;;
+    esac
+  done <"$ERR_TMP"
+  rm -f "$ERR_TMP"
+  ERR_TMP=""
+  HM_SALIDA=$(printf '%s\n' "$HM_SALIDA" | sed -n '$p')
+  if [ "$codigo" = 124 ]; then aviso "La herramienta del motor del panel no ha terminado en $espera segundos ($1)."; fi
+  return "$codigo"
+}
+
+# Campo de la última salida de la herramienta (vacío si no es JSON).
+hm_campo() { printf '%s' "$HM_SALIDA" | jqr -r "$@" 2>/dev/null || true; }
+
+# Hora (HH:MM) de una marca de tiempo del panel, en milisegundos; «?» si no
+# lo es.
+hora_de_ms() {
+  case "$1" in
+    '' | *[!0-9]*) printf '?' ;;
+    *) date -d "@$(($1 / 1000))" '+%H:%M' 2>/dev/null || printf '?' ;;
+  esac
+}
+
+# Explica por qué «provisionar» no ha dejado todo aplicado.
+explicar_provisionar() {
+  local error errores faltan fallidas
+  error=$(hm_campo '.error // empty')
+  error=${error%.}
+  errores=$(hm_campo '(.errores // []) | map(if type == "string" then . else tostring end) | join("; ")')
+  faltan=$(hm_campo '[(.faltan // {}) | to_entries[] | select((.value | length) > 0) | "\(.key): \(.value | join(", "))"] | join("; ")')
+  fallidas=$(hm_campo '.suspensiones.fallidas // [] | if type == "array" then join(", ") elif . == 0 then empty else tostring end')
+  aviso "El panel no ha dejado el motor con los ajustes de Mailway${error:+: $error}."
+  # El error ya dice el primero: la lista, solo si hay más.
+  if [ -n "$errores" ] && [ "${errores%.}" != "$error" ]; then aviso "Errores: ${errores:0:600}"; fi
+  if [ -n "$faltan" ]; then aviso "Faltan en el motor: ${faltan:0:600}"; fi
+  if [ -n "$fallidas" ]; then aviso "Suspensiones sin reaplicar: ${fallidas:0:600}."; fi
+}
+
+# Ajustes de Mailway en el motor 0.16 con «motor.js provisionar»: nombre del
+# servidor, X-Forwarded-For, exención de la red interna, límite de contraseñas
+# de aplicación, envío por 587 con STARTTLS y sin autoservicio; además
+# reaplica las suspensiones y comprueba que existe en el motor todo lo que el
+# panel conoce. Los sockets nuevos (el 587) solo se abren al arrancar: si la
+# herramienta lo pide (restartRequired), se reinicia el motor y se repite, y
+# la segunda vez ya no debe pedirlo. Devuelve 1 (y lo explica) si no queda
+# todo aplicado.
+#   provisionar_motor <contenedor del panel> <contenedor del motor>
+provisionar_motor() {
+  local panel=$1 motor=$2 intento codigo reinicio
+  for intento in 1 2; do
+    codigo=0
+    herramienta_motor "$panel" 900 provisionar || codigo=$?
+    if [ "$codigo" != 0 ] || [ "$(hm_campo '.ok')" != true ]; then
+      explicar_provisionar
+      return 1
+    fi
+    reinicio=$(hm_campo '(.restartRequired // []) | map(tostring) | join(", ")')
+    # Una ejecución anterior pudo crear el 587 sin llegar a reiniciar el
+    # motor: la herramienta ya no lo pide, pero el puerto sigue cerrado.
+    if [ -z "$reinicio" ] && ! puerto_abierto_motor "$motor" 587; then
+      reinicio="el puerto 587 aún no escucha"
+    fi
+    if [ -z "$reinicio" ]; then
+      ok "Ajustes de Mailway aplicados en el motor (suspensiones reaplicadas: $(hm_campo '.suspensiones.reaplicadas // 0'))."
+      return 0
+    fi
+    if [ "$intento" = 2 ]; then
+      aviso "El motor sigue pidiendo un reinicio después de reiniciarlo (${reinicio:0:300})."
+      return 1
+    fi
+    info "Se reinicia el motor para que abra lo nuevo y se repite."
+    docker restart "$motor" >/dev/null
+    if ! esperar_motor_016 "$motor" 150 ready; then
+      aviso "El motor no vuelve después de reiniciarlo. Revisa: docker logs $motor"
+      return 1
+    fi
+  done
+}
+
+# Paso de la instalación y de --actualizar con Stalwart 0.16: con el panel en
+# marcha, los ajustes de Mailway en el motor. Nunca interrumpe la instalación:
+# lo que quede pendiente va al resumen, --comprobar lo señala y repetir
+# --actualizar lo completa (es idempotente).
+#   aplicar_ajustes_mailway <contenedor del panel>
+aplicar_ajustes_mailway() {
+  local panel=$1
+  titulo "Ajustes de Mailway en el motor"
+  if [ -z "$panel" ] || ! en_marcha "$panel" || ! esperar_sano "$panel" 180; then
+    RESUMEN_AJUSTES="pendientes: el panel no está en marcha (repite con sudo mailway update -y --reaplicar)"
+    aviso "El panel${panel:+ ($panel)} no está en marcha: el motor sigue sin los ajustes de Mailway (envío por 587, exención de la red interna…). Repite cuando lo esté: sudo mailway update -y --reaplicar"
+    return 0
+  fi
+  if ! panel_tiene_herramienta_motor "$panel"; then
+    RESUMEN_AJUSTES="pendientes: el panel desplegado no tiene la herramienta del motor"
+    aviso "El panel desplegado ($panel) no tiene la herramienta del motor (server/dist/tools/motor.js): despliega la versión actual de Mailway y repite con sudo mailway update -y --reaplicar."
+    return 0
+  fi
+  if provisionar_motor "$panel" mailway-mail; then
+    RESUMEN_AJUSTES="aplicados por el panel"
+  else
+    # Lo más común: el panel aún no ha hecho su puesta en marcha (la
+    # instalación autónoma la hace en el navegador) y su herramienta todavía
+    # no tiene motor.
+    RESUMEN_AJUSTES="INCOMPLETOS (detalle arriba): completa la puesta en marcha del panel si falta y repite con sudo mailway update -y --reaplicar"
   fi
 }
 
@@ -2104,6 +2891,16 @@ desplegar_en_skyway() {
     "MAILWAY_PANEL_URL=https://$PANEL_HOSTNAME" \
     "MAILWAY_ENGINE_TRUSTED_NETWORK=$INTERNAL_SUBNET")
   [ -n "$variables" ] || fallo "No se pudieron preparar las variables del panel."
+  # Bulwark: sus tres variables mientras está activo; desactivado, se quitan
+  # (el panel deja de ofrecerlo y sus clientes vuelven a Roundcube).
+  local bulwark=false
+  if bulwark_activo; then
+    bulwark=true
+    variables=$(printf '%s\n%s' "$variables" "$(env_json "MAILWAY_BULWARK_URL=$BULWARK_URL_PANEL" \
+      "MAILWAY_BULWARK_ADMIN_PASSWORD=${BULWARK_ADMIN_PASSWORD:-$(leer_env BULWARK_ADMIN_PASSWORD)}" \
+      "MAILWAY_BULWARK_BACKEND_URL=$BULWARK_DESTINO_TRAEFIK")" | jqr -s -c 'add' 2>/dev/null || true)
+    [ -n "$variables" ] || fallo "No se pudieron preparar las variables de Bulwark para el panel."
+  fi
 
   local despliegue_inicial
   if [ -z "$servicio" ]; then
@@ -2134,9 +2931,10 @@ desplegar_en_skyway() {
     # anterior a la 1.0 los guarda en /data y en su base de datos) no se
     # añaden. Con otra clave perdería sus secretos y sus tokens; con otro
     # token, quien consulta sus rutas de Traefik dejaría de tener acceso.
-    fusion=$(printf '%s\n%s' "$RESP_BODY" "$variables" | jqr -s -c --argjson retirar "$retirar" \
+    fusion=$(printf '%s\n%s' "$RESP_BODY" "$variables" | jqr -s -c --argjson retirar "$retirar" --argjson bulwark "$bulwark" \
       '(.[0].vars // {}) as $antes | {vars: (reduce ("MAILWAY_SECRET", "MAILWAY_TRAEFIK_TOKEN") as $k
-        ($antes + .[1] | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end;
+        ($antes + .[1] | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end
+          | if $bulwark then . else del(.MAILWAY_BULWARK_URL, .MAILWAY_BULWARK_ADMIN_PASSWORD, .MAILWAY_BULWARK_BACKEND_URL) end;
           if ($antes | has($k)) then .[$k] = $antes[$k] else del(.[$k]) end))}' \
       2>/dev/null || true)
     [ -n "$fusion" ] || fallo "Respuesta inesperada de Skyway al leer las variables del panel."
@@ -2160,6 +2958,11 @@ desplegar_en_skyway() {
     fi
     if [ "$retirar" = true ] && [ -n "$(campo_json '.vars.MAILWAY_SMTP_ALLOW_SELF_SIGNED // empty')" ]; then
       info "Se retira MAILWAY_SMTP_ALLOW_SELF_SIGNED: el motor ya tiene certificado y el panel lo verifica."
+    fi
+    if [ "$bulwark" = false ] && [ -n "$(campo_json '.vars | keys[] | select(startswith("MAILWAY_BULWARK_"))')" ]; then
+      info "Se retiran las variables de Bulwark del panel (desactivado): sus clientes vuelven a Roundcube."
+    elif [ "$bulwark" = true ]; then
+      info "El panel recibe las variables de Bulwark (MAILWAY_BULWARK_URL, MAILWAY_BULWARK_ADMIN_PASSWORD y MAILWAY_BULWARK_BACKEND_URL)."
     fi
     sky_api PUT "/api/services/$servicio_id/env" "$fusion"
     [ "$RESP_CODE" = "200" ] || fallo "No se pudieron actualizar las variables del panel: $(sky_error)."
@@ -2814,8 +3617,14 @@ resumen_administrador() {
 resumen() {
   titulo "Resumen"
   local copia volumen paso=0
-  volumen=${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
-  copia="docker stop mailway-mail && docker run --rm -v $volumen:/origen:ro -v /root/copias:/destino alpine tar czf /destino/mailway-correo-\$(date +%F).tar.gz -C /origen . ; docker start mailway-mail"
+  if [ "$MOTOR" = "$MOTOR_016" ]; then
+    # La configuración (config.json) y los datos van en dos volúmenes: los dos
+    # en la misma copia, con el motor parado.
+    copia="docker stop mailway-mail && docker run --rm -v $(volumen_016_etc):/origen/etc:ro -v $(volumen_016_datos):/origen/datos:ro -v /root/copias:/destino alpine tar czf /destino/mailway-correo-\$(date +%F).tar.gz -C /origen . ; docker start mailway-mail"
+  else
+    volumen=$(volumen_015)
+    copia="docker stop mailway-mail && docker run --rm -v $volumen:/origen:ro -v /root/copias:/destino alpine tar czf /destino/mailway-correo-\$(date +%F).tar.gz -C /origen . ; docker start mailway-mail"
+  fi
   printf '\n'
   # Con la cuenta de administración ya creada, el enlace de puesta en marcha
   # (y su token) no sirven de nada: no se muestran.
@@ -2825,7 +3634,13 @@ resumen() {
     info "Panel:               https://$PANEL_HOSTNAME/setup?token=$MAILWAY_SETUP_TOKEN"
   fi
   info "Webmail:             https://$WEBMAIL_HOSTNAME"
-  info "Web del motor:       https://$MAIL_HOSTNAME (usuario admin; contraseña en deploy/.env)"
+  if [ "$MOTOR" = "$MOTOR_016" ]; then
+    # En el nombre público, Traefik solo deja pasar lo que usan los programas
+    # de correo: la administración y el autoservicio del motor no se publican.
+    info "Motor de correo:     Stalwart 0.16; se administra desde el panel (su web no se publica en $MAIL_HOSTNAME)"
+  else
+    info "Web del motor:       https://$MAIL_HOSTNAME (usuario admin; contraseña en deploy/.env)"
+  fi
   if [ -z "$EMPAREJADO_ADMIN_EMAIL" ]; then info "Token de puesta en marcha: $MAILWAY_SETUP_TOKEN"; fi
   if [ "$CON_SKYWAY" = 1 ]; then
     info "Panel en Skyway:     $RESUMEN_SKYWAY"
@@ -2840,7 +3655,23 @@ resumen() {
   info "DNS inverso (PTR):   $RESUMEN_PTR"
   info "Puerto 25 de salida: $RESUMEN_P25"
   info "Certificado IMAP/SMTP: $RESUMEN_CERT"
+  if [ "$MOTOR" = "$MOTOR_016" ] && [ -n "$RESUMEN_AJUSTES" ]; then info "Ajustes de Mailway en el motor: $RESUMEN_AJUSTES"; fi
+  if bulwark_activo; then
+    info "Bulwark (beta):      activo; cada cliente lo elige en el panel (Roundcube sigue siendo el predeterminado)"
+    if [ "$CON_SKYWAY" = 1 ] && [ -z "$PANEL_CONTENEDOR" ]; then
+      # Sin el despliegue del panel, nadie le ha dado sus variables.
+      info "                     el panel necesita sus tres variables (sin ellas no lo ofrece): MAILWAY_BULWARK_URL y"
+      info "                     MAILWAY_BULWARK_BACKEND_URL de deploy/.env, y MAILWAY_BULWARK_ADMIN_PASSWORD = BULWARK_ADMIN_PASSWORD"
+    fi
+  elif [ "$MOTOR" = "$MOTOR_016" ]; then
+    info "Bulwark (beta):      desactivado (sudo mailway bulwark on para ofrecerlo a los clientes)"
+  fi
   printf '\n'
+  if [ "$MOTOR" = "$MOTOR_015" ]; then
+    info "Motor de correo: Stalwart 0.15, que deja de recibir parches de seguridad el $FIN_SOPORTE_015_TEXTO."
+    info "  Para pasar a la 0.16 (unos minutos sin correo; vuelve atrás sola si algo falla): sudo mailway migrar-motor"
+    printf '\n'
+  fi
   if [ "$CERT_CONFIGURADO" = 0 ]; then
     info "Mientras el motor no tenga un certificado válido para $MAIL_HOSTNAME, la API de envío del panel"
     info "(que lo verifica) y los programas de correo mostrarán errores de certificado."
@@ -2849,8 +3680,15 @@ resumen() {
   info "Copia de seguridad del correo (detiene el motor unos segundos: copiar su base de datos en marcha"
   info "puede dejarla incoherente):"
   info "  $copia"
+  if bulwark_activo || docker volume inspect mailway-bulwark-admin >/dev/null 2>&1; then
+    # Ajustes de los usuarios (cifrados con BULWARK_SESSION_SECRET, que está
+    # en deploy/.env: guárdalo con la copia), administración y marca.
+    info "Copia de Bulwark (sus tres volúmenes; detiene Bulwark unos segundos):"
+    info "  docker stop mailway-bulwark; docker run --rm -v mailway-bulwark-ajustes:/origen/ajustes:ro -v mailway-bulwark-admin:/origen/admin:ro -v mailway-bulwark-estado:/origen/estado:ro -v /root/copias:/destino alpine tar czf /destino/mailway-bulwark-\$(date +%F).tar.gz -C /origen . ; docker start mailway-bulwark"
+  fi
   printf '\n'
   info "Actualizar Mailway (git pull y reaplicar):        mailway update -y"
+  info "Parches probados cada noche, con vuelta atrás:     sudo mailway auto-update on"
   info "Diagnóstico en cualquier momento (no cambia nada): mailway comprobar"
   info "Prueba de acceso a un buzón desde el webmail:      mailway probar-acceso"
   printf '\n'
@@ -2881,6 +3719,845 @@ resumen() {
   fi
 }
 
+# ---------------------------------------- cambio de motor (0.15 → 0.16) --
+#
+# --migrar-motor pasa un servidor de Stalwart 0.15 a la 0.16 con el
+# procedimiento oficial de Stalwart (UPGRADING/v0_16.md) adaptado a Mailway:
+# una ventana corta sin correo y sin tocar nunca el volumen de la 0.15, que es
+# a la vez la copia de seguridad y la vuelta atrás.
+#   1. Comprobaciones, sin cambiar nada: el panel y su herramienta del motor,
+#      la 0.15 sana y su contraseña (una sola petición), la cola de salida, el
+#      espacio en disco, las imágenes, el script oficial (con su sha256) y el
+#      compose con la 0.16.
+#   2. Panel en mantenimiento (no cambia nada del motor mientras dura) y copia
+#      en el panel del hash de la contraseña de cada buzón: la 0.16 ya no los
+#      devuelve y el panel las comprueba en local.
+#   3. Volcado y conversión con el script oficial, con la 0.15 aún en marcha.
+#   4. Ventana sin correo: se paran el webmail, el extractor y la 0.15, y sus
+#      datos se copian a dos volúmenes nuevos, con fecha, para la 0.16.
+#   5. La 0.16 en modo recuperación (solo el 8080, sin puertos públicos):
+#      «stalwart-cli apply» del plan, exigiendo 0 fallos, y su registro de
+#      eventos en la salida estándar.
+#   6. Primer arranque normal, aún sin puertos públicos: el panel aplica los
+#      ajustes de Mailway (también las suspensiones) y, si hace falta, se
+#      reinicia y se repite; el extractor pone el certificado y se comprueba
+#      todo: dominios, buzones, alias, DKIM, escuchas y el certificado
+#      servido en 993, 465 y 587.
+#   7. El motor definitivo con los puertos públicos (MAILWAY_MOTOR=stalwart-0.16
+#      en deploy/.env), el webmail y el extractor, y la comprobación de
+#      --comprobar.
+#   8. Tareas del panel tras migrar y fin del mantenimiento.
+# Cualquier fallo antes de que pase la comprobación del paso 7 vuelve solo a la
+# 0.15 (volver_a_015): su volumen está como estaba. Lo de la 0.16 se queda en
+# sus volúmenes con fecha, para revisarlo, y una migración nueva nunca los
+# reutiliza: crea otros.
+#
+# En modo recuperación no se aplica ningún ajuste: si allí se crea una escucha,
+# el registro de eventos o los ajustes de autenticación, el primer arranque
+# normal ya no crea los suyos por defecto (se queda sin escuchar en 8080, 25,
+# 465 ni 993, o sin los roles de los usuarios). Por eso los ajustes de Mailway
+# llegan con el motor ya arrancado, en el paso 6, salvo el registro de
+# eventos, que se crea a propósito para que no se cree el de /var/log.
+
+# Script oficial de conversión de Stalwart, fijado al commit de la v0.16.25 y
+# comprobado con su sha256. Su licencia (AGPL-3.0 o SEL) no deja incluirlo en
+# el repositorio: se descarga al migrar. Sus dependencias (requests y las
+# suyas) van igual: ruedas de Python puro, fijadas y con su sha256, que el
+# ayudante importa directamente del .whl (sin pip ni red dentro del
+# contenedor). Formato: «URL sha256».
+MIGRAR016_SCRIPT="https://raw.githubusercontent.com/stalwartlabs/stalwart/3f657330c0f49a015a3a372fb59669b5cccbca6d/resources/scripts/migrate_v016.py ebc7c2cc8b3d9378476523ee5fd76c39b1bc0e788a890ff17b507b03c0757458"
+MIGRAR016_DEPENDENCIAS=(
+  "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl 2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+  "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl 0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+  "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl 62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+  "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+  "https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl 6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6"
+)
+
+# Contenedores temporales de la migración: comparten con el motor la IP fija
+# y el alias mailway-mail en la red interna (y el alias en la de Traefik),
+# para que el panel, el extractor y las herramientas lo encuentren donde
+# siempre, pero no publican ningún puerto en el host.
+CONTENEDOR_RECUPERACION="mailway-mail-016-recuperacion"
+CONTENEDOR_PREVIO="mailway-mail-016-previo"
+
+# Estado de la migración en curso, para la vuelta atrás (ver al_salir):
+#   ""         sin migración, o terminada;
+#   preparada  aún no se ha parado nada (basta con quitar el mantenimiento);
+#   parado     la 0.15 está parada: hay que volver a ella;
+#   abierto    la 0.16 ya tiene los puertos públicos: también hay que volver.
+MIG_FASE=""
+MIG_SELLO=""
+MIG_DIR=""
+MIG_REGISTRO=""
+MIG_ETC=""
+MIG_DATOS=""
+MIG_ENV_ANTES=""
+MIG_ENV_CONSERVAR=0
+MIG_EXTRACTOR=0
+MIG_MANTENIMIENTO=0
+MIG_CERT_015=0
+# Con 1, la comprobación final de la migración no cuenta como incidencia el
+# certificado de IMAP y SMTP: la 0.15 tampoco servía uno válido, y migrar no
+# lo empeora (lo dice igualmente).
+TOLERAR_CERTIFICADO=0
+MIG_HORA_PARADA=""
+MIG_HORA_APERTURA=""
+PANEL_MOTOR=""
+RED_BORDE=""
+IMAGEN_016=""
+IMAGEN_CLI=""
+IMAGEN_PYTHON=""
+
+# Lo que necesitan las órdenes del motor, leído de deploy/.env sin preguntar.
+cargar_instalacion_motor() {
+  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
+  tiene docker || fallo "Falta Docker."
+  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  docker compose version >/dev/null 2>&1 || fallo "Falta Docker Compose v2 («docker compose»)."
+  case "$(leer_env MAILWAY_INSTALACION)" in
+    autonoma) CON_SKYWAY=0 ;;
+    '') if docker inspect --type container mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
+  esac
+  MAIL_HOSTNAME=$(leer_env MAIL_HOSTNAME)
+  host_valido "$MAIL_HOSTNAME" || fallo "MAIL_HOSTNAME no es válido en $ENV_FILE."
+  STALWART_ADMIN_PASSWORD=$(leer_env STALWART_ADMIN_PASSWORD)
+  [ -n "$STALWART_ADMIN_PASSWORD" ] || fallo "$ENV_FILE no guarda STALWART_ADMIN_PASSWORD, la contraseña del motor."
+  INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
+  INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
+  MAIL_INTERNAL_IP=$(leer_env MAILWAY_MAIL_INTERNAL_IP)
+  MAIL_INTERNAL_IP=${MAIL_INTERNAL_IP:-10.203.53.10}
+  TRAEFIK_ACME_VOLUME=$(leer_env TRAEFIK_ACME_VOLUME)
+  MAILWAY_MAIL_VOLUME=$(leer_env MAILWAY_MAIL_VOLUME)
+  MAILWAY_STALWART_ETC_VOLUME=$(leer_env MAILWAY_STALWART_ETC_VOLUME)
+  MAILWAY_STALWART_DATA_VOLUME=$(leer_env MAILWAY_STALWART_DATA_VOLUME)
+  MAILWAY_MOTOR_MIGRADO=$(leer_env MAILWAY_MOTOR_MIGRADO)
+  MOTOR=$(motor_configurado)
+  PANEL_MOTOR=$(contenedor_panel_conocido)
+  if [ "$CON_SKYWAY" = 1 ]; then
+    RED_BORDE=skyway-edge
+    USAR_PROXY_PROPIO=0
+  else
+    RED_BORDE=mailway-edge
+    USAR_PROXY_PROPIO=0
+    if docker inspect --type container mailway-proxy >/dev/null 2>&1; then USAR_PROXY_PROPIO=1; fi
+  fi
+  IMAGEN_016=$(imagen_compose "$COMPOSE_MOTOR_016" 'stalwartlabs/stalwart:')
+  IMAGEN_CLI=$(imagen_compose "$COMPOSE_MOTOR_016" 'stalwartlabs/cli:')
+  IMAGEN_PYTHON=$(imagen_compose "$COMPOSE_MAIL" 'python:')
+  if [ -z "$IMAGEN_016" ] || [ -z "$IMAGEN_CLI" ] || [ -z "$IMAGEN_PYTHON" ]; then
+    fallo "No se encuentran las imágenes del motor 0.16, de su CLI o de Python en los compose de deploy/."
+  fi
+}
+
+# La misma cerradura que «mailway update»: ni la actualización automática ni
+# otra orden del motor pueden cruzarse con esta. Sin flock, se sigue sin ella.
+tomar_cerrojo_motor() {
+  tiene flock || return 0
+  { exec 9>>"$DEPLOY_DIR/.actualizacion.lock"; } 2>/dev/null || return 0
+  flock -n 9 || fallo "Hay una actualización de Mailway u otra orden del motor en curso: espera a que termine y vuelve a intentarlo."
+}
+
+# Carpeta de trabajo (permisos 700) y registro de la orden: todo lo que se
+# muestra va también al fichero. Nada de lo que se muestra lleva secretos; el
+# volcado y el plan sí, y se quedan en la carpeta con permisos 600 solo
+# mientras hacen falta (ver limpiar_trabajo_migracion).
+#   preparar_registro_motor <nombre de la orden>
+preparar_registro_motor() {
+  local base=${MAILWAY_MIGRACION_DIR:-$DEPLOY_DIR/.migracion-motor} umask_previa
+  umask_previa=$(umask)
+  umask 077
+  mkdir -p "$base" || fallo "No se puede crear la carpeta de trabajo $base."
+  chmod 700 "$base"
+  MIG_SELLO=$(date -u +%Y%m%d-%H%M%S)
+  MIG_DIR="$base/$1-$MIG_SELLO"
+  mkdir "$MIG_DIR" || fallo "No se puede crear la carpeta de trabajo $MIG_DIR."
+  umask "$umask_previa"
+  MIG_REGISTRO="$MIG_DIR/registro.log"
+  # Si la terminal desaparece (una sesión SSH que se corta), tee sigue
+  # escribiendo el registro en lugar de terminar y llevarse la orden con él.
+  if tee --output-error=warn </dev/null >/dev/null 2>&1; then
+    exec > >(tee -a --output-error=warn "$MIG_REGISTRO") 2>&1
+  else
+    exec > >(tee -a "$MIG_REGISTRO") 2>&1
+  fi
+  # Sin colores: el registro se lee después con cualquier editor.
+  C_TIT=""
+  C_OK=""
+  C_AV=""
+  C_ER=""
+  C_0=""
+  info "Registro: $MIG_REGISTRO"
+}
+
+# Borra de la carpeta de trabajo lo que lleva secretos (volcado, plan, copia de
+# deploy/.env y dependencias): se queda el registro, el resumen y lo que el
+# script no pudo migrar. MAILWAY_MIGRACION_CONSERVAR=1 lo deja todo.
+limpiar_trabajo_migracion() {
+  [ -n "$MIG_DIR" ] && [ -d "$MIG_DIR" ] || return 0
+  if [ "${MAILWAY_MIGRACION_CONSERVAR:-0}" = 1 ]; then
+    aviso "Se conservan en $MIG_DIR el volcado y el plan, con contraseñas cifradas y claves DKIM: bórralos cuando ya no hagan falta."
+    return 0
+  fi
+  rm -rf "$MIG_DIR/dependencias"
+  rm -f "$MIG_DIR/settings.json" "$MIG_DIR/principals.json" "$MIG_DIR/export.json" "$MIG_DIR/migrate_v016.py"
+  # La copia de deploy/.env se queda si la vuelta atrás no pudo restaurarla.
+  if [ "$MIG_ENV_CONSERVAR" = 0 ]; then rm -f "$MIG_DIR/env-antes"; fi
+}
+
+# Ayudante de la migración (deploy/motor/migracion.py) en un contenedor
+# efímero con la imagen de Python de los compose: en la red interna, sin
+# capacidades y con todo en solo lectura salvo la carpeta de trabajo. La
+# contraseña del motor va por su entrada estándar. Su línea JSON queda en
+# HM_SALIDA (se lee con hm_campo) y su texto (también el del script oficial)
+# se muestra como información. Corre con el mismo usuario que la orden: la
+# carpeta de trabajo es suya (700, ficheros 600) y, sin capacidades, ni el
+# root del contenedor puede leerla si no es su dueño (con sudo, los dos son
+# root; con un usuario del grupo docker, como en la CI, no).
+#   ayudante <orden> [opciones]
+ayudante() {
+  local codigo=0 linea
+  local -a extra=()
+  if [ -n "${MAILWAY_TLS_CA_FILE:-}" ]; then extra=(-v "$MAILWAY_TLS_CA_FILE:/prueba/ca.pem:ro"); fi
+  preparar_errores_herramienta
+  HM_SALIDA=$(printf '%s\n' "$STALWART_ADMIN_PASSWORD" | docker run --rm -i --network mailway-internal \
+    --read-only --tmpfs /tmp:size=64m --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" \
+    -v "$MIG_DIR:/trabajo" -v "$DEPLOY_DIR/motor:/mailway:ro" ${extra[@]+"${extra[@]}"} \
+    "$IMAGEN_PYTHON" python -I -B /mailway/migracion.py "$@" 2>"$ERR_TMP") || codigo=$?
+  while IFS= read -r linea || [ -n "$linea" ]; do
+    if [ -n "$linea" ]; then info "${linea#Aviso: }"; fi
+  done <"$ERR_TMP"
+  rm -f "$ERR_TMP"
+  ERR_TMP=""
+  HM_SALIDA=$(printf '%s\n' "$HM_SALIDA" | sed -n '$p')
+  return "$codigo"
+}
+
+# Descarga una URL fijada y comprueba su sha256 antes de dejarla en su sitio.
+#   descargar_verificado <url> <sha256> <destino>
+descargar_verificado() {
+  local suma
+  if ! curl -fsSL --max-time 180 -o "$3.parcial" "$1"; then
+    rm -f "$3.parcial"
+    fallo "No se pudo descargar $1. Comprueba la conexión del servidor y vuelve a intentarlo."
+  fi
+  suma=$(sha256sum "$3.parcial" | cut -d' ' -f1)
+  if [ "$suma" != "$2" ]; then
+    rm -f "$3.parcial"
+    fallo "$1 no es el fichero esperado (sha256 $suma, se esperaba $2): no se usa."
+  fi
+  mv "$3.parcial" "$3"
+}
+
+# Últimas líneas del registro de un motor, sin colores (no llevan secretos).
+mostrar_registro_motor() {
+  local linea
+  while IFS= read -r linea; do
+    info "  $linea"
+  done < <(docker logs --tail "${2:-20}" "$1" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-300 || true)
+}
+
+# Con MAILWAY_TLS_CA_FILE (solo pruebas), el ayudante verifica también contra
+# esa CA (la monta en /prueba/ca.pem).
+CA_PRUEBAS=()
+
+comprobaciones_migracion() {
+  titulo "Comprobaciones previas (no cambian nada)"
+  if [ -n "${MAILWAY_TLS_CA_FILE:-}" ]; then CA_PRUEBAS=(--ca /prueba/ca.pem); fi
+  local cmd cola datos libre necesario linea imagen dep url suma
+  local maximo=${MAILWAY_MIGRACION_COLA_MAX:-50}
+  for cmd in curl sha256sum timeout; do
+    tiene "$cmd" || fallo "Falta $cmd en el servidor."
+  done
+  case "$maximo" in '' | *[!0-9]*) fallo "MAILWAY_MIGRACION_COLA_MAX debe ser un número de mensajes." ;; esac
+
+  # Motor 0.15 en marcha y sano, y su contraseña: UNA sola petición
+  # autenticada (cada contraseña incorrecta cuenta para el bloqueo
+  # automático), la de la cola de salida, que hace falta igualmente.
+  case "$(docker inspect --type container -f '{{.Config.Image}}' mailway-mail 2>/dev/null || true)" in
+    *stalwart:v0.15*) ;;
+    *) fallo "El contenedor mailway-mail no ejecuta Stalwart 0.15: no hay nada que migrar (o está a medias; revisa sudo mailway comprobar)." ;;
+  esac
+  [ "$(estado_contenedor mailway-mail)" = healthy ] ||
+    fallo "El motor 0.15 no está en marcha y sano: arréglalo antes de migrar (sudo mailway comprobar)."
+  docker image inspect "$IMAGEN_CURL" >/dev/null 2>&1 || docker pull -q "$IMAGEN_CURL" >/dev/null ||
+    fallo "No se pudo descargar la imagen $IMAGEN_CURL."
+  RESP_BODY=$(motor_api GET '/api/queue/messages?page=1&limit=1&values=1' 2>/dev/null || true)
+  cola=$(campo_json '.data.total // empty')
+  if [ -z "$cola" ]; then
+    if printf '%s' "$RESP_BODY" | grep -Eq '"status": *40[13]'; then
+      fallo "El motor 0.15 rechaza la contraseña de $ENV_FILE (STALWART_ADMIN_PASSWORD). No se reintenta: cada intento cuenta para su bloqueo automático."
+    fi
+    fallo "La gestión del motor 0.15 no responde por la red interna. Revisa: docker logs mailway-mail"
+  fi
+  RESP_BODY=""
+  ok "Stalwart 0.15 en marcha y sano; la contraseña de $ENV_FILE es la vigente."
+  if [ "$cola" -gt "$maximo" ]; then
+    fallo "Hay $cola mensajes en la cola de salida: suele ser un problema de entrega que conviene resolver antes (Resumen → Tu servicio en el panel). Pasan a la 0.16, pero para migrar igualmente: MAILWAY_MIGRACION_COLA_MAX=$cola."
+  elif [ "$cola" -gt 0 ]; then
+    info "Hay $cola mensajes en la cola de salida: pasan a la 0.16, que los sigue reintentando."
+  else
+    ok "Cola de salida vacía."
+  fi
+
+  # El panel y su herramienta del motor.
+  en_marcha "$PANEL_MOTOR" || fallo "El panel ($PANEL_MOTOR) no está en marcha: la migración lo necesita (mantenimiento, contraseñas y ajustes de la 0.16)."
+  panel_tiene_herramienta_motor "$PANEL_MOTOR" ||
+    fallo "El panel desplegado ($PANEL_MOTOR) no tiene la herramienta del motor (server/dist/tools/motor.js): despliega antes la versión actual de Mailway (sudo mailway update -y)."
+  herramienta_motor "$PANEL_MOTOR" 120 estado || fallo "La herramienta del motor del panel ha fallado: $(hm_campo '.error // "sin detalle"')."
+  [ "$(hm_campo '.ok')" = true ] || fallo "La herramienta del motor del panel ha respondido algo inesperado."
+  case "$(hm_campo '.api // empty')" in
+    rest015) ;;
+    *) fallo "El panel no ve un Stalwart 0.15 en el motor (ve «$(hm_campo '.api // "nada"')»): no se puede migrar así." ;;
+  esac
+  ok "Buzones en el panel: $(hm_campo '.buzones.total // "?"'); con su contraseña ya copiada: $(hm_campo '.buzones.conHash // "?"')."
+  if [ "$(hm_campo '.mantenimiento.activo')" = true ]; then
+    aviso "El panel ya estaba en mantenimiento (¿una migración interrumpida?): se renueva y se quita al terminar."
+  fi
+
+  # Certificado: con la 0.16 sale siempre del Traefik (con el extractor).
+  if [ "$CON_SKYWAY" = 1 ] && { [ -z "$TRAEFIK_ACME_VOLUME" ] || ! docker volume inspect "$TRAEFIK_ACME_VOLUME" >/dev/null 2>&1; }; then
+    fallo "Con Stalwart 0.16 el certificado de IMAP y SMTP sale del Traefik de Skyway y no se encuentra su volumen (TRAEFIK_ACME_VOLUME en $ENV_FILE). Corrígelo con sudo mailway update -y --reaplicar y vuelve a intentarlo."
+  fi
+  if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
+    fallo "Con Stalwart 0.16 el certificado de IMAP y SMTP sale del Traefik propio (perfil proxy), y esta instalación no lo tiene: la 0.16 serviría un certificado autofirmado. Sección 7 de docs/DESPLIEGUE-SKYWAY.md."
+  fi
+  if en_marcha mailway-certs-dumper; then MIG_EXTRACTOR=1; fi
+
+  # Espacio: una copia de los datos de la 0.15 y margen (la 0.16 reorganiza
+  # parte de la base de datos al arrancar).
+  for imagen in "$IMAGEN_PYTHON" "$IMAGEN_016" "$IMAGEN_CLI"; do
+    docker image inspect "$imagen" >/dev/null 2>&1 || docker pull -q "$imagen" >/dev/null ||
+      fallo "No se pudo descargar la imagen $imagen."
+  done
+  ok "Imágenes descargadas: $IMAGEN_016, $IMAGEN_CLI y $IMAGEN_PYTHON."
+  linea=$(docker run --rm --network none -v "$(volumen_015):/v:ro" "$IMAGEN_PYTHON" \
+    sh -c 'du -sk /v/data | cut -f1; df -Pk /v | awk "NR == 2 {print \$4}"' 2>/dev/null | tr '\n' ' ' || true)
+  read -r datos libre <<<"$linea"
+  case "$datos$libre" in '' | *[!0-9]*) fallo "No se pudo medir el volumen de la 0.15 ($(volumen_015)): ¿existe y tiene la carpeta data?" ;; esac
+  necesario=$((datos * 12 / 10 + 1048576))
+  if [ "$libre" -lt "$necesario" ]; then
+    fallo "No hay espacio: los datos de la 0.15 ocupan $((datos / 1024)) MiB y la copia necesita unos $((necesario / 1024)) MiB libres; hay $((libre / 1024)) MiB."
+  fi
+  ok "Espacio: datos de $((datos / 1024)) MiB y $((libre / 1024)) MiB libres."
+
+  # Script oficial y dependencias, fijados y con su sha256.
+  mkdir -p "$MIG_DIR/dependencias"
+  read -r url suma <<<"$MIGRAR016_SCRIPT"
+  descargar_verificado "$url" "$suma" "$MIG_DIR/migrate_v016.py"
+  for dep in "${MIGRAR016_DEPENDENCIAS[@]}"; do
+    read -r url suma <<<"$dep"
+    descargar_verificado "$url" "$suma" "$MIG_DIR/dependencias/${url##*/}"
+  done
+  ok "Script oficial de conversión y sus dependencias descargados y comprobados (sha256)."
+
+  # Volúmenes nuevos de la 0.16 (con fecha: nunca se reutiliza uno anterior)
+  # y el compose de la 0.16 con ellos.
+  MIG_ETC="mailway-stalwart-etc-$MIG_SELLO"
+  MIG_DATOS="mailway-stalwart-data-$MIG_SELLO"
+  if docker volume inspect "$MIG_ETC" >/dev/null 2>&1 || docker volume inspect "$MIG_DATOS" >/dev/null 2>&1; then
+    fallo "Ya existen los volúmenes $MIG_ETC o $MIG_DATOS: espera un segundo y vuelve a intentarlo."
+  fi
+  MOTOR=$MOTOR_016 MAILWAY_STALWART_ETC_VOLUME=$MIG_ETC MAILWAY_STALWART_DATA_VOLUME=$MIG_DATOS compose config -q ||
+    fallo "El compose con Stalwart 0.16 no es válido (arriba el motivo): no se ha cambiado nada."
+
+  # El certificado que sirve ahora la 0.15: si es válido, la 0.16 tendrá que
+  # servir uno igual de válido antes de abrir los puertos.
+  if ayudante tls --host mailway-mail --nombre "$MAIL_HOSTNAME" ${CA_PRUEBAS[@]+"${CA_PRUEBAS[@]}"}; then
+    MIG_CERT_015=1
+    ok "La 0.15 sirve un certificado válido para $MAIL_HOSTNAME en 993, 465 y 587: la 0.16 tendrá que servirlo igual."
+  else
+    aviso "La 0.15 no sirve ahora un certificado válido para $MAIL_HOSTNAME en 993, 465 y 587 ($(hm_campo '[.puertos // {} | to_entries[] | select(.value.ok | not) | "\(.key): \(.value.error)"] | join("; ")')): no se le exigirá a la 0.16."
+  fi
+}
+
+confirmar_migracion() {
+  titulo "Qué va a pasar"
+  info "1. El panel entra en mantenimiento y copia la contraseña de cada buzón (la 0.15 sigue en marcha)."
+  info "2. Se vuelcan y convierten los datos del motor con el script oficial de Stalwart."
+  info "3. Ventana sin correo (unos minutos; la copia de los datos es lo más largo): se paran el webmail"
+  info "   y la 0.15, cuyo volumen ($(volumen_015)) no se toca: es la copia de seguridad y la vuelta atrás."
+  info "   El correo que llegue mientras tanto no se pierde: los servidores remitentes lo reintentan."
+  info "4. La 0.16 arranca primero sin puertos públicos; se aplican los ajustes de Mailway, el certificado"
+  info "   y se comprueba todo. Solo entonces se abren los puertos y se repite la comprobación."
+  info "5. Si algo falla antes de terminar, vuelve sola a la 0.15."
+  info "Después: las contraseñas de aplicación de dispositivos y servicios dejan de valer y hay que crearlas"
+  info "de nuevo (el panel avisa a los titulares; Skyway vuelve a conectar sus servicios solo); las claves"
+  info "de API del panel siguen funcionando."
+  if [ "$SIN_CONFIRMAR" = 1 ]; then return 0; fi
+  [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal no se puede confirmar: añade -y (sudo mailway migrar-motor -y)."
+  confirmar "¿Migrar ahora a Stalwart 0.16?" n || fallo "Migración cancelada: no se ha cambiado nada."
+}
+
+activar_mantenimiento() {
+  herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos "${MAILWAY_MIGRACION_MINUTOS:-120}" ||
+    fallo "El panel no ha podido entrar en mantenimiento: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada."
+  [ "$(hm_campo '.activo')" = true ] || fallo "El panel no confirma el modo mantenimiento. No se ha cambiado nada."
+  MIG_MANTENIMIENTO=1
+  ok "Panel en mantenimiento: mientras dura, nada del panel cambia el motor. Se quita al terminar; si la orden se cortara, caduca solo (ahora, a las $(hora_de_ms "$(hm_campo '.hasta // empty')"))."
+}
+
+# Prolonga el mantenimiento al empezar cada paso largo: con muchos datos, la
+# migración puede durar más que el plazo con el que se activó, y al caducar
+# el panel volvería a cambiar el motor (también el temporal). Si no puede, lo
+# dice y sigue: el plazo inicial suele bastar.
+renovar_mantenimiento() {
+  [ "$MIG_MANTENIMIENTO" = 1 ] || return 0
+  herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos "${MAILWAY_MIGRACION_MINUTOS:-120}" >/dev/null 2>&1 ||
+    aviso "No se pudo prolongar el mantenimiento del panel (caduca a la hora prevista)."
+  return 0
+}
+
+# Quita el mantenimiento del panel si lo puso esta orden. Devuelve 1 si no
+# puede (lo explica: caduca solo, pero mejor quitarlo).
+desactivar_mantenimiento() {
+  [ "$MIG_MANTENIMIENTO" = 1 ] || return 0
+  # Un solo intento: si falla, se explica cómo quitarlo a mano.
+  MIG_MANTENIMIENTO=0
+  if herramienta_motor "$PANEL_MOTOR" 120 mantenimiento off && [ "$(hm_campo '.activo')" = false ]; then
+    ok "Panel fuera de mantenimiento."
+    return 0
+  fi
+  aviso "El panel sigue en mantenimiento (caduca solo). Para quitarlo ya: docker exec -u node $PANEL_MOTOR node server/dist/tools/motor.js mantenimiento off"
+  return 1
+}
+
+capturar_contrasenas() {
+  local codigo=0 fallidos
+  info "Copiando en el panel la contraseña (hash) de cada buzón: la 0.16 ya no las devuelve…"
+  herramienta_motor "$PANEL_MOTOR" 3600 capturar || codigo=$?
+  fallidos=$(hm_campo '(.fallidos // []) | length')
+  if [ "$codigo" != 0 ] || [ "$(hm_campo '.ok')" != true ] || [ "${fallidos:-0}" != 0 ]; then
+    fallo "El panel no ha podido copiar la contraseña de todos los buzones (${fallidos:-?} sin copiar: $(hm_campo '(.fallidos // []) | map(if type == "string" then . else (.email // .buzon // tostring) end) | join(", ")' | cut -c1-300)): sin ellas no podría comprobarlas con la 0.16. No se ha cambiado nada del motor."
+  fi
+  ok "Contraseñas copiadas en el panel (nuevas: $(hm_campo '.capturados // 0'); ya estaban: $(hm_campo '.yaEstaban // 0'))."
+}
+
+volcar_y_convertir() {
+  titulo "Volcado y conversión (la 0.15 sigue en marcha)"
+  ayudante volcar --url http://mailway-mail:8080 ||
+    fallo "El volcado del motor 0.15 ha fallado: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada del motor."
+  ok "Volcado de la 0.15 (dominios: $(hm_campo '.dominios'); buzones: $(hm_campo '.buzones'), suspendidos: $(hm_campo '.suspendidos'); alias: $(hm_campo '.alias'); firmas DKIM: $(hm_campo '.dkim'))."
+  ayudante convertir --nombre "$MAIL_HOSTNAME" ||
+    fallo "La conversión ha fallado: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada del motor."
+  ok "Plan de la 0.16 (operaciones: $(hm_campo '.operaciones'); $(hm_campo '.crear // {} | to_entries | map("\(.key): \(.value)") | join(", ")'))."
+  if [ -s "$MIG_DIR/sin-migrar.txt" ]; then
+    info "Ajustes de la 0.15 que el script no migra (los de Mailway los vuelve a aplicar el panel): $MIG_DIR/sin-migrar.txt"
+  fi
+}
+
+parar_015() {
+  titulo "Ventana sin correo: parada de la 0.15"
+  # Desde aquí, cualquier fallo vuelve a la 0.15 (al_salir).
+  MIG_FASE=parado
+  MIG_HORA_PARADA=$(date '+%H:%M')
+  if en_marcha mailway-webmail; then docker stop -t 30 mailway-webmail >/dev/null; fi
+  if en_marcha mailway-certs-dumper; then docker stop -t 30 mailway-certs-dumper >/dev/null; fi
+  # La pasarela del motor busca «mailway-mail» por su nombre, y los motores
+  # temporales lo llevan (en la red de Traefik, para el panel): parada, ningún
+  # visitante llega a ellos. La recuperan el motor definitivo o la vuelta atrás.
+  if en_marcha mailway-mail-gw; then docker stop -t 10 mailway-mail-gw >/dev/null; fi
+  # Con tiempo: RocksDB debe quedar cerrada limpia antes de copiarla.
+  docker stop -t 120 mailway-mail >/dev/null
+  ok "Webmail, extractor, pasarela y motor 0.15 parados ($MIG_HORA_PARADA)."
+}
+
+# Copia de los datos de la 0.15 a los volúmenes nuevos de la 0.16 (la 0.15 se
+# monta en solo lectura) y config.json propio: RocksDB en /var/lib/stalwart,
+# la misma ruta que una instalación nueva. El del script copia la ruta de la
+# 0.15 (…/data), que no coincidiría con la copia. Todo para el usuario 2000,
+# con el que corre la 0.16. Se comprueba que la copia tiene los mismos ficheros
+# y bytes que el original.
+copiar_datos_015() {
+  local par
+  titulo "Copia de los datos para la 0.16"
+  # Con las etiquetas de Compose del proyecto y del volumen que sustituyen:
+  # así Compose los usa como suyos, sin avisar de que ya existían.
+  for par in "mailway-stalwart-etc $MIG_ETC" "mailway-stalwart-data $MIG_DATOS"; do
+    docker volume create --label com.docker.compose.project=mailway \
+      --label "com.docker.compose.volume=${par% *}" "${par#* }" >/dev/null ||
+      fallo "No se pudo crear el volumen ${par#* }."
+  done
+  info "Copiando $(volumen_015) a $MIG_DATOS…"
+  docker run --rm --network none -v "$(volumen_015):/origen:ro" -v "$MIG_DATOS:/destino" -v "$MIG_ETC:/etc-destino" \
+    "$IMAGEN_PYTHON" sh -euc '
+      cp -a /origen/data/. /destino/
+      chown -R 2000:2000 /destino
+      printf "%s\n" "{\"@type\":\"RocksDb\",\"path\":\"/var/lib/stalwart\"}" >/etc-destino/config.json
+      chown 2000:2000 /etc-destino /etc-destino/config.json
+      chmod 0640 /etc-destino/config.json
+      python - <<"PY"
+import os
+def medir(raiz):
+    n = b = 0
+    for carpeta, _, ficheros in os.walk(raiz):
+        for f in ficheros:
+            n += 1
+            b += os.lstat(os.path.join(carpeta, f)).st_size
+    return n, b
+o, d = medir("/origen/data"), medir("/destino")
+print("origen", *o, "copia", *d)
+raise SystemExit(0 if o == d else 1)
+PY' >"$MIG_DIR/copia.txt" 2>&1 ||
+    fallo "La copia de los datos ha fallado: $(tr '\n' ' ' <"$MIG_DIR/copia.txt" | cut -c1-300)"
+  ok "Datos copiados y comprobados (ficheros: $(cut -d' ' -f2 "$MIG_DIR/copia.txt")); config.json propio en $MIG_ETC."
+}
+
+# Arranca un motor 0.16 temporal sobre los volúmenes nuevos, sin puertos
+# publicados, en la red interna con la IP y el alias del motor.
+#   arrancar_motor_temporal <nombre> <recuperacion|previo>
+arrancar_motor_temporal() {
+  local nombre=$1 modo=$2
+  local -a extra=()
+  docker rm -f "$nombre" >/dev/null 2>&1 || true
+  if [ "$modo" = recuperacion ]; then
+    extra=(-e STALWART_RECOVERY_MODE=1)
+  else
+    extra=(-v mailway-mail-certs:/opt/stalwart/certs:ro)
+  fi
+  STALWART_RECOVERY_ADMIN="admin:$STALWART_ADMIN_PASSWORD" docker run -d --name "$nombre" --hostname "$MAIL_HOSTNAME" \
+    -e STALWART_RECOVERY_ADMIN "${extra[@]}" \
+    -v "$MIG_ETC:/etc/stalwart" -v "$MIG_DATOS:/var/lib/stalwart" \
+    --network mailway-internal --ip "$MAIL_INTERNAL_IP" --network-alias mailway-mail \
+    --label "mailway.migracion=$modo" "$IMAGEN_016" >/dev/null ||
+    fallo "No se pudo arrancar el motor 0.16 temporal ($nombre)."
+  # El panel (junto a Skyway) llega al motor por la red de Traefik.
+  docker network connect --alias mailway-mail "$RED_BORDE" "$nombre" >/dev/null 2>&1 ||
+    fallo "No se pudo conectar $nombre a la red $RED_BORDE."
+}
+
+recuperacion_016() {
+  local codigo=0 linea
+  titulo "Stalwart 0.16 en modo recuperación (sin puertos de correo)"
+  arrancar_motor_temporal "$CONTENEDOR_RECUPERACION" recuperacion
+  # Al arrancar prepara los datos de la 0.15 (borra lo que ya no vale, migra
+  # el modelo del antispam): no responde hasta terminar. Si el contenedor se
+  # para, no se espera más.
+  if ! esperar_motor_016 "$CONTENEDOR_RECUPERACION" 1800 live; then
+    mostrar_registro_motor "$CONTENEDOR_RECUPERACION" 30
+    fallo "La 0.16 no ha terminado de preparar los datos de la 0.15 (registro arriba)."
+  fi
+  ok "La 0.16 ha preparado los datos de la 0.15 (modo recuperación)."
+  info "Aplicando el plan con stalwart-cli apply…"
+  STALWART_PASSWORD=$STALWART_ADMIN_PASSWORD docker run --rm -i --network mailway-internal \
+    -e STALWART_URL=http://mailway-mail:8080 -e STALWART_USER=admin -e STALWART_PASSWORD \
+    "$IMAGEN_CLI" apply --stdin --no-color <"$MIG_DIR/export.json" >"$MIG_DIR/apply.log" 2>&1 || codigo=$?
+  while IFS= read -r linea; do info "  $linea"; done < <(cut -c1-300 "$MIG_DIR/apply.log")
+  if [ "$codigo" != 0 ] || ! grep -q '(0 failed)' "$MIG_DIR/apply.log"; then
+    # Nunca se borra una cuenta para repetirlo: borraría su correo. Lo creado
+    # se queda en los volúmenes de este intento.
+    fallo "stalwart-cli apply no ha terminado sin fallos (código $codigo)."
+  fi
+  ok "Directorio de la 0.16 creado: dominios, buzones (con su contraseña), alias y firmas DKIM."
+  ayudante recuperacion --url http://mailway-mail:8080 ||
+    fallo "No se pudo dejar el registro de eventos del motor en la salida estándar: $(hm_campo '.error // "sin detalle"')."
+  docker stop -t 60 "$CONTENEDOR_RECUPERACION" >/dev/null || true
+  docker rm -f "$CONTENEDOR_RECUPERACION" >/dev/null 2>&1 || true
+}
+
+# Primer arranque normal, sin puertos publicados: la 0.16 crea sus escuchas y
+# roles por defecto; el panel aplica los ajustes de Mailway (suspensiones
+# incluidas: antes de abrir ningún puerto); el extractor, el certificado; y se
+# comprueba todo antes de abrir.
+previo_016() {
+  titulo "Primer arranque de la 0.16, aún sin puertos públicos"
+  arrancar_motor_temporal "$CONTENEDOR_PREVIO" previo
+  if ! esperar_motor_016 "$CONTENEDOR_PREVIO" 300 ready; then
+    mostrar_registro_motor "$CONTENEDOR_PREVIO" 30
+    fallo "La 0.16 no arranca con los datos migrados (registro arriba)."
+  fi
+  ok "Stalwart 0.16 en marcha con los datos migrados."
+  titulo "Ajustes de Mailway en la 0.16"
+  provisionar_motor "$PANEL_MOTOR" "$CONTENEDOR_PREVIO" ||
+    fallo "El panel no ha dejado la 0.16 con los ajustes de Mailway (detalle arriba)."
+
+  titulo "Certificado de IMAP y SMTP en la 0.16"
+  info "El extractor lleva a la 0.16 el certificado de Traefik para $MAIL_HOSTNAME…"
+  compose_q --profile tls up -d --no-deps --force-recreate certs-dumper ||
+    fallo "No se pudo arrancar el extractor del certificado."
+  if esperar_extractor 240; then
+    ok "El extractor confirma el certificado servido por la 0.16."
+  elif [ "$MIG_CERT_015" = 1 ]; then
+    fallo "El extractor no ha conseguido que la 0.16 sirva el certificado. Estado: $(docker exec mailway-certs-dumper python /app/extractor.py estado 2>&1 | head -n 3 | tr '\n' ' ')"
+  else
+    aviso "El extractor aún no confirma el certificado (la 0.15 tampoco servía uno válido)."
+  fi
+  if ayudante tls --host mailway-mail --nombre "$MAIL_HOSTNAME" ${CA_PRUEBAS[@]+"${CA_PRUEBAS[@]}"}; then
+    ok "La 0.16 sirve en 993, 465 y 587 (STARTTLS) el mismo certificado válido para $MAIL_HOSTNAME."
+  elif [ "$MIG_CERT_015" = 1 ]; then
+    fallo "La 0.16 no sirve un certificado válido para $MAIL_HOSTNAME en 993, 465 y 587: $(hm_campo '[.puertos // {} | to_entries[] | select(.value.ok | not) | "\(.key): \(.value.error)"] | join("; ")') $(hm_campo '.error // empty')"
+  else
+    aviso "La 0.16 no sirve un certificado válido en 993, 465 y 587 (tampoco la 0.15): revísalo después con sudo mailway comprobar."
+  fi
+
+  titulo "Comprobación de los datos migrados"
+  ayudante comprobar --url http://mailway-mail:8080 --nombre "$MAIL_HOSTNAME" ||
+    fallo "La 0.16 no tiene todo lo de la 0.15: $(hm_campo '((.problemas // []) | join(" ")) + (.error // "")' | cut -c1-600)"
+  ok "En la 0.16 está todo lo de la 0.15 (dominios: $(hm_campo '.recuento.dominios'); buzones: $(hm_campo '.recuento.buzones'); alias: $(hm_campo '.recuento.alias'); firmas DKIM: $(hm_campo '.recuento.dkim')), con sus escuchas y el nombre del servidor."
+  docker stop -t 60 "$CONTENEDOR_PREVIO" >/dev/null || true
+  docker rm -f "$CONTENEDOR_PREVIO" >/dev/null 2>&1 || true
+}
+
+definitivo_016() {
+  titulo "Stalwart 0.16 con los puertos públicos"
+  MIG_ENV_ANTES="$MIG_DIR/env-antes"
+  cp -p "$ENV_FILE" "$MIG_ENV_ANTES"
+  MAILWAY_STALWART_ETC_VOLUME=$MIG_ETC
+  MAILWAY_STALWART_DATA_VOLUME=$MIG_DATOS
+  MAILWAY_MOTOR_MIGRADO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  fijar_en_env MAILWAY_MOTOR "$MOTOR_016" MAILWAY_STALWART_ETC_VOLUME "$MIG_ETC" \
+    MAILWAY_STALWART_DATA_VOLUME "$MIG_DATOS" MAILWAY_MOTOR_MIGRADO "$MAILWAY_MOTOR_MIGRADO"
+  MOTOR=$MOTOR_016
+  MIG_FASE=abierto
+  MIG_HORA_APERTURA=$(date '+%H:%M')
+  compose_q up -d mailway-mail || fallo "Compose no ha podido arrancar el motor 0.16."
+  if ! { esperar_motor_016 mailway-mail 300 ready && esperar_sano mailway-mail 180; }; then
+    fallo "El motor 0.16 definitivo no arranca. Revisa: docker logs mailway-mail"
+  fi
+  ok "Stalwart 0.16 en marcha con los puertos de correo ($MIG_HORA_APERTURA)."
+  provisionar_motor "$PANEL_MOTOR" mailway-mail || fallo "El panel no confirma los ajustes de Mailway en el motor definitivo."
+  compose_q up -d --remove-orphans || fallo "Compose no ha podido arrancar el webmail."
+  compose_q --profile tls up -d certs-dumper || fallo "No se pudo arrancar el extractor del certificado."
+  esperar_sano mailway-webmail 180 || fallo "El webmail no vuelve a estar sano. Revisa: docker logs mailway-webmail"
+  # La pasarela arranca con el «up» de arriba: hasta que su comprobación de
+  # salud pasa, la comprobación final la daría por caída y volvería atrás.
+  esperar_sano mailway-mail-gw 60 || fallo "La pasarela del motor no arranca. Revisa: docker logs mailway-mail-gw"
+  titulo "Comprobación final (la de sudo mailway comprobar)"
+  if [ "$MIG_CERT_015" = 0 ]; then TOLERAR_CERTIFICADO=1; fi
+  comprobar_instalacion || fallo "La comprobación final no pasa (detalle arriba)."
+  TOLERAR_CERTIFICADO=0
+}
+
+# Vuelta atrás automática (desde al_salir, ante cualquier fallo con la 0.15
+# parada): fuera los motores temporales y el 0.16, deploy/.env como estaba,
+# la 0.15 sobre su volumen de siempre, el webmail y el extractor como estaban
+# y el panel fuera de mantenimiento. No se interrumpe con Ctrl+C. Devuelve 1
+# si no lo consigue todo (lo explica).
+volver_a_015() {
+  local fallos=0 abierto=0
+  trap '' INT TERM
+  set +e
+  if [ "$MIG_FASE" = abierto ]; then abierto=1; fi
+  MIG_FASE=""
+  printf '\n'
+  titulo "Vuelta atrás: Stalwart 0.15"
+  docker rm -f "$CONTENEDOR_RECUPERACION" "$CONTENEDOR_PREVIO" >/dev/null 2>&1
+  if [ -n "$MIG_ENV_ANTES" ] && [ -f "$MIG_ENV_ANTES" ]; then
+    if cp -p "$MIG_ENV_ANTES" "$ENV_FILE.vuelta" && mv "$ENV_FILE.vuelta" "$ENV_FILE"; then
+      ok "deploy/.env como estaba antes de migrar."
+    else
+      aviso "No se pudo devolver deploy/.env a como estaba: su copia está en $MIG_ENV_ANTES (cópiala a $ENV_FILE)."
+      MIG_ENV_CONSERVAR=1
+      fallos=$((fallos + 1))
+    fi
+  fi
+  MOTOR=$MOTOR_015
+  MAILWAY_STALWART_ETC_VOLUME=$(leer_env MAILWAY_STALWART_ETC_VOLUME)
+  MAILWAY_STALWART_DATA_VOLUME=$(leer_env MAILWAY_STALWART_DATA_VOLUME)
+  if [ "$abierto" = 1 ]; then docker stop -t 60 mailway-mail >/dev/null 2>&1; fi
+  if compose_q up -d mailway-mail && esperar_sano mailway-mail 240 && [ "$(estado_contenedor mailway-mail)" = healthy ]; then
+    ok "Stalwart 0.15 en marcha sobre su volumen de siempre ($(volumen_015))."
+  else
+    aviso "La 0.15 no vuelve a estar sana. Revisa: docker logs mailway-mail"
+    fallos=$((fallos + 1))
+  fi
+  compose_q up -d --remove-orphans || fallos=$((fallos + 1))
+  if [ "$MIG_EXTRACTOR" = 1 ]; then
+    compose_q --profile tls up -d --force-recreate certs-dumper || fallos=$((fallos + 1))
+  else
+    # Antes de migrar no estaba (la 0.15 usaba su propio ACME): fuera.
+    docker rm -f mailway-certs-dumper >/dev/null 2>&1
+  fi
+  if esperar_sano mailway-webmail 180; then ok "Webmail en marcha."; else aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"; fi
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
+  desactivar_mantenimiento || fallos=$((fallos + 1))
+  limpiar_trabajo_migracion
+  printf '\n'
+  if [ "$abierto" = 1 ]; then
+    aviso "La 0.16 llegó a abrir los puertos a las $MIG_HORA_APERTURA: el correo que llegara desde entonces está en su volumen ($MIG_DATOS), no en la 0.15."
+  fi
+  info "Lo creado por este intento se conserva para revisarlo (volúmenes $MIG_ETC y $MIG_DATOS) y nunca se reutiliza."
+  info "Para borrarlo cuando ya no haga falta: docker volume rm $MIG_ETC $MIG_DATOS"
+  info "Registro completo: $MIG_REGISTRO"
+  if [ "$fallos" = 0 ]; then
+    aviso "La migración no se ha completado y el servidor ha vuelto a Stalwart 0.15, con sus datos de siempre (motivo arriba)."
+    return 0
+  fi
+  aviso "La migración no se ha completado y la vuelta a la 0.15 tampoco del todo ($fallos incidencias arriba)."
+  aviso "El volumen de la 0.15 está intacto. A mano: sudo bash deploy/instalar.sh --actualizar (con MAILWAY_MOTOR=$MOTOR_015 en deploy/.env) y sudo mailway comprobar."
+  return 1
+}
+
+migrar_motor() {
+  cargar_instalacion_motor
+  [ "$MOTOR" = "$MOTOR_015" ] || fallo "Este servidor ya usa Stalwart 0.16: no hay nada que migrar."
+  tomar_cerrojo_motor
+  preparar_registro_motor migracion-motor
+  titulo "Cambio de motor: Stalwart 0.15 → 0.16"
+  comprobaciones_migracion
+  confirmar_migracion
+  # Confirmada, una sesión SSH que se corta ya no la interrumpe: sigue (o
+  # vuelve atrás) sola, con todo en el registro.
+  trap '' HUP
+  MIG_FASE=preparada
+  titulo "Panel"
+  activar_mantenimiento
+  capturar_contrasenas
+  volcar_y_convertir
+  parar_015
+  copiar_datos_015
+  renovar_mantenimiento
+  recuperacion_016
+  renovar_mantenimiento
+  previo_016
+  renovar_mantenimiento
+  definitivo_016
+  MIG_FASE=""
+  titulo "Tareas del panel tras migrar"
+  if herramienta_motor "$PANEL_MOTOR" 3600 tras-migrar && [ "$(hm_campo '.ok')" = true ]; then
+    ok "Credenciales internas renovadas: $(hm_campo '.credencialesInternas.renovadas // 0'); contraseñas de aplicación invalidadas: $(hm_campo '.contrasenasInvalidadas // 0'); titulares avisados: $(hm_campo '.avisados // 0')."
+  else
+    aviso "Las tareas del panel tras migrar no han terminado: el motor ya está migrado y funciona. Repítelas (son idempotentes): docker exec -u node $PANEL_MOTOR node server/dist/tools/motor.js tras-migrar"
+  fi
+  desactivar_mantenimiento || true
+  limpiar_trabajo_migracion
+  titulo "Migración terminada"
+  ok "Stalwart 0.16 en marcha desde las $MIG_HORA_APERTURA (sin correo desde las $MIG_HORA_PARADA)."
+  info "El volumen de la 0.15 ($(volumen_015)) sigue intacto: es la vuelta atrás (sudo mailway revertir-motor)."
+  info "Cuando lleves unos días sin problemas, retíralo para liberar espacio: sudo mailway retirar-motor-anterior"
+  info "Los titulares tienen que crear de nuevo sus contraseñas de aplicación (el panel les avisa)."
+  info "Registro: $MIG_REGISTRO"
+}
+
+# --revertir-motor: de vuelta a la 0.15 tras una migración terminada. Los
+# volúmenes de la 0.16 no se tocan (se puede volver a migrar después, a unos
+# nuevos). Con el panel: mantenimiento mientras dura, sus ajustes y la
+# comprobación de lo que conoce («provisionar», que también reaplica las
+# suspensiones) y sus tareas de cambio de motor («tras-migrar»: renueva en la
+# 0.15 las credenciales SMTP internas de las claves de API y los formularios
+# creadas con la 0.16).
+revertir_motor() {
+  local vol panel_listo=0
+  cargar_instalacion_motor
+  [ "$MOTOR" = "$MOTOR_016" ] || fallo "Este servidor usa Stalwart 0.15: no hay nada que revertir."
+  [ -n "$MAILWAY_MOTOR_MIGRADO" ] ||
+    fallo "Esta instalación no viene de una migración (empezó con Stalwart 0.16): no hay una 0.15 a la que volver."
+  vol=$(volumen_015)
+  docker volume inspect "$vol" >/dev/null 2>&1 ||
+    fallo "Ya no existe el volumen de la 0.15 ($vol): se retiró y no se puede volver a ella."
+  tomar_cerrojo_motor
+  preparar_registro_motor revertir-motor
+  titulo "Vuelta a Stalwart 0.15"
+  aviso "El correo recibido desde la migración ($MAILWAY_MOTOR_MIGRADO) se queda en el volumen de la 0.16 ($(volumen_016_datos)): con la 0.15 no se verá."
+  aviso "Lo que se haya creado o cambiado en el panel desde entonces (buzones, alias, contraseñas) no está en la 0.15; las contraseñas de aplicación de la 0.16 no valen allí y las anteriores vuelven a valer."
+  if [ "$SIN_CONFIRMAR" = 0 ]; then
+    [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal no se puede confirmar: añade -y (sudo mailway revertir-motor -y)."
+    confirmar "¿Volver a Stalwart 0.15?" n || fallo "Cancelado: no se ha cambiado nada."
+  fi
+  trap '' HUP
+  if en_marcha "$PANEL_MOTOR" && panel_tiene_herramienta_motor "$PANEL_MOTOR"; then
+    panel_listo=1
+    if herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos 60 && [ "$(hm_campo '.activo')" = true ]; then
+      MIG_MANTENIMIENTO=1
+    else
+      aviso "El panel no ha entrado en mantenimiento: se sigue igualmente."
+    fi
+  else
+    aviso "El panel ($PANEL_MOTOR) no está en marcha o no tiene la herramienta del motor: al terminar, repite con él en marcha «provisionar» y «tras-migrar» (docker exec -u node <panel> node server/dist/tools/motor.js …)."
+  fi
+  if en_marcha mailway-webmail; then docker stop -t 30 mailway-webmail >/dev/null; fi
+  if en_marcha mailway-certs-dumper; then docker stop -t 30 mailway-certs-dumper >/dev/null; fi
+  docker stop -t 120 mailway-mail >/dev/null 2>&1 || true
+  fijar_en_env MAILWAY_MOTOR "$MOTOR_015"
+  MOTOR=$MOTOR_015
+  if ! { compose_q up -d mailway-mail && esperar_sano mailway-mail 240 && [ "$(estado_contenedor mailway-mail)" = healthy ]; }; then
+    fallo "La 0.15 no arranca. Revisa: docker logs mailway-mail. Para seguir con la 0.16 (sus volúmenes no se han tocado): MAILWAY_MOTOR=$MOTOR_016 en $ENV_FILE y sudo mailway update -y --reaplicar."
+  fi
+  fijar_en_env MAILWAY_MOTOR_MIGRADO ""
+  MAILWAY_MOTOR_MIGRADO=""
+  ok "Stalwart 0.15 en marcha sobre su volumen ($vol)."
+  # Bulwark necesita la 0.16: queda desactivado, con sus volúmenes y secretos.
+  # El panel lo deja de ofrecer solo (el motor ya no es la 0.16); en la
+  # instalación autónoma, el «up» de abajo lo recrea sin sus variables.
+  if [ "$(leer_env MAILWAY_BULWARK)" = 1 ] || docker inspect --type container mailway-bulwark >/dev/null 2>&1; then
+    fijar_en_env MAILWAY_BULWARK 0 MAILWAY_BULWARK_URL "" MAILWAY_BULWARK_BACKEND_URL ""
+    retirar_bulwark
+    aviso "Bulwark necesita Stalwart 0.16: queda desactivado (sus volúmenes y sus secretos se conservan). Tras migrar de nuevo, sudo mailway bulwark on."
+  fi
+  compose_q up -d --remove-orphans || aviso "Compose no ha podido arrancar el webmail."
+  if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
+    :
+  elif [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
+    :
+  else
+    # Si la 0.15 usa su propio ACME, el extractor no hace nada.
+    arrancar_extractor || aviso "No se pudo arrancar el extractor del certificado."
+  fi
+  esperar_sano mailway-webmail 180 || aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
+  if [ "$panel_listo" = 1 ]; then
+    titulo "Panel"
+    if herramienta_motor "$PANEL_MOTOR" 900 provisionar && [ "$(hm_campo '.ok')" = true ]; then
+      ok "El panel ha aplicado sus ajustes y confirma que la 0.15 tiene todo lo que él conoce."
+    else
+      explicar_provisionar
+      aviso "Lo creado en el panel después de migrar no está en la 0.15: hay que darlo de alta de nuevo."
+    fi
+    if herramienta_motor "$PANEL_MOTOR" 3600 tras-migrar && [ "$(hm_campo '.ok')" = true ]; then
+      ok "Credenciales internas renovadas en la 0.15: $(hm_campo '.credencialesInternas.renovadas // 0'); contraseñas de aplicación de la 0.16 invalidadas: $(hm_campo '.contrasenasInvalidadas // 0'); de la 0.15 que vuelven a valer: $(hm_campo '.contrasenasRecuperadas // 0')."
+    else
+      aviso "Las tareas del panel tras volver no han terminado. Repítelas (son idempotentes): docker exec -u node $PANEL_MOTOR node server/dist/tools/motor.js tras-migrar"
+    fi
+  fi
+  desactivar_mantenimiento || true
+  titulo "Comprobación"
+  comprobar_instalacion || aviso "La comprobación tiene incidencias (arriba)."
+  info "Los volúmenes de la 0.16 se conservan ($(volumen_016_etc), $(volumen_016_datos)). Para volver a la 0.16, migra de nuevo: sudo mailway migrar-motor"
+  info "Registro: $MIG_REGISTRO"
+}
+
+# --retirar-motor-anterior: borra el volumen de la 0.15, que la migración
+# conserva como vuelta atrás. Exige escribir su nombre (o, sin terminal, -y y
+# MAILWAY_RETIRAR_VOLUMEN con ese nombre).
+retirar_motor_anterior() {
+  local vol usado tamano respuesta="" restos
+  cargar_instalacion_motor
+  [ "$MOTOR" = "$MOTOR_016" ] || fallo "Este servidor sigue con Stalwart 0.15: su volumen es el que usa el motor."
+  vol=$(volumen_015)
+  if ! docker volume inspect "$vol" >/dev/null 2>&1; then
+    info "No queda ningún volumen de la 0.15 ($vol)."
+  else
+    usado=$(docker ps -a --filter "volume=$vol" --format '{{.Names}}') ||
+      fallo "No se puede preguntar a Docker qué contenedores usan $vol: no se borra."
+    [ -z "$usado" ] || fallo "El volumen $vol lo usa el contenedor $(printf '%s' "$usado" | tr '\n' ' '): no se borra."
+    tamano=$(docker run --rm --network none -v "$vol:/v:ro" "$IMAGEN_PYTHON" du -sh /v 2>/dev/null | cut -f1 || true)
+    titulo "Retirar el volumen de Stalwart 0.15"
+    info "Volumen: $vol (${tamano:-tamaño desconocido}). Migración a la 0.16: ${MAILWAY_MOTOR_MIGRADO:-sin fecha registrada}."
+    info "Sin él ya no se puede volver a la 0.15. Si quieres guardar antes una copia:"
+    info "  docker run --rm -v $vol:/origen:ro -v /root/copias:/destino alpine tar czf /destino/mailway-0.15-\$(date +%F).tar.gz -C /origen ."
+    if [ "$SIN_CONFIRMAR" = 1 ]; then
+      [ "${MAILWAY_RETIRAR_VOLUMEN:-}" = "$vol" ] ||
+        fallo "Con -y hay que indicar también el volumen: MAILWAY_RETIRAR_VOLUMEN=$vol"
+    else
+      [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal: -y y MAILWAY_RETIRAR_VOLUMEN=$vol."
+      read -r -p "   Escribe el nombre del volumen para borrarlo ($vol): " respuesta || true
+      [ "$respuesta" = "$vol" ] || fallo "No coincide: no se ha borrado nada."
+    fi
+    docker volume rm "$vol" >/dev/null || fallo "Docker no ha podido borrar $vol."
+    fijar_en_env MAILWAY_MAIL_VOLUME ""
+    ok "Volumen de Stalwart 0.15 retirado ($vol)."
+  fi
+  # Intentos de migración que volvieron atrás: se dicen, no se borran.
+  restos=$(docker volume ls -q --filter label=com.docker.compose.project=mailway |
+    grep -E '^mailway-stalwart-(etc|data)-[0-9]{8}-[0-9]{6}$' |
+    grep -vx -e "$(volumen_016_etc)" -e "$(volumen_016_datos)" | paste -sd ' ' - || true)
+  if [ -n "$restos" ]; then
+    info "Quedan volúmenes de intentos de migración que volvieron atrás: $restos"
+    info "  Cuando ya no hagan falta: docker volume rm $restos"
+  fi
+}
+
 # ------------------------------------------------------------ diagnóstico --
 
 # Datos que necesita el diagnóstico, leídos de deploy/.env sin preguntar nada.
@@ -2897,6 +4574,7 @@ preparar_diagnostico() {
   STALWART_ADMIN_PASSWORD=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
   INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
   INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
+  MOTOR=$(motor_configurado)
 }
 
 # Muestra la salida de una comprobación hecha dentro de un contenedor con el
@@ -2921,12 +4599,99 @@ ejecutar_comprobacion() {
   return "$codigo"
 }
 
+# Ajustes del motor 0.16 que necesita Mailway, con UNA sola petición JMAP
+# autenticada (cada contraseña incorrecta cuenta para el bloqueo automático):
+# nombre del servidor, X-Forwarded-For, exención de la red interna, la escucha
+# del 587 con STARTTLS y el certificado; con Bulwark, además, el HTTPS
+# interno (443) y la caducidad del bloqueo. Devuelve el número de incidencias.
+comprobar_motor_016() {
+  local incidencias=0 nombre certificado
+  jmap_motor "$(jmap_cuerpo '[["x:SystemSettings/get",{"ids":["singleton"],"properties":["defaultHostname","defaultCertificateId"]},"s"],["x:Http/get",{"ids":["singleton"],"properties":["useXForwarded"]},"h"],["x:AllowedIp/query",{},"aq"],["x:AllowedIp/get",{"#ids":{"resultOf":"aq","name":"x:AllowedIp/query","path":"/ids"},"properties":["address"]},"a"],["x:NetworkListener/query",{},"lq"],["x:NetworkListener/get",{"#ids":{"resultOf":"lq","name":"x:NetworkListener/query","path":"/ids"},"properties":["protocol","bind","tlsImplicit"]},"l"],["x:Certificate/query",{},"cq"],["x:Certificate/get",{"#ids":{"resultOf":"cq","name":"x:Certificate/query","path":"/ids"},"properties":["subjectAlternativeNames","notValidAfter"]},"c"],["x:Security/get",{"ids":["singleton"],"properties":["authBanPeriod"]},"g"]]')"
+  case "$RESP_CODE" in
+    200) ;;
+    401 | 403)
+      aviso "El motor rechaza la contraseña de administración de $ENV_FILE (STALWART_ADMIN_PASSWORD). No se reintenta."
+      return 1
+      ;;
+    *)
+      aviso "La gestión del motor no responde por la red interna (HTTP $RESP_CODE). Revisa: docker logs mailway-mail"
+      return 1
+      ;;
+  esac
+  if [ -n "$(jmap_error)" ]; then
+    aviso "El motor rechazó la consulta de sus ajustes: $(jmap_error)."
+    return 1
+  fi
+  nombre=$(campo_json '.methodResponses[0][1].list[0].defaultHostname // empty')
+  if [ "$nombre" = "$MAIL_HOSTNAME" ]; then
+    ok "Nombre del servidor: $MAIL_HOSTNAME."
+  else
+    aviso "El motor se identifica como «${nombre:-sin nombre}», no como $MAIL_HOSTNAME: faltan los ajustes de Mailway (sudo mailway update -y --reaplicar)."
+    incidencias=$((incidencias + 1))
+  fi
+  if [ -n "$(campo_json --arg r "$INTERNAL_SUBNET" '(.methodResponses[3][1].list // [])[] | select(.address == $r) | .address')" ]; then
+    ok "La red interna $INTERNAL_SUBNET está exenta del bloqueo automático."
+  else
+    aviso "Falta la exención de $INTERNAL_SUBNET: los fallos de contraseña del webmail acabarían bloqueándolo. Aplica los ajustes de Mailway (sudo mailway update -y --reaplicar)."
+    incidencias=$((incidencias + 1))
+  fi
+  if [ "$(campo_json '.methodResponses[1][1].list[0].useXForwarded // false')" = true ]; then
+    ok "El motor toma la IP real de X-Forwarded-For (detrás de Traefik)."
+  else
+    aviso "El motor no usa X-Forwarded-For: un escáner que pase por Traefik bloquearía la IP de Traefik. Aplica los ajustes de Mailway (sudo mailway update -y --reaplicar)."
+    incidencias=$((incidencias + 1))
+  fi
+  if [ -n "$(campo_json '(.methodResponses[5][1].list // [])[] | select(.protocol == "smtp" and (.tlsImplicit | not) and ((.bind // {}) | keys | any(endswith(":587")))) | .protocol')" ]; then
+    if puerto_abierto_motor mailway-mail 587; then
+      ok "Envío por 587 con STARTTLS disponible."
+    else
+      aviso "El 587 está en los ajustes del motor, pero no escucha hasta reiniciarlo: docker restart mailway-mail"
+      incidencias=$((incidencias + 1))
+    fi
+  else
+    aviso "El motor no escucha en 587 (STARTTLS), que usan la API de envío, Skyway y los programas de correo. Aplica los ajustes de Mailway (sudo mailway update -y --reaplicar)."
+    incidencias=$((incidencias + 1))
+  fi
+  # Un comodín (*.dominio) también cubre el nombre del servidor.
+  certificado=$(campo_json --arg n "$MAIL_HOSTNAME" '(.methodResponses[0][1].list[0].defaultCertificateId // "") as $d | (.methodResponses[7][1].list // [])[] | select(.id == $d) | ((.subjectAlternativeNames // {}) | if type == "object" then keys else . end | any(. as $s | $s == $n or (($s | startswith("*.")) and ($s[2:] == ($n | sub("^[^.]+[.]"; "")))))) as $cubre | "\(if $cubre then "para \($n)" else "de otro nombre" end), válido hasta \(.notValidAfter)"')
+  if [ -n "$certificado" ]; then
+    info "Certificado: el de Traefik, que mantiene el extractor (perfil tls); $certificado."
+  else
+    aviso "El motor no tiene certificado por defecto y sirve uno autofirmado: lo pone el extractor del certificado (perfil tls; sección 5.2 de docs/DESPLIEGUE-SKYWAY.md)."
+    if [ "$TOLERAR_CERTIFICADO" = 1 ]; then
+      info "No impide la migración: la 0.15 tampoco servía un certificado válido."
+    else
+      incidencias=$((incidencias + 1))
+    fi
+  fi
+  if bulwark_activo; then
+    # Bulwark comprueba las contraseñas en https://MAIL_HOSTNAME por la red
+    # interna: el 443 del motor (con su certificado; lo mira comprobar_instalacion).
+    if [ -n "$(campo_json '(.methodResponses[5][1].list // [])[] | select(.protocol == "http" and .tlsImplicit == true and ((.bind // {}) | keys | any(endswith(":443")))) | .protocol')" ]; then
+      ok "El motor sirve HTTPS en su 443 interno, el que usa Bulwark para comprobar contraseñas."
+    else
+      aviso "El motor no escucha HTTPS en su 443 interno: Bulwark no puede comprobar las contraseñas por la red exenta (sus comprobaciones dan «inconclusive»)."
+      incidencias=$((incidencias + 1))
+    fi
+    # La caducidad del bloqueo la aplica el panel (ajustes recomendados); sin
+    # ella, una pestaña de Bulwark abierta tras cambiar la contraseña bloquea
+    # para siempre la IP del usuario. Se avisa sin contarlo como incidencia.
+    if [ "$(campo_json '.methodResponses[8][1].list[0].authBanPeriod // "nulo"')" = nulo ]; then
+      aviso "El bloqueo por fallos de acceso del motor es para siempre: con Bulwark conviene que caduque. Lo aplica el panel con sus ajustes recomendados (sudo mailway update -y --reaplicar, o Ajustes → Servidor de correo)."
+    else
+      ok "El bloqueo por fallos de acceso del motor caduca."
+    fi
+  fi
+  return "$incidencias"
+}
+
 # --comprobar: diagnóstico de solo lectura. Hace una sola petición
 # autenticada a la API del motor: cada contraseña incorrecta cuenta para su
 # bloqueo automático.
 comprobar_instalacion() {
-  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-webmail)
+  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail)
   if [ "$CON_SKYWAY" = 0 ]; then contenedores+=(mailway-panel); fi
+  if bulwark_activo; then contenedores+=(mailway-bulwark mailway-bulwark-gw); fi
 
   titulo "Contenedores"
   for c in "${contenedores[@]}"; do
@@ -2948,8 +4713,21 @@ comprobar_instalacion() {
     info "Extractor del certificado (perfil tls): no está en marcha; solo hace falta si el motor usa el certificado de Traefik."
   fi
 
-  titulo "Motor de correo"
-  if [ "$(estado_contenedor mailway-mail)" = healthy ]; then
+  titulo "Motor de correo ($(nombre_motor "$MOTOR"))"
+  case "$MOTOR:$(docker inspect --type container -f '{{.Config.Image}}' mailway-mail 2>/dev/null || true)" in
+    "$MOTOR_016":*stalwart:v0.15* | "$MOTOR_015":*stalwart:v0.16*)
+      aviso "deploy/.env dice $(nombre_motor "$MOTOR"), pero el contenedor mailway-mail ejecuta otra versión: repite sudo mailway update -y --reaplicar."
+      fallos=$((fallos + 1))
+      ;;
+  esac
+  if [ "$MOTOR" = "$MOTOR_015" ]; then aviso_fin_soporte_015; fi
+  if [ "$MOTOR" = "$MOTOR_016" ]; then
+    if [ "$(estado_contenedor mailway-mail)" = healthy ]; then
+      comprobar_motor_016 || fallos=$((fallos + $?))
+    else
+      info "El motor no está sano: no se consulta su API."
+    fi
+  elif [ "$(estado_contenedor mailway-mail)" = healthy ]; then
     respuesta=$(motor_api GET "/api/settings/keys?keys=server.hostname,server.allowed-ip.$INTERNAL_SUBNET,acme.mailway.directory,certificate.mailway.cert,certificate.default.cert" 2>/dev/null || true)
     if ! printf '%s' "$respuesta" | grep -q '"data"'; then
       if printf '%s' "$respuesta" | grep -Eq '"status": *40[13]'; then
@@ -2991,8 +4769,13 @@ comprobar_instalacion() {
   if [ "$(estado_contenedor mailway-webmail)" = healthy ]; then
     # Se verifica desde el webmail, por la red interna y con el nombre público
     # (SNI): es el mismo certificado que ven los programas de correo.
-    ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" certificado "$MAIL_HOSTNAME" ||
-      fallos=$((fallos + 1))
+    if ! ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" certificado "$MAIL_HOSTNAME"; then
+      if [ "$TOLERAR_CERTIFICADO" = 1 ]; then
+        info "No impide la migración: la 0.15 tampoco servía un certificado válido."
+      else
+        fallos=$((fallos + 1))
+      fi
+    fi
     titulo "Webmail"
     ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" conexion ||
       fallos=$((fallos + 1))
@@ -3003,9 +4786,16 @@ comprobar_instalacion() {
 
   if [ "$extractor" != ausente ]; then
     titulo "Extractor del certificado (perfil tls)"
-    ejecutar_comprobacion docker exec mailway-certs-dumper python /app/extractor.py estado ||
-      fallos=$((fallos + 1))
+    if ! ejecutar_comprobacion docker exec mailway-certs-dumper python /app/extractor.py estado; then
+      if [ "$TOLERAR_CERTIFICADO" = 1 ]; then
+        info "No impide la migración: la 0.15 tampoco servía un certificado válido."
+      else
+        fallos=$((fallos + 1))
+      fi
+    fi
   fi
+
+  comprobar_bulwark_diagnostico || fallos=$((fallos + $?))
 
   titulo "Resultado"
   if [ "$fallos" = 0 ]; then
@@ -3014,6 +4804,51 @@ comprobar_instalacion() {
   fi
   aviso "$fallos comprobaciones con incidencias (detalle arriba)."
   return 1
+}
+
+# Parte de --comprobar sobre Bulwark (solo si está activo; sin credenciales):
+# la salud a través de su pasarela, el certificado de MAIL_HOSTNAME que ve en
+# el 443 interno del motor y sus secretos. Devuelve el número de incidencias.
+comprobar_bulwark_diagnostico() {
+  local incidencias=0 salida sesion
+  if ! bulwark_activo; then
+    if docker inspect --type container mailway-bulwark >/dev/null 2>&1; then
+      titulo "Bulwark (correo web beta)"
+      aviso "Bulwark está desactivado, pero su contenedor sigue: lo retira sudo mailway update -y --reaplicar."
+    fi
+    return 0
+  fi
+  titulo "Bulwark (correo web beta)"
+  sesion=$(leer_env BULWARK_SESSION_SECRET)
+  if [ "${#sesion}" -lt 32 ] || [ -z "$(leer_env BULWARK_ADMIN_PASSWORD)" ]; then
+    aviso "Faltan los secretos de Bulwark en $ENV_FILE (o BULWARK_SESSION_SECRET tiene menos de 32 caracteres): repite sudo mailway bulwark on."
+    incidencias=$((incidencias + 1))
+  fi
+  if [ "$(estado_contenedor mailway-bulwark-gw)" = healthy ] && [ "$(estado_contenedor mailway-bulwark)" = healthy ]; then
+    if salida=$(docker exec mailway-bulwark-gw wget -qO- -T 10 http://127.0.0.1:8080/api/health 2>&1) &&
+      [[ $salida == *'"healthy"'* ]]; then
+      ok "Bulwark responde a través de su pasarela."
+    else
+      aviso "Bulwark no responde a través de su pasarela (${salida:0:200}). Revisa: docker logs mailway-bulwark-gw"
+      incidencias=$((incidencias + 1))
+    fi
+    # El certificado del 443 interno del motor, verificado como lo hace Bulwark
+    # (con sus CA y por el nombre público, que apunta a la IP interna).
+    if salida=$(docker exec -e MW_NOMBRE="$MAIL_HOSTNAME" mailway-bulwark node -e '
+const tls = require("tls"); const n = process.env.MW_NOMBRE;
+const s = tls.connect({ host: n, port: 443, servername: n, timeout: 8000 }, () => {
+  if (s.authorized) { console.log("OK"); } else { console.log("FALLO: " + s.authorizationError); process.exitCode = 1; }
+  s.end();
+});
+s.on("timeout", () => { console.log("FALLO: sin respuesta"); process.exit(1); });
+s.on("error", (e) => { console.log("FALLO: " + e.message); process.exit(1); });' 2>&1) && [ "$salida" = OK ]; then
+      ok "Bulwark verifica el certificado de $MAIL_HOSTNAME en el 443 interno del motor."
+    else
+      aviso "Bulwark no puede verificar el certificado de $MAIL_HOSTNAME en el 443 interno del motor (${salida:0:200}): sus comprobaciones de contraseña dan «inconclusive». Lo pone el extractor (perfil tls)."
+      incidencias=$((incidencias + 1))
+    fi
+  fi
+  return "$incidencias"
 }
 
 # --probar-acceso: un inicio de sesión real desde el webmail, con la
@@ -3056,11 +4891,29 @@ probar_acceso() {
 
 main() {
   printf '%sInstalador de Mailway %s%s\n' "$C_TIT" "$VERSION_INSTALADOR" "$C_0"
+  if [ "$MIGRAR_MOTOR" = 1 ]; then
+    migrar_motor
+    exit 0
+  fi
+  if [ "$REVERTIR_MOTOR" = 1 ]; then
+    revertir_motor
+    exit 0
+  fi
+  if [ "$RETIRAR_MOTOR_ANTERIOR" = 1 ]; then
+    retirar_motor_anterior
+    exit 0
+  fi
   if [ "$EMPAREJAR" = 1 ]; then
     info "Emparejado del panel con Skyway (configuración de deploy/.env)."
     if emparejar_solo; then exit 0; fi
     exit 1
   fi
+  if [ "$BULWARK_ORDEN" = estado ]; then
+    preparar_diagnostico
+    if estado_bulwark; then exit 0; fi
+    exit 1
+  fi
+  if [ -n "$BULWARK_ORDEN" ]; then cambiar_bulwark "$BULWARK_ORDEN"; fi
   if [ "$COMPROBAR" = 1 ] || [ "$PROBAR_ACCESO" = 1 ]; then
     preparar_diagnostico
     if [ "$CON_SKYWAY" = 1 ]; then info "Modo: junto a Skyway."; else info "Modo: instalación autónoma (sin Skyway)."; fi
@@ -3087,7 +4940,9 @@ main() {
   detectar_panel_existente
   recoger_datos
   migrar_instalacion_anterior
+  elegir_motor
   preparar_secretos
+  preparar_bulwark
 
   USAR_PROXY_PROPIO=0
   if [ "$CON_SKYWAY" = 0 ]; then
@@ -3118,7 +4973,10 @@ main() {
   comprobar_ptr
   levantar_servicios
   configurar_motor
-  if [ "$CON_SKYWAY" = 0 ]; then conectar_cloudflare_autonoma; fi
+  if [ "$CON_SKYWAY" = 0 ]; then
+    if [ "$MOTOR" = "$MOTOR_016" ]; then aplicar_ajustes_mailway mailway-panel; fi
+    conectar_cloudflare_autonoma
+  fi
 
   if [ "$CON_SKYWAY" = 1 ]; then
     desplegar_en_skyway
@@ -3133,10 +4991,18 @@ main() {
     # Lo último que puede fallar: así la contraseña del administrador que
     # crea el emparejado llega al resumen sin que nada la interrumpa.
     emparejar_al_terminar
+    # Con Stalwart 0.16, los ajustes de Mailway en el motor los aplica el
+    # panel con su herramienta del motor, que necesita la puesta en marcha
+    # del panel: la hace el emparejado. Nunca interrumpe la instalación.
+    if [ "$MOTOR" = "$MOTOR_016" ]; then aplicar_ajustes_mailway "${PANEL_CONTENEDOR:-$(contenedor_panel_conocido)}"; fi
     conectar_cloudflare_junto_a_skyway
     conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway
   fi
+  # Bulwark desactivado: fuera sus contenedores, si quedan, cuando el panel
+  # ya no lo ofrece (autónoma: recreado sin sus variables al levantar los
+  # servicios; junto a Skyway, redesplegado arriba).
+  if ! bulwark_activo; then retirar_bulwark; fi
 
   # Orden «mailway» (update, comprobar…) en el PATH para las próximas veces.
   bash "$DEPLOY_DIR/mailway.sh" instalar-comando || true

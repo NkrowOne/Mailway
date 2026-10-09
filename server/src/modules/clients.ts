@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { generateMailboxPassword, hashPassword, randomId } from '../core/crypto';
 import { badRequest, conflict, notFound } from '../core/errors';
+import { mailboxStateLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
 
 /* --------------------------------- Planes -------------------------------- */
@@ -91,6 +93,11 @@ export interface Client {
   createdAt: number;
   /** Referencia en un sistema externo (p. ej. "skyway:project:<id>"), o null. */
   externalRef: string | null;
+  /**
+   * Correo web elegido para sus webmail propios: Roundcube o el nuevo
+   * (Bulwark, beta). Se cambia con PUT /api/clients/:id/webmail (correoweb.ts).
+   */
+  webmailMotor: 'roundcube' | 'bulwark';
 }
 
 interface ClientRow {
@@ -103,6 +110,7 @@ interface ClientRow {
   notes: string;
   created_at: number;
   external_ref: string | null;
+  webmail_motor: 'roundcube' | 'bulwark';
 }
 
 function toClient(row: ClientRow): Client {
@@ -116,6 +124,7 @@ function toClient(row: ClientRow): Client {
     notes: row.notes,
     createdAt: row.created_at,
     externalRef: row.external_ref ?? null,
+    webmailMotor: row.webmail_motor === 'bulwark' ? 'bulwark' : 'roundcube',
   };
 }
 
@@ -309,10 +318,10 @@ export async function applyClientSuspension(
 ): Promise<SuspensionResult> {
   const rows = db
     .prepare(
-      `SELECT m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+      `SELECT m.id, m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
        WHERE d.client_id = ?`,
     )
-    .all(clientId) as { local_part: string; status: 'active' | 'suspended'; domain: string }[];
+    .all(clientId) as { id: string; local_part: string; status: 'active' | 'suspended'; domain: string }[];
   const result: SuspensionResult = { updated: 0, skipped: 0, failed: [] };
   const targets = rows.filter((row) => row.status === 'active');
   result.skipped = rows.length - targets.length;
@@ -322,7 +331,8 @@ export async function applyClientSuspension(
   await runLimited(targets, 5, async (row) => {
     const email = `${row.local_part}@${row.domain}`;
     try {
-      await engine.updateMailbox(email, { suspended });
+      // En fila con los demás cambios de estado del buzón (mailboxStateLockKey).
+      await withLock(mailboxStateLockKey(row.id), () => engine.updateMailbox(email, { suspended }));
       result.updated += 1;
     } catch (err) {
       result.failed.push({ email, error: (err as Error).message });
@@ -603,6 +613,10 @@ export function registerClientRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const current = getClient(id);
     const body = clientPatchSchema.parse(req.body ?? {});
+    // La suspensión se lleva a los buzones del motor DESPUÉS de guardarla:
+    // durante el mantenimiento del motor el cliente quedaría suspendido solo
+    // en el panel, con sus buzones entrando en el motor.
+    if (body.suspended !== undefined) exigirSinMantenimiento();
 
     if (body.planId && body.planId !== current.planId) {
       const nextPlan = getPlan(body.planId);

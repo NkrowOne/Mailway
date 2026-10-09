@@ -10,6 +10,7 @@ import {
   createMailbox,
   setDomainOwnership,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 let ctx: TestContext;
@@ -124,8 +125,8 @@ test('restablecer la contraseña: generada o propia, con validación', async () 
   const generated = await asAdmin('POST', `/api/mailboxes/${mailboxId}/password`, {});
   assert.equal(generated.statusCode, 200);
   const newPassword = generated.json().password as string;
-  assert.equal(await engine.verifyCredentials(email, newPassword), true);
-  assert.equal(await engine.verifyCredentials(email, password), false);
+  assert.equal(await motorAcepta(email, newPassword), true);
+  assert.equal(await motorAcepta(email, password), false);
 
   const short = await asAdmin('POST', `/api/mailboxes/${mailboxId}/password`, { password: 'corta' });
   assert.equal(short.statusCode, 400);
@@ -134,7 +135,7 @@ test('restablecer la contraseña: generada o propia, con validación', async () 
   const own = await asAdmin('POST', `/api/mailboxes/${mailboxId}/password`, { password: 'una-clave-propia' });
   assert.equal(own.statusCode, 200);
   assert.equal(own.json().password, undefined, 'la elegida por el usuario no se devuelve');
-  assert.equal(await engine.verifyCredentials(email, 'una-clave-propia'), true);
+  assert.equal(await motorAcepta(email, 'una-clave-propia'), true);
 });
 
 /* ------------------------------ Alta masiva ------------------------------ */
@@ -195,7 +196,7 @@ test('alta masiva: valida cada línea, crea las válidas y devuelve sus contrase
   const engine = getEngine();
   const ana = body.results[0]!;
   assert.equal(ana.email, `ana@${domain}`);
-  assert.equal(await engine.verifyCredentials(ana.email, ana.password!), true);
+  assert.equal(await motorAcepta(ana.email, ana.password!), true);
 
   const audit = db
     .prepare(`SELECT detail FROM audit_log WHERE action = 'mailbox.bulk_created' ORDER BY id DESC LIMIT 1`)

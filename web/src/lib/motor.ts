@@ -33,8 +33,28 @@ export interface EngineAcmeStatus {
   accountLabel?: string | null;
 }
 
+/** API de gestión del motor: Stalwart 0.15 (REST), Stalwart 0.16 (JMAP) o demostración. */
+export type EngineApi = 'rest015' | 'jmap016' | 'demo';
+
+/** Nombre del motor y de su API, tal y como se enseña en Ajustes. */
+export function nombreMotor(api: EngineApi | null | undefined): string {
+  if (api === 'rest015') return 'Stalwart 0.15 (API REST)';
+  if (api === 'jmap016') return 'Stalwart 0.16 (JMAP)';
+  if (api === 'demo') return 'Demostración';
+  return 'Versión sin determinar';
+}
+
+/** Comprobación propia de la versión del motor (en 0.16: puerto 587, límite de contraseñas…). */
+export interface ComprobacionMotor {
+  key: string;
+  label: string;
+  ok: boolean;
+}
+
 export interface EngineStatus {
   engine: { kind: 'stalwart' | 'demo' | null; error: string | null };
+  /** API detectada; null si el motor no respondió. */
+  api: EngineApi | null;
   hostname: {
     /** `server.hostname` guardado en el motor. */
     configured: string | null;
@@ -51,9 +71,17 @@ export interface EngineStatus {
   trustedNetworks: string[];
   forwardedHeaders: boolean;
   recommendedApplied: boolean;
+  /** Comprobaciones propias de la versión, con su nombre. */
+  extraChecks: ComprobacionMotor[];
+  /** Cambios guardados que solo se aplican al reiniciar el contenedor del motor. */
+  restartRequired: string[];
   tls: EngineTlsStatus;
   acme: EngineAcmeStatus;
+  /** false con Stalwart 0.16: el certificado lo pone el extractor de Traefik. */
+  acmeSupported: boolean;
   certificateFiles: boolean;
+  /** Modo mantenimiento del motor (su cambio de versión). */
+  maintenance: { active: boolean; until: number | null };
 }
 
 export interface RecommendedResult {
@@ -63,6 +91,8 @@ export interface RecommendedResult {
   running?: string | null;
   errors: string[];
   warnings: string[];
+  /** Lo que el motor solo aplica al reiniciar su contenedor. */
+  restartRequired?: string[];
 }
 
 export interface PlatformDnsRecord {

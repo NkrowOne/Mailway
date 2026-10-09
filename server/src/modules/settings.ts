@@ -20,6 +20,10 @@ export function setSetting(key: string, value: string): void {
   setStmt.run(key, value, now());
 }
 
+export function deleteSetting(key: string): void {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+}
+
 export function getJsonSetting<T>(key: string): T | null {
   const raw = getSetting(key);
   if (raw === null) return null;

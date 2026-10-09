@@ -112,6 +112,14 @@ const ETIQUETAS: Record<string, string> = {
   'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',
   'engine.acme_configured': 'Emisión del certificado configurada',
   'engine.certificate_reloaded': 'Certificado del motor recargado',
+  'engine.maintenance_on': 'Mantenimiento del motor activado',
+  'engine.maintenance_off': 'Mantenimiento del motor desactivado',
+  'engine.credentials_captured': 'Contraseñas copiadas del motor antes de migrarlo',
+  'engine.provisioned': 'Motor preparado tras su actualización',
+  'engine.post_migration': 'Tareas posteriores a la actualización del motor',
+  'engine.app_passwords_invalidated': 'Contraseñas de aplicación invalidadas por la actualización del motor',
+  'engine.app_passwords_restored': 'Contraseñas de aplicación recuperadas al volver a la versión anterior del motor',
+  'engine.suspensions_repaired': 'Buzones suspendidos y alias corregidos en el motor',
   // Planes y clientes
   'plan.created': 'Plan creado',
   'plan.updated': 'Plan actualizado',
@@ -164,10 +172,15 @@ const ETIQUETAS: Record<string, string> = {
   'cloudflare.account_token_replaced': 'Token de la cuenta de Cloudflare sustituido',
   'cloudflare.dns_applied': 'Registros DNS aplicados en Cloudflare',
   'cloudflare.instance_dns_applied': 'Registros DNS de la instancia aplicados en Cloudflare',
-  // Marca blanca
+  // Marca blanca y correo web
   'whitelabel.domain_created': 'Dominio de marca blanca dado de alta',
   'whitelabel.domain_verified': 'Dominio de marca blanca verificado',
   'whitelabel.domain_deleted': 'Dominio de marca blanca eliminado',
+  'client.webmail_changed': 'Correo web del cliente cambiado',
+  'client.webmail_brand_updated': 'Marca del correo web actualizada',
+  'client.webmail_brand_image_updated': 'Imagen de la marca del correo web actualizada',
+  'client.webmail_brand_image_removed': 'Imagen de la marca del correo web retirada',
+  'bulwark.synced': 'Marca y política aplicadas en el correo web nuevo',
   // Vigilancia
   'alert.dismissed': 'Aviso descartado',
   'notify.channels_updated': 'Canales de aviso actualizados',
@@ -191,6 +204,7 @@ const AREAS: Record<string, string> = {
   token: 'Token de gestión',
   cloudflare: 'Cloudflare',
   autoconfig: 'Autoconfiguración',
+  bulwark: 'Correo web nuevo',
   whitelabel: 'Marca blanca',
   alert: 'Aviso',
   notify: 'Avisos',
@@ -343,6 +357,10 @@ const RECUENTOS: Record<string, [string, string]> = {
   aliasesDeleted: ['alias eliminado', 'alias eliminados'],
   removed: ['elemento eliminado', 'elementos eliminados'],
   apiKeys: ['clave de API afectada', 'claves de API afectadas'],
+  webmails: ['webmail con su marca', 'webmail con su marca'],
+  imagenesSubidas: ['imagen subida', 'imágenes subidas'],
+  imagenesRetiradas: ['imagen retirada', 'imágenes retiradas'],
+  descartados: ['cliente con la marca de la instancia', 'clientes con la marca de la instancia'],
 };
 
 /** Recuentos que solo informan cuando no son cero (un «0 errores» sobra). */
@@ -355,6 +373,9 @@ const SOLO_SI_HAY = new Set([
   'unknown',
   'pending',
   'apiKeys',
+  'imagenesSubidas',
+  'imagenesRetiradas',
+  'descartados',
 ]);
 
 /** Valores sí/no con significado propio: se nombran solo cuando aportan algo. */
@@ -365,6 +386,10 @@ const BOOLEANOS: Record<string, [string | null, string | null]> = {
   disabled: ['deshabilitado', 'habilitado'],
   recommendedApplied: ['ajustes recomendados aplicados', null],
   ownershipVerified: ['propiedad comprobada', null],
+  permissiveCors: ['CORS para el correo web nuevo', 'sin CORS para el correo web nuevo'],
+  corsApplied: ['CORS del motor abierto', null],
+  marcaCambiada: ['marca cambiada', null],
+  politicaCambiada: ['política cambiada', null],
 };
 
 /** Listas de valores cuyo significado depende de la clave. */
@@ -384,6 +409,22 @@ const CAMPOS_CLIENTE: Record<string, string> = {
   contactEmail: 'correo de contacto',
   planId: 'plan',
   notes: 'notas',
+  // Marca del correo web
+  nombre: 'nombre',
+  nombreCorto: 'nombre corto',
+  empresa: 'empresa',
+  privacidadUrl: 'política de privacidad',
+  avisoLegalUrl: 'aviso legal',
+};
+
+/** Correo web de un cliente y huecos de imagen de su marca, por su código. */
+const CORREO_WEB: Record<string, string> = {
+  roundcube: 'Roundcube',
+  bulwark: 'correo web nuevo (beta)',
+  logoClaro: 'logotipo',
+  logoOscuro: 'logotipo para el modo oscuro',
+  favicon: 'icono de la pestaña',
+  icono: 'icono de la aplicación',
 };
 
 const ESTADOS: Record<string, string> = {
@@ -440,6 +481,9 @@ export function detalleAnotacion(detail: Record<string, unknown>): string[] {
       if (ID_INTERNO.test(valor)) continue;
       if (clave === 'status') texto = ESTADOS[valor] ?? valor;
       else if (clave === 'kind') texto = TIPOS[valor] ?? valor;
+      else if (clave === 'webmail' || clave === 'image') texto = CORREO_WEB[valor] ?? valor;
+      else if (clave === 'previous' && CORREO_WEB[valor]) texto = CORREO_WEB[valor]!;
+      else if (clave === 'type' && valor.startsWith('image/')) texto = valor.slice('image/'.length).toUpperCase();
       else if (clave === 'scope') texto = valor === 'instance' ? 'instancia' : null;
       else texto = valor;
       const rotulo = ROTULOS_DETALLE[clave];

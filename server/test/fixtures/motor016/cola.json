@@ -1,0 +1,63 @@
+{
+  "methodResponses": [
+    [
+      "x:QueuedMessage/query",
+      {
+        "accountId": "d333333",
+        "queryState": "n",
+        "canCalculateChanges": true,
+        "position": 0,
+        "ids": [
+          "jivyofs1abaa"
+        ],
+        "total": 1
+      },
+      "q"
+    ],
+    [
+      "x:QueuedMessage/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "createdAt": "2026-10-09T15:15:26Z",
+            "nextRetry": "2026-10-09T16:15:26Z",
+            "nextNotify": "2026-10-10T16:15:26Z",
+            "blobId": "edoziivehcoukepaqe3eurqmw7mn72gj9ipoz1nmt2taqeq002uxn333333q333333333333333qc",
+            "returnPath": "ana@m016-74124c.test",
+            "recipients": {
+              "fuera@externo-74124c.invalid": {
+                "retryCount": 0,
+                "retryDue": "2026-10-09T16:15:26Z",
+                "notifyCount": 0,
+                "notifyDue": "2026-10-10T16:15:26Z",
+                "expires": {
+                  "expiresAt": "2026-10-12T16:15:26Z",
+                  "@type": "Ttl"
+                },
+                "queueName": "remote",
+                "status": {
+                  "@type": "Scheduled"
+                },
+                "flags": {},
+                "orcpt": null
+              }
+            },
+            "receivedFromIp": "172.17.0.1",
+            "receivedViaPort": 465,
+            "flags": {
+              "authenticated": true
+            },
+            "envId": null,
+            "priority": 0,
+            "size": 254,
+            "id": "jivyofs1abaa"
+          }
+        ],
+        "notFound": []
+      },
+      "g"
+    ]
+  ],
+  "sessionState": "87ca32ba"
+}

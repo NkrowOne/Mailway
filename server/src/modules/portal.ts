@@ -13,12 +13,14 @@ import {
 } from '../core/crypto';
 import { HttpError, badRequest, notFound, tooMany, unauthorized } from '../core/errors';
 import { withLock } from '../core/locks';
-import { verifySha512Crypt } from '../core/sha512crypt';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireAdmin, requireAdminSession, requireAuth, requireClientAccess } from './auth';
 import { getClient, runLimited } from './clients';
+import { cambiarContrasenaBuzon, comprobarContrasenaBuzon, type ResultadoComprobacion } from './credenciales';
+import { exigirSinMantenimiento } from './mantenimiento';
 import {
+  contrasenasInvalidadas,
   createAppPassword,
   listAppPasswords,
   revokeAppPassword,
@@ -31,6 +33,7 @@ import {
   mobileconfigPlist,
   publicBaseUrl,
   thunderbirdAndroidQrPayload,
+  webmailPropio,
   type ConnectionSettings,
 } from './connection';
 import {
@@ -43,6 +46,7 @@ import {
   leerFoto,
   nombreSchema,
 } from './perfil';
+import { motorCorreoWebEnServicio } from './webmailmotor';
 
 /**
  * Portal del titular del buzón y enlaces de configuración de dispositivos.
@@ -54,10 +58,10 @@ import {
  * - entrando en «Mi buzón» con su dirección y la contraseña del buzón, donde
  *   además cambia su contraseña y gestiona contraseñas de aplicación.
  *
- * Las contraseñas del buzón se comprueban SIEMPRE en local
- * (engine.verifyCredentials): si se le pidiera al motor que autenticase, cada
- * fallo contaría para su baneo automático de IPs y un par de errores
- * tecleando bloquearían la IP del proxy para todos los clientes.
+ * Las contraseñas del buzón se comprueban SIEMPRE en el panel, contra su
+ * copia del hash (modules/credenciales.ts): si se le pidiera al motor que
+ * autenticase, cada fallo contaría para su baneo automático de IPs y un par
+ * de errores tecleando bloquearían la IP del proxy para todos los clientes.
  */
 
 const COOKIE_BUZON = 'mailway_buzon';
@@ -103,6 +107,18 @@ function sinComprobacion(): HttpError {
     503,
     'No se ha podido comprobar la contraseña en este momento. Vuelve a intentarlo en unos minutos.',
     'engine_unreachable',
+  );
+}
+
+/**
+ * El panel no tiene copia del hash de este buzón y el motor ya no la da
+ * (Stalwart 0.16): reintentar no sirve, hay que restablecer la contraseña.
+ */
+function sinCopia(): HttpError {
+  return new HttpError(
+    409,
+    'No se puede comprobar la contraseña de este buzón. Pide a la persona que administra tu correo que la restablezca.',
+    'password_unverifiable',
   );
 }
 
@@ -199,6 +215,14 @@ export function buzonDelPanel(req: FastifyRequest, mailboxId: string): Titular {
   return titular;
 }
 
+/**
+ * ¿Entra el titular al correo web por el nuevo (Bulwark)? Su cliente lo usa y
+ * su webmail es uno propio en servicio (la dirección general sigue en Roundcube).
+ */
+function usaCorreoWebNuevo(titular: Titular): boolean {
+  return motorCorreoWebEnServicio(titular.clientId) === 'bulwark' && webmailPropio(titular.clientId, titular.domain) !== null;
+}
+
 /** Datos de conexión en la forma de GET /api/mailboxes/:id/connection. */
 function datosConexion(titular: Titular): {
   settings: ConnectionSettings;
@@ -224,24 +248,6 @@ function datosConexion(titular: Titular): {
       webmailUrl: settings.webmailUrl,
     },
   };
-}
-
-/**
- * ¿Es una contraseña de aplicación del buzón? El motor acepta ambas para
- * IMAP/SMTP, pero gestionar la cuenta (cambiar la contraseña principal,
- * crear otras) solo debe poder hacerse con la principal: quien encuentre el
- * móvil perdido no debe poder adueñarse del buzón con la contraseña guardada.
- */
-function esContrasenaDeAplicacion(mailboxId: string, password: string): boolean {
-  const rows = db
-    .prepare('SELECT stored_secret FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
-    .all(mailboxId) as { stored_secret: string }[];
-  for (const { stored_secret: stored } of rows) {
-    // Formato del motor: $app$<etiqueta>$<hash $6$>.
-    const hash = stored.slice(stored.indexOf('$', 5) + 1);
-    if (hash.startsWith('$6$') && verifySha512Crypt(password, hash)) return true;
-  }
-  return false;
 }
 
 /**
@@ -363,13 +369,15 @@ async function comprobarContrasenaPrincipal(
   errorSiIncorrecta: () => HttpError,
 ): Promise<void> {
   comprobarLimite(titular.email, ip);
-  const ok = await getEngine().verifyCredentials(titular.email, password);
-  if (ok === null) throw sinComprobacion();
-  if (!ok) {
+  const resultado = await comprobarContrasenaBuzon(titular.id, password);
+  if (resultado === 'sin_respuesta') throw sinComprobacion();
+  if (resultado === 'sin_copia') throw sinCopia();
+  if (resultado === 'incorrecta') {
     registrarFallo(titular.email, ip);
     throw errorSiIncorrecta();
   }
-  if (esContrasenaDeAplicacion(titular.id, password)) throw contrasenaDeAplicacion();
+  // El motor también la acepta, pero gestionar la cuenta exige la principal.
+  if (resultado === 'aplicacion') throw contrasenaDeAplicacion();
 }
 
 /* --------------------------- Enlaces: utilidades --------------------------- */
@@ -597,7 +605,7 @@ export async function reiniciarBuzon(
     // Contraseña nueva siempre: quien probó el buzón conoce la anterior (o la
     // cambió desde «Mi buzón» o el webmail).
     const password = generateMailboxPassword();
-    await getEngine().setMailboxPassword(titular.email, password);
+    await cambiarContrasenaBuzon(titular, password);
     alCambiarContrasenaBuzon(titular.id);
     // Con la contraseña nueva ningún dispositivo entra: vuelve a estar sin
     // configurar.
@@ -828,8 +836,8 @@ export function registerPortalRoutes(app: FastifyInstance): void {
           'Se han indicado demasiadas contraseñas que no coinciden con la del buzón. Espera 15 minutos o crea el enlace sin la contraseña.',
         );
       }
-      const ok = await getEngine().verifyCredentials(titular.email, body.password);
-      if (ok === null) {
+      const resultado: ResultadoComprobacion = await comprobarContrasenaBuzon(titular.id, body.password);
+      if (resultado === 'sin_respuesta') {
         // Sin comprobarla no se guarda: podría no ser la del buzón.
         throw new HttpError(
           503,
@@ -837,7 +845,14 @@ export function registerPortalRoutes(app: FastifyInstance): void {
           'engine_unreachable',
         );
       }
-      if (!ok) {
+      if (resultado === 'sin_copia') {
+        throw new HttpError(
+          409,
+          'El panel no tiene copia de la contraseña de este buzón, así que no puede comprobarla. Restablece la contraseña del buzón o crea el enlace sin ella.',
+          'password_unverifiable',
+        );
+      }
+      if (resultado === 'incorrecta') {
         db.prepare('INSERT INTO login_attempts (ip, attempted_at) VALUES (?, ?)').run(claveFallos, now());
         throw badRequest(
           'La contraseña indicada no es la del buzón. Comprueba que es la última que se ha generado.',
@@ -847,7 +862,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // Una contraseña de aplicación también «vale», pero el enlace es para
       // la principal: con otra, el titular configuraría su móvil con una
       // credencial que alguien puede revocar sin avisarle.
-      if (esContrasenaDeAplicacion(titular.id, body.password)) throw contrasenaDeAplicacion();
+      if (resultado === 'aplicacion') throw contrasenaDeAplicacion();
       passwordEnc = encryptSecret(body.password);
     }
 
@@ -992,9 +1007,11 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         'client_suspended',
       );
     }
-    // Sin motor configurado fallarían todos los buzones por el mismo motivo:
-    // mejor un único error claro antes de tocar nada.
+    // Sin motor configurado, o con el motor en mantenimiento, fallarían todos
+    // los buzones por el mismo motivo: mejor un único error claro antes de
+    // tocar nada.
     getEngine();
+    exigirSinMantenimiento();
 
     const titulares = buzonesDelCliente(id);
     const activos = titulares.filter((t) => !t.suspendido);
@@ -1147,6 +1164,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     comprobarLimite(body.email, ip);
     const titular = buzonPorDireccion(body.email);
     if (!titular) {
+      // Cuesta lo mismo que una contraseña incorrecta: el tiempo de respuesta
+      // no dice qué direcciones existen.
+      await comprobarContrasenaBuzon(null, body.password);
       registrarFallo(body.email, ip);
       throw credencialesIncorrectas();
     }
@@ -1194,6 +1214,12 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         titular.displayName,
         settings,
       ),
+      // Contraseñas de aplicación que dejaron de funcionar al actualizar el
+      // servidor de correo: «Mi buzón» avisa arriba para que cree otras.
+      invalidatedAppPasswords: contrasenasInvalidadas(titular.id),
+      // Su webmail es el correo web nuevo (Bulwark): tras cambiar la
+      // contraseña hay que cerrarlo y volver a entrar (ver la ruta siguiente).
+      newWebmail: usaCorreoWebNuevo(titular),
     };
   });
 
@@ -1206,12 +1232,16 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     await comprobarContrasenaPrincipal(titular, body.current, req.ip || '', () =>
       badRequest('La contraseña actual no es correcta.', 'bad_current_password'),
     );
-    // setMailboxPassword sustituye solo la principal: las contraseñas de
-    // aplicación (otros dispositivos, integraciones) siguen funcionando.
-    await getEngine().setMailboxPassword(titular.email, body.next);
+    // Solo cambia la principal: las contraseñas de aplicación (otros
+    // dispositivos, integraciones) siguen funcionando.
+    await cambiarContrasenaBuzon(titular, body.next);
     alCambiarContrasenaBuzon(titular.id, tokenHash);
     auditTitular(req, titular.clientId, 'portal.password_changed', { email: titular.email });
-    return { ok: true };
+    // El correo web nuevo no vuelve al acceso al cambiar la contraseña: sigue
+    // reintentando con la anterior desde la IP del titular y el motor acaba
+    // bloqueándola (deploy/bulwark/README.md, «Riesgos»). «Mi buzón» pide
+    // cerrarlo y volver a entrar.
+    return { ok: true, reopenWebmail: usaCorreoWebNuevo(titular) };
   });
 
   app.get('/api/portal/mobileconfig', async (req, reply) => {
@@ -1332,15 +1362,16 @@ export function registerPortalRoutes(app: FastifyInstance): void {
         return responder(403, 'error');
       }
       if (titular.suspendido) return responder(403, 'error');
-      const ok = await getEngine().verifyCredentials(titular.email, curpass);
-      if (ok === null) return responder(503, 'error');
-      if (!ok) {
+      const resultado = await comprobarContrasenaBuzon(titular.id, curpass);
+      if (resultado === 'sin_respuesta') return responder(503, 'error');
+      if (resultado === 'sin_copia') return responder(409, 'error');
+      if (resultado === 'incorrecta') {
         registrarFallo(titular.email, null);
         return responder(403, 'error');
       }
-      if (esContrasenaDeAplicacion(titular.id, curpass)) return responder(403, 'error');
+      if (resultado === 'aplicacion') return responder(403, 'error');
 
-      await getEngine().setMailboxPassword(titular.email, newpass);
+      await cambiarContrasenaBuzon(titular, newpass);
       alCambiarContrasenaBuzon(titular.id);
       auditTitular(req, titular.clientId, 'webmail.password_changed', { email: titular.email });
       return responder(200, 'ok');

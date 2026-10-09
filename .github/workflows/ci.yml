@@ -22,4 +22,33 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Sintaxis de los scripts de despliegue
-        run: for f in deploy/*.sh; do [ -f "$f" ] && bash -n "$f"; done; true
+        run: |
+          shopt -s globstar nullglob
+          for f in deploy/**/*.sh; do bash -n "$f"; done
+
+  # La imagen del panel tal como la construye Skyway (o el compose autónomo).
+  # Las pruebas de arriba usan el Node del runner: sin esto, un parche de la
+  # imagen base (node:…-alpine) o de una dependencia nativa se fusionaría
+  # (también con parches-automaticos.yml) sin haberse construido ni arrancado.
+  imagen:
+    name: Imagen del panel (docker build y /api/health)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen del Dockerfile
+        run: docker build --pull -t mailway-panel:ci .
+      - name: Arrancar el panel y esperar a /api/health
+        run: |
+          docker run -d --name mailway-panel-ci -e MAILWAY_DEMO=1 mailway-panel:ci
+          for _ in $(seq 1 30); do
+            if docker exec mailway-panel-ci node -e \
+              "fetch('http://127.0.0.1:4100/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"; then
+              echo "El panel responde en /api/health."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs mailway-panel-ci
+          echo "El panel no responde en /api/health." >&2
+          exit 1

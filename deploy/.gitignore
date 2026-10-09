@@ -4,5 +4,15 @@
 .env.*
 !.env.example
 
+# Estado de «mailway update» (versión anterior y resultado), sus temporales y
+# el cerrojo que impide dos actualizaciones a la vez (ver mailway.sh).
+.actualizacion
+.actualizacion.*
+
 # Caché de Python que dejan las pruebas del extractor (deploy/tls).
 __pycache__/
+
+# Registros y carpeta de trabajo de las órdenes del motor (migrar-motor,
+# revertir-motor, retirar-motor-anterior). Los ficheros con secretos se
+# borran al terminar; los registros se quedan para consultarlos.
+.migracion-motor/

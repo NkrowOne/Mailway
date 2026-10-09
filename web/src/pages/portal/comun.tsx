@@ -89,6 +89,22 @@ export function AvisoError({ children }: { children: ReactNode }) {
   return <AvisoErrorKit>{children}</AvisoErrorKit>;
 }
 
+/**
+ * Aviso que pide hacer algo (fondo de «revisar»): no es un error de la
+ * página, sino algo del buzón que el titular tiene que resolver.
+ */
+export function AvisoAtencion({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <section
+      role="status"
+      className="revelar rounded-xl border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-4 py-3.5 text-base text-tinta"
+    >
+      <h2 className="text-md font-semibold text-tinta">{titulo}</h2>
+      <div className="mt-1.5 max-w-[70ch] text-tinta-2">{children}</div>
+    </section>
+  );
+}
+
 /** Confirmación de una acción completada, sobre el fondo de conformidad. */
 export function AvisoHecho({ children }: { children: ReactNode }) {
   return (

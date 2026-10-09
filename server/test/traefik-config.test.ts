@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
+import { anotarApiDelMotor, olvidarApiDelMotorParaPruebas } from '../src/engine/apiconocida';
 import { AUTOCONFIG_HOSTS_SETTING, type AutoconfigHostRecord } from '../src/modules/connection';
 import { setInstanceSettings, setJsonSetting } from '../src/modules/settings';
 import { buildTraefikConfig } from '../src/modules/whitelabel';
@@ -70,6 +71,7 @@ function seedHostStates(states: Record<string, AutoconfigHostRecord['state']>): 
 }
 
 const originalPanelBackend = config.traefik.panelBackend;
+const originalBulwark = { ...config.bulwark };
 
 beforeEach(() => {
   db.prepare('DELETE FROM client_domains').run();
@@ -81,6 +83,9 @@ beforeEach(() => {
 
 afterEach(() => {
   config.traefik.panelBackend = originalPanelBackend;
+  Object.assign(config.bulwark, originalBulwark);
+  db.prepare(`UPDATE clients SET webmail_motor = 'roundcube'`).run();
+  olvidarApiDelMotorParaPruebas();
 });
 
 test('un dominio sin DNS verificado NO se publica a Traefik', () => {
@@ -233,4 +238,105 @@ test('si un dominio de cliente coincide con la base de la instancia, no se dupli
   assert.ok(routers['mailway-autoconfig-instancia']);
   assert.equal(routers['mailway-autoconfig-dom_d'], undefined);
   assert.ok(routers['mailway-mtasts-dom_d']);
+});
+
+/* ------------------------- Correo web nuevo (Bulwark) ------------------------- */
+
+const BULWARK = 'http://mailway-bulwark-gw:8080';
+
+/** Un segundo cliente que ha elegido el correo web nuevo, con sus nombres. */
+function seedClienteBulwark(): void {
+  seedClient();
+  db.prepare(
+    `INSERT INTO clients (id, name, slug, plan_id, webmail_motor, created_at)
+     VALUES ('cli_b', 'Cliente Bulwark', 'cliente-bulwark', 'plan_t', 'bulwark', ?)
+     ON CONFLICT(id) DO UPDATE SET webmail_motor = 'bulwark'`,
+  ).run(Date.now());
+  for (const [id, hostname, kind, status] of [
+    ['wld_b1', 'webmail.bulwark.test', 'webmail', 'active'],
+    ['wld_b2', 'correo.bulwark.test', 'webmail', 'issuing'],
+    ['wld_b3', 'panel.bulwark.test', 'panel', 'active'],
+    ['wld_b4', 'pendiente.bulwark.test', 'webmail', 'pending_dns'],
+  ]) {
+    db.prepare(
+      `INSERT INTO client_domains (id, client_id, hostname, kind, status, created_at) VALUES (?, 'cli_b', ?, ?, ?, ?)`,
+    ).run(id, hostname, kind, status, Date.now());
+  }
+  seedDomain('wld_r1', 'webmail.roundcube.test', 'active');
+}
+
+function bulwarkDisponible(): void {
+  config.bulwark.url = 'http://mailway-bulwark:3000';
+  config.bulwark.adminPassword = 'clave-de-administracion';
+  config.bulwark.backendUrl = BULWARK;
+}
+
+test('Bulwark por fila: los webmail de su cliente van a la pasarela; los demás, a Roundcube', () => {
+  config.traefik.panelBackend = 'http://mailway-panel:4100';
+  seedClienteBulwark();
+  bulwarkDisponible();
+  anotarApiDelMotor('jmap016');
+  const cfg = build();
+  assert.equal(cfg.http.routers['mailway-wld_b1']!.service, 'mailway-bulwark');
+  assert.equal(cfg.http.routers['mailway-wld_b1-http']!.service, 'mailway-bulwark');
+  assert.equal(cfg.http.routers['mailway-wld_b2']!.service, 'mailway-bulwark', 'también mientras emite el certificado');
+  assert.equal(cfg.http.routers['mailway-wld_b4'], undefined, 'sin DNS no se publica, sea cual sea el correo web');
+  assert.equal(cfg.http.routers['mailway-wld_b3']!.service, 'mailway-panel', 'el panel de marca blanca no cambia');
+  assert.equal(cfg.http.routers['mailway-wld_r1']!.service, 'mailway-webmail');
+  assert.deepEqual(Object.keys(cfg.http.services).sort(), ['mailway-bulwark', 'mailway-panel', 'mailway-webmail']);
+  assert.equal(cfg.http.services['mailway-bulwark']!.loadBalancer.servers[0]!.url, BULWARK);
+  assert.equal(cfg.http.services['mailway-webmail']!.loadBalancer.servers[0]!.url, 'http://mailway-webmail:80');
+  // El puente de Skyway solo admite Host() y nombres sin puntos.
+  for (const [nombre, router] of Object.entries(cfg.http.routers)) {
+    assert.match(nombre, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+    assert.match(router.rule, /^Host\(`[a-z0-9.-]+`\)$/);
+  }
+});
+
+test('Bulwark por fila: sin Bulwark disponible o con el motor 0.15, sus nombres vuelven a Roundcube', () => {
+  seedClienteBulwark();
+  const destino = () => {
+    const cfg = build();
+    return [cfg.http.routers['mailway-wld_b1']!.service, Boolean(cfg.http.services['mailway-bulwark'])];
+  };
+  // Motor 0.16 pero Bulwark a medias (sin destino de Traefik).
+  bulwarkDisponible();
+  config.bulwark.backendUrl = '';
+  anotarApiDelMotor('jmap016');
+  assert.deepEqual(destino(), ['mailway-webmail', false]);
+  // Sin la contraseña de administración: tampoco (sin ella no habría marca).
+  bulwarkDisponible();
+  config.bulwark.adminPassword = '';
+  assert.deepEqual(destino(), ['mailway-webmail', false]);
+  // Disponible, pero el motor ha vuelto a 0.15 (o aún no se sabe).
+  bulwarkDisponible();
+  anotarApiDelMotor('rest015');
+  assert.deepEqual(destino(), ['mailway-webmail', false]);
+  olvidarApiDelMotorParaPruebas();
+  assert.deepEqual(destino(), ['mailway-webmail', false]);
+  // Todo en orden: a Bulwark.
+  anotarApiDelMotor('jmap016');
+  assert.deepEqual(destino(), ['mailway-bulwark', true]);
+  // El cliente vuelve a Roundcube.
+  db.prepare(`UPDATE clients SET webmail_motor = 'roundcube' WHERE id = 'cli_b'`).run();
+  assert.deepEqual(destino(), ['mailway-webmail', false]);
+});
+
+test('/api/traefik/config: el mismo reparto por la ruta que consulta Traefik', async () => {
+  const { getTestApp } = await import('./helpers');
+  const { getTraefikToken } = await import('../src/modules/whitelabel');
+  const app = await getTestApp();
+  seedClienteBulwark();
+  bulwarkDisponible();
+  anotarApiDelMotor('jmap016');
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/traefik/config',
+    headers: { 'x-mailway-token': getTraefikToken() },
+  });
+  assert.equal(res.statusCode, 200);
+  const cfg = res.json() as TraefikConfig;
+  assert.equal(cfg.http.routers['mailway-wld_b1']!.service, 'mailway-bulwark');
+  assert.equal(cfg.http.routers['mailway-wld_r1']!.service, 'mailway-webmail');
+  assert.equal(cfg.http.services['mailway-bulwark']!.loadBalancer.servers[0]!.url, BULWARK);
 });

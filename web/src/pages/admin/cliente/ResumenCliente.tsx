@@ -14,6 +14,7 @@ import { useToast } from '../../../ui/toast';
 import { BandaAviso, BandaError, Botonera, FilaDato, rutaCliente } from '../../../components/gestion/comun';
 import { SiguientePasoBienvenida } from '../../../components/EnlaceBienvenida';
 import { lecturaCuenta } from '../../puesta/comun';
+import { NOMBRE_MOTOR } from '../../../lib/correoweb';
 import { useRefrescarCliente, type ContextoCliente } from './datos';
 
 /** Dominios que se enseñan en el resumen; el resto, en la pestaña «Dominios». */
@@ -112,6 +113,17 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
             <FilaDato rotulo="Alta">
               <span className="valor text-sm">{formatDay(data.createdAt)}</span>
             </FilaDato>
+            {data.webmailMotor && (
+              <FilaDato rotulo="Correo web">
+                {NOMBRE_MOTOR[data.webmailMotor]}{' '}
+                <Link
+                  to={rutaCliente(id, 'marca-blanca')}
+                  className="text-sm text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
+                >
+                  Cambiar
+                </Link>
+              </FilaDato>
+            )}
             {data.externalRef && (
               <FilaDato rotulo="Vínculo externo">
                 {vinculadoConSkyway(data.externalRef) ? 'Vinculado con Skyway' : 'Vinculado'}{' '}

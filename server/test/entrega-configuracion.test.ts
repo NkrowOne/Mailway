@@ -23,6 +23,7 @@ import {
   createDomain,
   createMailbox,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 /*
@@ -227,10 +228,10 @@ test('enviar la configuración: genera contraseña y enlace, anota el envío y n
 
   // Sin enlace previo con contraseña: contraseña nueva (la anterior deja de valer).
   const engine = getEngine();
-  assert.equal(await engine.verifyCredentials(t.email, t.password), false);
+  assert.equal(await motorAcepta(t.email, t.password), false);
   const [enlace] = enlaces(t.mailboxId);
   assert.ok(enlace?.password_enc && enlace.token_enc);
-  assert.equal(await engine.verifyCredentials(t.email, decryptSecret(enlace.password_enc)), true);
+  assert.equal(await motorAcepta(t.email, decryptSecret(enlace.password_enc)), true);
   assert.ok(!res.body.includes(decryptSecret(enlace.token_enc)));
 
   const [fila] = envios(t.mailboxId);
@@ -278,7 +279,7 @@ test('un enlace reciente con contraseña se reutiliza: sin contraseña nueva ni 
   // Es el mismo enlace (la validez pedida solo vale para uno nuevo).
   assert.equal(body.link.expiresAt, enlace!.expires_at);
   assert.equal(enlaces(t.mailboxId).length, 1);
-  assert.equal(await getEngine().verifyCredentials(t.email, password), true, 'la contraseña no ha cambiado');
+  assert.equal(await motorAcepta(t.email, password), true, 'la contraseña no ha cambiado');
 
   const mailbox = await buzonJson(t.mailboxId, t.clientId);
   assert.equal(mailbox.setup.lastEmail?.to, 'otra@ejemplo.com');
@@ -304,11 +305,11 @@ test('sin enlace reutilizable se rota la contraseña y el buzón vuelve a estar 
   assert.equal(res.statusCode, 200, res.body);
   assert.equal((res.json() as RespuestaEnvio).reused, false);
   assert.equal(configuredAt(t.mailboxId), null);
-  assert.equal(await getEngine().verifyCredentials(t.email, t.password), false);
+  assert.equal(await motorAcepta(t.email, t.password), false);
   const lista = enlaces(t.mailboxId);
   assert.equal(lista.length, 2);
   assert.equal(lista[0]!.password_enc, null, 'el enlace anterior pierde la contraseña que ya no vale');
-  assert.equal(await getEngine().verifyCredentials(t.email, decryptSecret(lista[1]!.password_enc!)), true);
+  assert.equal(await motorAcepta(t.email, decryptSecret(lista[1]!.password_enc!)), true);
   // La sesión de «Mi buzón» se cierra con la contraseña antigua.
   const me = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie: cookieFrom(login) } });
   assert.equal(me.statusCode, 401);
@@ -323,7 +324,7 @@ test('sin contraseña: no la cambia y nunca reutiliza un enlace que la lleva', a
   const body = res.json() as RespuestaEnvio;
   assert.equal(body.reused, false);
   assert.equal(body.link.hasPassword, false);
-  assert.equal(await getEngine().verifyCredentials(t.email, t.password), true, 'la contraseña sigue siendo la misma');
+  assert.equal(await motorAcepta(t.email, t.password), true, 'la contraseña sigue siendo la misma');
   const lista = enlaces(t.mailboxId);
   assert.equal(lista.length, 2);
   assert.equal(lista[0]!.id, conContrasena.id);
@@ -351,7 +352,7 @@ test('no se envía al propio buzón ni a una dirección no válida', async () =>
   assert.equal((await enviar(t.mailboxId, { to: 'a@ejemplo.com', ttlHours: 721 }, t.userCookie)).statusCode, 400);
   assert.equal(envios(t.mailboxId).length, 0);
   // Nada de lo anterior toca la contraseña.
-  assert.equal(await getEngine().verifyCredentials(t.email, t.password), true);
+  assert.equal(await motorAcepta(t.email, t.password), true);
 });
 
 test(`límites: ${MAX_ENVIOS_POR_BUZON} por buzón y ${MAX_ENVIOS_POR_CLIENTE} por cliente cada hora`, async () => {
@@ -377,7 +378,7 @@ test(`límites: ${MAX_ENVIOS_POR_BUZON} por buzón y ${MAX_ENVIOS_POR_CLIENTE} p
   const cliente = await enviar(otro.mailboxId, { to: 'titular@ejemplo.com' }, t.userCookie);
   assert.equal(cliente.statusCode, 429, cliente.body);
   assert.equal(cliente.json().code, 'too_many_setup_emails');
-  assert.equal(await getEngine().verifyCredentials(otro.email, otro.password), true, 'sin envío no hay contraseña nueva');
+  assert.equal(await motorAcepta(otro.email, otro.password), true, 'sin envío no hay contraseña nueva');
 
   // Lo de hace más de una hora ya no cuenta.
   db.prepare('UPDATE envios_configuracion SET created_at = ? WHERE client_id = ?').run(
@@ -440,7 +441,7 @@ test('con un buzón o alias configuration@ anterior a la reserva no se envía (4
   assert.equal(res.statusCode, 409, res.body);
   assert.equal(res.json().code, 'configuration_sender_taken');
   assert.match(res.json().error, new RegExp(`configuration@${t.domain.replace(/\./g, '\\.')} ya está en uso`));
-  assert.equal(await getEngine().verifyCredentials(t.email, t.password), true, 'la contraseña no cambia');
+  assert.equal(await motorAcepta(t.email, t.password), true, 'la contraseña no cambia');
   assert.equal(enlaces(t.mailboxId).length, 0);
   assert.equal(envios(t.mailboxId).length, 0);
 
@@ -490,7 +491,7 @@ test('la cuenta configuration@ se crea una vez por dominio, oculta, y se borra c
   assert.ok(fila);
   const password = decryptSecret(fila.password_enc);
   assert.ok(password.length >= 24);
-  assert.equal(await engine.verifyCredentials(remitente, password), true);
+  assert.equal(await motorAcepta(remitente, password), true);
   assert.ok(!respuestas.includes(password), 'su contraseña nunca sale en una respuesta');
 
   // No es un buzón del cliente: ni en el listado, ni en el uso del plan.
@@ -519,7 +520,7 @@ test('la cuenta configuration@ se crea una vez por dominio, oculta, y se borra c
     headers: { cookie: ctx.adminCookie },
   });
   assert.equal(borrado.statusCode, 200, borrado.body);
-  assert.equal(await engine.verifyCredentials(remitente, password), false);
+  assert.equal(await motorAcepta(remitente, password), false);
   assert.equal((await engine.getMailboxUsage()).has(remitente), false);
   assert.equal(
     (db.prepare('SELECT COUNT(*) AS c FROM remitentes_configuracion WHERE domain_id = ?').get(t.domainId) as { c: number }).c,

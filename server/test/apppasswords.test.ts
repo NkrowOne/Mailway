@@ -8,6 +8,7 @@ import {
   createDomain,
   createMailbox,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 let ctx: TestContext;
@@ -44,8 +45,8 @@ test('crear, listar y revocar contraseñas de aplicación sin tocar la principal
   assert.equal(body.appPassword.revokedAt, null);
   assert.match(body.password, /^[a-z0-9]{4}(-[a-z0-9]{4}){3}$/);
 
-  assert.equal(await engine.verifyCredentials(email, body.password), true, 'la nueva sirve para entrar');
-  assert.equal(await engine.verifyCredentials(email, password), true, 'la principal no cambia');
+  assert.equal(await motorAcepta(email, body.password), true, 'la nueva sirve para entrar');
+  assert.equal(await motorAcepta(email, password), true, 'la principal no cambia');
 
   const list = await call(userCookie!, 'GET', base);
   assert.equal(list.statusCode, 200);
@@ -57,8 +58,8 @@ test('crear, listar y revocar contraseñas de aplicación sin tocar la principal
 
   const revoked = await call(userCookie!, 'DELETE', `${base}/${body.appPassword.id}`);
   assert.equal(revoked.statusCode, 200);
-  assert.equal(await engine.verifyCredentials(email, body.password), false, 'revocada deja de funcionar');
-  assert.equal(await engine.verifyCredentials(email, password), true);
+  assert.equal(await motorAcepta(email, body.password), false, 'revocada deja de funcionar');
+  assert.equal(await motorAcepta(email, password), true);
 
   const after = (await call(userCookie!, 'GET', base)).json().appPasswords as AppPasswordView[];
   assert.ok(after[0]!.revokedAt, 'queda en el historial como revocada');

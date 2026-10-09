@@ -1,25 +1,53 @@
 name: Pila de correo
 
-# Prueba el despliegue con contenedores reales: Stalwart v0.15.5, Roundcube y
-# el extractor del certificado (perfil «tls») con la topología de
-# deploy/docker-compose.mail.yml (red interna con subred fija), montados por
-# deploy/instalar.sh, con certificados de laboratorio y credenciales
-# desechables. Complementa a ci.yml; no lo sustituye.
+# Prueba el despliegue con contenedores reales, con certificados de
+# laboratorio y credenciales desechables. Complementa a ci.yml; no lo
+# sustituye:
+#   - el panel (driver y rutas) contra Stalwart 0.16 y 0.15 de verdad;
+#   - la pila montada por deploy/instalar.sh con cada motor: Stalwart 0.16
+#     (instalaciones nuevas) y 0.15 (las anteriores), Roundcube y el extractor
+#     del certificado (perfil «tls») con la topología de
+#     deploy/docker-compose.mail.yml;
+#   - la migración de la 0.15 a la 0.16 (instalar.sh --migrar-motor) con
+#     datos de verdad, su vuelta atrás automática, --revertir-motor y
+#     --retirar-motor-anterior;
+#   - la pasarela HTTP del motor (mailway-mail-gw) con los dos motores y un
+#     Traefik que confía en Cloudflare: la IP real y el bloqueo automático;
+#   - Bulwark: activado y desactivado por el instalador en la pila, y su
+#     ensayo (deploy/bulwark/prueba.sh) en los PR que lo tocan.
 
 on:
   push:
     branches: [main]
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'server/src/tools/motor.ts'
+      - 'server/src/modules/cambiomotor.ts'
+      - 'server/src/modules/engineops.ts'
+      - 'server/test/motor01*'
+      - 'server/test/panel-motor-real.test.ts'
+      - 'server/src/modules/bulwark.ts'
       - '.github/workflows/stack.yml'
+  # Incluye los PR de Dependabot que suben una imagen de los compose
+  # (deploy/docker-compose*.yml y deploy/motor/*/compose.yml, también los
+  # parches de Stalwart 0.15.x y 0.16.x): parches-automaticos.yml no los
+  # fusiona hasta que estas pruebas con contenedores reales terminan bien.
   pull_request:
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'server/src/tools/motor.ts'
+      - 'server/src/modules/cambiomotor.ts'
+      - 'server/src/modules/engineops.ts'
+      - 'server/test/motor01*'
+      - 'server/test/panel-motor-real.test.ts'
+      - 'server/src/modules/bulwark.ts'
       - '.github/workflows/stack.yml'
   workflow_dispatch:
-  # Las imágenes de Roundcube (1.7.x) y de Python (3.13) siguen su versión
-  # menor: una ejecución semanal detecta a tiempo una actualización que rompa
-  # la pila.
+  # Las imágenes van con versión exacta, pero una misma etiqueta puede volver
+  # a publicarse con arreglos de su sistema base: una ejecución semanal
+  # detecta a tiempo una que rompa la pila.
   schedule:
     - cron: '17 6 * * 1'
 
@@ -32,7 +60,7 @@ concurrency:
 
 jobs:
   estatica:
-    name: Extractor, diagnóstico y Compose (sin contenedores)
+    name: Extractor, motor, diagnóstico y Compose (sin contenedores)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -41,14 +69,34 @@ jobs:
       - name: Pruebas unitarias del extractor del certificado
         run: python3 -m unittest discover -s deploy/tls -v
 
-      - name: Sintaxis de Python, PHP y Bash
+      - name: Pruebas unitarias del ayudante de la migración del motor
+        run: python3 -m unittest discover -s deploy/motor -v
+
+      - name: Sintaxis de Python, PHP, JavaScript y Bash
         run: |
           python3 -m py_compile deploy/tls/extractor.py deploy/tls/laboratorio.py \
-            deploy/tls/test_extractor.py deploy/prueba-stack.py
+            deploy/tls/test_extractor.py deploy/motor/migracion.py deploy/motor/test_migracion.py \
+            deploy/prueba-stack.py
           php -l deploy/roundcube/diagnostico/comprobar.php
           php -l deploy/roundcube/mailway.php
-          for f in deploy/*.sh; do bash -n "$f"; done
-          shellcheck -x -S style deploy/*.sh
+          node --check deploy/prueba-panel-motor.js
+          node --check deploy/bulwark/prueba-navegador.cjs
+          shopt -s globstar nullglob
+          for f in deploy/**/*.sh; do bash -n "$f"; done
+          shellcheck -x -S style deploy/**/*.sh
+
+      - name: Pasarelas (nginx) con su configuración de verdad y los rangos de Cloudflare al día
+        run: |
+          # Las dos copias de los rangos (pasarela del motor y de Bulwark) salen
+          # de deploy/bulwark/cloudflare/rangos.txt.
+          bash deploy/bulwark/cloudflare/generar.sh --comprobar
+          nginx=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(nginx:[^[:space:]]+).*#\1#p' deploy/docker-compose.mail.yml | head -n 1)
+          : "${nginx:?sin la imagen de nginx en deploy/docker-compose.mail.yml}"
+          for carpeta in deploy/motor/pasarela deploy/bulwark/nginx; do
+            # Como en los compose: usuario 101, raíz en solo lectura y sin red.
+            docker run --rm --network none --user 101:101 --read-only --tmpfs /tmp \
+              -v "$PWD/$carpeta:/etc/nginx/mailway:ro" --entrypoint nginx "$nginx" -t -c /etc/nginx/mailway/nginx.conf
+          done
 
       - name: Emparejado y panel en Skyway del instalador (docker y Skyway simulados)
         run: bash deploy/prueba-emparejado.sh
@@ -56,7 +104,13 @@ jobs:
       - name: Migración desde la 0.x en el instalador (docker y motor simulados)
         run: bash deploy/prueba-migracion.sh
 
-      - name: Compose con un entorno ficticio (con y sin el perfil tls)
+      - name: Actualización automática y vuelta atrás de mailway (git real; docker y systemd simulados)
+        run: bash deploy/prueba-actualizacion.sh
+
+      - name: Motor de correo en el instalador (0.15 y 0.16; migración y vuelta atrás simuladas)
+        run: bash deploy/prueba-motor016.sh
+
+      - name: Compose con un entorno ficticio (cada motor, con y sin los perfiles tls y bulwark)
         run: |
           cat > "$RUNNER_TEMP/ficticio.env" <<'EOF'
           MAILWAY_INSTALACION='skyway'
@@ -67,24 +121,243 @@ jobs:
           ROUNDCUBE_DES_KEY='0123456789abcdef01234567'
           TRAEFIK_ACME_VOLUME='skyway_traefik-letsencrypt'
           EOF
-          for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
-            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
-            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+          for motor in '' stalwart-0.15 stalwart-0.16; do
+            for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile bulwark config -q
+              # Traefik no llega al motor: el servicio del motor es su pasarela,
+              # que está siempre (sin perfil) y le entrega la IP real.
+              grep -qF 'traefik.http.services.mailway-mail.loadbalancer.server.url: http://mailway-mail-gw:8080' <<<"$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)"
+              if grep -q 'traefik.http.services.mailway-mail.loadbalancer.server.port' <<<"$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)"; then
+                echo "$f ($motor): Traefik llega al motor sin pasar por su pasarela" >&2
+                exit 1
+              fi
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config --services | grep -qx mailway-mail-gw
+              # Bulwark solo con su perfil, y nunca sin pedirlo.
+              if MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config --services | grep -q bulwark; then
+                echo "$f ($motor): Bulwark sin su perfil" >&2
+                exit 1
+              fi
+              [ "$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile bulwark config --services | grep -c bulwark)" = 2 ]
+              # El motor no debe recibir la cabecera Forwarded del cliente: la
+              # lee antes que X-Forwarded-For y Traefik la deja pasar (ver los
+              # compose de cada motor). Con cualquier motor, en todos sus routers.
+              config=$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)
+              grep -qF 'traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded: ""' <<<"$config"
+              routers=$(grep -oE 'traefik\.http\.routers\.mailway-mail[a-z-]*\.rule' <<<"$config" | cut -d. -f4 | sort -u)
+              [ "$(wc -l <<<"$routers")" -ge 2 ]
+              while read -r router; do
+                grep -qE "traefik\.http\.routers\.$router\.middlewares: ([^ ]*,)?mailway-mail-sin-forwarded(,|\$)" <<<"$config"
+              done <<<"$routers"
+            done
           done
+          # Sin MAILWAY_MOTOR, la 0.15: las instalaciones anteriores a la 0.16
+          # siguen exactamente igual.
+          docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f deploy/docker-compose.mail.yml config --images |
+            grep -qx 'stalwartlabs/stalwart:v0.15.5'
+          # Bulwark y las pasarelas, con versión exacta y digest.
+          for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
+            imagenes=$(docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile bulwark config --images)
+            grep -qE '^ghcr\.io/bulwarkmail/webmail:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$' <<<"$imagenes"
+            if grep -E '^nginx:' <<<"$imagenes" | grep -vqE '^nginx:[0-9.]+-alpine@sha256:[0-9a-f]{64}$'; then
+              echo "$f: una pasarela sin el digest de su imagen" >&2
+              exit 1
+            fi
+          done
+          # El panel autónomo recibe las tres variables de Bulwark solo cuando
+          # el instalador escribe sus direcciones (Bulwark activo).
+          panel() { docker compose --env-file "$1" -f deploy/docker-compose.standalone.yml config --format json | jq -c '.services["mailway-panel"].environment | {MAILWAY_BULWARK_URL, MAILWAY_BULWARK_ADMIN_PASSWORD, MAILWAY_BULWARK_BACKEND_URL}'; }
+          [ "$(panel "$RUNNER_TEMP/ficticio.env")" = '{"MAILWAY_BULWARK_URL":"","MAILWAY_BULWARK_ADMIN_PASSWORD":"","MAILWAY_BULWARK_BACKEND_URL":""}' ]
+          { cat "$RUNNER_TEMP/ficticio.env"
+            echo "BULWARK_ADMIN_PASSWORD='clave-de-bulwark'"
+            echo "MAILWAY_BULWARK_URL='http://mailway-bulwark:3000'"
+            echo "MAILWAY_BULWARK_BACKEND_URL='http://mailway-bulwark-gw:8080'"; } >"$RUNNER_TEMP/bulwark.env"
+          [ "$(panel "$RUNNER_TEMP/bulwark.env")" = '{"MAILWAY_BULWARK_URL":"http://mailway-bulwark:3000","MAILWAY_BULWARK_ADMIN_PASSWORD":"clave-de-bulwark","MAILWAY_BULWARK_BACKEND_URL":"http://mailway-bulwark-gw:8080"}' ]
 
-  pila:
-    name: Stalwart y Roundcube reales (TLS, IMAP, SMTP y renovación)
+  # El driver de Stalwart 0.16 y el panel de extremo a extremo contra los
+  # motores de verdad, con las versiones de deploy/motor/*/compose.yml (las
+  # que sube Dependabot). Cada prueba con su propio motor: dejan datos en él.
+  contrato:
+    name: Panel contra Stalwart 0.16 y 0.15 reales
     needs: estatica
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
 
-      # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
-      # comprueba TLS en 993/465, IMAP (webmail y directo), SMTP AUTH en
-      # 465/587, la renovación con el extractor, --comprobar y --probar-acceso,
-      # y lo retira todo al terminar. Ver deploy/prueba-stack.py.
+      - name: Driver de Stalwart 0.16 (JMAP)
+        run: |
+          MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
+          export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-contrato-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
+          trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          # Primero la salida y después el eval: «eval "$(…)"» daría por bueno
+          # un arranque fallido, y la prueba, sin sus variables, se omitiría.
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
+          cd server
+          node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR016_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
+
+      - name: Panel contra Stalwart 0.16
+        run: |
+          MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
+          export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-panel-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
+          trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
+          cd server
+          node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts test/panel-motor-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR016_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
+
+      - name: Panel contra Stalwart 0.15
+        run: |
+          MOTOR015_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.15/compose.yml)
+          export MOTOR015_IMAGEN MOTOR015_CONTENEDOR=mailway-panel-015
+          : "${MOTOR015_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.15/compose.yml}"
+          trap 'docker rm -f "$MOTOR015_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          variables=$(server/test/motor015-arrancar.sh)
+          eval "$variables"
+          cd server
+          node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts test/panel-motor-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR015_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
+
+  # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
+  # comprueba TLS en 993/465 (y 587 con STARTTLS en la 0.16), IMAP (webmail y
+  # directo), SMTP AUTH en 465/587, la renovación con el extractor,
+  # --comprobar y --probar-acceso, y lo retira todo al terminar. Con la 0.16,
+  # además, el primer arranque, los ajustes de Mailway con la herramienta del
+  # motor del panel y las rutas de Traefik. Ver deploy/prueba-stack.py.
+  pila:
+    name: Pila con Stalwart ${{ matrix.motor }} (TLS, IMAP, SMTP y renovación)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        motor: ['0.16', '0.15']
+    steps:
+      - uses: actions/checkout@v4
       - name: Pila completa montada por el instalador
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
-        run: python3 deploy/prueba-stack.py
+          MOTOR: stalwart-${{ matrix.motor }}
+        run: python3 deploy/prueba-stack.py --motor "$MOTOR"
+
+  # La pila de la 0.16 con Bulwark: «instalar.sh --activar-bulwark» lo levanta
+  # (Bulwark y su pasarela sanos, solo en las redes internas, la API de
+  # administración solo por dentro, el acceso con un buzón por la red exenta
+  # y el 443 interno del motor, secretos generados una vez y nunca a la
+  # vista); --comprobar y --estado-bulwark; una actualización no lo recrea;
+  # desactivarlo conserva volúmenes y secretos. Ver deploy/prueba-stack.py.
+  pila-bulwark:
+    name: Pila con Stalwart 0.16 y Bulwark (activar y desactivar)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pila con Bulwark montada por el instalador
+        env:
+          MAILWAY_PRUEBA_DESECHABLE: '1'
+        run: python3 deploy/prueba-stack.py --bulwark
+
+  # La pasarela HTTP del motor (deploy/motor/pasarela) con cada motor:
+  # Traefik que confía en Cloudflare y otro que no, un nodo de Cloudflare
+  # simulado y visitantes que falsean X-Forwarded-For y Forwarded. El motor
+  # debe ver siempre la IP real y bloquearla al pasar el umbral; sin la
+  # pasarela, la petición por Cloudflare se haría pasar por la red exenta.
+  pasarela:
+    name: Pasarela del motor con Stalwart ${{ matrix.motor }} (IP real y bloqueo)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        motor: ['0.16', '0.15']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prueba con contenedores reales
+        run: bash deploy/prueba-pasarela.sh --motor "stalwart-${{ matrix.motor }}"
+
+  # Ensayo de Bulwark (deploy/bulwark/README.md, «Ensayo») en los PR que lo
+  # tocan (deploy/bulwark, el cliente del panel o los compose, donde
+  # Dependabot sube sus imágenes) y en todas las demás ejecuciones (main, a
+  # mano y cada semana). Con las imágenes de los compose: lo que se despliega.
+  bulwark:
+    name: Ensayo de Bulwark (deploy/bulwark/prueba.sh)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: ¿El PR toca Bulwark?
+        id: cambios
+        env:
+          EVENTO: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          CABEZA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENTO" != pull_request ]; then
+            echo "ensayar=1" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE...$CABEZA" |
+            grep -qE '^(deploy/bulwark/|server/src/modules/bulwark\.ts$|deploy/docker-compose\.[a-z]+\.yml$|\.github/workflows/stack\.yml$)'; then
+            echo "ensayar=1" >>"$GITHUB_OUTPUT"
+          else
+            echo "Este PR no toca Bulwark: no se ensaya."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.cambios.outputs.ensayar == '1'
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.cambios.outputs.ensayar == '1'
+        run: npm ci --no-audit --no-fund
+      - name: Ensayo con las imágenes de los compose
+        if: steps.cambios.outputs.ensayar == '1'
+        run: |
+          imagen() { sed -n -E "s#^[[:space:]]*image:[[:space:]]*($1[^[:space:]]*)[[:space:]]*\$#\1#p" "$2" | head -n 1; }
+          MWB_IMAGEN_BULWARK=$(imagen 'ghcr.io/bulwarkmail/webmail:' deploy/docker-compose.mail.yml)
+          MWB_IMAGEN_NGINX=$(imagen 'nginx:' deploy/docker-compose.mail.yml)
+          MWB_IMAGEN_TRAEFIK=$(imagen 'traefik:' deploy/docker-compose.standalone.yml)
+          MWB_IMAGEN_STALWART=$(imagen 'stalwartlabs/stalwart:' deploy/motor/stalwart-0.16/compose.yml)
+          export MWB_IMAGEN_BULWARK MWB_IMAGEN_NGINX MWB_IMAGEN_TRAEFIK MWB_IMAGEN_STALWART
+          : "${MWB_IMAGEN_BULWARK:?}" "${MWB_IMAGEN_NGINX:?}" "${MWB_IMAGEN_TRAEFIK:?}" "${MWB_IMAGEN_STALWART:?}"
+          bash deploy/bulwark/prueba.sh
+
+  # Un servidor con la 0.15 y datos de verdad pasa a la 0.16: primero un
+  # intento que falla a propósito (vuelve solo a la 0.15), después la
+  # migración (el mismo correo con la misma contraseña; alias, DKIM y
+  # suspensiones), --revertir-motor, otra migración y
+  # --retirar-motor-anterior. Descarga el script oficial de Stalwart y sus
+  # dependencias, fijados con su sha256, como lo haría un servidor.
+  migracion:
+    name: Migración de Stalwart 0.15 a 0.16 y vuelta atrás
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migración con contenedores reales
+        env:
+          MAILWAY_PRUEBA_DESECHABLE: '1'
+        run: python3 deploy/prueba-stack.py --migracion

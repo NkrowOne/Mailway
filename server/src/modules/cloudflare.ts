@@ -224,9 +224,9 @@ export interface Resolucion {
  */
 function guardadaUtilizable(
   guardada: CuentaRow,
-  opts: { clientId: string | null; permitirInstancia: boolean },
+  opts: { clientId: string | null; permitirInstancia: boolean; permitirGuardadaDeInstancia?: boolean },
 ): boolean {
-  if (guardada.client_id === null) return opts.permitirInstancia;
+  if (guardada.client_id === null) return opts.permitirInstancia || opts.permitirGuardadaDeInstancia === true;
   return guardada.client_id === opts.clientId;
 }
 
@@ -244,7 +244,17 @@ function guardadaUtilizable(
  */
 export async function resolverZona(
   hostname: string,
-  opts: { clientId: string | null; storedAccountId?: string | null; permitirInstancia: boolean },
+  opts: {
+    clientId: string | null;
+    storedAccountId?: string | null;
+    permitirInstancia: boolean;
+    /**
+     * Usar la cuenta guardada aunque sea de la instancia y quien actúa no
+     * pueda usar las de la instancia. Solo el registro del webmail de marca
+     * blanca (aplicarDnsMarcaBlanca): véase allí por qué es seguro.
+     */
+    permitirGuardadaDeInstancia?: boolean;
+  },
 ): Promise<{ resolucion: Resolucion | null; motivo: string }> {
   const candidatas: CuentaRow[] = [];
   const guardada = opts.storedAccountId ? cuentaRow(opts.storedAccountId) : undefined;
@@ -252,7 +262,7 @@ export async function resolverZona(
   // La cuenta del administrador asociada al dominio que no se ha podido usar:
   // el motivo lo explica, porque la ficha del dominio dice que el DNS se
   // aplicó con ella.
-  const instanciaReservada = guardada?.client_id === null && !opts.permitirInstancia;
+  const instanciaReservada = guardada?.client_id === null && !guardadaUtilizable(guardada, opts);
   if (opts.clientId) candidatas.push(...cuentasDeCliente(opts.clientId));
   if (opts.permitirInstancia) candidatas.push(...cuentasDeInstancia());
 
@@ -343,6 +353,12 @@ export interface Deseado {
    * funcionar, así que un proxy activo se respeta. En los de correo no.
    */
   proxyTolerado?: boolean;
+  /**
+   * Se publica con el proxy de Cloudflare (nube naranja). Solo el webmail de
+   * marca blanca: protege su página de acceso, y el correo no pasa por él
+   * (IMAP y SMTP van al nombre del servidor, siempre sin proxy).
+   */
+  proxied?: boolean;
 }
 
 const vacias = (): Operaciones => ({ deletes: [], patches: [], puts: [], posts: [] });
@@ -400,9 +416,9 @@ export function comentarioPropio(): string {
   return `${COMENTARIO_MAILWAY} (instancia ${huella})`;
 }
 
-/** Cuerpo del registro para la API: sin proxy, TTL automático y marcado como de esta instancia. */
+/** Cuerpo del registro para la API: sin proxy (salvo que se pida), TTL automático y marcado como de esta instancia. */
 export function cuerpoRegistro(d: Deseado, comentario: string = comentarioPropio()): CfRegistroNuevo {
-  const base = { type: d.type, name: d.name, ttl: 1, proxied: false, comment: comentario };
+  const base = { type: d.type, name: d.name, ttl: 1, proxied: d.proxied === true, comment: comentario };
   if (d.type === 'MX') return { ...base, content: d.content, priority: d.priority ?? 10 };
   if (d.type === 'SRV' && d.data) return { ...base, data: { ...d.data } };
   if (d.type === 'TXT') return { ...base, content: trocearTxt(d.content) };
@@ -474,6 +490,9 @@ export function fusionarSpf(
 
 const MOTIVO_PROXY =
   'Está en modo proxy (nube naranja): se cambiará a «Solo DNS», ya que el proxy de Cloudflare impide la conexión de los programas de correo.';
+
+const MOTIVO_PROXY_ACTIVAR =
+  'Está en «Solo DNS» (nube gris): se activará el proxy de Cloudflare para proteger la página de acceso del webmail.';
 
 const MOTIVO_EMAIL_ROUTING =
   'Cloudflare Email Routing tiene bloqueado este registro. Desactiva Email Routing en el panel de Cloudflare (Email → Email Routing → Settings) y vuelve a revisar los cambios.';
@@ -560,6 +579,18 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
       const otros = aqui.filter((r) => r.type !== 'CNAME');
       const propio = cnames.find((r) => sinPunto(r.content) === d.content);
       if (propio && cnames.length === 1 && otros.length === 0) {
+        if (d.proxied) {
+          if (propio.proxied) return conservar('Ya existe con el valor correcto y el proxy de Cloudflare activo.', [propio]);
+          if (propio.bloqueado) return enConflicto(MOTIVO_EMAIL_ROUTING, [propio], null);
+          return {
+            ...base,
+            action: 'update',
+            reason: MOTIVO_PROXY_ACTIVAR,
+            current: describir(propio),
+            operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: true }] },
+            reemplazo: null,
+          };
+        }
         if (!propio.proxied) return conservar('Ya existe con el valor correcto.', [propio]);
         if (propio.bloqueado) return enConflicto(MOTIVO_EMAIL_ROUTING, [propio], null);
         return {
@@ -574,13 +605,28 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
       if (aqui.length === 0) return crear();
       // Un A que ya apunta a la IP del servidor equivale al CNAME.
       const aIp = otros.filter((r) => r.type === 'A');
-      if (
+      const aEquivalentes =
         ctx.publicIp &&
         cnames.length === 0 &&
         aIp.length > 0 &&
         aIp.length === otros.length &&
-        aIp.every((r) => r.content.trim() === ctx.publicIp && !r.proxied)
-      ) {
+        aIp.every((r) => r.content.trim() === ctx.publicIp);
+      if (aEquivalentes && d.proxied) {
+        const sinProxy = aIp.filter((r) => !r.proxied);
+        if (sinProxy.length === 0) {
+          return conservar('Existe un registro A que apunta a la IP del servidor con el proxy activo; es equivalente.', aIp);
+        }
+        if (sinProxy.some((r) => r.bloqueado)) return enConflicto(MOTIVO_EMAIL_ROUTING, sinProxy, null);
+        return {
+          ...base,
+          action: 'update',
+          reason: MOTIVO_PROXY_ACTIVAR,
+          current: aIp.map(describir).join(' · '),
+          operaciones: { ...vacias(), patches: sinProxy.map((r) => ({ id: r.id, proxied: true })) },
+          reemplazo: null,
+        };
+      }
+      if (aEquivalentes && aIp.every((r) => !r.proxied)) {
         return conservar('Existe un registro A que apunta a la IP del servidor; es equivalente.', aIp);
       }
       const reason =
@@ -792,6 +838,18 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
       }
       const propio = mismos.find((r) => r.content.trim() === d.content);
       if (propio && mismos.length === 1) {
+        if (d.proxied) {
+          if (propio.proxied) return conservar('Ya existe con el valor correcto y el proxy de Cloudflare activo.', [propio]);
+          if (propio.bloqueado) return enConflicto(MOTIVO_EMAIL_ROUTING, [propio], null);
+          return {
+            ...base,
+            action: 'update',
+            reason: MOTIVO_PROXY_ACTIVAR,
+            current: describir(propio),
+            operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: true }] },
+            reemplazo: null,
+          };
+        }
         if (!propio.proxied) return conservar('Ya existe con el valor correcto.', [propio]);
         if (d.proxyTolerado) {
           return conservar(
@@ -1224,6 +1282,220 @@ export async function aplicarDnsDominio(
   return { ...resultado, domain: fresco, zone: zonaPublica(r.zona) };
 }
 
+/* -------------------------- Marca blanca (webmail) ------------------------ */
+
+/**
+ * Cuenta y zona de Cloudflare con las que se aplicó el DNS del dominio de
+ * correo del que cuelga `hostname` (el más específico del cliente).
+ */
+function asociacionDelDominioPadre(
+  clientId: string,
+  hostname: string,
+): { accountId: string | null; zoneId: string | null } {
+  const filas = db
+    .prepare('SELECT domain, cloudflare_account_id, cloudflare_zone_id FROM domains WHERE client_id = ?')
+    .all(clientId) as { domain: string; cloudflare_account_id: string | null; cloudflare_zone_id: string | null }[];
+  const padre = filas
+    .filter((d) => hostname.endsWith(`.${d.domain}`))
+    .sort((a, b) => b.domain.length - a.domain.length)[0];
+  return { accountId: padre?.cloudflare_account_id ?? null, zoneId: padre?.cloudflare_zone_id ?? null };
+}
+
+/** Registro que debe tener un dominio de marca blanca: CNAME al servidor de correo o, sin nombre, A a la IP. */
+/**
+ * ¿Cubre el certificado gratuito de Cloudflare (Universal SSL) este nombre?
+ * Solo la zona y un nivel de subdominio (`ejemplo.com` y `*.ejemplo.com`):
+ * con el proxy, uno más profundo (`webmail.correo.ejemplo.com`, el webmail de
+ * un dominio de correo que ya es un subdominio) daría un error de certificado
+ * a los visitantes, salvo con un certificado avanzado de pago. Ese va sin
+ * proxy, como antes.
+ */
+export function cubiertoPorCertificadoCloudflare(hostname: string, zona: string): boolean {
+  const host = sinPunto(hostname).toLowerCase();
+  const raiz = sinPunto(zona).toLowerCase();
+  if (host === raiz) return true;
+  if (!host.endsWith(`.${raiz}`)) return false;
+  return !host.slice(0, -(raiz.length + 1)).includes('.');
+}
+
+function deseadoDeMarcaBlanca(destino: ClientDomain): Deseado {
+  const inst = getInstanceSettings();
+  const mail = sinPunto(inst.mailHostname || '');
+  const host = sinPunto(destino.hostname);
+  // El webmail va con el proxy de Cloudflare: su página de acceso queda tras
+  // el cortafuegos y los límites de Cloudflare, y el correo no se ve
+  // afectado (va al nombre del servidor, sin proxy). El panel de marca
+  // blanca no: su límite de intentos cuenta la IP de la conexión.
+  const proxied = destino.kind === 'webmail';
+  if (mail && mail !== host) {
+    // El CNAME es preferible: si cambia la IP del servidor, no hay que tocar nada.
+    return { type: 'CNAME', name: host, content: mail, required: true, proxied };
+  }
+  if (inst.publicIp) {
+    return { type: 'A', name: host, content: inst.publicIp.trim(), required: true, proxyTolerado: false, proxied };
+  }
+  throw badRequest(
+    'Configura en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
+    'instance_incomplete',
+  );
+}
+
+/**
+ * Busca la cuenta para el registro de un dominio de marca blanca. Además de
+ * las cuentas del cliente (y las de la instancia si actúa la
+ * administración), vale la cuenta con la que se aplicó el DNS del dominio de
+ * correo del que cuelga, aunque sea de la instancia y actúe el cliente (o
+ * Skyway en su nombre). Es la única excepción a «el token del operador nunca
+ * se usa en una acción del cliente», y es segura porque:
+ * - el nombre es un subdominio de un dominio de correo de ESE cliente, con la
+ *   propiedad comprobada (assertHostnameAllowed);
+ * - la administración ya escribió en esa zona para ese mismo dominio (por eso
+ *   la cuenta quedó asociada), así que no abre ninguna zona nueva;
+ * - solo se escribe un registro con un valor fijo (el servidor de correo o su
+ *   IP), y con esa cuenta nunca se reemplaza lo que haya (aplicarDnsMarcaBlanca).
+ */
+async function resolverZonaMarcaBlanca(
+  destino: { clientId: string; hostname: string },
+  permitirInstancia: boolean,
+): Promise<{ resolucion: Resolucion | null; motivo: string }> {
+  const host = sinPunto(destino.hostname);
+  const padre = asociacionDelDominioPadre(destino.clientId, host);
+  const r = await resolverZona(host, {
+    clientId: destino.clientId,
+    storedAccountId: padre.accountId,
+    permitirInstancia,
+    permitirGuardadaDeInstancia: true,
+  });
+  // La excepción vale para la MISMA zona en la que ya escribió la
+  // administración: si el token del operador viera además una zona más
+  // específica para este nombre, esa no se ha abierto nunca a este cliente.
+  if (
+    r.resolucion &&
+    r.resolucion.cuenta.client_id === null &&
+    !permitirInstancia &&
+    r.resolucion.zona.id !== padre.zoneId
+  ) {
+    return {
+      resolucion: null,
+      motivo:
+        'La zona de este nombre está en la cuenta de Cloudflare de la instancia y no es la del dominio de correo que configuró el administrador: solicita al administrador que aplique el registro.',
+    };
+  }
+  return r;
+}
+
+/**
+ * Apunta un dominio de marca blanca a este servidor en Cloudflare (el webmail,
+ * con proxy). `soloCrear` (el alta automática) crea el registro si falta y no
+ * modifica uno existente, ni para activarle el proxy. Lanza
+ * `400 cloudflare_unavailable` si ninguna cuenta utilizable ve la zona.
+ */
+export async function aplicarDnsMarcaBlanca(
+  id: string,
+  opts: { permitirInstancia: boolean; replaceConflicts: boolean; soloCrear: boolean },
+): Promise<ResultadoAplicacion & { domain: ClientDomain; zone: string }> {
+  const destino = getClientDomain(id);
+  const base = deseadoDeMarcaBlanca(destino);
+  const { resolucion, motivo } = await resolverZonaMarcaBlanca(destino, opts.permitirInstancia);
+  if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
+  // El proxy, solo si el certificado gratuito de Cloudflare cubre el nombre.
+  const deseado: Deseado = {
+    ...base,
+    proxied: base.proxied === true && cubiertoPorCertificadoCloudflare(base.name, resolucion.zona.name),
+  };
+  // Con la cuenta de la instancia en nombre de quien no puede usarla (la
+  // excepción de resolverZonaMarcaBlanca) no se reemplaza nada: un conflicto
+  // se informa y se resuelve a mano.
+  const enNombreDelCliente = resolucion.cuenta.client_id === null && !opts.permitirInstancia;
+  const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [deseado.name]);
+  const inst = getInstanceSettings();
+  const cambios = planificar([deseado], existentes, {
+    apex: resolucion.zona.name,
+    publicIp: inst.publicIp || undefined,
+  });
+  const resultado = await ejecutarPlan(resolucion.cliente, resolucion.zona.id, cambios, {
+    replaceConflicts: opts.replaceConflicts && !enNombreDelCliente,
+    soloCrear: opts.soloCrear,
+  });
+  const domain = await refreshClientDomain(id).catch(() => getClientDomain(id));
+  return { ...resultado, domain, zone: resolucion.zona.name };
+}
+
+/** ¿Es este registro el del webmail: un CNAME al servidor de correo o un A a su IP? */
+function apuntaAlServidor(r: CfRegistro): boolean {
+  const inst = getInstanceSettings();
+  const mail = sinPunto(inst.mailHostname || '');
+  const ip = (inst.publicIp || '').trim();
+  return (r.type === 'CNAME' && mail !== '' && sinPunto(r.content) === mail) || (r.type === 'A' && ip !== '' && r.content.trim() === ip);
+}
+
+/**
+ * Antes del alta automática de webmail.<dominio>: ¿qué hay ya en Cloudflare
+ * con ese nombre? «libre» si nada (aunque lo responda un comodín, como el de
+ * la web), «propio» si ya apunta a este servidor, «ajeno» si es otra cosa (el
+ * cliente lo usa para otro servicio: no se toca) y null si ninguna cuenta
+ * utilizable ve la zona o Cloudflare no responde. Las cuentas son las que
+ * escribirían el registro (resolverZonaMarcaBlanca, sin las de la instancia).
+ */
+export async function estadoWebmailEnCloudflare(
+  clientId: string,
+  hostname: string,
+): Promise<'libre' | 'propio' | 'ajeno' | null> {
+  const host = sinPunto(hostname);
+  try {
+    const { resolucion } = await resolverZonaMarcaBlanca({ clientId, hostname: host }, false);
+    if (!resolucion) return null;
+    const registros = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
+    if (registros.length === 0) return 'libre';
+    return registros.every(apuntaAlServidor) ? 'propio' : 'ajeno';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Al retirar un webmail automático (interruptor del cliente desactivado):
+ * borra de Cloudflare el registro que escribió Mailway para él. Solo el
+ * propio (con el comentario exacto de esta instancia) y que apunta a este
+ * servidor; cualquier otro se deja. Con las mismas cuentas que lo crearon.
+ * Devuelve si ha borrado algo; un fallo no impide retirar el webmail.
+ */
+export async function retirarRegistroMarcaBlanca(destino: ClientDomain): Promise<boolean> {
+  const host = sinPunto(destino.hostname);
+  try {
+    const { resolucion } = await resolverZonaMarcaBlanca(destino, false);
+    if (!resolucion) return false;
+    const comentario = comentarioPropio();
+    const propios = (await existentesPara(resolucion.cliente, resolucion.zona.id, [host])).filter(
+      (r) => esPropio(r, comentario) && apuntaAlServidor(r),
+    );
+    for (const r of propios) await resolucion.cliente.deleteRecord(resolucion.zona.id, r.id);
+    return propios.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Con el proxy de Cloudflare, el DNS público devuelve IP de Cloudflare y no
+ * dice adónde apunta el nombre: se pregunta a Cloudflare. true si el nombre
+ * tiene, con proxy, un CNAME al servidor de correo o un A a la IP pública;
+ * false si no; null si ninguna cuenta ve la zona o Cloudflare no responde.
+ * Es una lectura: también vale la cuenta de la instancia, porque solo dice
+ * si un subdominio de un dominio verificado del cliente apunta aquí.
+ */
+export async function registroProxyApuntaAqui(destino: ClientDomain): Promise<boolean | null> {
+  const host = sinPunto(destino.hostname);
+  try {
+    const { resolucion } = await resolverZonaMarcaBlanca(destino, true);
+    if (!resolucion) return null;
+    const registros = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
+    return registros.some((r) => r.proxied && apuntaAlServidor(r));
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------------- DNS de la plataforma (instancia) ------------------ */
 
 function hostDe(url: string): string {
@@ -1607,46 +1879,19 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const destino = getClientDomain(id);
     requireClientAccess(req, destino.clientId);
     const body = marcaBlancaSchema.parse(req.body) || {};
-
-    const inst = getInstanceSettings();
-    const mail = sinPunto(inst.mailHostname || '');
-    const host = sinPunto(destino.hostname);
-    let deseado: Deseado;
-    if (mail && mail !== host) {
-      // El CNAME es preferible: si cambia la IP del servidor, no hay que tocar nada.
-      deseado = { type: 'CNAME', name: host, content: mail, required: true };
-    } else if (inst.publicIp) {
-      deseado = { type: 'A', name: host, content: inst.publicIp.trim(), required: true, proxyTolerado: false };
-    } else {
-      throw badRequest(
-        'Configura en Ajustes el nombre del servidor de correo o la IP pública antes de configurar el DNS.',
-        'instance_incomplete',
-      );
-    }
-
-    const { resolucion, motivo } = await resolverZona(host, {
-      clientId: destino.clientId,
+    const resultado = await aplicarDnsMarcaBlanca(id, {
       permitirInstancia: permiteInstancia(user, req.query),
-    });
-    if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
-    const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [host]);
-    const cambios = planificar([deseado], existentes, {
-      apex: resolucion.zona.name,
-      publicIp: inst.publicIp || undefined,
-    });
-    const resultado = await ejecutarPlan(resolucion.cliente, resolucion.zona.id, cambios, {
       replaceConflicts: body.replaceConflicts === true,
       soloCrear: body.soloCrear === true,
     });
-    const domain: ClientDomain = await refreshClientDomain(id).catch(() => getClientDomain(id));
     audit(req, 'cloudflare.dns_applied', {
       whitelabelDomainId: id,
-      hostname: host,
-      zone: resolucion.zona.name,
+      hostname: resultado.domain.hostname,
+      zone: resultado.zone,
       applied: resultado.applied.length,
       errors: resultado.errors.length,
-    }, domain.clientId);
-    return { ...resultado, domain };
+    }, resultado.domain.clientId);
+    return { applied: resultado.applied, errors: resultado.errors, skipped: resultado.skipped, domain: resultado.domain };
   });
 
   /** DNS de la plataforma: vista previa (solo administrador). */

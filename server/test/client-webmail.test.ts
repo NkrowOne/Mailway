@@ -152,3 +152,23 @@ test('404, 5xx y errores TLS no pasan por HTTPS operativo', async (t) => {
     assert.equal((await checkHttps('mail.example.com')).ok, true);
   }
 });
+
+test('cada buzón entra por el webmail de su propio dominio; sin él, por el principal', async () => {
+  const { getConnectionSettings } = await import('../src/modules/connection');
+  const alta = (id: string, hostname: string) =>
+    db.prepare(`INSERT INTO client_domains (id, client_id, hostname, kind, status, activated_at, created_at)
+      VALUES (?, 'web_a', ?, 'webmail', 'active', ?, ?)`).run(id, hostname, Date.now(), Date.now());
+  alta('web_dom_a', 'webmail.empresa-a.example');
+  alta('web_dom_b', 'webmail.empresa-b.example');
+  setPrimaryWebmail('web_dom_a');
+  assert.equal(getConnectionSettings('empresa-b.example', 'web_a').webmailUrl, 'https://webmail.empresa-b.example');
+  assert.equal(getConnectionSettings('empresa-a.example', 'web_a').webmailUrl, 'https://webmail.empresa-a.example');
+  // Un dominio sin webmail propio, o sin dominio: el principal del cliente.
+  assert.equal(getConnectionSettings('otra.example', 'web_a').webmailUrl, 'https://webmail.empresa-a.example');
+  assert.equal(getConnectionSettings('', 'web_a').webmailUrl, 'https://webmail.empresa-a.example');
+  // Un nombre que solo termina igual no es del dominio.
+  assert.equal(getConnectionSettings('a.example', 'web_a').webmailUrl, 'https://webmail.empresa-a.example');
+  // El de un dominio que no está en servicio no se usa.
+  db.prepare("UPDATE client_domains SET status = 'issuing' WHERE id = 'web_dom_b'").run();
+  assert.equal(getConnectionSettings('empresa-b.example', 'web_a').webmailUrl, 'https://webmail.empresa-a.example');
+});

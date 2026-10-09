@@ -5,6 +5,7 @@ import { getEngine, engineConfigured } from '../engine';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import { getClient, getClientUsage, getPlan } from './clients';
 import { webmailUrlForClient } from './connection';
+import { resumenCorreoWebNuevo } from './correoweb';
 import { listDomains } from './domains';
 import { direccionesObligatorias } from './mailboxes';
 import { getInstanceSettings } from './settings';
@@ -52,6 +53,8 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
       engine: engineHealth,
       queue,
       instance: getInstanceSettings(),
+      // El correo web nuevo (Bulwark), solo si está configurado (null si no).
+      bulwark: await resumenCorreoWebNuevo(),
     };
   });
 
