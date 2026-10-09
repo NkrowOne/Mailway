@@ -22,6 +22,7 @@ import {
   type Deseado,
 } from '../src/modules/cloudflare';
 import { config } from '../src/config';
+import { esperarWebmailsEnPreparacion } from '../src/modules/domains';
 import { asegurarWebmailDeDominio, getClientDomain } from '../src/modules/whitelabel';
 import { checkWebmailsAutomaticos } from '../src/modules/watchdog';
 import { decryptSecret } from '../src/core/crypto';
@@ -2448,6 +2449,10 @@ async function dominioAplicado(clientId: string, dominio: string): Promise<strin
     payload: { domain: dominio, clientId, autoDns: true },
   });
   assert.equal(res.statusCode, 200, res.body);
+  // El webmail de marca se prepara en segundo plano al comprobarse la
+  // propiedad: se espera aquí para que no se cruce con lo que la prueba
+  // cambie después (el interruptor general, sobre todo).
+  await esperarWebmailsEnPreparacion();
   return (res.json() as { domain: { id: string } }).domain.id;
 }
 
