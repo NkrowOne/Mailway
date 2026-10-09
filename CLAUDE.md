@@ -50,14 +50,18 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
     una línea JSON por la salida estándar), que usa el instalador. Los pasos
     del asistente que comparte viven en `modules/setup.ts`.
+    `src/tools/avisar.ts`: aviso a la administración (incidencia en Avisos y
+    canales) desde la terminal, que usa `mailway update --auto`.
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
   `src/pages/admin/`; la ficha del cliente, con sus pestañas, en
   `ClienteDetalle.tsx` y `src/pages/admin/cliente/`), portal del titular en `src/pages/portal/`, kit de UI
   en `src/ui/`, componentes de área en `src/components/`, tipos y utilidades
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
 - `deploy/` — `instalar.sh` (instalador idempotente), `mailway.sh` (la orden
-  `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`),
-  compose del motor y el
+  `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`;
+  `update --auto`, con comprobación antes y después y vuelta atrás, y
+  `auto-update on|off|status`, su temporizador de systemd), pruebas de los
+  scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
@@ -79,8 +83,11 @@ npm run reset-password -w server -- correo@ejemplo.com NuevaContraseña
 ```
 
 **`npm run typecheck`, `npm run lint`, `npm test` y `npm run build`** son la
-verificación mínima; la CI (`.github/workflows/ci.yml`) ejecuta los cuatro y
-comprueba la sintaxis de `deploy/*.sh` (`bash -n`).
+verificación mínima; la CI (`.github/workflows/ci.yml`) ejecuta los cuatro,
+comprueba la sintaxis de `deploy/*.sh` (`bash -n`) y construye y arranca la
+imagen del panel. Si tocas `deploy/`, ejecuta también sus `prueba-*.sh`
+(`bash deploy/prueba-actualizacion.sh`…), que corren en
+`.github/workflows/stack.yml` con `shellcheck` y la pila de correo real.
 
 Las pruebas viven en `server/test/*.test.ts` y se ejecutan con `node --test`.
 `test/env.ts` da a cada fichero una carpeta de datos temporal propia, activa
@@ -144,6 +151,10 @@ prueba que lo reproduce.
 - **Versión**: `config.version`, los tres `package.json`,
   `VERSION_INSTALADOR` de `deploy/instalar.sh` y la cabecera de
   `docs/PLAN.md` van sincronizados.
+- **Dependencias e imágenes**: versión exacta siempre (`Dockerfile` y
+  compose, nunca `1.7.x` ni `22-alpine`). Dependabot (`.github/dependabot.yml`)
+  propone las nuevas y `parches-automaticos.yml` fusiona solo los parches
+  cuando todo ha pasado; Stalwart se queda en 0.15.x.
 
 ## Seguridad (imprescindible)
 

@@ -292,6 +292,30 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
 
 Detalle en [SEGURIDAD.md](SEGURIDAD.md).
 
+### 3.8 Actualizaciones
+
+29. **Parches automáticos, pero probados.** Todas las imágenes llevan su
+    versión exacta (Dockerfile y compose): nada cambia en un servidor sin
+    haber pasado la CI. Dependabot agrupa cada lunes los parches de npm, de
+    las imágenes y de las acciones, y `parches-automaticos.yml` fusiona un
+    grupo solo cuando han terminado bien todas las comprobaciones de su
+    commit, incluida la imagen del panel arrancada y, si cambian los compose,
+    la pila con Stalwart y Roundcube reales; sin ejecutar nunca el código del
+    PR con permisos de escritura. Solo parches: los de Stalwart 0.15.x no
+    migran sus datos, y la 0.16 exige un driver nuevo (sección 6).
+30. **Actualización del servidor con vuelta atrás.** `mailway update --auto`
+    (`deploy/mailway.sh`, cada noche con `mailway auto-update on`) no toca
+    nada sin versión nueva; con ella, exige que el servidor supere antes
+    `instalar.sh --comprobar` y `/api/health` del panel, guarda el commit
+    anterior en `deploy/.actualizacion`, aplica, comprueba durante tres
+    minutos y, si falla, vuelve al commit anterior con sus imágenes exactas
+    y lo comprueba (códigos 0, 1 y 2). No restaura bases de datos: las
+    migraciones del panel solo añaden y el panel anterior ignora las que no
+    conoce. Una versión que falla se reintenta una vez; una actualización
+    interrumpida se retoma. Avisa a la administración con `tools/avisar.js`
+    (Avisos y sus canales). Junto a Skyway, el panel lo sigue desplegando
+    Skyway desde GitHub y no se vuelve atrás desde aquí.
+
 ## 4. Modelo de datos
 
 SQLite en `/data/mailway.db`. Migraciones incrementales en
