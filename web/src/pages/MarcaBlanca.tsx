@@ -490,7 +490,12 @@ function FichaDominio({
   const toast = useToast();
   const [confirmar, setConfirmar] = useState(false);
   const meta = estadoMeta[domain.status];
-  const cuenta = domain.status === 'pending_dns' ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname) : undefined;
+  // El webmail va con el proxy de Cloudflare: el botón sigue a mano también en
+  // servicio, para activárselo a un registro que se creó sin él.
+  const cuenta =
+    domain.status === 'pending_dns' || domain.kind === 'webmail'
+      ? cuentaCloudflarePara(cuentas, domain.clientId, domain.hostname)
+      : undefined;
 
   // Activar, elegir o quitar un dominio cambia el webmail que ven el resumen
   // del cliente y los datos de conexión de sus buzones.
@@ -547,8 +552,12 @@ function FichaDominio({
       await queryClient.invalidateQueries({ queryKey: ['whitelabel-domains'] });
       if (data.errors.length > 0) {
         toast('error', `Cloudflare ha rechazado el registro: ${data.errors[0]!.error}`);
+      } else if (data.applied.length > 0) {
+        toast('ok', 'Se ha configurado el registro en Cloudflare. La comprobación se repetirá en unos minutos.');
+      } else if ((data.skipped ?? []).length > 0) {
+        toast('error', data.skipped[0]!.reason);
       } else {
-        toast('ok', 'Se ha creado el registro en Cloudflare. La comprobación se repetirá en unos minutos.');
+        toast('ok', 'El registro ya estaba configurado en Cloudflare.');
       }
     },
     onError: (err) => {
@@ -641,7 +650,7 @@ function FichaDominio({
             {cuenta && (
               <p className="text-sm text-tinta-2">
                 La zona está en Cloudflare ({cuenta.label}): «Configurar en Cloudflare» crea el registro
-                sin pasar por su panel.
+                sin pasar por su panel{domain.kind === 'webmail' ? ', con el proxy de Cloudflare activo' : ''}.
               </p>
             )}
             {instrucciones.map((i) => (

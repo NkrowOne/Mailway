@@ -17,8 +17,10 @@ import {
   ejecutarPlan,
   fusionarSpf,
   planificar,
+  registroProxyApuntaAqui,
   type Deseado,
 } from '../src/modules/cloudflare';
+import { getClientDomain } from '../src/modules/whitelabel';
 import { decryptSecret } from '../src/core/crypto';
 import type { CfRegistro } from '../src/core/cloudflare';
 import { db } from '../src/core/db';
@@ -1071,7 +1073,7 @@ test('DNS de la plataforma: A del servidor, webmail y panel, y CNAME de autoconf
   await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
 });
 
-test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async () => {
+test('marca blanca: el webmail propio se apunta con un CNAME al servidor, con el proxy de Cloudflare', async () => {
   setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
   const cliente = await createClient(ctx, { withUser: true });
   const z = cf.zona('marca.es');
@@ -1098,7 +1100,7 @@ test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async
   const cname = cf.enZona(z.id).find((r) => r.name === 'webmail.marca.es')!;
   assert.equal(cname.type, 'CNAME');
   assert.equal(cname.content, 'mail.plataforma.es');
-  assert.equal(cname.proxied, false);
+  assert.equal(cname.proxied, true);
 
   const otro = await createClient(ctx, { withUser: true });
   const ajeno = await ctx.app.inject({
@@ -1785,7 +1787,7 @@ test('un registro con «Mailway» en el comentario que no es de esta instancia e
   assert.equal(planificar([srv], ajenos, { apex: 'otra.es' })[0]!.action, 'conflict');
 });
 
-test('marca blanca con soloCrear: no se quita el proxy de un registro existente', async () => {
+test('marca blanca: el alta crea sola el registro del webmail con proxy y soloCrear no toca uno existente', async () => {
   setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
   const cliente = await createClient(ctx);
   const z = cf.zona('marca-proxy.es');
@@ -1793,8 +1795,9 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
   const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
   assert.equal(cuenta.statusCode, 200, cuenta.body);
-  const { domainId } = await createDomain(ctx, cliente.clientId, 'marca-proxy.es');
-  void domainId;
+  await createDomain(ctx, cliente.clientId, 'marca-proxy.es');
+
+  // Alta por la administración: el registro se crea solo, con proxy.
   const alta = await ctx.app.inject({
     method: 'POST',
     url: '/api/whitelabel/domains',
@@ -1803,9 +1806,17 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   });
   assert.equal(alta.statusCode, 200, alta.body);
   const wid = (alta.json() as { domain: { id: string } }).domain.id;
-  cf.registro(z.id, { type: 'CNAME', name: 'webmail.marca-proxy.es', content: 'mail.plataforma.es', proxied: true });
+  const creado = cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!;
+  assert.equal(creado.type, 'CNAME');
+  assert.equal(creado.content, 'mail.plataforma.es');
+  assert.equal(creado.proxied, true);
+  assert.equal(creado.comment, comentarioPropio());
 
-  cf.llamadas = [];
+  // Un registro puesto a mano sin proxy: soloCrear no lo modifica...
+  cf.reset();
+  const z2 = cf.zona('marca-proxy.es');
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z2.id] });
+  cf.registro(z2.id, { type: 'CNAME', name: 'webmail.marca-proxy.es', content: 'mail.plataforma.es' });
   let res = await ctx.app.inject({
     method: 'POST',
     url: `/api/whitelabel/domains/${wid}/cloudflare`,
@@ -1815,9 +1826,9 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   assert.equal(res.statusCode, 200, res.body);
   assert.deepEqual(modificaciones(), []);
   assert.match((res.json() as { skipped: { reason: string }[] }).skipped[0]!.reason, /no modifica registros existentes/);
-  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, true);
+  assert.equal(cf.enZona(z2.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, false);
 
-  // Sin soloCrear (el botón de la ficha, tras verlo), sí se quita el proxy.
+  // ...y el botón de la ficha (sin soloCrear) le activa el proxy.
   res = await ctx.app.inject({
     method: 'POST',
     url: `/api/whitelabel/domains/${wid}/cloudflare`,
@@ -1825,13 +1836,153 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
     payload: {},
   });
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, false);
+  assert.equal(cf.enZona(z2.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, true);
 
   await ctx.app.inject({
     method: 'DELETE',
     url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
     headers: { cookie: ctx.adminCookie },
   });
+});
+
+test('marca blanca: el cliente usa la cuenta de la instancia solo en la zona cuyo DNS aplicó la administración', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const aplicada = cf.zona('aplicada-por-admin.es');
+  const ajena = cf.zona('sin-aplicar.es');
+  const TOKEN_INSTANCIA = 'cfut_instanciamarca0123456789abcdefghijklm';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [aplicada.id, ajena.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+
+  // La administración da de alta el dominio del cliente con el DNS automático:
+  // la cuenta de la instancia queda asociada a ese dominio.
+  const altaDominio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'aplicada-por-admin.es', clientId: cliente.clientId, autoDns: true },
+  });
+  assert.equal(altaDominio.statusCode, 200, altaDominio.body);
+  // El otro dominio del cliente se verifica sin pasar por Cloudflare (el plan
+  // de las pruebas admite uno: se amplía solo para este alta).
+  const limite = db.prepare('SELECT max_domains AS m FROM plans WHERE id = ?').get(cliente.planId) as { m: number };
+  db.prepare('UPDATE plans SET max_domains = 2 WHERE id = ?').run(cliente.planId);
+  try {
+    await createDomain(ctx, cliente.clientId, 'sin-aplicar.es');
+  } finally {
+    db.prepare('UPDATE plans SET max_domains = ? WHERE id = ?').run(limite.m, cliente.planId);
+  }
+
+  // El cliente da de alta su webmail: se crea en la zona ya aplicada...
+  cf.llamadas = [];
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.aplicada-por-admin.es' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const creado = cf.enZona(aplicada.id).find((r) => r.name === 'webmail.aplicada-por-admin.es');
+  assert.ok(creado, 'el registro del webmail debería existir');
+  assert.equal(creado!.proxied, true);
+
+  // ...pero en la otra zona del operador, cuyo DNS nunca escribió la
+  // administración para este cliente, no se escribe nada.
+  const antes = cf.enZona(ajena.id).length;
+  cf.llamadas = [];
+  const otra = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.sin-aplicar.es' },
+  });
+  assert.equal(otra.statusCode, 200, otra.body);
+  assert.equal(cf.enZona(ajena.id).length, antes);
+  assert.ok(cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`));
+
+  // Con la cuenta de la instancia en nombre del cliente, un conflicto no se
+  // reemplaza ni pidiéndolo.
+  const wid = (alta.json() as { domain: { id: string } }).domain.id;
+  cf.reset();
+  const z = cf.zona('aplicada-por-admin.es');
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  db.prepare('UPDATE domains SET cloudflare_zone_id = ? WHERE domain = ?').run(z.id, 'aplicada-por-admin.es');
+  cf.registro(z.id, { type: 'A', name: 'webmail.aplicada-por-admin.es', content: '198.51.100.7' });
+  const reemplazo = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(reemplazo.statusCode, 200, reemplazo.body);
+  assert.deepEqual(modificaciones(), []);
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.aplicada-por-admin.es')!.content, '198.51.100.7');
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});
+
+test('marca blanca detrás del proxy: Cloudflare confirma adónde apunta el registro', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('confirma.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await createDomain(ctx, cliente.clientId, 'confirma.es');
+  const id = 'wld_prueba_proxy';
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+  ).run(id, cliente.clientId, 'webmail.confirma.es', Date.now());
+  const dominio = getClientDomain(id);
+
+  // Sin ninguna cuenta que vea la zona: no se sabe.
+  assert.equal(await registroProxyApuntaAqui(dominio), null);
+
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  // La cuenta ve la zona, pero no hay registro: no apunta aquí.
+  assert.equal(await registroProxyApuntaAqui(dominio), false);
+
+  // Con proxy y hacia el servidor de correo: sí.
+  cf.registro(z.id, { type: 'CNAME', name: 'webmail.confirma.es', content: 'mail.plataforma.es', proxied: true });
+  assert.equal(await registroProxyApuntaAqui(dominio), true);
+
+  // Con proxy pero hacia otro sitio: no.
+  cf.reset();
+  const z2 = cf.zona('confirma.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z2.id] });
+  cf.registro(z2.id, { type: 'CNAME', name: 'webmail.confirma.es', content: 'otro.servidor.es', proxied: true });
+  assert.equal(await registroProxyApuntaAqui(dominio), false);
+});
+
+test('plan del webmail con proxy: crear con proxy, activárselo a uno propio y conservar uno equivalente', () => {
+  const d: Deseado = { type: 'CNAME', name: 'webmail.plan.es', content: 'mail.plataforma.es', required: true, proxied: true };
+  const ctxPlan = { apex: 'plan.es', publicIp: '203.0.113.10' };
+  const [crear] = planificar([d], [], ctxPlan);
+  assert.equal(crear!.action, 'create');
+  assert.equal(crear!.operaciones!.posts[0]!.proxied, true);
+
+  const gris = { id: 'r1', type: 'CNAME', name: 'webmail.plan.es', content: 'mail.plataforma.es', proxied: false } as CfRegistro;
+  const [activar] = planificar([d], [gris], ctxPlan);
+  assert.equal(activar!.action, 'update');
+  assert.deepEqual(activar!.operaciones!.patches, [{ id: 'r1', proxied: true }]);
+
+  const naranja = { ...gris, proxied: true } as CfRegistro;
+  assert.equal(planificar([d], [naranja], ctxPlan)[0]!.action, 'keep');
+
+  // Un A a la IP del servidor equivale al CNAME: sin proxy se le activa.
+  const a = { id: 'r2', type: 'A', name: 'webmail.plan.es', content: '203.0.113.10', proxied: false } as CfRegistro;
+  const [conA] = planificar([d], [a], ctxPlan);
+  assert.equal(conA!.action, 'update');
+  assert.deepEqual(conA!.operaciones!.patches, [{ id: 'r2', proxied: true }]);
+  assert.equal(planificar([d], [{ ...a, proxied: true } as CfRegistro], ctxPlan)[0]!.action, 'keep');
+
+  // Sin proxy pedido (el panel de marca blanca), nada cambia.
+  const sinProxy: Deseado = { ...d, proxied: false };
+  assert.equal(planificar([sinProxy], [gris], ctxPlan)[0]!.action, 'keep');
+  assert.equal(planificar([sinProxy], [], ctxPlan)[0]!.operaciones!.posts[0]!.proxied, false);
 });
 
 /* ------- Reserva de los dominios cuyo DNS escribió la administración ------ */

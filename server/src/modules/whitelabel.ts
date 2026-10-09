@@ -9,7 +9,7 @@ import { dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { resolveAlert } from './alerts';
 import { audit } from './audit';
-import { requireAdmin, requireAuth, requireClientAccess } from './auth';
+import { requireAdmin, requireAuth, requireClientAccess, type AuthedUser } from './auth';
 import {
   autoconfigRoutingAvailable,
   routedAutoconfigHosts,
@@ -333,9 +333,9 @@ export function esIpDeCloudflare(ip: string): boolean {
  * Por qué un dominio de marca blanca resuelve a otras IP. «Apunta a … en
  * lugar de a …» despista en los dos casos más comunes con Cloudflare: que el
  * nombre no tenga registro propio y responda el comodín del dominio (el de
- * la web, casi siempre con proxy), o que el registro esté bien pero con la
- * nube naranja. En ninguno de los dos hay un valor que corregir en el
- * registro: hay que crearlo o quitarle el proxy.
+ * la web, casi siempre con proxy), o que tenga el proxy activo y no haya
+ * forma de saber adónde apunta. En ninguno de los dos hay un valor que
+ * corregir en el registro.
  */
 export function detalleIpAjena(opts: {
   hostname: string;
@@ -344,21 +344,32 @@ export function detalleIpAjena(opts: {
   mailHostname: string;
   /** El nombre lo responde un comodín (*.padre), no un registro propio. */
   comodin: boolean;
+  /**
+   * Con las IP de Cloudflare: si hay una cuenta conectada que ve la zona
+   * (entonces se ha comprobado y el registro no apunta aquí) o no la hay.
+   */
+  cuentaCloudflare?: boolean;
 }): string {
-  const { hostname, ips, publicIp, mailHostname, comodin } = opts;
+  const { hostname, ips, publicIp, mailHostname, comodin, cuentaCloudflare = false } = opts;
   const conProxy = ips.length > 0 && ips.every(esIpDeCloudflare);
   const padre = hostname.split('.').slice(1).join('.');
   const registro = mailHostname
     ? `un registro CNAME para ${hostname} que apunte a ${mailHostname}`
     : `un registro A para ${hostname} con la IP ${publicIp}`;
+  if (comodin && conProxy && cuentaCloudflare) {
+    return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que tiene activo el proxy de Cloudflare. Crea ${registro}; «Configurar en Cloudflare» lo crea con el proxy activo.`;
+  }
   if (comodin && conProxy) {
-    return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que tiene activo el proxy de Cloudflare (nube naranja). Crea ${registro}, sin proxy (solo DNS, nube gris).`;
+    return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que tiene activo el proxy de Cloudflare (nube naranja). Crea ${registro} sin proxy (solo DNS, nube gris), o conecta en Conexiones la cuenta de Cloudflare de la zona para usarlo con proxy.`;
   }
   if (comodin) {
     return `${hostname} no tiene registro propio: responde el comodín *.${padre}, que apunta a ${ips.join(', ')}. Crea ${registro}.`;
   }
+  if (conProxy && cuentaCloudflare) {
+    return `El registro de ${hostname} tiene activo el proxy de Cloudflare, pero no apunta a este servidor: debe ser ${registro}.`;
+  }
   if (conProxy) {
-    return `El registro de ${hostname} tiene activo el proxy de Cloudflare (nube naranja): el tráfico no llega directamente a este servidor y no se puede emitir el certificado. Desactiva el proxy (solo DNS, nube gris).`;
+    return `El registro de ${hostname} tiene activo el proxy de Cloudflare (nube naranja) y no hay una cuenta de Cloudflare conectada que vea su zona para comprobar adónde apunta. Conéctala en Conexiones o desactiva el proxy (solo DNS, nube gris).`;
   }
   return `El dominio apunta a ${ips.join(', ')} en lugar de a ${publicIp}. Corrige el registro.`;
 }
@@ -379,9 +390,12 @@ async function respondeComodin(hostname: string, ips: string[]): Promise<boolean
 
 /**
  * El dominio debe resolver a la IP de este servidor. `resolve4` sigue la
- * cadena de CNAME, así que esto cubre las dos formas de apuntarlo.
+ * cadena de CNAME, así que esto cubre las dos formas de apuntarlo. Con el
+ * proxy de Cloudflare resuelve a IP de Cloudflare: entonces se pregunta a
+ * Cloudflare adónde apunta el registro (registroProxyApuntaAqui).
  */
-async function checkDns(hostname: string): Promise<DnsCheckResult> {
+async function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
+  const hostname = domain.hostname;
   const instance = getInstanceSettings();
   if (!instance.publicIp) {
     return {
@@ -411,6 +425,16 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
     };
   }
   if (!ips.includes(instance.publicIp)) {
+    let cuentaCloudflare = false;
+    if (ips.every(esIpDeCloudflare)) {
+      // Importación diferida: cloudflare.ts ya importa este módulo.
+      const { registroProxyApuntaAqui } = await import('./cloudflare');
+      const apunta = await registroProxyApuntaAqui(domain);
+      if (apunta) {
+        return { status: 'ok', detail: 'El dominio apunta a este servidor a través del proxy de Cloudflare.' };
+      }
+      cuentaCloudflare = apunta === false;
+    }
     return {
       status: 'failed',
       detail: detalleIpAjena({
@@ -419,10 +443,31 @@ async function checkDns(hostname: string): Promise<DnsCheckResult> {
         publicIp: instance.publicIp,
         mailHostname: instance.mailHostname,
         comodin: await respondeComodin(hostname, ips),
+        cuentaCloudflare,
       }),
     };
   }
   return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
+}
+
+/**
+ * ¿La redirección lleva a la misma página por HTTPS? Es el síntoma del modo
+ * «Flexible» de Cloudflare: le habla a este servidor por HTTP y Traefik lo
+ * redirige a HTTPS, que vuelve a llegar por HTTP. Sin esto, el 301 contaría
+ * como «responde» y el webmail quedaría en servicio sin poder abrirse.
+ */
+export function redirigeASiMismo(hostname: string, location: string | null): boolean {
+  if (!location) return false;
+  try {
+    const destino = new URL(location, `https://${hostname}/`);
+    // Solo la misma dirección exacta: un salto de «/» a «/?_task=login» es una
+    // redirección normal de la aplicación, no un bucle.
+    return (
+      destino.protocol === 'https:' && destino.hostname === hostname && destino.pathname === '/' && destino.search === ''
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -438,6 +483,13 @@ export async function checkHttps(hostname: string): Promise<{ ok: boolean; detai
       redirect: 'manual',
       signal: AbortSignal.timeout(8000),
     });
+    if (res.status >= 300 && res.status < 400 && redirigeASiMismo(hostname, res.headers.get('location'))) {
+      return {
+        ok: false,
+        detail:
+          'HTTPS redirige a la misma dirección sin fin. Con el proxy de Cloudflare, cambia el modo de cifrado SSL/TLS a «Completo» o «Completo (estricto)»: en «Flexible», Cloudflare llega a este servidor por HTTP y este lo devuelve a HTTPS una y otra vez.',
+      };
+    }
     if (res.status >= 200 && res.status < 400) {
       return { ok: true, detail: `HTTPS responde correctamente (HTTP ${res.status}).` };
     }
@@ -555,7 +607,7 @@ export function applyClientDomainCheck(
  */
 export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   const domain = getClientDomain(id);
-  const dns = await checkDns(domain.hostname);
+  const dns = await checkDns(domain);
   // Solo se prueba HTTPS cuando el DNS ya apunta aquí: antes no puede haber certificado.
   const https = dns.status === 'ok' ? await checkHttps(domain.hostname) : null;
   return applyClientDomainCheck(id, dns, https);
@@ -658,6 +710,38 @@ function requireDomainAccess(req: FastifyRequest, id: string): ClientDomain {
   const domain = getClientDomain(id);
   requireClientAccess(req, domain.clientId);
   return domain;
+}
+
+/**
+ * Registro del webmail en Cloudflare sin que nadie lo pida: si una cuenta
+ * utilizable ve la zona, se crea con el proxy activo (soloCrear: un registro
+ * existente nunca se toca). Devuelve el dominio ya comprobado, o null si no
+ * se ha podido (sin cuenta, Cloudflare no responde): entonces quedan las
+ * instrucciones del DNS y el botón «Configurar en Cloudflare».
+ */
+async function dnsAutomatico(req: FastifyRequest, user: AuthedUser, id: string): Promise<ClientDomain | null> {
+  try {
+    // Importación diferida: cloudflare.ts ya importa este módulo.
+    const { aplicarDnsMarcaBlanca, permiteInstancia } = await import('./cloudflare');
+    const r = await aplicarDnsMarcaBlanca(id, {
+      permitirInstancia: permiteInstancia(user, req.query),
+      replaceConflicts: false,
+      soloCrear: true,
+    });
+    if (r.applied.length > 0) {
+      audit(req, 'cloudflare.dns_applied', {
+        whitelabelDomainId: id,
+        hostname: r.domain.hostname,
+        zone: r.zone,
+        applied: r.applied.length,
+        errors: r.errors.length,
+        automatico: true,
+      }, r.domain.clientId);
+    }
+    return r.domain;
+  } catch {
+    return null;
+  }
 }
 
 const createSchema = z.object({
@@ -777,9 +861,11 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     ).run(id, clientId, hostname, body.kind, now());
     audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind }, clientId);
 
-    // Primera comprobación inmediata: si el DNS ya estaba puesto, el usuario
+    // El webmail se apunta solo en Cloudflare cuando se puede. Después, la
+    // primera comprobación inmediata: si el DNS ya estaba puesto, el usuario
     // ve el progreso sin tener que pulsar nada.
-    const domain = await refreshClientDomain(id).catch(() => getClientDomain(id));
+    const automatico = body.kind === 'webmail' ? await dnsAutomatico(req, user, id) : null;
+    const domain = automatico ?? (await refreshClientDomain(id).catch(() => getClientDomain(id)));
     return { domain, instructions: dnsInstructions(hostname) };
   });
 
@@ -790,9 +876,14 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
   });
 
   app.post('/api/whitelabel/domains/:id/verify', async (req) => {
+    const user = requireAuth(req);
     const { id } = req.params as { id: string };
-    requireDomainAccess(req, id);
-    const domain = await refreshClientDomain(id);
+    const actual = requireDomainAccess(req, id);
+    // Un webmail que aún espera al DNS (dado de alta antes de que hubiera una
+    // cuenta de Cloudflare, por ejemplo): se intenta crear su registro.
+    const automatico =
+      actual.kind === 'webmail' && actual.status === 'pending_dns' ? await dnsAutomatico(req, user, id) : null;
+    const domain = automatico ?? (await refreshClientDomain(id));
     audit(req, 'whitelabel.domain_verified', { id, status: domain.status }, domain.clientId);
     return { domain, instructions: dnsInstructions(domain.hostname) };
   });

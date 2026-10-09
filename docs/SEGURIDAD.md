@@ -207,6 +207,23 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   cuentas; las rutas que solo trabajan con la cuenta de la instancia (DNS de
   la plataforma y certificado del motor) responden
   `403 cloudflare_instance_admin_only`.
+  **Única excepción: el registro del dominio de marca blanca.** Para él vale
+  la cuenta con la que se aplicó el DNS del dominio de correo del que cuelga,
+  aunque sea de la instancia y actúe el cliente (o Skyway con
+  `soloCliente=1`). No abre ninguna zona nueva: la administración ya escribió
+  en ella para ese mismo dominio del mismo cliente, el nombre es un subdominio
+  suyo con la propiedad comprobada, el registro tiene un valor fijo (CNAME al
+  servidor de correo o A a su IP) y con esa cuenta nunca se reemplaza lo que
+  haya, ni pidiéndolo (`replaceConflicts` se ignora). Una zona del operador
+  cuyo DNS no aplicó la administración para ese cliente sigue cerrada.
+- **Webmail detrás del proxy de Cloudflare**: el registro del webmail de
+  marca blanca se crea con proxy. Como el DNS público devuelve entonces IP de
+  Cloudflare, la comprobación pregunta a Cloudflare (con la misma cuenta, solo
+  lectura) si el registro apunta de verdad a este servidor; sin una cuenta que
+  vea la zona, el dominio no se publica en Traefik. El webmail solo toma la IP
+  del visitante de `CF-Connecting-IP` cuando quien conectó con Traefik es una
+  IP de Cloudflare: el servidor tiene la IP pública y cualquiera podría enviar
+  esa cabecera directamente.
 - **Dominios en zonas del operador**: si la administración escribió el DNS de
   un dominio con una cuenta de la instancia, sus registros (MX, TXT de
   verificación) siguen en la zona del operador aunque el dominio se borre, y
@@ -224,8 +241,9 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   las zonas del operador los registros que la 1.0 marcó con el comentario
   `Mailway` (MX y TXT `_mailway.`) de dominios que ya no estén en el panel, y
   bórralos.
-- **El alta automática solo crea** (`autoDns`): no modifica ni borra ningún
-  registro existente; las actualizaciones (SPF, proxy, registros propios) solo
+- **El alta automática solo crea** (`autoDns`, y el registro del webmail de
+  marca blanca al darlo de alta o al comprobarlo): no modifica ni borra ningún
+  registro existente, ni para activarle el proxy; las actualizaciones (SPF, proxy, registros propios) solo
   las aplica «Aplicar» tras revisar el plan, y solo sobre registros con el
   comentario exacto de esta instancia.
 - **Lo que el cliente no ve de la administración**: las notas internas del

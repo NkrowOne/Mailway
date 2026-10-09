@@ -771,7 +771,7 @@ printf '%s' "$TOKEN" | docker exec -i -u node <contenedor del panel> \
 |---|---|
 | `GET /api/domains/:id/cloudflare` | Plan (no modifica nada): `{ available, reason?, account?: { id, label }, zone?: { id, name, status, nameServers }, changes: [{ action: create\|update\|keep\|conflict, type, name, content, priority?, current?, reason, required }], summary }`. `?includeRecommended=false` limita a los obligatorios. |
 | `POST /api/domains/:id/cloudflare/apply` | `{ replaceConflicts?, includeRecommended? (true por defecto) }` → `{ applied, errors, skipped, domain }`. Sin cuenta que vea la zona: `400 cloudflare_unavailable`. Si el motor propone un MX interno, ni el plan ni la aplicación siguen: `409 mx_hostname_internal` (sección 2.4). |
-| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`. `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para quitarle el proxy. |
+| `POST /api/whitelabel/domains/:id/cloudflare` | Crea el CNAME (o A) de un dominio de marca blanca → `{ applied, errors, skipped, domain }`; el de tipo `webmail`, con el proxy de Cloudflare (a uno existente que apunta aquí se le activa). `{ soloCrear: true }` (lo envía Skyway al crearlo automáticamente) no modifica uno existente, ni para activarle el proxy. Usa también la cuenta con la que se aplicó el DNS del dominio de correo del que cuelga, aunque sea de la instancia (sección 4.3). |
 | `GET /api/cloudflare/instance-dns` · `POST` | DNS de la plataforma (administración): A de `mail.`, `webmail.` y `panel.` y CNAME `autoconfig.`/`autodiscover.` del dominio base. `POST` acepta `{ replaceConflicts? }` → `{ applied, errors, skipped, missing }`. |
 
 Si la zona está pendiente de activación en Cloudflare, `zone.nameServers`
@@ -801,10 +801,19 @@ indica los servidores de nombres que debes poner en tu registrador.
 
   Sin una cuenta propia que contenga la zona, el plan responde
   `available: false` y la aplicación `400 cloudflare_unavailable`: nunca se
-  escribe en una zona de la instancia. Skyway lo envía cuando quien actúa en
+  escribe en una zona de la instancia, salvo el registro de marca blanca de
+  abajo. Skyway lo envía cuando quien actúa en
   Skyway no es administrador (propietario o miembro de un espacio de trabajo),
   para que su token de administración no abra a los proyectos las cuentas de la
   instancia.
+- **Excepción: el registro de un dominio de marca blanca.** Vale también la
+  cuenta con la que se aplicó el DNS del dominio de correo del que cuelga,
+  aunque sea de la instancia y actúe el cliente (o Skyway con
+  `soloCliente=1`): la administración ya escribió en esa zona para ese mismo
+  dominio. Con esa cuenta solo se crea el registro (o se le activa el proxy),
+  nunca se reemplaza un conflicto, aunque se pida `replaceConflicts`. Una zona
+  del operador cuyo DNS no aplicó la administración para ese cliente no se
+  toca (docs/SEGURIDAD.md).
 - Lo que la administración escribe con una cuenta de la instancia queda
   **reservado**: los registros de un dominio (MX, TXT de verificación) siguen
   en la zona del operador aunque el dominio se borre, y probarían la propiedad
@@ -827,8 +836,10 @@ indica los servidores de nombres que debes poner en tu registrador.
   registro existente. Lo que esta sección describe como «se corrige», «se
   fusiona» o «se actualiza» solo lo hace **Aplicar en Cloudflare** desde la
   ficha del dominio, después de revisar el plan.
-- Todos los registros van **sin proxy** (nube gris): el proxy de Cloudflare
-  rompe SMTP e IMAP. Un registro con proxy se corrige.
+- Todos los registros del correo van **sin proxy** (nube gris): el proxy de
+  Cloudflare rompe SMTP e IMAP. Un registro con proxy se corrige. La
+  excepción es el **webmail de marca blanca**, que va con proxy (sección 7.1):
+  es solo una página web y el correo va al nombre del servidor.
 - **SPF**: si ya existe uno, se fusiona (se añade `mx` delante del primer
   `all`) en lugar de crear un segundo, que invalidaría ambos. Un `mx` escrito
   detrás de `all` no cuenta, igual que en la comprobación DNS. Con dos SPF no
@@ -1045,14 +1056,41 @@ Traefik los dominios cuyo DNS ya apunta aquí, y un dominio solo pasa a «En
 servicio» cuando responde por HTTPS con un certificado válido y un código 2xx
 o 3xx (un 404 o un 5xx indican que la ruta o su destino aún no están bien).
 
-El nombre necesita **registro propio y sin proxy** (nube gris en
-Cloudflare): un CNAME hacia el servidor de correo o un A hacia la IP. Si
-resuelve a las IP de Cloudflare, el detalle del dominio dice cuál de los dos
-casos es: que no tiene registro y responde el comodín del dominio
-(`*.sucliente.com`, normalmente el de la web, con proxy), o que su registro
-tiene el proxy activo. Mientras tanto no se publica en Traefik (el nombre
-responde «404 page not found») y el panel, los enlaces y la API siguen dando
-el webmail general de la instancia.
+**DNS automático y proxy de Cloudflare.** Al dar de alta un dominio de tipo
+`webmail`, y al pulsar «Comprobar» mientras espera al DNS, Mailway crea su
+registro en Cloudflare si alguna cuenta utilizable ve la zona (sección 4.3,
+incluida la excepción de marca blanca): CNAME al servidor de correo **con el
+proxy de Cloudflare** (nube naranja), marcado con el comentario de la
+instancia. Solo crea: un registro existente no se toca (para activarle el
+proxy está «Configurar en Cloudflare» en la ficha). Si no puede, el alta
+sigue y quedan las instrucciones.
+
+Con el proxy, el DNS público devuelve IP de Cloudflare: Mailway pregunta a
+Cloudflare si el registro de ese nombre es un CNAME al servidor de correo (o
+un A a su IP) con proxy y, si lo es, lo da por bueno («apunta a este
+servidor a través del proxy de Cloudflare»). Sin una cuenta conectada que vea
+la zona no puede saberlo: el detalle pide conectarla o quitar el proxy. Si el
+nombre no tiene registro propio y responde el comodín del dominio
+(`*.sucliente.com`, normalmente el de la web), el detalle también lo dice.
+Mientras tanto no se publica en Traefik (el nombre responde «404 page not
+found») y el panel, los enlaces y la API siguen dando el webmail general de
+la instancia.
+
+Lo que tiene que cumplir la zona en Cloudflare (lo mismo que ya necesitan las
+webs de Skyway con proxy):
+
+- **SSL/TLS en «Completo» o «Completo (estricto)»**, nunca «Flexible»: en
+  «Flexible», Cloudflare llega por HTTP, Traefik lo devuelve a HTTPS y la
+  página no carga nunca. La comprobación lo detecta («HTTPS redirige a la
+  misma dirección») y el dominio no entra en servicio.
+- Con «Completo (estricto)», el certificado del servidor tiene que poder
+  emitirse: Let's Encrypt lo valida por HTTP en `/.well-known/acme-challenge/`,
+  así que, si «Usar siempre HTTPS» está activo, esa ruta necesita una
+  excepción. Mientras no hay certificado, Cloudflare responde con un error 526
+  y el dominio sigue en «Emitiendo certificado».
+- El webmail toma la IP real del visitante de `CF-Connecting-IP`, solo cuando
+  la conexión llega de una IP de Cloudflare, para que su límite de intentos
+  fallidos siga contando por persona (deploy/roundcube/README.md).
 
 **Webmail principal**: si un cliente tiene varios dominios de webmail en
 servicio, el marcado como principal (`isPrimary`) es el que usan su inicio,
