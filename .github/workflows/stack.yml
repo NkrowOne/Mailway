@@ -109,9 +109,11 @@ jobs:
               # compose de cada motor). Con cualquier motor, en todos sus routers.
               config=$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)
               grep -qF 'traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded: ""' <<<"$config"
-              for router in $(grep -oE 'traefik\.http\.routers\.mailway-mail[a-z-]*\.rule' <<<"$config" | cut -d. -f4 | sort -u); do
+              routers=$(grep -oE 'traefik\.http\.routers\.mailway-mail[a-z-]*\.rule' <<<"$config" | cut -d. -f4 | sort -u)
+              [ "$(wc -l <<<"$routers")" -ge 2 ]
+              while read -r router; do
                 grep -qE "traefik\.http\.routers\.$router\.middlewares: ([^ ]*,)?mailway-mail-sin-forwarded(,|\$)" <<<"$config"
-              done
+              done <<<"$routers"
             done
           done
           # Sin MAILWAY_MOTOR, la 0.15: las instalaciones anteriores a la 0.16
@@ -139,16 +141,22 @@ jobs:
         run: |
           MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
           export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-contrato-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
           trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
-          eval "$(server/test/motor016-arrancar.sh)"
+          # Primero la salida y después el eval: «eval "$(…)"» daría por bueno
+          # un arranque fallido, y la prueba, sin sus variables, se omitiría.
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
           cd server && node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts
 
       - name: Panel contra Stalwart 0.16
         run: |
           MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
           export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-panel-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
           trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
-          eval "$(server/test/motor016-arrancar.sh)"
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
           cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
             test/panel-motor-real.test.ts
 
@@ -156,8 +164,10 @@ jobs:
         run: |
           MOTOR015_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.15/compose.yml)
           export MOTOR015_IMAGEN MOTOR015_CONTENEDOR=mailway-panel-015
+          : "${MOTOR015_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.15/compose.yml}"
           trap 'docker rm -f "$MOTOR015_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
-          eval "$(server/test/motor015-arrancar.sh)"
+          variables=$(server/test/motor015-arrancar.sh)
+          eval "$variables"
           cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
             test/panel-motor-real.test.ts
 

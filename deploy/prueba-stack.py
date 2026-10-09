@@ -49,8 +49,9 @@ prueba encuentra los puertos publicados: otra permite ejecutarla contra un
 Docker aislado (Docker dentro de Docker), cuyos puertos no están en el host.
 
 MAILWAY_PRUEBA_PANEL_IMAGEN=<imagen del panel> usa el panel de verdad en lugar
-del simulado (con su base vacía: no conoce los buzones de la prueba, así que
-en la migración no se prueban ni el intento que falla ni la suspensión).
+del simulado y hace su puesta en marcha con emparejar.js, como el emparejado.
+Su base no conoce los buzones de la prueba, así que en la migración no se
+prueban ni el intento que falla ni la suspensión.
 """
 from __future__ import annotations
 

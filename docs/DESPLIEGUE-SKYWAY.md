@@ -1720,7 +1720,8 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    claves de otros dominios. Con la 0.16, el primer arranque, los ajustes de
    Mailway con la herramienta del motor del panel (simulada en
    `deploy/prueba-panel-motor.js`, con el contrato de la real), que una
-   actualización no los repite y, con un Traefik real, las rutas del nombre
+   actualización no repite el primer arranque ni reinicia el motor y, con un
+   Traefik real, las rutas del nombre
    del servidor de correo (403 en la administración y el autoservicio del
    motor) y que la cabecera `Forwarded` no llega al motor.
 4. **La migración con contenedores reales** (`deploy/prueba-stack.py
@@ -1747,4 +1748,6 @@ niega si encuentra restos de Mailway o de Skyway y nunca debe lanzarse en un
 servidor con datos. Para ejecutarla en un equipo de desarrollo sin tocar su
 Docker, sirve un Docker aislado (Docker dentro de Docker): con `DOCKER_HOST`
 apuntando a él y `MAILWAY_PRUEBA_DIRECCION` a la dirección por la que se
-alcanzan sus puertos.
+alcanzan sus puertos. Con `MAILWAY_PRUEBA_PANEL_IMAGEN=<imagen del panel>`,
+la prueba usa el panel de verdad en lugar del simulado (su puesta en marcha,
+con `emparejar.js`, como el emparejado).
