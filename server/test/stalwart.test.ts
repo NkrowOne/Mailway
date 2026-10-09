@@ -12,7 +12,11 @@ import { Stalwart015Engine } from '../src/engine/stalwart';
  * - «notFound» lleva en `item` el nombre que no existe (el principal de la
  *   ruta o un miembro de la lista);
  * - los miembros de una lista deben existir y se validan antes de escribir;
- * - un GET omite los campos vacíos (un buzón suspendido llega SIN «roles»);
+ * - un GET omite los campos vacíos (un buzón sin roles llega SIN «roles»);
+ * - el rol «user» da los permisos de un buzón, entre ellos `authenticate`
+ *   (entrar) y `email-receive` (recibir correo), y `disabledPermissions` los
+ *   quita uno a uno (comprobado con el 0.15.5 real: sin el rol, el correo
+ *   que llega rebota);
  * - un HTTP 404 solo significa «ruta desconocida»;
  * - addItem de un secreto que no es $app$ sustituye la contraseña principal.
  */
@@ -21,6 +25,7 @@ interface Principal {
   type: 'individual' | 'list' | 'domain';
   secrets?: string[];
   roles?: string[];
+  disabledPermissions?: string[];
   members?: string[];
   externalMembers?: string[];
 }
@@ -121,6 +126,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       type: nuevo.type,
       secrets: nuevo.secrets,
       roles: nuevo.roles,
+      disabledPermissions: nuevo.disabledPermissions,
       members: nuevo.members,
       externalMembers: nuevo.externalMembers,
     });
@@ -180,6 +186,12 @@ const motor = new Stalwart015Engine({
   smtpPort: 587,
   smtpSecure: false,
 });
+
+/** ¿Tiene el principal ese permiso? Como en 0.15.5: lo da el rol «user» y lo quita disabledPermissions. */
+function tienePermiso(nombre: string, permiso: string): boolean {
+  const p = principales.get(nombre);
+  return Boolean(p?.roles?.includes('user')) && !(p?.disabledPermissions ?? []).includes(permiso);
+}
 
 function buzon(nombre: string, extra: Partial<Principal> = {}): void {
   principales.set(nombre, { type: 'individual', secrets: [sha512Crypt('clave-correcta')], roles: ['user'], ...extra });
@@ -301,6 +313,37 @@ test('addAppPassword devuelve el secreto propuesto y la referencia $app$ que gua
   await motor.removeAppPassword('ana@acme.test', creada.ref);
   assert.ok(!principales.get('ana@acme.test')?.secrets?.includes(creada.ref));
   assert.deepEqual(llamadas.at(-1)?.body, [{ action: 'removeItem', field: 'secrets', value: creada.ref }]);
+});
+
+/* ------------------------------- Suspensión -------------------------------- */
+
+test('suspender un buzón le impide entrar, pero el correo le sigue llegando', async () => {
+  buzon('ana@acme.test');
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false, 'no entra por IMAP, SMTP ni webmail');
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate-oauth'), false, 'ni con un token OAuth que tuviera');
+  // Antes se le quitaba el rol «user» y con él email-receive: el correo rebotaba.
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true, 'el correo le sigue llegando');
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
+
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), true);
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true);
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
+});
+
+test('un buzón suspendido como antes (sin el rol «user») se reactiva del todo', async () => {
+  buzon('ana@acme.test', { roles: [] });
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, true);
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+});
+
+test('adoptar un buzón huérfano suspendido lo deja activo', async () => {
+  buzon('ana@acme.test', { disabledPermissions: ['authenticate', 'authenticate-oauth'] });
+  await motor.createMailbox({ email: 'ana@acme.test', passwordHash: sha512Crypt('nueva-clave-segura') });
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), true);
+  assert.equal((await motor.readMailboxCredentials('ana@acme.test'))?.suspended, false);
 });
 
 /* ------------------------ readMailboxCredentials -------------------------- */
