@@ -39,7 +39,7 @@ const RED_INTERNA = process.env.MAILWAY_ENGINE_TRUSTED_NETWORK || '10.203.53.0/2
 const CAPACIDAD_016 = 'urn:stalwart:jmap';
 const USO =
   'Uso: node server/dist/tools/motor.js estado | capturar | mantenimiento on [--minutos N] | mantenimiento off | provisionar | tras-migrar';
-const AVISO_587 = 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor.';
+const AVISO_587 = 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor';
 
 class ErrorDeUso extends Error {}
 

@@ -130,23 +130,32 @@ const ESCUCHA_587 = {
  * clave estable (la que se guarda) → aviso para el administrador.
  */
 const AVISOS_REINICIO: Record<string, string> = {
-  submission587: 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor.',
+  // Sin punto final: quien lo muestra los une con «; » y cierra la frase.
+  submission587: 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor',
 };
+
+/** Un cambio que espera a un reinicio del motor. */
+export interface AvisoReinicio {
+  /** Marca de arranque del motor al guardarlo; null si no se pudo leer. */
+  marca: string | null;
+  /** Cuándo se guardó (ms). */
+  guardadoEn: number;
+}
 
 /**
  * Dónde se recuerdan los cambios que esperan a un reinicio del motor (clave
- * de AVISOS_REINICIO → marca de arranque del motor al guardarlos). El panel
- * usa su base de datos (engine/reinicios.ts): así el aviso sobrevive a un
- * reinicio del panel y lo ve aunque lo haya dejado la herramienta de
- * migración, que es otro proceso. Sin almacén, en memoria.
+ * de AVISOS_REINICIO → aviso). El panel usa su base de datos
+ * (engine/reinicios.ts): así el aviso sobrevive a un reinicio del panel y lo
+ * ve aunque lo haya dejado la herramienta de migración, que es otro proceso.
+ * Sin almacén, en memoria.
  */
 export interface AlmacenReinicios {
-  leer(): Record<string, string | null>;
-  guardar(pendientes: Record<string, string | null>): void;
+  leer(): Record<string, AvisoReinicio>;
+  guardar(pendientes: Record<string, AvisoReinicio>): void;
 }
 
 export function almacenReiniciosEnMemoria(): AlmacenReinicios {
-  let guardados: Record<string, string | null> = {};
+  let guardados: Record<string, AvisoReinicio> = {};
   return {
     leer: () => ({ ...guardados }),
     guardar: (pendientes) => {
@@ -1035,43 +1044,54 @@ export class Stalwart016Engine implements MailEngine {
   }
 
   /**
-   * Marca del arranque en curso del motor. En un nodo único, `lastRenewal` del
-   * nodo se fija al arrancar (comprobado: cambia con cada `docker restart` y no
-   * se renueva después), así que sirve para saber si el motor ha reiniciado
-   * desde que se guardó un cambio que lo exige. null si no se puede leer.
+   * Marca del arranque en curso del motor y cuándo arrancó. En un nodo único,
+   * `lastRenewal` del nodo se fija al arrancar (comprobado: cambia con cada
+   * `docker restart` y no se renueva después), así que sirve para saber si el
+   * motor ha reiniciado desde que se guardó un cambio que lo exige. null si no
+   * se puede leer.
    */
-  private async marcaDeArranque(): Promise<string | null> {
+  private async arranqueDelMotor(): Promise<{ marca: string | null; arrancadoEn: number | null }> {
     try {
       const nodos = await this.lista<{ nodeId?: number; lastRenewal?: string }>('ClusterNode', { ids: null });
-      if (nodos.length === 0) return null;
-      return nodos
+      if (nodos.length === 0) return { marca: null, arrancadoEn: null };
+      const marca = nodos
         .map((n) => `${n.nodeId ?? '?'}@${n.lastRenewal ?? '?'}`)
         .sort()
         .join(',');
+      const tiempos = nodos.map((n) => Date.parse(n.lastRenewal ?? '')).filter((t) => Number.isFinite(t));
+      return { marca, arrancadoEn: tiempos.length > 0 ? Math.max(...tiempos) : null };
     } catch {
-      return null;
+      return { marca: null, arrancadoEn: null };
     }
+  }
+
+  private async marcaDeArranque(): Promise<string | null> {
+    return (await this.arranqueDelMotor()).marca;
   }
 
   private async pendientesActuales(): Promise<string[]> {
     const pendientes = this.reinicios.leer();
     const claves = Object.keys(pendientes);
     if (claves.length === 0) return [];
-    const marca = await this.marcaDeArranque();
+    const { marca, arrancadoEn } = await this.arranqueDelMotor();
     for (const clave of claves) {
-      const marcaAlGuardar = pendientes[clave] ?? null;
+      const aviso = pendientes[clave]!;
+      const reiniciado =
+        aviso.marca !== null && marca !== null
+          ? marca !== aviso.marca
+          : // Sin la marca de entonces (o de ahora), basta con que el motor haya
+            // arrancado después de guardarlo: si no, el aviso no se iría nunca.
+            arrancadoEn !== null && arrancadoEn > aviso.guardadoEn;
       // Ya ha reiniciado desde que se guardó, o es un aviso que esta versión
       // del panel ya no conoce.
-      if (!AVISOS_REINICIO[clave] || (marca !== null && marcaAlGuardar !== null && marca !== marcaAlGuardar)) {
-        delete pendientes[clave];
-      }
+      if (!AVISOS_REINICIO[clave] || reiniciado) delete pendientes[clave];
     }
     if (Object.keys(pendientes).length !== claves.length) this.reinicios.guardar(pendientes);
     return Object.keys(pendientes).map((clave) => AVISOS_REINICIO[clave]!);
   }
 
   private anotarReinicio(clave: string, marca: string | null): void {
-    this.reinicios.guardar({ ...this.reinicios.leer(), [clave]: marca });
+    this.reinicios.guardar({ ...this.reinicios.leer(), [clave]: { marca, guardadoEn: Date.now() } });
   }
 
   private olvidarReinicio(clave: string): void {

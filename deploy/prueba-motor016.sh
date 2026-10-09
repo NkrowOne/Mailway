@@ -449,7 +449,7 @@ comprobar "sin reiniciar el motor" no_contiene "$REGISTRO" "docker restart"
 # ---------------------------------------------------- herramienta del panel --
 
 PROVISION_OK='{"ok":true,"api":"jmap016","aplicados":["ajustes"],"avisos":[],"restartRequired":[],"errores":[],"suspensiones":{"reaplicadas":2,"fallidas":[]},"faltan":{"dominios":[],"buzones":[],"alias":[]}}'
-PROVISION_REINICIO='{"ok":true,"api":"jmap016","aplicados":["la escucha del 587"],"avisos":[],"restartRequired":["Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor."],"errores":[],"suspensiones":{"reaplicadas":2,"fallidas":[]},"faltan":{"dominios":[],"buzones":[],"alias":[]}}'
+PROVISION_REINICIO='{"ok":true,"api":"jmap016","aplicados":["la escucha del 587"],"avisos":[],"restartRequired":["Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor"],"errores":[],"suspensiones":{"reaplicadas":2,"fallidas":[]},"faltan":{"dominios":[],"buzones":[],"alias":[]}}'
 
 echo "# provisionar pide reiniciar: se reinicia el motor y se repite"
 reiniciar_estado "stalwartlabs/stalwart:v0.16.25"
