@@ -18,7 +18,7 @@ import {
 } from '../lib/motor';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { AvisoError, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, AvisoEspera, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { BandaAviso } from './gestion/comun';
 
@@ -175,6 +175,9 @@ export function HojaServidorCorreo() {
           Comprobar de nuevo
         </Button>
       </div>
+      <AvisoEspera activo={aplicar.isPending} className="px-4 pb-3">
+        Aplicando los ajustes en el motor y recargándolo. Puede tardar un minuto o más.
+      </AvisoEspera>
       {!data.hostname.expected && (
         <p className="px-4 pb-3 text-sm text-tinta-3">
           Indica el nombre del servidor de correo en «Identidad del servidor» para poder aplicar los

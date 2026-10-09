@@ -6,7 +6,7 @@ import { lookupA, lookupPtr } from '../core/dns';
 import { db, now } from '../core/db';
 import { badRequest, forbidden, tooMany } from '../core/errors';
 import { isValidHostname } from '../core/hostnames';
-import { buildEngine, buildGuardedEngine, engineConfigured } from '../engine';
+import { buildEngine, engineConfigured, motorProtegidoPara } from '../engine';
 import type { EngineApi, EngineSettings } from '../engine/types';
 import { audit } from './audit';
 import {
@@ -233,7 +233,7 @@ export async function applyRecommendedQuietly(settings: EngineSettings | null): 
   const hostname = getInstanceSettings().mailHostname.trim().toLowerCase();
   if (!hostname) return null;
   try {
-    const result = await applyRecommendedEngineSettings(hostname, buildGuardedEngine(settings));
+    const result = await applyRecommendedEngineSettings(hostname, motorProtegidoPara(settings));
     return {
       applied: result.errors.length === 0,
       hostname,

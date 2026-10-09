@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { HttpError } from '../src/core/errors';
+import { getEngine, motorProtegidoPara } from '../src/engine';
 import { DemoEngine } from '../src/engine/demo';
 import { anunciaGestion016, detectarApiStalwart, MotorStalwart } from '../src/engine/detector';
 import { Stalwart015Engine } from '../src/engine/stalwart';
 import type { EngineApi, EngineSettings, MailEngine } from '../src/engine/types';
+import { activarMantenimiento, desactivarMantenimiento } from '../src/modules/mantenimiento';
+import { getEngineSettings } from '../src/modules/settings';
 import { fakeStalwart } from './stalwart-falso';
 
 /*
@@ -194,4 +197,26 @@ test('una ruta que falta sin cambio de versión no se repite: el error llega tal
     1,
     'la operación no se repite si la API no ha cambiado',
   );
+});
+
+test('la puesta en marcha aplica los ajustes con el mismo motor que el resto del panel', async () => {
+  // Con los ajustes del motor activo, el mismo objeto que getEngine(): lo que
+  // el driver recuerda tras aplicarlos (en 0.16, el reinicio pendiente) lo ve
+  // después Ajustes.
+  const activos = getEngineSettings();
+  assert.ok(activos);
+  assert.equal(motorProtegidoPara({ ...activos }), getEngine());
+
+  // Con otros ajustes, uno nuevo que también respeta el modo mantenimiento,
+  // sin llegar a hablar con el motor.
+  const otro = motorProtegidoPara(ajustes);
+  assert.notEqual(otro, getEngine());
+  activarMantenimiento(5);
+  try {
+    motorFalso.received.length = 0;
+    await assert.rejects(otro.createDomain('acme.test'), (err: HttpError) => err.code === 'engine_maintenance');
+    assert.equal(motorFalso.received.length, 0);
+  } finally {
+    desactivarMantenimiento();
+  }
 });

@@ -30,11 +30,17 @@ export function buildEngine(settings: EngineSettings): MailEngine {
 }
 
 /**
- * Igual que buildEngine, pero sus modificaciones respetan el modo
+ * Motor para unos ajustes concretos cuyas modificaciones respetan el modo
  * mantenimiento: lo usa la puesta en marcha para aplicar los ajustes
- * recomendados a un motor que aún no está guardado como el activo.
+ * recomendados. Si son los del motor activo, es el mismo objeto que
+ * `getEngine()`: así lo que el driver recuerda en memoria tras una operación
+ * (en Stalwart 0.16, los cambios que esperan a que se reinicie el motor) lo
+ * ve después Ajustes; con un objeto nuevo se perdería al terminar la
+ * petición.
  */
-export function buildGuardedEngine(settings: EngineSettings): MailEngine {
+export function motorProtegidoPara(settings: EngineSettings): MailEngine {
+  const activos = getEngineSettings();
+  if (activos && fingerprint(activos) === fingerprint(settings)) return getEngine();
   return new MotorProtegido(buildEngine(settings));
 }
 

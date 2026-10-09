@@ -926,6 +926,40 @@ export function Cargando({ label = 'Cargando…' }: { label?: string }) {
   );
 }
 
+/**
+ * Nota bajo un botón ocupado cuando la operación tarda de verdad (aplicar
+ * los ajustes recomendados en Stalwart 0.16 lleva 15 segundos o más): solo
+ * aparece si sigue en marcha pasado un segundo y medio, para que lo rápido no
+ * parpadee, y deja claro que no se ha quedado colgada.
+ */
+export function AvisoEspera({
+  activo,
+  className = '',
+  children,
+}: {
+  activo: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  // Montar y desmontar el contenido reinicia la espera en cada operación.
+  return activo ? <AvisoEsperaActivo className={className}>{children}</AvisoEsperaActivo> : null;
+}
+
+function AvisoEsperaActivo({ className, children }: { className: string; children: ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const espera = window.setTimeout(() => setVisible(true), 1500);
+    return () => window.clearTimeout(espera);
+  }, []);
+  if (!visible) return null;
+  // Sin aro propio: el botón ocupado ya gira; esto solo explica la espera.
+  return (
+    <p role="status" className={`entrada-diferida text-sm text-tinta-2 ${className}`}>
+      {children}
+    </p>
+  );
+}
+
 /* ------------------------------- Membrete --------------------------------- */
 
 /**
