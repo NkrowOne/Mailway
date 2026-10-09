@@ -3714,7 +3714,7 @@ comprobaciones_migracion() {
     rest015) ;;
     *) fallo "El panel no ve un Stalwart 0.15 en el motor (ve «$(hm_campo '.api // "nada"')»): no se puede migrar así." ;;
   esac
-  ok "Panel: $(hm_campo '.buzones.total // "?"') buzones, $(hm_campo '.buzones.conHash // "?"') con su contraseña ya copiada en el panel."
+  ok "Buzones en el panel: $(hm_campo '.buzones.total // "?"'); con su contraseña ya copiada: $(hm_campo '.buzones.conHash // "?"')."
   if [ "$(hm_campo '.mantenimiento.activo')" = true ]; then
     aviso "El panel ya estaba en mantenimiento (¿una migración interrumpida?): se renueva y se quita al terminar."
   fi
@@ -3834,17 +3834,17 @@ capturar_contrasenas() {
   if [ "$codigo" != 0 ] || [ "$(hm_campo '.ok')" != true ] || [ "${fallidos:-0}" != 0 ]; then
     fallo "El panel no ha podido copiar la contraseña de todos los buzones (${fallidos:-?} sin copiar: $(hm_campo '(.fallidos // []) | map(if type == "string" then . else (.email // .buzon // tostring) end) | join(", ")' | cut -c1-300)): sin ellas no podría comprobarlas con la 0.16. No se ha cambiado nada del motor."
   fi
-  ok "Contraseñas copiadas en el panel: $(hm_campo '.capturados // 0') nuevas y $(hm_campo '.yaEstaban // 0') que ya estaban."
+  ok "Contraseñas copiadas en el panel (nuevas: $(hm_campo '.capturados // 0'); ya estaban: $(hm_campo '.yaEstaban // 0'))."
 }
 
 volcar_y_convertir() {
   titulo "Volcado y conversión (la 0.15 sigue en marcha)"
   ayudante volcar --url http://mailway-mail:8080 ||
     fallo "El volcado del motor 0.15 ha fallado: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada del motor."
-  ok "Volcado: $(hm_campo '.dominios') dominios, $(hm_campo '.buzones') buzones ($(hm_campo '.suspendidos') suspendidos), $(hm_campo '.alias') alias y $(hm_campo '.dkim') firmas DKIM."
+  ok "Volcado de la 0.15 (dominios: $(hm_campo '.dominios'); buzones: $(hm_campo '.buzones'), suspendidos: $(hm_campo '.suspendidos'); alias: $(hm_campo '.alias'); firmas DKIM: $(hm_campo '.dkim'))."
   ayudante convertir --nombre "$MAIL_HOSTNAME" ||
     fallo "La conversión ha fallado: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada del motor."
-  ok "Plan de la 0.16: $(hm_campo '.operaciones') operaciones ($(hm_campo '.crear // {} | to_entries | map("\(.value) \(.key)") | join(", ")'))."
+  ok "Plan de la 0.16 (operaciones: $(hm_campo '.operaciones'); $(hm_campo '.crear // {} | to_entries | map("\(.key): \(.value)") | join(", ")'))."
   if [ -s "$MIG_DIR/sin-migrar.txt" ]; then
     info "Ajustes de la 0.15 que el script no migra (los de Mailway los vuelve a aplicar el panel): $MIG_DIR/sin-migrar.txt"
   fi
@@ -3900,7 +3900,7 @@ print("origen", *o, "copia", *d)
 raise SystemExit(0 if o == d else 1)
 PY' >"$MIG_DIR/copia.txt" 2>&1 ||
     fallo "La copia de los datos ha fallado: $(tr '\n' ' ' <"$MIG_DIR/copia.txt" | cut -c1-300)"
-  ok "Datos copiados y comprobados ($(cut -d' ' -f2 "$MIG_DIR/copia.txt") ficheros); config.json propio en $MIG_ETC."
+  ok "Datos copiados y comprobados (ficheros: $(cut -d' ' -f2 "$MIG_DIR/copia.txt")); config.json propio en $MIG_ETC."
 }
 
 # Arranca un motor 0.16 temporal sobre los volúmenes nuevos, sin puertos
@@ -3993,7 +3993,7 @@ previo_016() {
   titulo "Comprobación de los datos migrados"
   ayudante comprobar --url http://mailway-mail:8080 --nombre "$MAIL_HOSTNAME" ||
     fallo "La 0.16 no tiene todo lo de la 0.15: $(hm_campo '((.problemas // []) | join(" ")) + (.error // "")' | cut -c1-600)"
-  ok "En la 0.16 están los $(hm_campo '.recuento.dominios') dominios, $(hm_campo '.recuento.buzones') buzones, $(hm_campo '.recuento.alias') alias y $(hm_campo '.recuento.dkim') firmas DKIM, con sus escuchas y el nombre del servidor."
+  ok "En la 0.16 está todo lo de la 0.15 (dominios: $(hm_campo '.recuento.dominios'); buzones: $(hm_campo '.recuento.buzones'); alias: $(hm_campo '.recuento.alias'); firmas DKIM: $(hm_campo '.recuento.dkim')), con sus escuchas y el nombre del servidor."
   docker stop -t 60 "$CONTENEDOR_PREVIO" >/dev/null || true
   docker rm -f "$CONTENEDOR_PREVIO" >/dev/null 2>&1 || true
 }
