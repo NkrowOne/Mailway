@@ -9,6 +9,7 @@ import { getEngine } from '../src/engine';
 import { DemoEngine } from '../src/engine/demo';
 import type { CreatedAppPassword, EngineApi, MailEngine } from '../src/engine/types';
 import { listAlerts } from '../src/modules/alerts';
+import { listAudit } from '../src/modules/audit';
 import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
 import { componerAvisoInvalidadas, trasMigrarMotor } from '../src/modules/cambiomotor';
 import { comprobarContrasenaBuzon, leerHashBuzon } from '../src/modules/credenciales';
@@ -533,6 +534,79 @@ test('tras-migrar avisa por correo a cada titular una sola vez, sin las de Skywa
   } finally {
     config.demoMode = true;
     setTransportFactoryForTests(null);
+  }
+});
+
+test('tras volver a la 0.15, sus contraseñas de aplicación que siguen en el motor vuelven a valer', async () => {
+  db.prepare("DELETE FROM alerts WHERE type = 'engine_app_passwords_invalidated'").run();
+  const e = await escenario('Vuelta atrás');
+  const crear = async (nombre: string) => {
+    const res = await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: nombre });
+    assert.equal(res.statusCode, 200, res.body);
+    return (res.json() as { appPassword: { id: string } }).appPassword.id;
+  };
+  // Creadas en la 0.15 (anteriores a esta versión: sin engine_api).
+  const portatil = await crear('Portátil');
+  const tableta = await crear('Tableta');
+  db.prepare('UPDATE app_passwords SET engine_api = NULL WHERE id IN (?, ?)').run(portatil, tableta);
+  const fila = (id: string) =>
+    db.prepare('SELECT invalidated_at, invalidation_notified_at, revoked_at FROM app_passwords WHERE id = ?').get(id) as {
+      invalidated_at: number | null;
+      invalidation_notified_at: number | null;
+      revoked_at: number | null;
+    };
+
+  // Migración a la 0.16: se invalidan y se avisa.
+  const sim = simular016();
+  let creadaEn016 = '';
+  try {
+    assert.equal((await motor('tras-migrar')).codigo, 0);
+    assert.notEqual(fila(portatil).invalidated_at, null);
+    db.prepare('UPDATE app_passwords SET invalidation_notified_at = ? WHERE id IN (?, ?)').run(Date.now(), portatil, tableta);
+    creadaEn016 = await crear('Móvil nuevo');
+    assert.ok(listAlerts({}).some((a) => a.type === 'engine_app_passwords_invalidated' && a.resolvedAt === null));
+  } finally {
+    sim.restaurar();
+  }
+
+  // Vuelta atrás: la 0.15 arranca con su volumen intacto. La tableta ya no
+  // está en el motor (alguien la borró allí): esa no se puede recuperar.
+  const crudo = getEngine({ saltarMantenimiento: true }) as DemoEngine & Record<string, unknown>;
+  crudo.detectApi = async (): Promise<EngineApi> => 'rest015';
+  const refTableta = (db.prepare('SELECT stored_secret FROM app_passwords WHERE id = ?').get(tableta) as { stored_secret: string })
+    .stored_secret;
+  const credencialesDemo = DemoEngine.prototype.readMailboxCredentials;
+  crudo.readMailboxCredentials = async function (this: DemoEngine, email: string) {
+    const credenciales = await credencialesDemo.call(this, email);
+    return credenciales && { ...credenciales, appPasswords: credenciales.appPasswords.filter((a) => a.ref !== refTableta) };
+  };
+  try {
+    const vuelta = await motor('tras-migrar');
+    assert.equal(vuelta.codigo, 0, JSON.stringify(vuelta.json));
+    assert.equal(vuelta.json.contrasenasRecuperadas, 1);
+    assert.deepEqual(fila(portatil), { invalidated_at: null, invalidation_notified_at: null, revoked_at: null });
+    assert.notEqual(fila(tableta).invalidated_at, null, 'el motor ya no la tiene');
+    assert.notEqual(fila(creadaEn016).invalidated_at, null, 'la creada en la 0.16 no existe en la 0.15');
+    assert.ok(
+      listAudit({ viewerIsAdmin: true }).some(
+        (a) => a.action === 'engine.app_passwords_restored' && (a.detail as { contrasenas: number }).contrasenas === 1,
+      ),
+    );
+    // Queda una de la 0.15 invalidada: el aviso de la migración sigue abierto.
+    const abierto = () =>
+      db
+        .prepare('SELECT 1 FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL')
+        .get('engine_app_passwords_invalidated:jmap016') !== undefined;
+    assert.equal(abierto(), true);
+
+    // Revocada la que falta, ya no queda nada de aquella migración: se cierra.
+    assert.equal((await como('DELETE', `/api/mailboxes/${e.mailboxId}/app-passwords/${tableta}`)).statusCode, 200);
+    const otra = await motor('tras-migrar');
+    assert.equal(otra.json.contrasenasRecuperadas, 0, 'idempotente');
+    assert.equal(abierto(), false);
+  } finally {
+    delete crudo.detectApi;
+    delete crudo.readMailboxCredentials;
   }
 });
 

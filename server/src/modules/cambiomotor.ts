@@ -4,7 +4,7 @@ import { HttpError } from '../core/errors';
 import { normalizeHostname } from '../core/hostnames';
 import { getEngine } from '../engine';
 import type { EngineApi, MailEngine } from '../engine/types';
-import { fireAlert } from './alerts';
+import { fireAlert, resolveAlert } from './alerts';
 import { auditSystem } from './audit';
 import { runLimited } from './clients';
 import { publicBaseUrl } from './connection';
@@ -203,8 +203,11 @@ export interface ResultadoProvision {
 }
 
 /**
- * Deja el motor (recién migrado, quizá en modo recuperación) como lo necesita
- * Mailway y comprueba que no falta nada:
+ * Deja el motor (recién migrado, ya en su primer arranque normal) como lo
+ * necesita Mailway y comprueba que no falta nada. Nunca en el modo de
+ * recuperación de 0.16: una escucha, una autenticación o un registro creados
+ * allí estropean los valores por defecto del primer arranque normal (el
+ * instalador espera a ese arranque, sin puertos publicados):
  * 1. ajustes recomendados con el nombre del servidor de la instancia;
  * 2. las suspensiones de nuevo (el script oficial de migración no conserva
  *    roles ni permisos: los buzones suspendidos vuelven activos), ANTES de
@@ -382,6 +385,12 @@ export interface ResultadoTrasMigrar {
   credencialesInternas: { renovadas: number; fallidas: string[] };
   /** Contraseñas de aplicación de dispositivos y Skyway marcadas como invalidadas en esta ejecución. */
   contrasenasInvalidadas: number;
+  /**
+   * Contraseñas de aplicación de esta versión del motor, invalidadas al migrar
+   * a otra, que vuelven a valer tras volver atrás (`revertir-motor`): siguen en
+   * el motor, cuyo volumen no se tocó.
+   */
+  contrasenasRecuperadas: number;
   /** Buzones cuyo titular ha recibido en esta ejecución el aviso por correo. */
   avisados: number;
   /** Buzones a los que no se ha podido enviar el aviso (se reintenta al repetir la orden). */
@@ -419,6 +428,7 @@ export async function trasMigrarMotor(
     api: null,
     credencialesInternas: { renovadas: 0, fallidas: [] },
     contrasenasInvalidadas: 0,
+    contrasenasRecuperadas: 0,
     avisados: 0,
     avisosFallidos: [],
     sinCopia: 0,
@@ -520,6 +530,12 @@ export async function trasMigrarMotor(
     });
   }
 
+  // 2b. De vuelta a esta versión (revertir-motor): las suyas que se
+  //     invalidaron al migrar a la otra siguen en el motor, cuyo volumen no se
+  //     tocó, y vuelven a valer. Solo las que el motor confirma (0.15 da sus
+  //     contraseñas de aplicación; 0.16 no, y no se recupera ninguna).
+  await recuperarInvalidadas(motor, api, resultado);
+
   // Buzones sin copia del hash: con 0.16 no pueden entrar en «Mi buzón».
   const sinCopia = api === 'jmap016' ? buzonesSinCopia() : [];
   resultado.sinCopia = sinCopia.length;
@@ -546,10 +562,77 @@ export async function trasMigrarMotor(
     renovadas: resultado.credencialesInternas.renovadas,
     fallidas: resultado.credencialesInternas.fallidas.length,
     contrasenasInvalidadas: resultado.contrasenasInvalidadas,
+    contrasenasRecuperadas: resultado.contrasenasRecuperadas,
     avisados: resultado.avisados,
     sinCopia: resultado.sinCopia,
   });
   return resultado;
+}
+
+/**
+ * Quita la marca de invalidada a las contraseñas de aplicación creadas en la
+ * versión del motor que vuelve a estar en marcha y que el motor todavía
+ * tiene, y olvida su aviso por correo (si se vuelve a migrar, se avisa de
+ * nuevo). Cuando no queda ninguna de esta versión invalidada, cierra el aviso
+ * a la administración de la migración a la otra.
+ */
+async function recuperarInvalidadas(motor: MailEngine, api: EngineApi, resultado: ResultadoTrasMigrar): Promise<void> {
+  const invalidadas = (
+    db
+      .prepare(
+        `SELECT ap.id, ap.stored_secret, ap.engine_api, m.local_part || '@' || d.domain AS email, d.client_id
+         FROM app_passwords ap JOIN mailboxes m ON m.id = ap.mailbox_id JOIN domains d ON d.id = m.domain_id
+         WHERE ap.revoked_at IS NULL AND ap.invalidated_at IS NOT NULL`,
+      )
+      .all() as { id: string; stored_secret: string; engine_api: string | null; email: string; client_id: string }[]
+  ).filter((f) => !esDeOtroMotor(f.engine_api, api));
+
+  const porBuzon = new Map<string, typeof invalidadas>();
+  for (const fila of invalidadas) {
+    if (!porBuzon.has(fila.email)) porBuzon.set(fila.email, []);
+    porBuzon.get(fila.email)!.push(fila);
+  }
+  const recuperadas: typeof invalidadas = [];
+  for (const [email, filas] of porBuzon) {
+    let enElMotor: Set<string>;
+    try {
+      const credenciales = await motor.readMailboxCredentials(email);
+      // Sin la lista del motor no se puede saber si siguen: se quedan como están.
+      if (!credenciales) continue;
+      enElMotor = new Set(credenciales.appPasswords.map((a) => a.ref));
+    } catch {
+      continue;
+    }
+    recuperadas.push(...filas.filter((f) => enElMotor.has(f.stored_secret)));
+  }
+  if (recuperadas.length > 0) {
+    const marcar = db.prepare(
+      'UPDATE app_passwords SET invalidated_at = NULL, invalidation_notified_at = NULL WHERE id = ? AND revoked_at IS NULL',
+    );
+    db.transaction(() => {
+      for (const fila of recuperadas) resultado.contrasenasRecuperadas += marcar.run(fila.id).changes;
+    })();
+    const porCliente = new Map<string, Set<string>>();
+    for (const fila of recuperadas) {
+      if (!porCliente.has(fila.client_id)) porCliente.set(fila.client_id, new Set());
+      porCliente.get(fila.client_id)!.add(fila.email);
+    }
+    for (const [clientId, buzones] of porCliente) {
+      auditSystem(
+        'engine.app_passwords_restored',
+        { api, contrasenas: recuperadas.filter((f) => f.client_id === clientId).length, buzones: [...buzones].sort() },
+        clientId,
+      );
+    }
+  }
+  // Ninguna de esta versión sigue invalidada: el aviso de la migración a la
+  // otra ya no tiene nada pendiente (el de la migración a esta, si lo hay, es
+  // de las de la otra y se queda).
+  if (recuperadas.length === invalidadas.length) {
+    for (const otra of Object.keys(NOMBRES_API) as EngineApi[]) {
+      if (otra !== api) resolveAlert(`engine_app_passwords_invalidated:${otra}`);
+    }
+  }
 }
 
 /* ------------------------- Aviso a los titulares --------------------------- */
