@@ -1,0 +1,17 @@
+{
+  "methodResponses": [
+    [
+      "x:Action/set",
+      {
+        "accountId": "d333333",
+        "created": {
+          "r": {
+            "id": "bvmsbhw"
+          }
+        }
+      },
+      "c"
+    ]
+  ],
+  "sessionState": "7f6521dc"
+}

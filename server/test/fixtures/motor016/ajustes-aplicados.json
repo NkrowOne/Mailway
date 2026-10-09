@@ -1,0 +1,392 @@
+{
+  "methodResponses": [
+    [
+      "x:SystemSettings/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "defaultHostname": "mail.mailway.test",
+            "defaultDomainId": "c",
+            "defaultCertificateId": null,
+            "threadPoolSize": null,
+            "maxConnections": 8192,
+            "proxyTrustedNetworks": {},
+            "mailExchangers": {
+              "0": {
+                "hostname": null,
+                "priority": 10
+              }
+            },
+            "services": {
+              "caldav": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "carddav": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "imap": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "jmap": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "managesieve": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "pop3": {
+                "hostname": null,
+                "cleartext": false
+              },
+              "smtp": {
+                "hostname": null,
+                "cleartext": true
+              },
+              "webdav": {
+                "hostname": null,
+                "cleartext": false
+              }
+            },
+            "providerInfo": {},
+            "id": "singleton"
+          }
+        ],
+        "notFound": []
+      },
+      "s"
+    ],
+    [
+      "x:Http/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "rateLimitAuthenticated": {
+              "count": 1000,
+              "period": 60000
+            },
+            "rateLimitAnonymous": {
+              "count": 100,
+              "period": 60000
+            },
+            "allowedEndpoints": {
+              "match": {},
+              "else": "200"
+            },
+            "enableHsts": false,
+            "usePermissiveCors": false,
+            "responseHeaders": {},
+            "useXForwarded": true,
+            "redirectRoot": null,
+            "id": "singleton"
+          }
+        ],
+        "notFound": []
+      },
+      "h"
+    ],
+    [
+      "x:Authentication/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "directoryId": null,
+            "defaultUserRoleIds": {
+              "b": true
+            },
+            "defaultGroupRoleIds": {
+              "c": true
+            },
+            "defaultTenantRoleIds": {
+              "d": true,
+              "b": true
+            },
+            "defaultAdminRoleIds": {
+              "e": true,
+              "b": true
+            },
+            "passwordHashAlgorithm": "argon2id",
+            "passwordMinLength": 8,
+            "passwordMaxLength": 128,
+            "passwordMinStrength": "three",
+            "passwordDefaultExpiry": null,
+            "maxAppPasswords": 100,
+            "maxApiKeys": 5,
+            "id": "singleton"
+          }
+        ],
+        "notFound": []
+      },
+      "a"
+    ],
+    [
+      "x:NetworkListener/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "name": "smtp",
+            "bind": {
+              "[::]:25": true
+            },
+            "protocol": "smtp",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": false,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ciaeqb"
+          },
+          {
+            "name": "submissions",
+            "bind": {
+              "[::]:465": true
+            },
+            "protocol": "smtp",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": true,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckafab"
+          },
+          {
+            "name": "imaps",
+            "bind": {
+              "[::]:993": true
+            },
+            "protocol": "imap",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": true,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckafqb"
+          },
+          {
+            "name": "pop3s",
+            "bind": {
+              "[::]:995": true
+            },
+            "protocol": "pop3",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": true,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckagab"
+          },
+          {
+            "name": "sieve",
+            "bind": {
+              "[::]:4190": true
+            },
+            "protocol": "manageSieve",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": false,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckagqb"
+          },
+          {
+            "name": "https",
+            "bind": {
+              "[::]:443": true
+            },
+            "protocol": "http",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": true,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckahab"
+          },
+          {
+            "name": "http",
+            "bind": {
+              "[::]:8080": true
+            },
+            "protocol": "http",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": false,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyi0ckahqb"
+          },
+          {
+            "name": "submission",
+            "bind": {
+              "[::]:587": true
+            },
+            "protocol": "smtp",
+            "overrideProxyTrustedNetworks": {},
+            "socketBacklog": 1024,
+            "socketNoDelay": true,
+            "socketReceiveBufferSize": null,
+            "socketReuseAddress": true,
+            "socketReusePort": true,
+            "socketSendBufferSize": null,
+            "socketTosV4": null,
+            "socketTtl": null,
+            "useTls": true,
+            "tlsDisableCipherSuites": {},
+            "tlsDisableProtocols": {},
+            "tlsIgnoreClientOrder": true,
+            "tlsImplicit": false,
+            "tlsTimeout": 60000,
+            "maxConnections": 8192,
+            "id": "jivyj0tgajaa"
+          }
+        ],
+        "notFound": []
+      },
+      "l"
+    ],
+    [
+      "x:Tracer/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "path": "/var/log/stalwart/",
+            "prefix": "stalwart",
+            "rotate": "daily",
+            "ansi": true,
+            "multiline": false,
+            "enable": true,
+            "level": "info",
+            "lossy": false,
+            "events": {},
+            "eventsPolicy": "exclude",
+            "@type": "Log",
+            "id": "jivyizmsaaaa"
+          },
+          {
+            "buffered": false,
+            "ansi": false,
+            "multiline": false,
+            "enable": true,
+            "level": "info",
+            "lossy": false,
+            "events": {},
+            "eventsPolicy": "exclude",
+            "@type": "Stdout",
+            "id": "jivyj0tgajqa"
+          }
+        ],
+        "notFound": []
+      },
+      "t"
+    ],
+    [
+      "x:AllowedIp/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "address": "172.16.0.0/12",
+            "reason": "Red de confianza de Mailway (webmail): exenta del bloqueo automático",
+            "createdAt": "2026-10-09T15:14:17Z",
+            "expiresAt": null,
+            "id": "jivyj0tgaiaa"
+          },
+          {
+            "address": "127.0.0.0/8",
+            "reason": "Red de confianza de Mailway (webmail): exenta del bloqueo automático",
+            "createdAt": "2026-10-09T15:14:17Z",
+            "expiresAt": null,
+            "id": "jivyj0tgaiqa"
+          }
+        ],
+        "notFound": []
+      },
+      "i"
+    ]
+  ],
+  "sessionState": "7f6521dc"
+}

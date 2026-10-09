@@ -1,0 +1,107 @@
+{
+  "listaContraCuenta": {
+    "accountId": "d333333",
+    "notCreated": {
+      "l": {
+        "type": "primaryKeyViolation",
+        "properties": [
+          "email"
+        ],
+        "objectId": {
+          "object": "Account",
+          "id": "d"
+        }
+      }
+    }
+  },
+  "cuentaDuplicada": {
+    "accountId": "d333333",
+    "notCreated": {
+      "a": {
+        "type": "primaryKeyViolation",
+        "properties": [
+          "email"
+        ],
+        "objectId": {
+          "object": "Account",
+          "id": "e"
+        }
+      }
+    }
+  },
+  "borrarPrincipal": {
+    "accountId": "e",
+    "notDestroyed": {
+      "b": {
+        "type": "forbidden",
+        "description": "Users are not allowed to destroy their own credentials."
+      }
+    }
+  },
+  "dominioEnlazado": {
+    "accountId": "d333333",
+    "notDestroyed": {
+      "e": {
+        "type": "objectIsLinked",
+        "objectId": {
+          "object": "Domain",
+          "id": "e"
+        },
+        "linkedObjects": [
+          {
+            "object": "Account",
+            "id": "f"
+          },
+          {
+            "object": "DkimSignature",
+            "id": "jivyogpgabaa"
+          },
+          {
+            "object": "DkimSignature",
+            "id": "jivyogxsabqa"
+          }
+        ]
+      }
+    }
+  },
+  "dominioPorDefecto": {
+    "accountId": "d333333",
+    "notDestroyed": {
+      "c": {
+        "type": "objectIsLinked",
+        "objectId": {
+          "object": "Domain",
+          "id": "c"
+        },
+        "linkedObjects": [
+          {
+            "object": "SystemSettings",
+            "id": "singleton"
+          }
+        ]
+      }
+    }
+  },
+  "dominioSoloDkim": {
+    "accountId": "d333333",
+    "notDestroyed": {
+      "e": {
+        "type": "objectIsLinked",
+        "objectId": {
+          "object": "Domain",
+          "id": "e"
+        },
+        "linkedObjects": [
+          {
+            "object": "DkimSignature",
+            "id": "jivyogpgabaa"
+          },
+          {
+            "object": "DkimSignature",
+            "id": "jivyogxsabqa"
+          }
+        ]
+      }
+    }
+  }
+}
