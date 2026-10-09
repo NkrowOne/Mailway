@@ -337,7 +337,8 @@ export interface AdminDashboard {
     apiKeys: number;
   };
   messages: { last24h: number; failed24h: number; last30d: number };
-  engine: { ok: boolean; detail?: string };
+  /** Salud del motor y API de gestión detectada (rest015, jmap016 o demo). */
+  engine: { ok: boolean; api?: 'rest015' | 'jmap016' | 'demo'; detail?: string };
   queue: { pending: number; oldestSeconds: number | null };
   instance: InstanceSettings;
 }

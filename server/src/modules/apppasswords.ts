@@ -79,10 +79,15 @@ export function listAppPasswords(mailboxId: string): AppPasswordInfo[] {
 
 /** Contraseñas sin revocar que dejaron de funcionar con la actualización del servidor de correo. */
 export function contrasenasInvalidadas(mailboxId: string): number {
+  // Las `skyway:<servicio>` no cuentan: las renueva Skyway, no el titular, y
+  // el aviso le pediría algo que no le toca (el correo de aviso tampoco las
+  // menciona).
   return (
     db
       .prepare(
-        'SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NOT NULL',
+        `SELECT COUNT(*) AS c FROM app_passwords
+         WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NOT NULL
+           AND name NOT LIKE 'skyway:%'`,
       )
       .get(mailboxId) as { c: number }
   ).c;

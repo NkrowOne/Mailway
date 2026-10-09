@@ -446,7 +446,8 @@ test('tras-migrar: renueva las credenciales internas, invalida las de dispositiv
       url: '/api/portal/me',
       headers: { cookie: String(login.headers['set-cookie']).split(';')[0]! },
     });
-    assert.equal(me.json().invalidatedAppPasswords, 2);
+    // La de Skyway no cuenta: la renueva Skyway, no el titular.
+    assert.equal(me.json().invalidatedAppPasswords, 1);
 
     // Las invalidadas no cuentan para el máximo y se revocan sin el motor.
     assert.equal(

@@ -14,6 +14,7 @@ import {
   type UsoHost,
 } from '../../lib/rutas';
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
+import { nombreMotor, type EngineApi } from '../../lib/motor';
 import { HojaWebmailAutomaticoGeneral } from '../../components/WebmailAutomatico';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
@@ -263,7 +264,7 @@ function HojaMotor({
   const [adminPassword, setAdminPassword] = useState('');
   const [smtpHost, setSmtpHost] = useState(engine?.smtpHost ?? 'mailway-mail');
   const [smtpPort, setSmtpPort] = useState(String(engine?.smtpPort ?? 587));
-  const [testResult, setTestResult] = useState<null | { ok: boolean; detail?: string }>(null);
+  const [testResult, setTestResult] = useState<null | { ok: boolean; api?: EngineApi; detail?: string }>(null);
   const [intentado, setIntentado] = useState(false);
 
   // Cambiar el destino (URL, usuario o servidor SMTP) sin volver a escribir
@@ -294,7 +295,7 @@ function HojaMotor({
   });
 
   const test = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; detail?: string }>('/api/settings/engine/test', payload()),
+    mutationFn: () => api.post<{ ok: boolean; api?: EngineApi; detail?: string }>('/api/settings/engine/test', payload()),
     onSuccess: (result) => setTestResult(result),
     onError: (err) =>
       setTestResult({
@@ -411,7 +412,7 @@ function HojaMotor({
             }`}
           >
             {testResult.ok
-              ? 'La conexión con el motor es correcta.'
+              ? `La conexión con el motor es correcta${testResult.api ? `: ${nombreMotor(testResult.api)}` : ''}.`
               : `No hay conexión con el motor: ${testResult.detail || 'sin detalle'}`}
           </p>
         )}

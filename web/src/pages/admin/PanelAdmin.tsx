@@ -18,6 +18,7 @@ import {
 import { estiloBoton } from '../../ui/Button';
 import { formatDate } from '../../lib/format';
 import { medicionCompleta, TEXTO_MEDICION_INCOMPLETA } from '../../lib/entregabilidad';
+import { nombreMotor } from '../../lib/motor';
 import { autorAnotacion, detalleAnotacion, etiquetaAccion } from '../../lib/tokens';
 
 /** Atajos a las altas y conexiones más frecuentes, sin buscarlas en el índice. */
@@ -100,7 +101,8 @@ export default function PanelAdmin() {
       valor: engine.ok ? 'En marcha' : 'Sin conexión',
       referencia: 'En marcha',
       veredicto: engine.ok ? 'normal' : 'fuera',
-      nota: engine.ok ? undefined : engine.detail,
+      // Con el motor en marcha, qué versión es (Stalwart 0.15 o 0.16).
+      nota: engine.ok ? (engine.api ? nombreMotor(engine.api) : undefined) : engine.detail,
     },
     {
       concepto: 'Cola de salida',
