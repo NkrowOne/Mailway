@@ -31,6 +31,7 @@ import {
   type NivelZona,
 } from './zonefile';
 import { lookupMx, lookupTxt, type MxRecord } from '../core/dns';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { getInstanceSettings } from './settings';
 
 /** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
@@ -503,9 +504,10 @@ export function registerDomainRoutes(app: FastifyInstance): void {
   /**
    * Registros DNS que hay que crear (tabla para copiar y pegar, o para que
    * una integración los cree). Pasan por la misma selección que la
-   * comprobación y Cloudflare: sin SRV de puertos cerrados, sin TLSA y sin
-   * nombres de otras zonas; al final va el TXT de verificación de la
-   * propiedad (categoría «verificacion»).
+   * comprobación y Cloudflare: sin SRV de puertos cerrados, sin TLSA ni CAA,
+   * sin los de Stalwart 0.16 que Mailway no enruta y sin nombres de otras
+   * zonas; al final va el TXT de verificación de la propiedad (categoría
+   * «verificacion»).
    */
   app.get('/api/domains/:id/dns', async (req) => {
     const { id } = req.params as { id: string };
@@ -649,6 +651,9 @@ export function registerDomainRoutes(app: FastifyInstance): void {
         'needs_confirmation',
       );
     }
+    // Cada elemento falla por separado (y se informa como borrado a medias):
+    // durante el mantenimiento del motor fallarían todos, mejor un 503 claro.
+    exigirSinMantenimiento();
     const engine = getEngine();
     const fallidos: string[] = [];
 

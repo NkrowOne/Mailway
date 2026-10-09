@@ -84,6 +84,10 @@ test('info: datos de la instancia; el token de Traefik solo para administradores
   assert.equal(info.features.cloudflareSoloCrear, true);
   // Y solo ofrece «Enviar configuración inicial» si admite los enlaces de bienvenida.
   assert.equal(info.features.invites, true);
+  // La API del motor y el aviso de contraseñas de aplicación invalidadas al
+  // cambiarla: con ellos Skyway vuelve a conectar sus servicios SMTP.
+  assert.deepEqual(info.engine, { api: 'demo' });
+  assert.equal(info.features.appPasswordInvalidation, true);
   assert.equal(info.traefik.configPath, '/api/traefik/config');
   assert.ok(info.traefik.token.length > 10);
 
@@ -293,11 +297,13 @@ test('resumen: un token de cliente lee el suyo y no el de otro cliente', async (
   assert.equal(resumen.apiKeys[0].usedToday, 0);
   assert.equal(resumen.appPasswords.length, 1);
   assert.equal(resumen.appPasswords[0].id, app.appPassword.id);
+  assert.equal(resumen.appPasswords[0].invalidatedAt, null);
   assert.equal(resumen.connection.imap.port, 993);
   assert.equal(resumen.connection.submission.port, 587);
   assert.equal(resumen.usage.mailboxes, 1);
   assert.ok(!res.body.includes(app.password), 'la contraseña de aplicación no vuelve a salir');
   assert.ok(!res.body.includes('stored_secret') && !res.body.includes('$app$'));
+  assert.ok(!res.body.includes('verifier') && !res.body.includes('$6$'), 'ni el verificador');
 
   const otro = await ctx.app.inject({
     method: 'GET',

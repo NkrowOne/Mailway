@@ -8,6 +8,7 @@ import { withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { assertClientActive } from './clients';
+import { cifrarContrasena, esDeOtroMotor } from './credenciales';
 import { getMailbox, requireMailboxAccess } from './mailboxes';
 import { bloquesContrasenaAplicacion, getConnectionSettings, type BloqueVariables } from './connection';
 
@@ -19,6 +20,12 @@ import { bloquesContrasenaAplicacion, getConnectionSettings, type BloqueVariable
  *
  * Las funciones de este bloque las comparten el panel (rutas de abajo), el
  * portal del titular y las integraciones.
+ *
+ * El secreto lo decide el motor: Mailway propone uno y Stalwart 0.15 lo
+ * acepta, pero 0.16 genera el suyo (app_…). Se entrega el que devuelve el
+ * motor y el panel solo guarda su referencia para retirarlo, un verificador
+ * irreversible ($6$) y la API del motor en que se creó: al cambiar de versión
+ * de motor, las anteriores dejan de funcionar (invalidatedAt).
  */
 
 export interface AppPasswordInfo {
@@ -28,16 +35,22 @@ export interface AppPasswordInfo {
   name: string;
   createdAt: number;
   revokedAt: number | null;
+  /** Dejó de funcionar al cambiar de versión el servidor de correo; null si sigue valiendo. */
+  invalidatedAt: number | null;
 }
 
 interface AppPasswordRow {
   id: string;
   mailbox_id: string;
   name: string;
+  /** Referencia opaca del motor para retirarla (en 0.15, el $app$…$<hash> que guarda). */
   stored_secret: string;
+  verifier: string | null;
+  engine_api: string | null;
   created_by: string | null;
   created_at: number;
   revoked_at: number | null;
+  invalidated_at: number | null;
 }
 
 function toInfo(row: AppPasswordRow, email: string): AppPasswordInfo {
@@ -48,6 +61,7 @@ function toInfo(row: AppPasswordRow, email: string): AppPasswordInfo {
     name: row.name,
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
+    invalidatedAt: row.invalidated_at ?? null,
   };
 }
 
@@ -61,6 +75,17 @@ export function listAppPasswords(mailboxId: string): AppPasswordInfo[] {
     )
     .all(mailboxId) as AppPasswordRow[];
   return rows.map((row) => toInfo(row, email));
+}
+
+/** Contraseñas sin revocar que dejaron de funcionar con la actualización del servidor de correo. */
+export function contrasenasInvalidadas(mailboxId: string): number {
+  return (
+    db
+      .prepare(
+        'SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NOT NULL',
+      )
+      .get(mailboxId) as { c: number }
+  ).c;
 }
 
 /**
@@ -102,20 +127,24 @@ function newAppPassword(): string {
  * o aplicación es lo normal; decenas suelen indicar que no se revocan las
  * antiguas, y cada una es una puerta más al buzón. Es el mismo para el panel,
  * «Mi buzón» y las integraciones: se comprueba al crear, sea cual sea la vía.
+ * Las que dejaron de funcionar con una actualización del motor no cuentan.
  */
 export const MAX_ACTIVE_APP_PASSWORDS = 25;
 
 function activeAppPasswords(mailboxId: string): number {
   return (
     db
-      .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
+      .prepare(
+        'SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NULL',
+      )
       .get(mailboxId) as { c: number }
   ).c;
 }
 
 /**
  * Crea una contraseña de aplicación en el motor y la registra. Devuelve la
- * contraseña en claro UNA sola vez; en la base solo queda el hash del motor.
+ * contraseña en claro UNA sola vez; en la base solo quedan su referencia en
+ * el motor y un verificador irreversible.
  *
  * Aquí (y no en cada ruta) se comprueban el cliente suspendido, el buzón
  * suspendido y el máximo de activas, para que ninguna vía se los salte. Las
@@ -149,21 +178,23 @@ async function createAppPasswordNow(
       'app_password_limit',
     );
   }
-  const password = newAppPassword();
-  const stored = await getEngine().addAppPassword(mailbox.email, password, engineLabel(name));
+  const engine = getEngine();
+  // El motor puede imponer su propio secreto: vale el que devuelve.
+  const { secret, ref } = await engine.addAppPassword(mailbox.email, engineLabel(name), newAppPassword());
+  const api = await engine.detectApi().catch(() => null);
   const id = randomId('app');
   try {
     db.prepare(
-      `INSERT INTO app_passwords (id, mailbox_id, name, stored_secret, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, mailboxId, name, stored, createdBy, now());
+      `INSERT INTO app_passwords (id, mailbox_id, name, stored_secret, verifier, engine_api, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, mailboxId, name, ref, cifrarContrasena(secret), api, createdBy, now());
   } catch (err) {
     // Sin registro en el panel no se podría revocar: se retira del motor.
-    await getEngine().removeAppPassword(mailbox.email, stored).catch(() => undefined);
+    await engine.removeAppPassword(mailbox.email, ref).catch(() => undefined);
     throw err;
   }
   const row = db.prepare('SELECT * FROM app_passwords WHERE id = ?').get(id) as AppPasswordRow;
-  return { appPassword: toInfo(row, mailbox.email), password };
+  return { appPassword: toInfo(row, mailbox.email), password: secret };
 }
 
 /**
@@ -184,15 +215,24 @@ export function variablesContrasenaAplicacion(
   });
 }
 
-/** Revoca una contraseña de aplicación: deja de funcionar al instante. */
+/**
+ * Revoca una contraseña de aplicación: deja de funcionar al instante. Una que
+ * ya no funciona (invalidada al cambiar de motor, o creada en otra versión
+ * del motor) solo se marca en el panel: en el motor actual no existe y su
+ * referencia no significa nada para él. Es idempotente.
+ */
 export async function revokeAppPassword(mailboxId: string, appId: string): Promise<void> {
   const row = db
     .prepare('SELECT * FROM app_passwords WHERE id = ? AND mailbox_id = ?')
     .get(appId, mailboxId) as AppPasswordRow | undefined;
   if (!row) throw notFound('Contraseña de aplicación no encontrada.');
   if (row.revoked_at) return;
-  const mailbox = getMailbox(mailboxId);
-  await getEngine().removeAppPassword(mailbox.email, row.stored_secret);
+  if (row.invalidated_at === null) {
+    const engine = getEngine();
+    if (!esDeOtroMotor(row.engine_api, await engine.detectApi())) {
+      await engine.removeAppPassword(getMailbox(mailboxId).email, row.stored_secret);
+    }
+  }
   db.prepare('UPDATE app_passwords SET revoked_at = ? WHERE id = ?').run(now(), appId);
 }
 

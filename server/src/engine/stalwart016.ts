@@ -4,6 +4,7 @@ import type {
   CreatedAppPassword,
   CreateMailboxInput,
   EngineApi,
+  EngineDirectory,
   EngineDnsRecord,
   EngineHealth,
   EngineReloadResult,
@@ -72,6 +73,9 @@ export class Stalwart016Engine implements MailEngine {
   }
   async readMailboxCredentials(_email: string): Promise<MailboxCredentials | null> {
     return null;
+  }
+  async listDirectory(): Promise<EngineDirectory> {
+    return this.pendiente();
   }
   async getMailboxUsage(): Promise<Map<string, number>> {
     return this.pendiente();

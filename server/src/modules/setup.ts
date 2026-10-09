@@ -6,8 +6,8 @@ import { lookupA, lookupPtr } from '../core/dns';
 import { db, now } from '../core/db';
 import { badRequest, forbidden, tooMany } from '../core/errors';
 import { isValidHostname } from '../core/hostnames';
-import { buildEngine, engineConfigured } from '../engine';
-import type { EngineSettings } from '../engine/types';
+import { buildEngine, buildGuardedEngine, engineConfigured } from '../engine';
+import type { EngineApi, EngineSettings } from '../engine/types';
 import { audit } from './audit';
 import {
   type AuthedUser,
@@ -198,10 +198,18 @@ export function scrub(text: string, secret: string): string {
   return secret ? text.split(secret).join('•••') : text;
 }
 
-async function testEngine(settings: EngineSettings): Promise<{ ok: boolean; detail?: string }> {
+/**
+ * Prueba un motor sin guardarlo. Con Stalwart, el ping averigua además qué
+ * API habla (0.15 o 0.16), que se devuelve para enseñarla.
+ */
+async function testEngine(settings: EngineSettings): Promise<{ ok: boolean; api?: EngineApi; detail?: string }> {
   const engine = buildEngine(settings);
   const health = await engine.ping();
-  return { ok: health.ok, detail: health.detail ? scrub(health.detail, settings.adminPassword) : undefined };
+  return {
+    ok: health.ok,
+    ...(health.api ? { api: health.api } : {}),
+    detail: health.detail ? scrub(health.detail, settings.adminPassword) : undefined,
+  };
 }
 
 export interface RecommendedOutcome {
@@ -209,27 +217,37 @@ export interface RecommendedOutcome {
   hostname: string;
   errors: string[];
   warnings: string[];
+  /** Cambios guardados que el motor solo aplica al reiniciar su contenedor (Stalwart 0.16). */
+  restartRequired: string[];
   error?: string;
 }
 
 /**
  * Tras conectar un motor real con el nombre del servidor ya conocido, fija
  * en el motor los ajustes recomendados. Nunca hace fallar el paso: si el
- * motor no los acepta, el resultado lo explica y Ajustes permite repetirlo.
+ * motor no los acepta (o está en mantenimiento), el resultado lo explica y
+ * Ajustes permite repetirlo.
  */
 export async function applyRecommendedQuietly(settings: EngineSettings | null): Promise<RecommendedOutcome | null> {
   if (!settings || settings.kind !== 'stalwart') return null;
   const hostname = getInstanceSettings().mailHostname.trim().toLowerCase();
   if (!hostname) return null;
   try {
-    const result = await applyRecommendedEngineSettings(hostname, buildEngine(settings));
-    return { applied: result.errors.length === 0, hostname, errors: result.errors, warnings: result.warnings };
+    const result = await applyRecommendedEngineSettings(hostname, buildGuardedEngine(settings));
+    return {
+      applied: result.errors.length === 0,
+      hostname,
+      errors: result.errors,
+      warnings: result.warnings,
+      restartRequired: result.restartRequired,
+    };
   } catch (err) {
     return {
       applied: false,
       hostname,
       errors: [],
       warnings: [],
+      restartRequired: [],
       error: scrub((err as Error).message, settings.adminPassword),
     };
   }

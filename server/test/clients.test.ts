@@ -9,6 +9,7 @@ import {
   createDomain,
   createMailbox,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 let ctx: TestContext;
@@ -196,15 +197,15 @@ test('suspender un cliente suspende sus buzones en el motor y reactivarlo restau
   // Un buzón suspendido por su cuenta antes de suspender el cliente.
   const single = await asAdmin('PATCH', `/api/mailboxes/${own.mailboxId}`, { status: 'suspended' });
   assert.equal(single.statusCode, 200);
-  assert.equal(await engine.verifyCredentials(active.email, active.password), true);
-  assert.equal(await engine.verifyCredentials(own.email, own.password), false);
+  assert.equal(await motorAcepta(active.email, active.password), true);
+  assert.equal(await motorAcepta(own.email, own.password), false);
 
   const suspend = await asAdmin('PATCH', `/api/clients/${clientId}`, { suspended: true });
   assert.equal(suspend.statusCode, 200, suspend.body);
   assert.equal(suspend.json().client.suspended, true);
   assert.deepEqual(suspend.json().suspension, { updated: 1, skipped: 1, failed: [] });
-  assert.equal(await engine.verifyCredentials(active.email, active.password), false);
-  assert.equal(await engine.verifyCredentials(own.email, own.password), false);
+  assert.equal(await motorAcepta(active.email, active.password), false);
+  assert.equal(await motorAcepta(own.email, own.password), false);
 
   // Mientras el cliente está suspendido no se reactiva un buzón suelto…
   const reactivate = await asAdmin('PATCH', `/api/mailboxes/${active.mailboxId}`, { status: 'active' });
@@ -217,9 +218,9 @@ test('suspender un cliente suspende sus buzones en el motor y reactivarlo restau
 
   const resume = await asAdmin('PATCH', `/api/clients/${clientId}`, { suspended: false });
   assert.equal(resume.statusCode, 200);
-  assert.equal(await engine.verifyCredentials(active.email, active.password), true);
+  assert.equal(await motorAcepta(active.email, active.password), true);
   assert.equal(
-    await engine.verifyCredentials(own.email, own.password),
+    await motorAcepta(own.email, own.password),
     false,
     'el buzón suspendido individualmente sigue suspendido',
   );

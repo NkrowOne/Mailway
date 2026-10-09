@@ -4,8 +4,10 @@ import { checkDnsbl } from '../core/dns';
 import { engineConfigured, getEngine } from '../engine';
 import { fireAlert, resolveAlert } from './alerts';
 import { refreshAutoconfigHosts } from './autoconfig';
+import { capturarSiProcede } from './credenciales';
 import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
+import { mantenimientoActivo } from './mantenimiento';
 import { getInstanceSettings } from './settings';
 import { getSetting, setSetting } from './settings';
 import {
@@ -25,6 +27,10 @@ import {
  * certificado del motor se consultan una vez al día, y el DNS de los dominios
  * con una frecuencia que depende de si se espera un cambio, para no castigar
  * a los resolutores ni a los servicios externos.
+ *
+ * Durante el mantenimiento del motor (su cambio de versión) no se hace nada
+ * que dependa de él ni del webmail: se paran a propósito, y avisar de «motor
+ * caído» o medir el DNS contra un motor a medio migrar solo daría sustos.
  */
 
 const MINUTE = 60_000;
@@ -356,6 +362,22 @@ async function checkNombreDelMotor(): Promise<void> {
   await checkEngineHostname();
 }
 
+/* ------------------ Copia de las contraseñas (cada hora) ------------------ */
+
+/**
+ * Mientras el motor sea Stalwart 0.15, copia en el panel el hash de los
+ * buzones que aún no lo tienen (cada hora) y refresca todos (a diario): así
+ * la copia está completa mucho antes de migrar a 0.16, que ya no los da.
+ */
+async function checkCopiaDeContrasenas(): Promise<void> {
+  if (!engineConfigured()) return;
+  const todas = due('credenciales_todas', DAY);
+  if (!todas && !due('credenciales', HOUR)) return;
+  markRun('credenciales');
+  if (todas) markRun('credenciales_todas');
+  await capturarSiProcede({ todas });
+}
+
 /* ------------------------------ Planificador ------------------------------ */
 
 let timer: NodeJS.Timeout | null = null;
@@ -378,17 +400,23 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
   if (running) return; // una vuelta lenta no debe solaparse con la siguiente
   running = true;
   try {
+    // El motor (y el webmail, que se para con él) se están cambiando de
+    // versión: nada de lo que dependa de ellos se comprueba ni avisa.
+    const mantenimiento = mantenimientoActivo();
     // Las tres rápidas son independientes: en serie sumaban sus tiempos de
     // espera y, con el webmail caído, la vuelta tardaba 10 s de más.
-    await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);
+    if (!mantenimiento) await Promise.allSettled([checkEngine(), checkQueue(), checkWebmail()]);
     // Las lentas van después y ya se autolimitan por frecuencia.
     await paso('listas negras', checkBlacklists, log);
-    await paso('dns de dominios', checkDomainDns, log);
+    if (!mantenimiento) await paso('dns de dominios', checkDomainDns, log);
     await paso('marca blanca', checkWhitelabelDomains, log);
     await paso('webmail automático', checkWebmailsAutomaticos, log);
     await paso('autoconfiguración', checkAutoconfigHosts, log);
-    await paso('certificado del motor', checkTlsDelMotor, log);
-    await paso('nombre del motor', checkNombreDelMotor, log);
+    if (!mantenimiento) {
+      await paso('certificado del motor', checkTlsDelMotor, log);
+      await paso('nombre del motor', checkNombreDelMotor, log);
+      await paso('copia de las contraseñas', checkCopiaDeContrasenas, log);
+    }
     // Limpieza: las alertas resueltas hace más de 30 días no aportan nada.
     await paso('limpieza', async () => {
       db.prepare('DELETE FROM alerts WHERE resolved_at IS NOT NULL AND resolved_at < ?').run(

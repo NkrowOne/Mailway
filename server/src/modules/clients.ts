@@ -5,6 +5,7 @@ import { generateMailboxPassword, hashPassword, randomId } from '../core/crypto'
 import { badRequest, conflict, notFound } from '../core/errors';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
 
 /* --------------------------------- Planes -------------------------------- */
@@ -603,6 +604,10 @@ export function registerClientRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const current = getClient(id);
     const body = clientPatchSchema.parse(req.body ?? {});
+    // La suspensión se lleva a los buzones del motor DESPUÉS de guardarla:
+    // durante el mantenimiento del motor el cliente quedaría suspendido solo
+    // en el panel, con sus buzones entrando en el motor.
+    if (body.suspended !== undefined) exigirSinMantenimiento();
 
     if (body.planId && body.planId !== current.planId) {
       const nextPlan = getPlan(body.planId);

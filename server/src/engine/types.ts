@@ -68,6 +68,14 @@ export interface MailEngine {
   readMailboxCredentials(email: string): Promise<MailboxCredentials | null>;
 
   /**
+   * Lo que existe en el motor, en minúsculas y sin duplicados: dominios,
+   * buzones (direcciones completas) y alias (direcciones de las listas). Solo
+   * lectura. La provisión tras migrar lo usa para comprobar que no falta nada
+   * de lo que tiene la base de datos del panel.
+   */
+  listDirectory(): Promise<EngineDirectory>;
+
+  /**
    * Bytes ocupados por cada buzón, en una sola consulta. Las claves van en
    * minúsculas; un buzón ausente del mapa es «desconocido», no «vacío».
    */
@@ -163,6 +171,12 @@ export interface MailboxCredentials {
   /** Contraseñas de aplicación tal como las guarda el motor. */
   appPasswords: { label: string; hash: string; ref: string }[];
   suspended: boolean;
+}
+
+export interface EngineDirectory {
+  domains: string[];
+  accounts: string[];
+  lists: string[];
 }
 
 export interface RecommendedInput {

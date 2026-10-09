@@ -2,6 +2,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
+import { upstream } from '../src/core/errors';
 import { getEngine } from '../src/engine';
 import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
 import {
@@ -11,6 +12,7 @@ import {
   createDomain,
   createMailbox,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 /*
@@ -219,22 +221,57 @@ test('incluir la contraseña no sirve de oráculo: 5 fallos por buzón bloquean 
   assert.equal((await crearEnlace(b.mailboxId, { includePassword: true, password: b.password })).statusCode, 429);
 });
 
-test('sin respuesta del motor, la contraseña no se guarda en el enlace (503)', async () => {
+test('sin copia del hash y sin respuesta del motor, la contraseña no se guarda en el enlace (503)', async () => {
   const b = await buzonDePrueba();
+  // Un buzón anterior a la copia local: el panel tendría que leer el hash del motor.
+  db.prepare('DELETE FROM credenciales_buzon WHERE mailbox_id = ?').run(b.mailboxId);
   const engine = getEngine();
-  const original = engine.verifyCredentials.bind(engine);
-  engine.verifyCredentials = async () => null;
+  const original = engine.readMailboxCredentials.bind(engine);
+  engine.readMailboxCredentials = async () => {
+    throw upstream('El motor de correo no responde.', 'engine_unreachable');
+  };
   try {
     const res = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
     assert.equal(res.statusCode, 503, res.body);
     assert.equal(res.json().code, 'engine_unreachable');
   } finally {
-    engine.verifyCredentials = original;
+    engine.readMailboxCredentials = original;
   }
   const enlaces = db.prepare('SELECT COUNT(*) AS c FROM setup_links WHERE mailbox_id = ?').get(b.mailboxId) as {
     c: number;
   };
   assert.equal(enlaces.c, 0, 'no se crea ningún enlace');
+
+  // Con el motor respondiendo (0.15), la copia se llena sola y el enlace se crea.
+  const res = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.notEqual(
+    db.prepare('SELECT 1 FROM credenciales_buzon WHERE mailbox_id = ?').get(b.mailboxId),
+    undefined,
+    'la comprobación ha copiado el hash del motor',
+  );
+});
+
+test('sin copia del hash y con un motor que no la da (0.16), se pide restablecer la contraseña (409)', async () => {
+  const b = await buzonDePrueba();
+  db.prepare('DELETE FROM credenciales_buzon WHERE mailbox_id = ?').run(b.mailboxId);
+  const engine = getEngine();
+  const original = engine.readMailboxCredentials.bind(engine);
+  engine.readMailboxCredentials = async () => null;
+  try {
+    const res = await crearEnlace(b.mailboxId, { includePassword: true, password: b.password });
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'password_unverifiable');
+    const login = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/portal/login',
+      payload: { email: b.email, password: b.password },
+    });
+    assert.equal(login.statusCode, 409, login.body);
+    assert.equal(login.json().code, 'password_unverifiable');
+  } finally {
+    engine.readMailboxCredentials = original;
+  }
 });
 
 test('el enlace no admite una contraseña de aplicación en lugar de la principal', async () => {
@@ -465,7 +502,7 @@ test('cambiar la contraseña conserva las contraseñas de aplicación y cierra l
     password: string;
   };
   assert.equal(appPassword.name, 'Móvil de trabajo');
-  assert.equal(await getEngine().verifyCredentials(b.email, appPass), true);
+  assert.equal(await motorAcepta(b.email, appPass), true);
 
   // Con una contraseña de aplicación no se gestiona la cuenta.
   const conApp = await login(b.email, appPass);
@@ -517,9 +554,9 @@ test('cambiar la contraseña conserva las contraseñas de aplicación y cierra l
   assert.equal(cambio.statusCode, 200, cambio.body);
 
   const engine = getEngine();
-  assert.equal(await engine.verifyCredentials(b.email, nueva), true);
-  assert.equal(await engine.verifyCredentials(b.email, b.password), false);
-  assert.equal(await engine.verifyCredentials(b.email, appPass), true, 'la contraseña de aplicación debe seguir valiendo');
+  assert.equal(await motorAcepta(b.email, nueva), true);
+  assert.equal(await motorAcepta(b.email, b.password), false);
+  assert.equal(await motorAcepta(b.email, appPass), true, 'la contraseña de aplicación debe seguir valiendo');
 
   const actual = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie } });
   assert.equal(actual.statusCode, 200, 'la sesión que hizo el cambio sigue abierta');
@@ -579,9 +616,9 @@ test('contraseñas de aplicación desde el portal: listar, crear y revocar', asy
   });
   assert.equal(revocar.statusCode, 200, revocar.body);
   const engine = getEngine();
-  assert.equal(await engine.verifyCredentials(b.email, passMovil), false);
-  assert.equal(await engine.verifyCredentials(b.email, passPortatil), true);
-  assert.equal(await engine.verifyCredentials(b.email, b.password), true);
+  assert.equal(await motorAcepta(b.email, passMovil), false);
+  assert.equal(await motorAcepta(b.email, passPortatil), true);
+  assert.equal(await motorAcepta(b.email, b.password), true);
 
   // No se puede revocar la de otro buzón desde esta sesión.
   const otro = await buzonDePrueba();
@@ -682,8 +719,8 @@ test('cambio de contraseña desde el webmail (complemento password de Roundcube)
     assert.equal(ok.statusCode, 200, ok.body);
     assert.equal(ok.body, 'ok');
     assert.match(String(ok.headers['content-type']), /^text\/plain/);
-    assert.equal(await getEngine().verifyCredentials(b.email, 'nueva-desde-webmail'), true);
-    assert.equal(await getEngine().verifyCredentials(b.email, b.password), false);
+    assert.equal(await motorAcepta(b.email, 'nueva-desde-webmail'), true);
+    assert.equal(await motorAcepta(b.email, b.password), false);
 
     const registro = auditoria('webmail.password_changed').filter((a) => a.detail.includes(b.email));
     assert.equal(registro.length, 1);
@@ -776,9 +813,9 @@ test('reiniciar tras una prueba: contraseña y enlace nuevos, sin rastro de la p
   assert.ok(Math.abs(r.link.expiresAt - (Date.now() + 168 * 3600_000)) < 60_000);
 
   // Credenciales: solo vale la nueva; la de aplicación de la prueba, tampoco.
-  assert.equal(await engine.verifyCredentials(b.email, r.password), true);
-  assert.equal(await engine.verifyCredentials(b.email, b.password), false);
-  assert.equal(await engine.verifyCredentials(b.email, appPass), false);
+  assert.equal(await motorAcepta(b.email, r.password), true);
+  assert.equal(await motorAcepta(b.email, b.password), false);
+  assert.equal(await motorAcepta(b.email, appPass), false);
   const apps = db.prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ?').get(b.mailboxId) as { c: number };
   assert.equal(apps.c, 0, 'tampoco queda el historial de contraseñas de aplicación');
 
@@ -834,8 +871,8 @@ test('reiniciar puede conservar las contraseñas de aplicación y crear el enlac
   const r = res.json() as Reinicio;
   assert.equal(r.appPasswordsRevoked, 0);
   assert.equal(r.link.hasPassword, false);
-  assert.equal(await getEngine().verifyCredentials(b.email, appPass), true, 'la integración sigue funcionando');
-  assert.equal(await getEngine().verifyCredentials(b.email, r.password), true);
+  assert.equal(await motorAcepta(b.email, appPass), true, 'la integración sigue funcionando');
+  assert.equal(await motorAcepta(b.email, r.password), true);
   const fila = db.prepare('SELECT password_enc FROM setup_links WHERE id = ?').get(r.link.id) as {
     password_enc: string | null;
   };
@@ -854,7 +891,7 @@ test('reiniciar: solo quien gestiona el cliente, y nunca un buzón suspendido', 
   assert.equal(anonimo.statusCode, 401);
   const deOtroCliente = await reiniciar(propio.mailboxId, {}, ajeno.userCookie!);
   assert.equal(deOtroCliente.statusCode, 403);
-  assert.equal(await getEngine().verifyCredentials(propio.email, propio.password), true, 'no ha cambiado nada');
+  assert.equal(await motorAcepta(propio.email, propio.password), true, 'no ha cambiado nada');
 
   const delCliente = await reiniciar(propio.mailboxId, {}, propio.userCookie!);
   assert.equal(delCliente.statusCode, 200, delCliente.body);
