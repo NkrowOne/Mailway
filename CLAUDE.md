@@ -40,7 +40,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `autoconfig` (rutas públicas y estado de los nombres), `whitelabel`
     (marca blanca y `/api/traefik/config`), `transactional` (claves y
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
-    `alerts`, `watchdog`, `dashboard`.
+    `alerts`, `watchdog`, `dashboard`, `suspensiones` (corrección única, al
+    arrancar o desde el vigilante, de lo que dejó la suspensión anterior:
+    buzones con `roles: []` y alias sin sus destinos).
   - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,

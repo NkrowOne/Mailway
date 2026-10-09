@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { generateMailboxPassword, hashPassword, randomId } from '../core/crypto';
 import { badRequest, conflict, notFound } from '../core/errors';
+import { mailboxStateLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
@@ -309,10 +310,10 @@ export async function applyClientSuspension(
 ): Promise<SuspensionResult> {
   const rows = db
     .prepare(
-      `SELECT m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+      `SELECT m.id, m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
        WHERE d.client_id = ?`,
     )
-    .all(clientId) as { local_part: string; status: 'active' | 'suspended'; domain: string }[];
+    .all(clientId) as { id: string; local_part: string; status: 'active' | 'suspended'; domain: string }[];
   const result: SuspensionResult = { updated: 0, skipped: 0, failed: [] };
   const targets = rows.filter((row) => row.status === 'active');
   result.skipped = rows.length - targets.length;
@@ -322,7 +323,8 @@ export async function applyClientSuspension(
   await runLimited(targets, 5, async (row) => {
     const email = `${row.local_part}@${row.domain}`;
     try {
-      await engine.updateMailbox(email, { suspended });
+      // En fila con los demás cambios de estado del buzón (mailboxStateLockKey).
+      await withLock(mailboxStateLockKey(row.id), () => engine.updateMailbox(email, { suspended }));
       result.updated += 1;
     } catch (err) {
       result.failed.push({ email, error: (err as Error).message });

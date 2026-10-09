@@ -75,7 +75,11 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
    `email-receive`: no entra por ningún protocolo y el correo le sigue
    llegando. El rol se añade con `addItem`, nunca con `set`: en Stalwart 0.15
    roles, listas y grupos son una misma relación y `set roles` saca al buzón
-   de todos sus alias.
+   de todos sus alias. Las versiones anteriores suspendían con `roles: []`
+   (el correo se devolvía al remitente y el buzón salía de sus alias); lo que
+   dejaron lo corrige una sola vez `modules/suspensiones.ts` al arrancar (o
+   el vigilante, si el motor no respondía): vuelve a suspender así los buzones
+   suspendidos y fija de nuevo los destinos de todos los alias.
 3. **Semántica de errores del motor.** Stalwart 0.15 devuelve los errores de
    gestión con **HTTP 200** y un cuerpo sin `data`
    (`{"error":"notFound"|"fieldAlreadyExists"|"other"|…}`). El driver los

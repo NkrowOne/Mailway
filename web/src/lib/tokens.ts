@@ -112,6 +112,7 @@ const ETIQUETAS: Record<string, string> = {
   'engine.recommended_applied': 'Ajustes recomendados aplicados en el motor',
   'engine.acme_configured': 'Emisión del certificado configurada',
   'engine.certificate_reloaded': 'Certificado del motor recargado',
+  'engine.suspensions_repaired': 'Buzones suspendidos y alias corregidos en el motor',
   // Planes y clientes
   'plan.created': 'Plan creado',
   'plan.updated': 'Plan actualizado',
