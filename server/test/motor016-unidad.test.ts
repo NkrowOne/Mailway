@@ -195,7 +195,13 @@ class MotorFalso {
 
   /** «docker restart»: el nodo vuelve a arrancar (otra marca de arranque). */
   reiniciar(): void {
-    this.nodos = this.nodos.map((n) => ({ ...n, lastRenewal: new Date(Date.parse(n.lastRenewal) + 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z') }));
+    // Como el real: arranca ahora (después de cualquier aviso guardado) y con otra marca.
+    this.nodos = this.nodos.map((n) => ({
+      ...n,
+      lastRenewal: new Date(Math.max(Date.parse(n.lastRenewal) + 60_000, Date.now() + 1000))
+        .toISOString()
+        .replace(/\.\d{3}Z$/, 'Z'),
+    }));
   }
 
   metodos(): string[] {
@@ -1429,7 +1435,7 @@ describe('ajustes recomendados y estado', () => {
     assert.deepEqual(estado.restartRequired, aplicado.restartRequired, 'la escucha está guardada, pero aún no abierta');
 
     // Un aviso que esta versión del panel no conoce no se muestra.
-    almacen.guardar({ ...almacen.leer(), 'aviso-de-otra-version': null });
+    almacen.guardar({ ...almacen.leer(), 'aviso-de-otra-version': { marca: null, guardadoEn: Date.now() } });
     assert.deepEqual((await panel.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, aplicado.restartRequired);
 
     motorFalso.reiniciar();
@@ -1437,14 +1443,36 @@ describe('ajustes recomendados y estado', () => {
     assert.deepEqual(almacen.leer(), {}, 'tras reiniciar el motor no queda nada guardado');
   });
 
+  test('sin la marca de arranque al guardarlo, el aviso se va cuando el motor arranca después', async () => {
+    const almacen = almacenReiniciosEnMemoria();
+    const panel = new Stalwart016Engine(ajustes(), { tiempos: RAPIDOS, reinicios: almacen });
+    // El motor no deja leer sus nodos justo entonces.
+    const nodos = motorFalso.nodos;
+    motorFalso.nodos = [];
+    const aplicado = await panel.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 });
+    assert.equal(aplicado.restartRequired?.length, 1);
+    assert.equal(almacen.leer().submission587?.marca, null);
+    motorFalso.nodos = nodos;
+
+    // Ya se leen, pero el motor arrancó antes de guardarlo: sigue pendiente.
+    assert.equal((await panel.getSettingsStatus({ trustedNetworks: REDES })).restartRequired.length, 1);
+    motorFalso.reiniciar();
+    assert.deepEqual((await panel.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, []);
+    assert.deepEqual(almacen.leer(), {});
+  });
+
   test('almacenReiniciosEnBase: los avisos van a la base de datos del panel', () => {
-    almacenReiniciosEnBase.guardar({ submission587: '1@2026-10-09T10:00:00Z' });
-    assert.deepEqual(almacenReiniciosEnBase.leer(), { submission587: '1@2026-10-09T10:00:00Z' });
+    const aviso = { marca: '1@2026-10-09T10:00:00Z', guardadoEn: 1_791_000_000_000 };
+    almacenReiniciosEnBase.guardar({ submission587: aviso });
+    assert.deepEqual(almacenReiniciosEnBase.leer(), { submission587: aviso });
     // Lo que no tiene la forma esperada no rompe nada.
     setJsonSetting(AJUSTE_REINICIOS, ['no', 'es', 'un', 'objeto']);
     assert.deepEqual(almacenReiniciosEnBase.leer(), {});
-    setJsonSetting(AJUSTE_REINICIOS, { submission587: 7 });
-    assert.deepEqual(almacenReiniciosEnBase.leer(), { submission587: null });
+    setJsonSetting(AJUSTE_REINICIOS, { submission587: 7, otro: { marca: 3, guardadoEn: 'ayer' } });
+    assert.deepEqual(almacenReiniciosEnBase.leer(), {
+      submission587: { marca: null, guardadoEn: 0 },
+      otro: { marca: null, guardadoEn: 0 },
+    });
     almacenReiniciosEnBase.guardar({});
     assert.equal(getSetting(AJUSTE_REINICIOS), null);
   });

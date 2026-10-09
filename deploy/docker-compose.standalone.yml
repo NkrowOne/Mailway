@@ -18,9 +18,20 @@
 #
 # Los puertos de correo (25, 465, 587, 993, 4190) van directos al host.
 #
+# Motor (MAILWAY_MOTOR en deploy/.env): igual que en docker-compose.mail.yml,
+# lo propio de cada versión de Stalwart vive en motor/<motor>/compose.yml.
+# Las instalaciones nuevas usan stalwart-0.16; las anteriores siguen en
+# stalwart-0.15 hasta que se migran con «sudo mailway migrar-motor». Con la
+# 0.16, el certificado de IMAP/SMTP sale del Traefik del perfil `proxy` (con
+# el extractor, perfil `tls`): sin ese Traefik, el motor no tiene de dónde
+# sacarlo.
+#
 # Diagnóstico de la pila (no cambia nada) y prueba de acceso a un buzón:
 #   sudo bash deploy/instalar.sh --comprobar
 #   sudo bash deploy/instalar.sh --probar-acceso
+#
+# Versiones exactas en todas las imágenes, como en docker-compose.mail.yml:
+# las nuevas llegan como PR de Dependabot que la CI prueba antes de fusionar.
 # ============================================================================
 
 name: mailway
@@ -79,7 +90,11 @@ services:
       - traefik.http.services.mailway-panel.loadbalancer.server.port=4100
 
   mailway-mail:
-    image: stalwartlabs/stalwart:v0.15.5
+    # Imagen, credenciales, volúmenes, rutas de Traefik y comprobación de
+    # salud: las del motor elegido (ver la cabecera).
+    extends:
+      file: motor/${MAILWAY_MOTOR:-stalwart-0.15}/compose.yml
+      service: mailway-mail
     container_name: mailway-mail
     # Sin esto Stalwart se identifica con el ID del contenedor.
     hostname: ${MAIL_HOSTNAME}
@@ -92,13 +107,6 @@ services:
       - '4190:4190'
       # Web del motor, solo desde el propio servidor (o por el proxy).
       - '127.0.0.1:8080:8080'
-    environment:
-      # Solo se aplica en el PRIMER arranque.
-      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD}
-    volumes:
-      - mailway-mail-data:/opt/stalwart
-      # Certificado de MAIL_HOSTNAME que escribe el extractor (perfil `tls`).
-      - mailway-mail-certs:/opt/stalwart/certs:ro
     networks:
       mailway-internal:
         ipv4_address: ${MAILWAY_MAIL_INTERNAL_IP:-10.203.53.10}
@@ -106,29 +114,9 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=mailway-edge
-      - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME}`)
-      - traefik.http.routers.mailway-mail.entrypoints=web
-      - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
-      - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
-      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https
-      - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`)
-      - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
-      - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
-      - traefik.http.services.mailway-mail.loadbalancer.server.port=8080
-    healthcheck:
-      # Sin wget ni curl en la imagen: /dev/tcp de bash contra /healthz/live.
-      test:
-        - CMD
-        - bash
-        - -c
-        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz/live HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200'"
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.x-apache
+    image: roundcube/roundcubemail:1.7.4-apache
     container_name: mailway-webmail
     restart: unless-stopped
     ports:
@@ -195,7 +183,7 @@ services:
   # OPCIONAL (perfil `proxy`): Traefik propio con Let's Encrypt en 80/443.
   # --------------------------------------------------------------------------
   mailway-proxy:
-    image: traefik:v3.7
+    image: traefik:v3.7.14
     container_name: mailway-proxy
     restart: unless-stopped
     profiles: ['proxy']
@@ -224,15 +212,16 @@ services:
       - mailway-edge
 
   # --------------------------------------------------------------------------
-  # OPCIONAL (perfil `tls`): extractor del certificado de MAIL_HOSTNAME que
-  # obtuvo el Traefik del perfil `proxy`, para IMAP y SMTP. Solo si no se usa
-  # el ACME del propio motor (Ajustes → Servidor de correo, vía preferida).
-  # Escribe en el volumen del motor únicamente ese par, lo recarga, comprueba
-  # 993 y 465 y vuelve al anterior si falla. Detalle en
-  # docker-compose.mail.yml y en la sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.
+  # Perfil `tls`: extractor del certificado de MAIL_HOSTNAME que obtuvo el
+  # Traefik del perfil `proxy`, para IMAP y SMTP. Con Stalwart 0.16 es la
+  # única vía; con la 0.15, solo si no se usa el ACME del propio motor
+  # (Ajustes → Servidor de correo). Escribe en el volumen del motor
+  # únicamente ese par, lo recarga, comprueba 993 y 465 y vuelve al anterior
+  # si falla. Detalle en docker-compose.mail.yml y en la sección 5.2 de
+  # docs/DESPLIEGUE-SKYWAY.md.
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: python:3.13-alpine
+    image: python:3.13.16-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']
@@ -240,6 +229,9 @@ services:
     init: true
     read_only: true
     cap_drop: [ALL]
+    # Para entregar la clave privada al usuario 2000 de Stalwart 0.16 (ver
+    # docker-compose.mail.yml).
+    cap_add: [CHOWN]
     security_opt: ['no-new-privileges:true']
     tmpfs:
       - /tmp:size=8m
@@ -283,8 +275,14 @@ networks:
 volumes:
   mailway-panel-data:
     name: ${MAILWAY_PANEL_VOLUME:-mailway-panel-data}
+  # Stalwart 0.15 (se conserva intacto tras migrar a la 0.16) y Stalwart 0.16
+  # (configuración y datos). Ver docker-compose.mail.yml.
   mailway-mail-data:
     name: ${MAILWAY_MAIL_VOLUME:-mailway-mail-data}
+  mailway-stalwart-etc:
+    name: ${MAILWAY_STALWART_ETC_VOLUME:-mailway-stalwart-etc}
+  mailway-stalwart-data:
+    name: ${MAILWAY_STALWART_DATA_VOLUME:-mailway-stalwart-data}
   mailway-webmail-db:
     name: ${MAILWAY_WEBMAIL_DB_VOLUME:-mailway-webmail-db}
   mailway-mail-certs:

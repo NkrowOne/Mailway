@@ -11,14 +11,36 @@ webs de Skyway). Este servicio:
      se cambia uno vigente por otro que caduca antes);
   3. lo valida en local ANTES de escribir nada: vigente, válido para
      MAIL_HOSTNAME y con la clave privada que corresponde al certificado;
-  4. escribe solo ese par, de forma atómica, donde lo lee certificate.mailway:
+  4. escribe solo ese par, de forma atómica, donde lo lee el motor:
      <volumen>/<MAIL_HOSTNAME>/cert.pem y key.pem;
-  5. si cambió, pide al motor GET /api/reload/certificate, comprueba el
-     certificado que sirve en 993 y 465 y, si no es el nuevo, vuelve al par
-     anterior;
-  6. no hace nada si el motor obtiene su propio certificado por ACME (si
-     conserva además certificate.mailway, solo mantiene esos ficheros al día,
-     sin recargar el motor).
+  5. si cambió, pide al motor que recargue sus certificados, comprueba el que
+     sirve en 993 y 465 y, si no es el nuevo, vuelve al par anterior.
+
+Sirve para las dos API de gestión de Stalwart y en cada pasada detecta cuál
+tiene delante (GET /jmap/session autenticado: solo la sesión de 0.16 anuncia
+urn:stalwart:jmap), porque el motor puede migrarse con el extractor en marcha.
+Las credenciales son STALWART_ADMIN_USER y STALWART_ADMIN_PASSWORD: con 0.15,
+las del administrador de respaldo; con 0.16, las de STALWART_RECOVERY_ADMIN.
+
+  - Stalwart 0.15 (API REST en /api). El motor corre como root y lee el par
+    por certificate.mailway (%{file:…}%), que configura deploy/instalar.sh;
+    este servicio solo pide GET /api/reload/certificate. No hace nada si el
+    motor obtiene su propio certificado por ACME (si conserva además
+    certificate.mailway, solo mantiene esos ficheros al día, sin recargarlo).
+  - Stalwart 0.16 (API JMAP en /jmap). Ya no existen las macros %{file:…}%:
+    este servicio da de alta, si falta, un objeto Certificate de tipo File con
+    las mismas rutas, lo deja como SystemSettings.defaultCertificateId (el que
+    reciben los clientes sin SNI, como el webmail) y recarga con x:Action
+    ReloadTlsCertificates. Aquí no hay atajo de ACME: Mailway usa el
+    certificado de Traefik.
+
+La imagen de 0.16 corre como el usuario stalwart (UID/GID 2000), no como root.
+Con ese motor, las carpetas del par quedan root:<grupo del motor> 0750 y la
+clave root:<grupo del motor> 0640: solo la leen root y el motor. root sigue
+siendo el dueño de todo, así que rota, poda, vuelve atrás y relee el par sin
+DAC_OVERRIDE ni FOWNER; asignar el grupo es lo único que exige una capacidad,
+CHOWN. El grupo es MAILWAY_TLS_GID_MOTOR (2000 por defecto, el de la imagen
+oficial). Con 0.15 todo vuelve a ser solo de root (0700 y 0600).
 
 Ante un 401/403 de la API del motor no reintenta en bucle: cada contraseña
 incorrecta cuenta para el bloqueo automático de Stalwart. Nunca registra
@@ -39,15 +61,18 @@ from __future__ import annotations
 
 import base64
 import binascii
+import errno
 import hashlib
 import http.client
 import json
 import os
+import posixpath
 import re
 import secrets
 import shutil
 import socket
 import ssl
+import stat
 import sys
 import tempfile
 import time
@@ -72,6 +97,16 @@ VERSION = re.compile(r'[0-9a-f]{24}')
 EXTENSIONES_VOLCADO = ('.pem', '.crt', '.key', '.cer')
 MAX_RESPUESTA = 1 << 20
 TIPOS_CLAVE = ('PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY')
+# Versiones de la API de gestión del motor.
+MOTOR_015 = '0.15'   # REST en /api
+MOTOR_016 = '0.16'   # JMAP en /jmap
+# Capacidad JMAP de los objetos de gestión: solo la anuncia 0.16.
+CAPACIDAD_016 = 'urn:stalwart:jmap'
+USO_JMAP = ['urn:ietf:params:jmap:core', CAPACIDAD_016]
+# Grupo con el que corre la imagen oficial de 0.16 (usuario stalwart, 2000:2000).
+GID_MOTOR_016 = 2000
+# Id JMAP (RFC 8620, 1.2): solo estos se aceptan del motor; acaban en el registro.
+_ID_JMAP = re.compile(r'[A-Za-z0-9_-]{1,255}')
 _PEM = re.compile(rb'-----BEGIN ([A-Z0-9 ]+)-----\r?\n.*?\r?\n-----END \1-----', re.S)
 _HOST = re.compile(r'(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?')
 
@@ -89,7 +124,11 @@ class AcmeIlegible(Exception):
 
 
 class ErrorMotor(Exception):
-    """La API del motor respondió algo inesperado."""
+    """La API del motor respondió algo inesperado (codigo: el estado HTTP, si lo hubo)."""
+
+    def __init__(self, mensaje: str = '', codigo: Optional[int] = None):
+        super().__init__(mensaje)
+        self.codigo = codigo
 
 
 class MotorNoDisponible(ErrorMotor):
@@ -100,8 +139,11 @@ class ErrorAutenticacion(ErrorMotor):
     """La API del motor rechazó las credenciales (401) o el permiso (403)."""
 
     def __init__(self, codigo: int):
-        super().__init__(f'HTTP {codigo}')
-        self.codigo = codigo
+        super().__init__(f'HTTP {codigo}', codigo)
+
+
+class CertificadoRechazado(ErrorMotor):
+    """El motor 0.16 no admite el objeto Certificate o el certificado por defecto (el mensaje dice por qué)."""
 
 
 # --------------------------------------------------------------- configuración
@@ -144,6 +186,8 @@ class Configuracion:
     espera_auth: float
     espera_rechazo: float
     fichero_estado: Path
+    # Grupo con el que corre el motor 0.16: el único, además de root, que lee la clave.
+    gid_motor: int = GID_MOTOR_016
 
     @classmethod
     def desde_entorno(cls, entorno: Mapping[str, str], con_clave: bool = True) -> 'Configuracion':
@@ -168,6 +212,15 @@ class Configuracion:
             raise ConfiguracionInvalida('MAILWAY_TLS_PUERTOS debe ser una lista de puertos (p. ej. 993,465).') from None
         if not puertos or any(not 0 < p < 65536 for p in puertos):
             raise ConfiguracionInvalida('MAILWAY_TLS_PUERTOS debe ser una lista de puertos (p. ej. 993,465).')
+        try:
+            gid_motor = int(entorno.get('MAILWAY_TLS_GID_MOTOR', '').strip() or GID_MOTOR_016)
+        except ValueError:
+            gid_motor = -1
+        # (2^32 - 1 es el «sin cambio» de chown: no es un grupo.)
+        if not 0 <= gid_motor < 0xFFFFFFFF:
+            raise ConfiguracionInvalida(
+                'MAILWAY_TLS_GID_MOTOR debe ser el número del grupo con el que corre el motor (2000 en la imagen '
+                'oficial de Stalwart 0.16).')
         return cls(
             host=host,
             acme_json=Path(entorno.get('MAILWAY_ACME_JSON', '/traefik/acme.json')),
@@ -186,6 +239,7 @@ class Configuracion:
             espera_auth=_numero(entorno, 'MAILWAY_TLS_ESPERA_AUTH', 3600, 1),
             espera_rechazo=_numero(entorno, 'MAILWAY_TLS_ESPERA_RECHAZO', 21600, 1),
             fichero_estado=Path(entorno.get('MAILWAY_TLS_ESTADO', '/tmp/mailway-tls/estado.json')),
+            gid_motor=gid_motor,
         )
 
 
@@ -444,34 +498,109 @@ def _retirar(ruta: Path) -> None:
         ruta.unlink()
 
 
+def _cambiar_grupo(ruta: Path, gid: int) -> None:
+    """Cambia solo el grupo (sin seguir enlaces). A otro grupo que el propio exige CAP_CHOWN."""
+    os.chown(ruta, -1, gid, follow_symlinks=False)
+
+
 class Volumen:
     """Volumen de certificados del motor: él lo monta en /opt/stalwart/certs y este servicio en /output.
 
     Estructura:
       .mailway-tls/<versión>/cert.pem   cadena de certificados (0644)
-      .mailway-tls/<versión>/key.pem    clave privada (0600)
+      .mailway-tls/<versión>/key.pem    clave privada
       <MAIL_HOSTNAME> -> .mailway-tls/<versión>   (enlace relativo)
 
     La ruta que lee el motor (<MAIL_HOSTNAME>/cert.pem y key.pem) es la misma
     que escribía el volcado antiguo: las instalaciones existentes no tienen
     que cambiar la configuración del motor.
+
+    Permisos (gid = grupo con el que corre el motor):
+      gid None (0.15, el motor es root)   carpetas 0700 y clave 0600, de root
+      gid N    (0.16, usuario stalwart)   carpetas y clave de root:N, 0750 y
+                                          0640: solo root y el motor leen la clave
+    root es siempre el dueño: escribe, poda y relee sin DAC_OVERRIDE ni FOWNER,
+    y solo necesita CAP_CHOWN para dar el grupo al motor.
     """
 
-    def __init__(self, base: Path, host: str):
+    def __init__(self, base: Path, host: str, gid: Optional[int] = None,
+                 cambiar_grupo: Optional[Callable[[Path, int], None]] = None):
         self.base = base
         self.host = host
         self.privado = base / PRIVADO
         self.enlace = base / host
+        self.gid = gid
+        # Inyectable en las pruebas: sin ser root no se puede dar un grupo cualquiera.
+        self._cambiar_grupo = cambiar_grupo or _cambiar_grupo
+
+    @property
+    def modo_carpeta(self) -> int:
+        return 0o700 if self.gid is None else 0o750
+
+    @property
+    def modo_clave(self) -> int:
+        return 0o600 if self.gid is None else 0o640
+
+    def gid_actual(self) -> Optional[int]:
+        """Grupo para el que quedó preparado el volumen (None: solo root, como con 0.15)."""
+        try:
+            datos = os.lstat(self.privado)
+        except OSError:
+            return None
+        if stat.S_ISDIR(datos.st_mode) and stat.S_IMODE(datos.st_mode) & 0o050 == 0o050:
+            return datos.st_gid
+        return None
+
+    def _ajustar(self, ruta: Path, modo: int) -> None:
+        """Deja «ruta» con el modo y el grupo que tocan sin abrirla de más en ningún momento.
+
+        Hacia el motor 0.16 se cambia primero el grupo y después el modo: la
+        clave no es legible por el grupo hasta que el grupo es el del motor. De
+        vuelta a 0.15, al revés: primero se cierra el modo y después se
+        devuelve el grupo (si falta CHOWN, ese grupo se queda ya sin permisos).
+        """
+        datos = os.lstat(ruta)
+        if self.gid is not None:
+            if datos.st_gid != self.gid:
+                self._cambiar_grupo(ruta, self.gid)
+            if stat.S_IMODE(datos.st_mode) != modo:
+                os.chmod(ruta, modo)
+            return
+        if stat.S_IMODE(datos.st_mode) != modo:
+            os.chmod(ruta, modo)
+        if datos.st_gid != os.getegid():
+            try:
+                self._cambiar_grupo(ruta, os.getegid())
+            except PermissionError:
+                pass
+
+    def _ajustar_version(self, carpeta: Path) -> None:
+        # La clave antes que su carpeta: al abrir la carpeta al grupo del
+        # motor, la clave ya tiene su grupo y su modo definitivos.
+        clave = carpeta / 'key.pem'
+        if clave.is_file() and not clave.is_symlink():
+            self._ajustar(clave, self.modo_clave)
+        self._ajustar(carpeta, self.modo_carpeta)
 
     def preparar(self) -> None:
+        """Crea la carpeta privada y deja todo con los permisos del motor actual.
+
+        Se llama en cada pasada: al migrar el motor de 0.15 a 0.16 (o al
+        volver), los pares que ya están en el volumen cambian de permisos sin
+        tener que reescribirlos.
+        """
         if not self.base.is_dir():
             raise OSError(f'No existe {self.base}: ¿está montado el volumen de certificados del motor?')
         self.privado.mkdir(mode=0o700, exist_ok=True)
-        os.chmod(self.privado, 0o700)
-        # Restos de una escritura interrumpida (nunca los usa el motor).
+        # Primero la carpeta privada: al cerrarla (0.15) se cierra todo a la
+        # vez y, al abrirla (0.16), cada versión sigue cerrada hasta ajustarla.
+        self._ajustar(self.privado, self.modo_carpeta)
         for entrada in self.privado.iterdir():
+            # Restos de una escritura interrumpida (nunca los usa el motor).
             if entrada.name.startswith('.tmp-'):
                 _retirar(entrada)
+            elif VERSION.fullmatch(entrada.name) and entrada.is_dir() and not entrada.is_symlink():
+                self._ajustar_version(entrada)
         for entrada in self.base.iterdir():
             if entrada.name.startswith(f'.{self.host}.') and entrada.name.endswith('.tmp'):
                 _retirar(entrada)
@@ -501,8 +630,13 @@ class Volumen:
         temporal = Path(tempfile.mkdtemp(prefix='.tmp-', dir=self.privado))
         try:
             _escribir_fichero(temporal / 'cert.pem', cert, 0o644)
+            # La clave nace solo de root y pasa después al grupo del motor (si
+            # lo hay). Todo se hace dentro de la carpeta temporal, de root y
+            # 0700, antes de abrirla: el motor nunca ve una versión a medias.
             _escribir_fichero(temporal / 'key.pem', clave, 0o600)
+            self._ajustar(temporal / 'key.pem', self.modo_clave)
             os.chmod(temporal, 0o700)
+            self._ajustar(temporal, self.modo_carpeta)
             _fsync_dir(temporal)
             os.rename(temporal, self.privado / version)
         except BaseException:
@@ -638,8 +772,21 @@ def acme_cubre(ajustes: Mapping[str, object], host: str) -> bool:
     return False
 
 
-class Motor:
-    """Cliente mínimo de la API de gestión de Stalwart 0.15 (solo lecturas y recargas)."""
+def _anuncia_016(sesion: Mapping[str, object]) -> bool:
+    """¿Anuncia la sesión JMAP la capacidad de gestión de 0.16?
+
+    Va en primaryAccounts y en las capacidades de la cuenta, no en las
+    generales de la sesión (comprobado con el motor 0.16.25 real).
+    """
+    listas = [sesion.get('capabilities'), sesion.get('primaryAccounts')]
+    cuentas = sesion.get('accounts')
+    if isinstance(cuentas, dict):
+        listas += [c.get('accountCapabilities') for c in cuentas.values() if isinstance(c, dict)]
+    return any(isinstance(lista, dict) and CAPACIDAD_016 in lista for lista in listas)
+
+
+class _ClienteMotor:
+    """Peticiones autenticadas a la API de gestión del motor, sin proxies ni redirecciones."""
 
     def __init__(self, url: str, usuario: str, clave: str, espera: float = 15.0):
         self.url = url.rstrip('/')
@@ -648,12 +795,18 @@ class Motor:
         self._abridor = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SinRedireccion())
         self.espera = espera
 
-    def _pedir(self, ruta: str) -> object:
-        peticion = urllib.request.Request(
-            self.url + ruta, headers={'Authorization': self._autorizacion, 'Accept': 'application/json'})
+    def _json(self, ruta: str, cuerpo: object = None) -> object:
+        """GET de «ruta» o, con cuerpo, POST en JSON. Devuelve el JSON de la respuesta."""
+        cabeceras = {'Authorization': self._autorizacion, 'Accept': 'application/json'}
+        datos = None
+        if cuerpo is not None:
+            datos = json.dumps(cuerpo).encode()
+            # 0.16 rechaza las peticiones JMAP sin este tipo (desde 0.16.10).
+            cabeceras['Content-Type'] = 'application/json'
+        peticion = urllib.request.Request(self.url + ruta, data=datos, headers=cabeceras)
         try:
             with self._abridor.open(peticion, timeout=self.espera) as respuesta:
-                cuerpo = respuesta.read(MAX_RESPUESTA + 1)
+                contenido = respuesta.read(MAX_RESPUESTA + 1)
         except urllib.error.HTTPError as error:
             codigo = error.code
             try:
@@ -662,16 +815,43 @@ class Motor:
                 pass
             if codigo in (401, 403):
                 raise ErrorAutenticacion(codigo) from None
-            raise ErrorMotor(f'la API respondió HTTP {codigo}') from None
+            raise ErrorMotor(f'la API respondió HTTP {codigo}', codigo) from None
         except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
             motivo = getattr(error, 'reason', error)
             raise MotorNoDisponible(f'sin conexión con {self.url}: {type(motivo).__name__}') from None
-        if len(cuerpo) > MAX_RESPUESTA:
+        if len(contenido) > MAX_RESPUESTA:
             raise ErrorMotor('respuesta demasiado grande')
         try:
-            datos = json.loads(cuerpo)
+            return json.loads(contenido)
         except ValueError:
             raise ErrorMotor('la API no devolvió JSON') from None
+
+    def detectar(self) -> str:
+        """API de gestión del motor: MOTOR_016 o MOTOR_015.
+
+        Las dos versiones sirven GET /jmap/session (el JMAP del correo), y
+        0.15.5 responde 200 también a su administrador de respaldo (comprobado
+        con el motor real): lo que distingue a 0.16 es que la sesión
+        autenticada anuncia urn:stalwart:jmap. Un 404 (sin JMAP) es 0.15.
+        Va autenticada a propósito: con una contraseña incorrecta, este es el
+        único intento (401) hasta que vence la espera larga.
+        """
+        try:
+            sesion = self._json('/jmap/session')
+        except ErrorMotor as error:
+            if error.codigo == 404:
+                return MOTOR_015
+            raise
+        if not isinstance(sesion, dict):
+            raise ErrorMotor('respuesta inesperada de /jmap/session')
+        return MOTOR_016 if _anuncia_016(sesion) else MOTOR_015
+
+
+class Motor(_ClienteMotor):
+    """Cliente mínimo de la API REST de gestión de Stalwart 0.15 (solo lecturas y recargas)."""
+
+    def _pedir(self, ruta: str) -> object:
+        datos = self._json(ruta)
         if isinstance(datos, dict) and 'data' in datos:
             return datos['data']
         # Stalwart 0.15 devuelve sus errores de gestión con HTTP 200 y
@@ -708,6 +888,150 @@ class Motor:
                 detalle = valor.get('error') if isinstance(valor, dict) else valor
                 propios.append(f'{clave}: {_texto_corto(detalle)}')
         return propios
+
+
+@dataclass
+class CertificadoMotor:
+    """El objeto Certificate de este servicio en el motor 0.16."""
+    id: str
+    cambios: tuple = ()   # lo hecho en esta pasada: 'creado' y/o 'por_defecto'
+    ajenos: tuple = ()    # otros Certificate que cubren el servidor y compiten por él
+
+
+def _es_fichero(valor: object, ruta: str) -> bool:
+    """¿Es un PublicText/SecretText de tipo File con esta ruta?"""
+    return (isinstance(valor, dict) and valor.get('@type') == 'File' and isinstance(valor.get('filePath'), str)
+            and posixpath.normpath(valor['filePath'].strip()) == posixpath.normpath(ruta))
+
+
+def _error_de_objeto(error: object) -> str:
+    """Motivo de un SetError, sin más datos que su descripción (lleva rutas, nunca contenido)."""
+    if not isinstance(error, dict):
+        return 'error desconocido'
+    return _texto_corto(error.get('description') or error.get('type') or 'error desconocido')
+
+
+class MotorJmap(_ClienteMotor):
+    """Cliente mínimo de la API JMAP de gestión de Stalwart 0.16 (POST /jmap).
+
+    Solo toca lo suyo: el Certificate de tipo File con las rutas de este
+    servicio, SystemSettings.defaultCertificateId y la recarga de certificados.
+    """
+
+    def __init__(self, url: str, usuario: str, clave: str, espera: float = 15.0):
+        super().__init__(url, usuario, clave, espera)
+        # Primer error de la última recarga cuando es de OTRO objeto del motor.
+        self.error_ajeno: Optional[str] = None
+
+    def _llamar(self, llamadas: list) -> dict:
+        datos = self._json('/jmap', {'using': USO_JMAP, 'methodCalls': llamadas})
+        respuestas = datos.get('methodResponses') if isinstance(datos, dict) else None
+        if not isinstance(respuestas, list):
+            raise ErrorMotor('respuesta JMAP inesperada')
+        resultado = {}
+        for respuesta in respuestas:
+            if (isinstance(respuesta, list) and len(respuesta) == 3 and isinstance(respuesta[0], str)
+                    and isinstance(respuesta[1], dict) and isinstance(respuesta[2], str)):
+                resultado.setdefault(respuesta[2], (respuesta[0], respuesta[1]))
+        return resultado
+
+    @staticmethod
+    def _resultado(respuestas: dict, llamada: str) -> dict:
+        """Argumentos de la respuesta a una llamada; los errores de método son excepciones (RFC 8620)."""
+        nombre, argumentos = respuestas.get(llamada, (None, None))
+        if nombre is None:
+            raise ErrorMotor('respuesta JMAP incompleta')
+        if nombre == 'error':
+            tipo = argumentos.get('type')
+            if tipo == 'forbidden':
+                raise ErrorAutenticacion(403)
+            raise ErrorMotor(f'la API devolvió el error JMAP «{_texto_corto(tipo, 40)}»')
+        return argumentos
+
+    @staticmethod
+    def _comprobar_por_defecto(argumentos: dict) -> None:
+        rechazo = (argumentos.get('notUpdated') or {}).get('singleton')
+        if rechazo is not None:
+            raise CertificadoRechazado('no se pudo fijar como certificado por defecto: ' + _error_de_objeto(rechazo))
+        if 'singleton' not in (argumentos.get('updated') or {}):
+            raise ErrorMotor('respuesta inesperada al fijar el certificado por defecto')
+
+    def asegurar_certificado(self, host: str, ruta_cert: str, ruta_clave: str) -> CertificadoMotor:
+        """Da de alta, si falta, el Certificate de tipo File con estas rutas y lo deja por defecto.
+
+        Idempotente: con todo en su sitio es una sola petición de lectura. El
+        motor lee el certificado al crear el objeto, así que los ficheros
+        tienen que estar ya en el volumen y ser legibles por él. El certificado
+        por defecto es el que reciben los clientes sin SNI o con un nombre que
+        no está en ningún certificado (el webmail entra por «mailway-mail»).
+        """
+        respuestas = self._llamar([
+            ['x:Certificate/get', {'ids': None, 'properties': ['certificate', 'privateKey',
+                                                               'subjectAlternativeNames']}, 'c'],
+            ['x:SystemSettings/get', {'ids': ['singleton'], 'properties': ['defaultCertificateId']}, 's'],
+        ])
+        lista = self._resultado(respuestas, 'c').get('list')
+        sistema = self._resultado(respuestas, 's').get('list')
+        if not isinstance(lista, list) or not isinstance(sistema, list):
+            raise ErrorMotor('respuesta inesperada al leer los certificados del motor')
+        certificados = [c for c in lista if isinstance(c, dict) and isinstance(c.get('id'), str)
+                        and _ID_JMAP.fullmatch(c['id'])]
+        propios = [c['id'] for c in certificados
+                   if _es_fichero(c.get('certificate'), ruta_cert) and _es_fichero(c.get('privateKey'), ruta_clave)]
+        ajenos = tuple(
+            c['id'] for c in certificados
+            if c['id'] not in propios and isinstance(c.get('subjectAlternativeNames'), dict)
+            and any(cubre(n, host) for n in c['subjectAlternativeNames'] if isinstance(n, str)))
+        por_defecto = sistema[0].get('defaultCertificateId') if sistema and isinstance(sistema[0], dict) else None
+        if por_defecto in propios:
+            return CertificadoMotor(por_defecto, (), ajenos)
+        if propios:
+            respuestas = self._llamar([['x:SystemSettings/set', {
+                'update': {'singleton': {'defaultCertificateId': propios[0]}}}, 's']])
+            self._comprobar_por_defecto(self._resultado(respuestas, 's'))
+            return CertificadoMotor(propios[0], ('por_defecto',), ajenos)
+        # Alta y certificado por defecto en la misma petición: «#mailway» es
+        # el id que acaba de crear la llamada anterior.
+        respuestas = self._llamar([
+            ['x:Certificate/set', {'create': {'mailway': {
+                'certificate': {'@type': 'File', 'filePath': ruta_cert},
+                'privateKey': {'@type': 'File', 'filePath': ruta_clave}}}}, 'c'],
+            ['x:SystemSettings/set', {'update': {'singleton': {'defaultCertificateId': '#mailway'}}}, 's'],
+        ])
+        alta = self._resultado(respuestas, 'c')
+        rechazo = (alta.get('notCreated') or {}).get('mailway')
+        if rechazo is not None:
+            raise CertificadoRechazado(_error_de_objeto(rechazo))
+        creado = (alta.get('created') or {}).get('mailway')
+        ident = creado.get('id') if isinstance(creado, dict) else None
+        if not isinstance(ident, str) or not _ID_JMAP.fullmatch(ident):
+            raise ErrorMotor('respuesta inesperada al registrar el certificado')
+        self._comprobar_por_defecto(self._resultado(respuestas, 's'))
+        return CertificadoMotor(ident, ('creado', 'por_defecto'), ajenos)
+
+    def recargar(self, id_propio: str) -> list:
+        """x:Action ReloadTlsCertificates. Devuelve los errores del certificado propio.
+
+        El motor solo informa del primer error de la recarga, con el objeto al
+        que se refiere. Si es de otro objeto no cuenta (lo que decide es lo que
+        se sirve después) y queda en error_ajeno para el registro. Ojo: tras
+        una recarga con errores, 0.16 deja de servir el certificado que falló
+        (pasa al autofirmado), no conserva el anterior en memoria como 0.15.
+        """
+        self.error_ajeno = None
+        respuestas = self._llamar([['x:Action/set', {'create': {'recarga': {'@type': 'ReloadTlsCertificates'}}}, 'a']])
+        argumentos = self._resultado(respuestas, 'a')
+        if 'recarga' in (argumentos.get('created') or {}):
+            return []
+        rechazo = (argumentos.get('notCreated') or {}).get('recarga')
+        if not isinstance(rechazo, dict):
+            raise ErrorMotor('respuesta inesperada al recargar los certificados')
+        objeto = rechazo.get('objectId') if isinstance(rechazo.get('objectId'), dict) else {}
+        detalle = _error_de_objeto(rechazo)
+        if objeto.get('object', 'Certificate') == 'Certificate' and objeto.get('id', id_propio) == id_propio:
+            return [f'Certificate {id_propio}: {detalle}']
+        self.error_ajeno = f'{_texto_corto(objeto.get("object"), 40)} {_texto_corto(objeto.get("id"), 40)}: {detalle}'
+        return []
 
 
 @dataclass
@@ -762,13 +1086,17 @@ class Estado:
 class Extractor:
     def __init__(self, cfg: Configuracion, motor: Optional[Motor] = None,
                  reloj: Callable[[], float] = time.time, dormir: Callable[[float], None] = time.sleep,
-                 salida: Optional[TextIO] = None):
+                 salida: Optional[TextIO] = None, motor16: Optional[MotorJmap] = None,
+                 cambiar_grupo: Optional[Callable[[Path, int], None]] = None):
         self.cfg = cfg
         self.motor = motor or Motor(cfg.url_motor, cfg.usuario, cfg.clave)
-        self.volumen = Volumen(cfg.salida, cfg.host)
+        self.motor16 = motor16 or MotorJmap(cfg.url_motor, cfg.usuario, cfg.clave)
+        self.volumen = Volumen(cfg.salida, cfg.host, cambiar_grupo=cambiar_grupo)
         self.reloj = reloj
         self.dormir = dormir
         self._salida = salida
+        # API del motor detectada en la última pasada que pudo consultarlo.
+        self.api: Optional[str] = None
         self.api_bloqueada_hasta = 0.0
         self._mensaje_bloqueo = ''
         # Huellas que el motor no llegó a servir: no se reintentan hasta que vence la espera.
@@ -807,6 +1135,7 @@ class Extractor:
                 'mensaje': self.estado.mensaje,
                 'certificado': self.estado.certificado,
                 'host': self.cfg.host,
+                'motor': self.api,
                 'intervalo': self.cfg.intervalo,
                 'actualizado': self.reloj(),
             }
@@ -830,14 +1159,35 @@ class Extractor:
         if error.codigo == 401:
             self._mensaje_bloqueo = (
                 f'El motor rechaza la contraseña de administración (HTTP 401). Revisa STALWART_ADMIN_PASSWORD en '
-                f'deploy/.env (debe ser la vigente del usuario «{self.cfg.usuario}» del motor) y recrea este servicio. '
-                f'No se volverá a intentar hasta dentro de {minutos} min: cada contraseña incorrecta cuenta para el '
-                'bloqueo automático del motor.')
+                f'deploy/.env (debe ser la vigente del usuario «{self.cfg.usuario}» del motor; con Stalwart 0.16, la '
+                f'de STALWART_RECOVERY_ADMIN) y recrea este servicio. No se volverá a intentar hasta dentro de '
+                f'{minutos} min: cada contraseña incorrecta cuenta para el bloqueo automático del motor.')
         else:
             self._mensaje_bloqueo = (
                 f'El usuario «{self.cfg.usuario}» no tiene permiso para leer los ajustes o recargar los certificados '
                 f'del motor (HTTP {error.codigo}). Usa el administrador del motor. No se volverá a intentar hasta '
                 f'dentro de {minutos} min.')
+
+    def _detectar(self, ahora: float) -> tuple:
+        """(API del motor o None, problema). Se repite en cada pasada: el motor puede migrar a 0.16 (o volver)."""
+        if ahora < self.api_bloqueada_hasta:
+            return None, ('autenticacion', self._mensaje_bloqueo)
+        try:
+            api = self.motor16.detectar()
+        except ErrorAutenticacion as error:
+            self._bloquear_api(error, ahora)
+            return None, ('autenticacion', self._mensaje_bloqueo)
+        except ErrorMotor as error:
+            return None, ('motor', f'No se pudo consultar la API del motor ({error}); se reintentará.')
+        if api != self.api:
+            como = 'JMAP' if api == MOTOR_016 else 'REST'
+            if self.api is None:
+                self.registrar(f'Motor detectado: Stalwart {api} (API de gestión {como}).')
+            else:
+                self.registrar(f'El motor ha pasado de Stalwart {self.api} a {api} (API de gestión {como}): se '
+                               'adaptan los permisos del volumen y la forma de aplicar el certificado.')
+            self.api = api
+        return api, None
 
     def _consultar_motor(self, ahora: float) -> tuple:
         if ahora < self.api_bloqueada_hasta:
@@ -849,6 +1199,49 @@ class Extractor:
             return None, ('autenticacion', self._mensaje_bloqueo)
         except ErrorMotor as error:
             return None, ('motor', f'No se pudo consultar la API del motor ({error}); se reintentará.')
+
+    def _ruta_motor(self, fichero: str) -> str:
+        """Ruta de un fichero del par tal como la ve el motor (el volumen montado en ruta_motor)."""
+        return f'{self.cfg.ruta_motor}/{self.cfg.host}/{fichero}'
+
+    def _certificado_016(self, ahora: float, candidato: Candidato) -> Optional[CertificadoMotor]:
+        """Asegura el Certificate del motor 0.16; si no se puede, deja el estado y devuelve None."""
+        host = self.cfg.host
+        try:
+            propio = self.motor16.asegurar_certificado(host, self._ruta_motor('cert.pem'), self._ruta_motor('key.pem'))
+        except ErrorAutenticacion as error:
+            self._bloquear_api(error, ahora)
+            self._fijar(False, 'autenticacion', self._mensaje_bloqueo, candidato)
+            return None
+        except CertificadoRechazado as error:
+            pista = ''
+            if 'denied' in str(error) or 'os error 13' in str(error):
+                pista = (f' El motor no puede leer los ficheros: comprueba que corre con el grupo '
+                         f'{self.cfg.gid_motor} (MAILWAY_TLS_GID_MOTOR).')
+            elif 'No such file' in str(error) or 'os error 2' in str(error):
+                pista = (f' El motor no ve los ficheros: comprueba que monta el volumen de certificados en '
+                         f'{self.cfg.ruta_motor} (MAILWAY_TLS_RUTA_MOTOR).')
+            self._fijar(False, 'sin_referencia', f'El motor no admite el certificado de {host} ({error}).{pista} '
+                                                 'Se reintentará.', candidato)
+            return None
+        except ErrorMotor as error:
+            self._fijar(False, 'motor', f'No se pudo registrar el certificado en el motor ({error}); se reintentará.',
+                        candidato)
+            return None
+        if 'creado' in propio.cambios:
+            self.registrar(f'Certificado de {host} registrado en el motor (Certificate {propio.id}, leído de los '
+                           'ficheros del volumen) como certificado por defecto.')
+        elif 'por_defecto' in propio.cambios:
+            self.registrar(f'El certificado de {host} (Certificate {propio.id}) pasa a ser el certificado por defecto '
+                           'del motor.')
+        return propio
+
+    def _recargar_016(self, id_propio: str) -> list:
+        errores = self.motor16.recargar(id_propio)
+        if self.motor16.error_ajeno:
+            self._una_vez(f'Al recargar, el motor informa de un error en otro de sus objetos ('
+                          f'{self.motor16.error_ajeno}); no afecta al certificado de {self.cfg.host}.')
+        return errores
 
     def _comprobar_servido(self, huella: str, reintentos: int = 0) -> tuple:
         """(lo sirve, detalle, sin conexión). «Sin conexión» = ningún puerto negoció TLS."""
@@ -867,8 +1260,8 @@ class Extractor:
                 fallos.append(f'{puerto}: sirve otro certificado')
         return not fallos, '; '.join(fallos), bool(fallos) and caidos == len(fallos)
 
-    def _recargar_y_comprobar(self, candidato: Candidato) -> tuple:
-        errores = self.motor.recargar()
+    def _recargar_y_comprobar(self, candidato: Candidato, recargar: Callable[[], list]) -> tuple:
+        errores = recargar()
         if errores:
             return False, 'el motor no pudo cargar el par: ' + '; '.join(errores), False
         return self._comprobar_servido(candidato.huella, reintentos=1)
@@ -890,6 +1283,40 @@ class Extractor:
         except ParNoValido:
             return None
 
+    def _preparar_volumen(self, api: Optional[str]) -> bool:
+        """Permisos del volumen según el motor detectado. False si no se pudo (el estado dice por qué)."""
+        if api == MOTOR_016:
+            gid = self.cfg.gid_motor
+        elif api == MOTOR_015:
+            gid = None
+        else:
+            # Sin saber qué motor hay se respetan los permisos que ya tiene el
+            # volumen: cerrarlos a ciegas dejaría a un 0.16 sin poder leer la clave.
+            gid = self.volumen.gid_actual()
+        self.volumen.gid = gid
+        try:
+            self.volumen.preparar()
+        except PermissionError as error:
+            self._sin_permisos(error)
+            return False
+        except OSError as error:
+            self._fijar(False, 'volumen', f'No se puede preparar el volumen de certificados del motor ({error}); '
+                                          'se reintentará.')
+            return False
+        return True
+
+    def _sin_permisos(self, error: OSError) -> None:
+        motivo = errno.errorcode.get(error.errno or 0, type(error).__name__)
+        if self.volumen.gid is not None:
+            mensaje = (f'No se puede dar al motor acceso a la clave privada ({motivo}). Stalwart 0.16 la lee con el '
+                       f'grupo {self.volumen.gid} (MAILWAY_TLS_GID_MOTOR) y asignárselo exige que este servicio tenga '
+                       'la capacidad CHOWN (cap_add: [CHOWN] en certs-dumper). Se conserva el certificado actual y se '
+                       'reintentará.')
+        else:
+            mensaje = (f'No se pueden ajustar los permisos del volumen de certificados del motor ({motivo}); se '
+                       'reintentará.')
+        self._fijar(False, 'permisos', mensaje)
+
     def _purgar(self) -> None:
         retirados, desconocidos = self.volumen.purgar_ajenos()
         if retirados:
@@ -905,13 +1332,18 @@ class Extractor:
         ahora = self.reloj()
         host = self.cfg.host
         puertos = ' y '.join(str(p) for p in self.cfg.puertos)
-        ajustes, problema = self._consultar_motor(ahora)
+        api, problema = self._detectar(ahora)
+        ajustes = None
+        if api == MOTOR_015:
+            ajustes, problema = self._consultar_motor(ahora)
+            if ajustes and ajustes.acme and not ajustes.referencia:
+                self._purgar()
+                self._fijar(True, 'acme', 'El motor obtiene su propio certificado por ACME: este servicio no tiene '
+                                          'nada que hacer.')
+                return
 
-        if ajustes and ajustes.acme and not ajustes.referencia:
-            self._purgar()
-            self._fijar(True, 'acme', 'El motor obtiene su propio certificado por ACME: este servicio no tiene nada que hacer.')
+        if not self._preparar_volumen(api):
             return
-
         try:
             validos, descartes = candidatos_acme(self.cfg.acme_json, host)
         except AcmeIlegible as error:
@@ -937,41 +1369,67 @@ class Extractor:
         cambio = actual is None or mejor.version != actual.version
         anterior = None
         if cambio or self.volumen.es_heredado():
-            anterior = self.volumen.instalar(mejor)
+            try:
+                anterior = self.volumen.instalar(mejor)
+            except PermissionError as error:
+                self._sin_permisos(error)
+                return
             if cambio:
                 self.registrar(f'Certificado de {host} escrito en el volumen del motor ({mejor.describir(ahora)}).')
 
-        if ajustes is None:
+        if problema:
             codigo, mensaje = problema
             self._fijar(False, codigo, mensaje, mejor)
             return
-        if not ajustes.referencia:
-            falta = ('certificate.mailway apunta a otros ficheros' if ajustes.referencia_otra
-                     else 'falta certificate.mailway')
-            self._fijar(False, 'sin_referencia',
-                        f'El motor aún no usa este certificado ({falta}). deploy/instalar.sh lo configura; a mano, '
-                        'sigue la sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.', mejor)
-            return
-        if ajustes.acme:
-            self.volumen.podar({mejor.version})
-            self._fijar(True, 'acme_y_fichero',
-                        'El motor usa su propio ACME y conserva certificate.mailway: los ficheros se mantienen al día '
-                        'sin recargar el motor.', mejor)
-            return
+        forzar = False
+        pista = ''
+        if api == MOTOR_016:
+            # 0.16: el propio servicio registra el certificado en el motor (ya
+            # no hay macros %{file:…}% que configure el instalador).
+            propio = self._certificado_016(ahora, mejor)
+            if propio is None:
+                return
+
+            def recargar() -> list:
+                return self._recargar_016(propio.id)
+
+            # Un certificado recién registrado o fijado por defecto exige
+            # recargar aunque el nombre ya se sirva bien: sin recarga, los
+            # clientes sin SNI seguirían recibiendo el certificado anterior.
+            forzar = bool(propio.cambios)
+            if propio.ajenos:
+                pista = (f' El motor tiene además otros certificados para {host} (Certificate '
+                         f'{", ".join(propio.ajenos)}): sirve el que caduca más tarde; si no son de Mailway, '
+                         'retíralos en la web del motor (Settings › TLS › Certificates).')
+        else:
+            if not ajustes.referencia:
+                falta = ('certificate.mailway apunta a otros ficheros' if ajustes.referencia_otra
+                         else 'falta certificate.mailway')
+                self._fijar(False, 'sin_referencia',
+                            f'El motor aún no usa este certificado ({falta}). deploy/instalar.sh lo configura; a '
+                            'mano, sigue la sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.', mejor)
+                return
+            if ajustes.acme:
+                self.volumen.podar({mejor.version})
+                self._fijar(True, 'acme_y_fichero',
+                            'El motor usa su propio ACME y conserva certificate.mailway: los ficheros se mantienen al '
+                            'día sin recargar el motor.', mejor)
+                return
+            recargar = self.motor.recargar
 
         sirve, detalle, caido = self._comprobar_servido(mejor.huella)
         if not sirve and caido:
             self._motor_sin_tls(detalle, mejor)
             return
-        if not sirve:
-            if not cambio and self.recarga_sin_efecto.get(mejor.huella, 0) > ahora:
+        if not sirve or forzar:
+            if not sirve and not cambio and not forzar and self.recarga_sin_efecto.get(mejor.huella, 0) > ahora:
                 self._fijar(False, 'no_servido',
                             f'El motor no sirve el certificado de {host} aunque se le pidió recargarlo ({detalle}). '
-                            'Revisa su registro (docker logs mailway-mail) o reinícialo: docker restart mailway-mail.',
-                            mejor)
+                            'Revisa su registro (docker logs mailway-mail) o reinícialo: docker restart mailway-mail.'
+                            + pista, mejor)
                 return
             try:
-                sirve, detalle, caido = self._recargar_y_comprobar(mejor)
+                sirve, detalle, caido = self._recargar_y_comprobar(mejor, recargar)
             except ErrorAutenticacion as error:
                 self._bloquear_api(error, ahora)
                 self._fijar(False, 'autenticacion', self._mensaje_bloqueo, mejor)
@@ -1003,16 +1461,17 @@ class Extractor:
         # El motor no sirve el par nuevo: se vuelve al anterior si sigue siendo válido.
         previo = self._par_en_volumen(anterior) if (cambio and anterior) else None
         if previo is None:
-            self._fijar(False, 'no_servido', f'El motor no sirve el certificado de {host}: {detalle}.', mejor)
+            self._fijar(False, 'no_servido', f'El motor no sirve el certificado de {host}: {detalle}.{pista}', mejor)
             return
         self.volumen.volver(anterior)
         self.rechazados[mejor.huella] = ahora + self.cfg.espera_rechazo
         reintento = time.strftime('%H:%M', time.gmtime(ahora + self.cfg.espera_rechazo))
         try:
             # Lo que cuenta es lo que sirve después, no la respuesta de la
-            # recarga: si el motor no llegó a cargar el par nuevo, sigue con el
-            # anterior en memoria aunque la recarga informe de errores.
-            self.motor.recargar()
+            # recarga: 0.15 sigue con el par anterior en memoria si no llegó a
+            # cargar el nuevo, y 0.16 (que tras un fallo pasa al autofirmado)
+            # vuelve a leerlo ahora que el enlace apunta otra vez a él.
+            recargar()
         except ErrorAutenticacion as error:
             self._bloquear_api(error, ahora)
         except ErrorMotor:
@@ -1023,16 +1482,14 @@ class Extractor:
         self._fijar(False, 'vuelta_atras',
                     f'El motor no sirvió el certificado nuevo de {host} ({detalle}). Se ha vuelto al anterior '
                     f'({previo.describir(ahora)}) y {situacion}. El nuevo se reintentará a partir de las '
-                    f'{reintento} UTC.', previo)
+                    f'{reintento} UTC.{pista}', previo)
 
     # -- bucle del servicio
 
     def servir(self) -> None:
-        try:
-            self.volumen.preparar()
-        except OSError as error:
-            # Cada pasada lo vuelve a intentar y deja el motivo en el estado.
-            self.registrar(f'No se puede preparar el volumen de certificados del motor ({error}).')
+        # El volumen se prepara en cada pasada, ya con los permisos del motor
+        # detectado: prepararlo aquí, a ciegas, cerraría a un motor 0.16 el
+        # acceso a la clave hasta la primera pasada.
         self.registrar(f'Extractor del certificado de {self.cfg.host} en marcha: lee {self.cfg.acme_json} en solo '
                        'lectura y escribe en el volumen del motor únicamente el par de ese nombre.')
         firma_previa: object = ()
@@ -1091,6 +1548,9 @@ def estado(entorno: Mapping[str, str]) -> int:
         tipo = 'comodín, ' if certificado.get('comodin') else ''
         print(f'Certificado en el volumen: {tipo}emisor {certificado.get("emisor")}, caduca '
               f'{certificado.get("caduca")}, huella {certificado.get("huella")}…')
+    if datos.get('motor') in (MOTOR_015, MOTOR_016):
+        como = 'JMAP' if datos['motor'] == MOTOR_016 else 'REST'
+        print(f'Motor: Stalwart {datos["motor"]} (API de gestión {como}).')
     if not reciente:
         print('El estado no se ha actualizado recientemente: revisa «docker logs mailway-certs-dumper».')
     return 0 if correcto else 1

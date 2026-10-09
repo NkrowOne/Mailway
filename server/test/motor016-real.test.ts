@@ -8,6 +8,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { HttpError } from '../src/core/errors';
 import { sha512Crypt } from '../src/core/sha512crypt';
+import { carpetasDeList } from './protocolos-correo';
 import { RutaDeGestionAusente } from '../src/engine/errores';
 import { ClienteJmap, ofreceGestion, type Argumentos, type SesionJmap } from '../src/engine/jmap';
 import { Stalwart016Engine } from '../src/engine/stalwart016';
@@ -280,19 +281,34 @@ async function imapLogin(usuario: string, clave: string): Promise<'ok' | 'rechaz
   }
 }
 
-/** Mensajes de INBOX con ese asunto (búsqueda IMAP). */
+/**
+ * Mensajes con ese asunto en todas las carpetas del buzón (búsqueda IMAP).
+ * Todas, no solo INBOX: con salida a Internet (la CI) el filtro de spam del
+ * motor lleva el mensaje de prueba, de un remitente sin SPF, DKIM ni DMARC, a
+ * la de correo no deseado, y lo que se comprueba es que llegó al buzón.
+ */
 async function imapBuscar(usuario: string, clave: string, asunto: string): Promise<number> {
   const c = new Conversacion(await conectarTls(PUERTO_IMAPS));
+  let n = 0;
+  const orden = async (comando: string): Promise<{ ok: boolean; texto: string }> => {
+    n += 1;
+    const etiqueta = `a${n}`;
+    c.enviar(`${etiqueta} ${comando}`);
+    const texto = await c.esperar(new RegExp(`^${etiqueta} (OK|NO|BAD)[^\\r\\n]*\\r\\n`, 'm'));
+    return { ok: new RegExp(`^${etiqueta} OK`, 'm').test(texto), texto };
+  };
   try {
     await c.esperar(/^\* OK.*\r\n/m);
-    c.enviar(`a1 LOGIN ${comillas(usuario)} ${comillas(clave)}`);
-    assert.match(await c.esperar(/^a1 (OK|NO|BAD)[^\r\n]*\r\n/m), /^a1 OK/m);
-    c.enviar('a2 SELECT INBOX');
-    await c.esperar(/^a2 (OK|NO|BAD)[^\r\n]*\r\n/m);
-    c.enviar(`a3 SEARCH SUBJECT ${comillas(asunto)}`);
-    const r = await c.esperar(/^a3 (OK|NO|BAD)[^\r\n]*\r\n/m);
-    const linea = /^\* SEARCH([^\r\n]*)/m.exec(r)?.[1] ?? '';
-    return linea.trim() ? linea.trim().split(/\s+/).length : 0;
+    assert.ok((await orden(`LOGIN ${comillas(usuario)} ${comillas(clave)}`)).ok, `IMAP rechaza a ${usuario}`);
+    const carpetas = carpetasDeList((await orden('LIST "" "*"')).texto);
+    let total = 0;
+    for (const carpeta of carpetas.length > 0 ? carpetas : ['INBOX']) {
+      if (!(await orden(`EXAMINE ${comillas(carpeta)}`)).ok) continue;
+      const r = await orden(`SEARCH SUBJECT ${comillas(asunto)}`);
+      const linea = /^\* SEARCH([^\r\n]*)/m.exec(r.texto)?.[1] ?? '';
+      total += linea.trim() ? linea.trim().split(/\s+/).length : 0;
+    }
+    return total;
   } finally {
     c.cerrar();
   }

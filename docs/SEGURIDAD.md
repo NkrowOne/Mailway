@@ -372,7 +372,21 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
   - `http.use-x-forwarded=true` hace que el motor vea la IP real de quien llega
-    por Traefik, en lugar de bloquear la IP de Traefik para todos.
+    por Traefik, en lugar de bloquear la IP de Traefik para todos;
+  - Traefik **borra la cabecera `Forwarded`** antes de llegar al motor
+    (middleware `mailway-mail-sin-forwarded`, en `deploy/motor/*/compose.yml`,
+    encadenado en cada router del motor). Stalwart lee
+    `Forwarded: for=` antes que `X-Forwarded-For`, y Traefik solo reescribe
+    las `X-Forwarded-*`: sin el middleware, cualquiera podía decir que venía de
+    la red exenta y probar contraseñas sin límite contra
+    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en cada
+    router, con los dos motores.
+- **Pendiente con el proxy de Cloudflare**: si Traefik confía en las IP de
+  Cloudflare (`forwardedHeaders.trustedIPs`), conserva el `X-Forwarded-For`
+  que llega por Cloudflare, cuya primera dirección pone el cliente, y
+  Stalwart toma justo esa. Antes de confiar en Cloudflare en el Traefik que
+  sirve `MAIL_HOSTNAME`, el motor necesita delante una pasarela que calcule la
+  IP real (la última que no es de un proxy de confianza) y le pase solo esa.
 - **Compromiso conocido**: con `http.use-x-forwarded=true`, un contenedor
   conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar con
   `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
@@ -404,7 +418,60 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     invalidadas (ya no cuentan ni se ofrecen como activas), se avisa a la
     administración y a cada titular, y se revocan sin llamar al motor;
   - las credenciales SMTP internas de las claves de API y de los formularios
-    se renuevan en el motor nuevo y se guardan cifradas, como antes.
+    se renuevan en el motor nuevo y se guardan cifradas, como antes;
+  - al volver a la 0.15 (`mailway revertir-motor`), las contraseñas de
+    aplicación de la 0.15 que el motor todavía tiene vuelven a valer, y las
+    creadas en la 0.16 se marcan como invalidadas: no existen en la 0.15.
+
+### Stalwart 0.16 y el cambio de motor
+
+- **Credencial del motor 0.16.** `STALWART_RECOVERY_ADMIN=admin:<STALWART_ADMIN_PASSWORD>`
+  en el entorno de `mailway-mail` es la credencial de administración
+  permanente del motor: la 0.16 la acepta en cada arranque, también fuera del
+  modo de recuperación. Quien lea `deploy/.env` (600, root) o
+  `docker inspect mailway-mail` (root o grupo `docker`) la tiene. Para
+  cambiarla: `deploy/.env` y las variables del panel, y recrear el motor. La
+  cuenta `admin@<servidor>` que crea el primer arranque (todos los permisos,
+  contraseña que nadie guarda) se borra en cuanto el motor arranca, si es la
+  única cuenta.
+- **`mail.<dominio>` con la 0.16.** Traefik solo deja pasar una lista de rutas
+  (`/jmap`, `/.well-known/`, `/dav/`, autoconfiguración de Thunderbird y
+  Outlook, `/healthz/`, `/robots.txt`); todo lo demás (administración
+  `/admin`, autoservicio `/account`, `/login`, `/api/…` y lo que añada un
+  parche) responde 403 con un router de prioridad mínima y una lista de IP que
+  solo admite 127.0.0.1. `/jmap` queda abierto a los titulares: lo que pueden
+  hacer con los objetos de gestión (`x:…`) depende de los permisos de su rol,
+  de los que el panel retira el autoservicio. La cabecera `Forwarded` se borra
+  en los tres routers.
+- **Suspensión en 0.16.** Se quita el permiso `authenticate`, que el motor
+  exige con cualquier credencial: contraseña, contraseña de aplicación, token
+  OAuth o clave de API (no hay un permiso aparte para OAuth, como en la 0.15).
+- **Migración (`mailway migrar-motor`).** Carpeta de trabajo
+  `deploy/.migracion-motor/` (700). El volcado y el plan llevan hashes de
+  contraseñas, claves privadas DKIM y secretos de la 0.15: ficheros 600 que se
+  borran al terminar, también si vuelve atrás (`MAILWAY_MIGRACION_CONSERVAR=1`
+  los deja); el registro no lleva secretos (la prueba de la pila lo
+  comprueba). La contraseña del motor llega al ayudante por la entrada
+  estándar y al CLI de Stalwart por el entorno, nunca en los argumentos. El
+  script oficial (`migrate_v016.py`) y sus dependencias se descargan de URL
+  fijadas y se comprueba su sha256; se ejecutan con `python -I -B` en un
+  contenedor efímero sin capacidades, sin privilegios nuevos, con el sistema
+  de ficheros de solo lectura (salvo la carpeta de trabajo) y solo en
+  `mailway-internal`.
+- **Motores temporales.** Comparten la IP fija y el alias `mailway-mail` (red
+  interna y de Traefik) pero no publican puertos ni llevan etiquetas de
+  Traefik (`exposedbydefault=false`). El de recuperación solo escucha en el
+  8080. Las suspensiones se vuelven a aplicar, por si el script oficial no las
+  conserva, ANTES de abrir los puertos de correo.
+- **Datos que se conservan.** El volumen de la 0.15 (correo, hashes y claves
+  DKIM) sigue intacto tras migrar, como vuelta atrás, hasta
+  `mailway retirar-motor-anterior` (que exige escribir su nombre). Los
+  volúmenes de intentos que volvieron atrás también conservan datos: se
+  listan, no se borran solos. Inclúyelos en la política de copias y de
+  borrado.
+- **Certificado con la 0.16.** El motor corre como el usuario 2000: el
+  extractor escribe la clave privada con ese grupo y permisos 0640 (carpetas
+  0750), para lo que conserva solo la capacidad `CHOWN`.
 
 ## 8. Rutas públicas
 
@@ -479,7 +546,47 @@ cualquier argumento que parezca un token antes de leer nada, no lee desde un
 terminal, limita el tamaño de la entrada y no repite nunca lo recibido; el
 token queda cifrado en la base y fuera de `deploy/.env` y de la actividad.
 
-## 11. Recomendaciones operativas
+La de avisos (`tools/avisar.js`, que usa la actualización automática) no
+recibe secretos: limpia los textos de colores y caracteres de control, los
+acorta, no repite las opciones que no reconoce y nunca muestra las URL ni los
+tokens de los canales.
+
+## 11. Actualizaciones
+
+Los parches de seguridad llegan solos, pero solo después de probarse:
+
+- **Versiones exactas.** El `Dockerfile` y los compose fijan cada imagen con
+  su versión completa (p. ej. `node:22.23.3-alpine`,
+  `roundcube/roundcubemail:1.7.4-apache`, Stalwart `v0.15.5`): un `pull` o
+  una reconstrucción nunca traen una versión que no haya pasado la CI.
+- **Solo parches, y tras todas las comprobaciones.** Dependabot agrupa los
+  parches (x.y.Z) de npm, de las imágenes y de las acciones.
+  `.github/workflows/parches-automaticos.yml` fusiona uno solo si el PR es de
+  Dependabot, sale de una rama de este repositorio hacia la principal, su
+  último commit es de Dependabot y es exactamente el probado, todas sus
+  dependencias suben solo un parche y han terminado bien todas las
+  comprobaciones del commit: la CI, la imagen del panel construida y
+  arrancada y, si cambian los compose, la pila de correo real. Las versiones
+  menores y mayores, y Stalwart fuera de la 0.15, las revisa una persona.
+- **El workflow con permisos no ejecuta el código del PR.** Corre por
+  `workflow_run` con la configuración de la rama principal y permiso de
+  escritura, así que nunca hace checkout ni ejecuta nada del PR: solo consulta
+  la API con `gh`, y lo que llega del evento pasa por variables de entorno,
+  nunca dentro del script.
+- **Vuelta atrás en el servidor.** `mailway update --auto` (activado con
+  `sudo mailway auto-update on`) no hace nada si no hay versión nueva; si la
+  hay, comprueba el servidor antes y después, y si falla vuelve al commit
+  anterior y a sus imágenes. No toca los volúmenes ni restaura bases de datos
+  (los parches de Stalwart no migran sus datos), no inicia sesión en ningún
+  buzón y no prueba los puertos desde fuera (esas conexiones llegarían desde
+  una IP sin exención y contarían para el bloqueo automático del motor). En
+  el registro del sistema se tapan los secretos que el resumen del instalador
+  muestra a quien instala a mano. Se niega a actualizar si hay cambios hechos
+  a mano en la copia (volver atrás los borraría).
+
+Detalle en la sección 8.1 de [DESPLIEGUE-SKYWAY.md](DESPLIEGUE-SKYWAY.md).
+
+## 12. Recomendaciones operativas
 
 - Mantén cerrados en el cortafuegos todos los puertos salvo 22, 25, 80, 443,
   465, 587, 993 y 4190.
@@ -493,5 +600,8 @@ token queda cifrado en la base y fuera de `deploy/.env` y de la actividad.
   certificado.
 - Revisa **Actividad** y **Avisos** con regularidad y configura al menos un
   canal de aviso.
+- Activa la actualización automática (`sudo mailway auto-update on`): los
+  parches de seguridad llegan probados y, si algo falla al aplicarlos, el
+  servidor vuelve solo a la versión anterior.
 - Guarda cifradas las copias de `/data`, del volumen del motor y de
   `deploy/.env`.
