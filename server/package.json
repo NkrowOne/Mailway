@@ -1,6 +1,6 @@
 {
   "name": "@mailway/server",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "main": "dist/index.js",
   "scripts": {
@@ -10,6 +10,7 @@
     "reset-password": "tsx src/tools/reset-password.ts",
     "emparejar": "tsx src/tools/emparejar.ts",
     "cloudflare": "tsx src/tools/cloudflare.ts",
+    "motor": "tsx src/tools/motor.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx --import ./test/env.ts test/*.test.ts"
   },

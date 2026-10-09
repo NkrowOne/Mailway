@@ -1,0 +1,72 @@
+# ============================================================================
+# Motor de correo: Stalwart 0.15 (API REST de gestión en /api)
+# ----------------------------------------------------------------------------
+# NO se usa solo: docker-compose.mail.yml y docker-compose.standalone.yml lo
+# incorporan al servicio mailway-mail con «extends» cuando deploy/.env dice
+# MAILWAY_MOTOR=stalwart-0.15 (o no dice nada: es el motor de las
+# instalaciones anteriores a la llegada de la 0.16). Aquí va solo lo que
+# cambia entre motores: imagen, credenciales, volúmenes, rutas de Traefik y
+# comprobación de salud.
+#
+# Stalwart 0.15 deja de recibir parches de seguridad el 1 de diciembre de
+# 2026. Para pasar a la 0.16 sin perder correo:
+#   sudo mailway migrar-motor        (o deploy/instalar.sh --migrar-motor)
+# Detalle en la sección 8.3 de docs/DESPLIEGUE-SKYWAY.md.
+#
+# La 0.15.x solo recibe parches (Dependabot nunca propone la 0.16 aquí): la
+# 0.16 cambia la gestión y el formato de los datos, y se pasa a ella con la
+# migración, nunca con un «pull».
+# ============================================================================
+
+services:
+  mailway-mail:
+    image: stalwartlabs/stalwart:v0.15.5
+    environment:
+      # Solo se aplica en el PRIMER arranque (crea el administrador de
+      # respaldo con esta contraseña). Cambiarla después aquí no tiene efecto.
+      STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
+    volumes:
+      - mailway-mail-data:/opt/stalwart
+      # Certificado de MAIL_HOSTNAME que escribe el extractor (perfil `tls`):
+      # <MAIL_HOSTNAME>/cert.pem y key.pem, y nada de otros dominios.
+      - mailway-mail-certs:/opt/stalwart/certs:ro
+    labels:
+      # Web del motor (administración, autoconfiguración, MTA-STS) por HTTPS
+      # en el nombre del servidor de correo, p. ej. https://mail.miempresa.com.
+      # Además hace que Traefik obtenga el certificado de MAIL_HOSTNAME, que
+      # el extractor opcional (`certs-dumper`) puede llevar a IMAP/SMTP.
+      - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail.entrypoints=web
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https,mailway-mail-sin-forwarded
+      - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
+      # El motor (con use-x-forwarded) toma la IP del cliente de la cabecera
+      # Forwarded ANTES que de X-Forwarded-For, y Traefik deja pasar Forwarded
+      # tal cual (solo reescribe X-Forwarded-*). Sin quitarla, cualquiera podía
+      # decir que venía de la red del webmail (exenta del bloqueo automático)
+      # y probar contraseñas sin límite contra https://MAIL_HOSTNAME. Un valor
+      # vacío borra la cabecera; X-Forwarded-For sigue llegando con la IP real.
+      - traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded=
+      - traefik.http.routers.mailway-mail-secure.middlewares=mailway-mail-sin-forwarded
+      # Traefik no llega al motor: el servicio es su pasarela (mailway-mail-gw,
+      # deploy/motor/pasarela), que le entrega una sola IP en X-Forwarded-For,
+      # la real, aunque Traefik conserve la cabecera que trae la petición (p. ej.
+      # si confía en Cloudflare). Sin ella, la primera dirección de esa
+      # cabecera la elegiría el cliente, también una de la red exenta.
+      - traefik.http.services.mailway-mail.loadbalancer.server.url=http://mailway-mail-gw:8080
+    healthcheck:
+      # La imagen (Debian slim) no trae wget ni curl: se pregunta a
+      # /healthz/live con el /dev/tcp de bash. Sin un healthcheck que pase,
+      # Traefik descarta el contenedor y mail.<dominio> no tiene ruta.
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz/live HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200'"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

@@ -33,8 +33,25 @@ export const PUERTOS_PUBLICADOS: ReadonlySet<number> = new Set([993, 465, 587, 4
 /** Servicios SRV que nunca se anuncian aunque el motor los proponga. */
 const SRV_EXCLUIDOS = ['_imap._tcp.', '_pop3._tcp.', '_pop3s._tcp.'];
 
-/** Tipos que el panel no pide: TLSA exige DNSSEC y cambia con cada certificado. */
-const TIPOS_EXCLUIDOS = new Set(['TLSA']);
+/**
+ * Tipos que el panel no pide: TLSA exige DNSSEC y cambia con cada
+ * certificado. CAA solo lo propone Stalwart 0.16 cuando emite él mismo el
+ * certificado del dominio (Mailway no se lo pide), y publicarlo en la zona del
+ * cliente limitaría qué autoridad puede emitir el certificado de su web.
+ */
+const TIPOS_EXCLUIDOS = new Set(['TLSA', 'CAA']);
+
+/**
+ * Primeras etiquetas de nombres que Stalwart 0.16 propone y Mailway no
+ * enruta, igual que TLSA:
+ * - `ua-auto-config` (CNAME) y `_ua-auto-config` (TXT `v=UAAC1…`): la
+ *   autoconfiguración PACC. Apuntaría al servidor de correo, pero Traefik no
+ *   tiene ruta para ese nombre (Mailway sirve la suya en autoconfig. y
+ *   autodiscover.) y el resumen del TXT depende del documento del motor.
+ * - `_validation-persist` (TXT): validación persistente del ACME del motor,
+ *   que Mailway no usa en los dominios de los clientes.
+ */
+const ETIQUETAS_EXCLUIDAS = new Set(['ua-auto-config', '_ua-auto-config', '_validation-persist']);
 
 /** Tipos que publican la web de un nombre (los navegadores consultan también HTTPS y SVCB). */
 const TIPOS_WEB = new Set(['A', 'AAAA', 'CNAME', 'HTTPS', 'SVCB']);
@@ -107,7 +124,8 @@ export function registrosWebExcluidos(domain: string, records: EngineDnsRecord[]
  * Registros del motor que de verdad hay que publicar para `domain`, con
  * nombres y destinos sin punto final:
  * - fuera los SRV de puertos no publicados;
- * - fuera TLSA;
+ * - fuera TLSA y CAA, y los de Stalwart 0.16 que Mailway no enruta (PACC
+ *   `ua-auto-config` y `_ua-auto-config`, y `_validation-persist`);
  * - fuera los registros de la web del dominio raíz y de www (A, AAAA, CNAME,
  *   HTTPS y SVCB): publicar el correo nunca debe pisar la web del cliente;
  * - fuera los nombres ajenos al dominio (un importador los rechazaría y
@@ -123,6 +141,7 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
     if (esRegistroWeb(record, domain)) continue;
     const name = sinPunto(record.name).toLowerCase();
     if (!dentroDelDominio(name, domain)) continue;
+    if (ETIQUETAS_EXCLUIDAS.has(name.split('.')[0]!)) continue;
     if (type === 'SRV') {
       if (SRV_EXCLUIDOS.some((prefijo) => `${name}.`.startsWith(prefijo))) continue;
       const puerto = puertoSrv(record.content);

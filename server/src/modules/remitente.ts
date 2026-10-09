@@ -3,6 +3,8 @@ import { decryptSecret, encryptSecret, generateMailboxPassword } from '../core/c
 import { HttpError, badRequest, conflict } from '../core/errors';
 import { withLock } from '../core/locks';
 import { getEngine } from '../engine';
+import type { MailEngine } from '../engine/types';
+import { cifrarContrasena } from './credenciales';
 
 /**
  * Remitente de los correos de configuración: la cuenta configuration@<dominio>.
@@ -71,11 +73,18 @@ function direccionOcupada(domainId: string): boolean {
  * La primera vez la crea en el motor; después solo descifra la contraseña.
  * En fila por dominio: dos envíos simultáneos no crean la cuenta dos veces
  * con contraseñas distintas.
+ *
+ * Su contraseña se guarda cifrada (hay que recuperarla para el SMTP), así que
+ * no necesita copia del hash: si hiciera falta, se recalcula. `engine` solo lo
+ * indica la herramienta de migración, que trabaja durante el mantenimiento.
  */
-export async function asegurarRemitenteConfiguracion(domain: {
-  id: string;
-  domain: string;
-}): Promise<{ email: string; password: string }> {
+export async function asegurarRemitenteConfiguracion(
+  domain: {
+    id: string;
+    domain: string;
+  },
+  engine: MailEngine = getEngine(),
+): Promise<{ email: string; password: string }> {
   const email = direccionRemitente(domain.domain);
   return withLock(claveCerrojo(domain.id), async () => {
     // Un buzón o alias configuration@ creado antes de reservar la dirección
@@ -98,7 +107,7 @@ export async function asegurarRemitenteConfiguracion(domain: {
         // Clave maestra cambiada: la contraseña guardada ya no se puede
         // leer. Se le pone una nueva en el motor y se sigue.
         const password = generateMailboxPassword(LONGITUD_CONTRASENA);
-        await getEngine().setMailboxPassword(email, password);
+        await engine.setMailboxPassword(email, cifrarContrasena(password));
         db.prepare('UPDATE remitentes_configuracion SET password_enc = ? WHERE domain_id = ?').run(
           encryptSecret(password),
           domain.id,
@@ -107,12 +116,12 @@ export async function asegurarRemitenteConfiguracion(domain: {
       }
     }
 
-    const engine = getEngine();
     const password = generateMailboxPassword(LONGITUD_CONTRASENA);
+    const passwordHash = cifrarContrasena(password);
     try {
       await engine.createMailbox({
         email,
-        password,
+        passwordHash,
         displayName: NOMBRE_REMITENTE_CONFIGURACION,
         quotaBytes: CUOTA_REMITENTE_BYTES,
       });
@@ -120,7 +129,7 @@ export async function asegurarRemitenteConfiguracion(domain: {
       // Ya estaba en el motor (un borrado de dominio a medias, una base
       // restaurada): es la cuenta reservada, se adopta con contraseña nueva.
       if (!(err instanceof HttpError) || err.code !== 'engine_exists') throw err;
-      await engine.setMailboxPassword(email, password);
+      await engine.setMailboxPassword(email, passwordHash);
     }
     try {
       db.prepare(

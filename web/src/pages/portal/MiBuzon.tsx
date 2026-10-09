@@ -13,6 +13,7 @@ import { formatDate } from '../../lib/format';
 import {
   formatoBytes,
   mensajeError,
+  TEXTO_INVALIDADA,
   type ContrasenaAplicacion,
   type PortalMe,
 } from '../../lib/portal';
@@ -21,7 +22,7 @@ import { Input } from '../../ui/Field';
 import { Cargando, Dialogo, Escala, Hoja, Logotipo, Marca, MarcaFondo, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
-import { AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
+import { AvisoAtencion, AvisoError, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
 import { VariablesIntegracion } from '../../components/VariablesIntegracion';
 import { AvatarBuzon } from '../../components/FotoBuzon';
 import { HojaPerfil } from './Perfil';
@@ -235,6 +236,8 @@ function InicioBuzon({ me }: { me: PortalMe }) {
         </Button>
       }
     >
+      {me.invalidatedAppPasswords > 0 && <AvisoContrasenasInvalidadas cuantas={me.invalidatedAppPasswords} />}
+
       <HojaEspacio me={me} />
 
       <HojaPerfil
@@ -272,9 +275,41 @@ function InicioBuzon({ me }: { me: PortalMe }) {
         </div>
       </Hoja>
 
-      <HojaContrasenasAplicacion />
-      <HojaCambioContrasena />
+      {/* Destino del aviso de contraseñas que han dejado de funcionar. */}
+      <div id="contrasenas-aplicacion" className="scroll-mt-4">
+        <HojaContrasenasAplicacion />
+      </div>
+      <HojaCambioContrasena correoWebNuevo={me.newWebmail === true} />
     </MarcoPortal>
+  );
+}
+
+/**
+ * Aviso arriba del todo: con la actualización del servidor de correo, las
+ * contraseñas de aplicación anteriores dejaron de funcionar y los
+ * dispositivos que las usaban no se conectan hasta que tengan una nueva.
+ */
+function AvisoContrasenasInvalidadas({ cuantas }: { cuantas: number }) {
+  return (
+    <AvisoAtencion
+      titulo={
+        cuantas === 1
+          ? 'Una contraseña de aplicación ha dejado de funcionar'
+          : `${cuantas} contraseñas de aplicación han dejado de funcionar`
+      }
+    >
+      <p>
+        El servidor de correo se ha actualizado y las contraseñas de aplicación creadas antes ya no sirven. Los
+        dispositivos y programas que las usaban no pueden recibir ni enviar correo hasta que les pongas una nueva. Tu
+        contraseña principal no ha cambiado.
+      </p>
+      <p className="mt-2">
+        <a href="#contrasenas-aplicacion" className="font-semibold text-petroleo underline underline-offset-2">
+          Crear una contraseña nueva para cada dispositivo
+        </a>{' '}
+        y escribirla en él en lugar de la anterior.
+      </p>
+    </AvisoAtencion>
   );
 }
 
@@ -348,6 +383,8 @@ function HojaContrasenasAplicacion() {
       setARevocar(null);
       toast('ok', `Se ha revocado la contraseña de «${app.name}».`);
       await queryClient.invalidateQueries({ queryKey: ['portal-app-passwords'] });
+      // El aviso de arriba cuenta las que dejaron de funcionar.
+      if (app.invalidatedAt) await queryClient.invalidateQueries({ queryKey: ['portal-me'] });
     },
     onError: (err) => toast('error', mensajeError(err, 'No se ha podido revocar la contraseña.')),
   });
@@ -468,7 +505,10 @@ function HojaContrasenasAplicacion() {
               key={app.id}
               className="regla-fila flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 last:border-b-0"
             >
-              <p className="min-w-0 grow basis-full break-words text-base text-tinta sm:basis-0">{app.name}</p>
+              <div className="min-w-0 grow basis-full sm:basis-0">
+                <p className="break-words text-base text-tinta">{app.name}</p>
+                {app.invalidatedAt && !app.revokedAt && <p className="text-sm text-tinta-2">{TEXTO_INVALIDADA}</p>}
+              </div>
               <div className="flex shrink-0 items-baseline gap-1.5 sm:w-32">
                 <span className="rotulo sm:hidden">Creada</span>
                 <span className="valor text-sm text-tinta-2">{formatDate(app.createdAt)}</span>
@@ -476,6 +516,8 @@ function HojaContrasenasAplicacion() {
               <div className="shrink-0 sm:w-28">
                 {app.revokedAt ? (
                   <MarcaFondo veredicto="sin-dato">Revocada</MarcaFondo>
+                ) : app.invalidatedAt ? (
+                  <MarcaFondo veredicto="fuera">Dejó de funcionar</MarcaFondo>
                 ) : (
                   <MarcaFondo veredicto="normal">Activa</MarcaFondo>
                 )}
@@ -508,8 +550,9 @@ function HojaContrasenasAplicacion() {
         {aRevocar && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              El dispositivo que utiliza la contraseña «{aRevocar.name}» dejará de recibir y enviar correo hasta que se
-              configure con otra contraseña. Los demás dispositivos no se ven afectados.
+              {aRevocar.invalidatedAt
+                ? `La contraseña «${aRevocar.name}» ya no funciona en ningún dispositivo: al revocarla solo se quita de la lista.`
+                : `El dispositivo que utiliza la contraseña «${aRevocar.name}» dejará de recibir y enviar correo hasta que se configure con otra contraseña. Los demás dispositivos no se ven afectados.`}
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="plano" className={TACTIL} onClick={() => setARevocar(null)}>
@@ -533,20 +576,25 @@ function HojaContrasenasAplicacion() {
 
 /* --------------------------- Cambio de contraseña -------------------------- */
 
-function HojaCambioContrasena() {
+function HojaCambioContrasena({ correoWebNuevo }: { correoWebNuevo: boolean }) {
   const toast = useToast();
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
   const [repetida, setRepetida] = useState('');
   const [error, setError] = useState('');
+  // El correo web nuevo no vuelve solo al acceso tras un cambio de contraseña:
+  // sigue intentándolo con la anterior y el servidor acaba bloqueando la conexión.
+  const [cerrarCorreoWeb, setCerrarCorreoWeb] = useState(false);
 
   const cambiar = useMutation({
-    mutationFn: () => api.post('/api/portal/password', { current: actual, next: nueva }),
-    onSuccess: () => {
+    mutationFn: () =>
+      api.post<{ ok: boolean; reopenWebmail?: boolean }>('/api/portal/password', { current: actual, next: nueva }),
+    onSuccess: (data) => {
       setActual('');
       setNueva('');
       setRepetida('');
       setError('');
+      setCerrarCorreoWeb(Boolean(data?.reopenWebmail));
       toast('ok', 'Se ha cambiado la contraseña del buzón.');
     },
     onError: (err) => setError(mensajeError(err, 'No se ha podido cambiar la contraseña.')),
@@ -566,9 +614,20 @@ function HojaCambioContrasena() {
   return (
     <Hoja title="Cambiar la contraseña">
       <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
+        {cerrarCorreoWeb && (
+          <AvisoAtencion titulo="Cierra el correo web y vuelve a entrar">
+            <p>
+              Si tienes el correo web abierto en alguna pestaña o dispositivo, ciérralo y vuelve a entrar con la
+              contraseña nueva. Mientras siga abierto, intentará conectar con la anterior y el servidor de correo
+              puede bloquear tu conexión durante una hora; en ese tiempo, desde esa red tampoco se sincronizarán
+              tu móvil ni tu ordenador.
+            </p>
+          </AvisoAtencion>
+        )}
         <Nota>
           Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzcas en ellos
           la nueva. Los que utilizan una contraseña de aplicación no se ven afectados.
+          {correoWebNuevo && ' Si tienes el correo web abierto, después tendrás que cerrarlo y volver a entrar.'}
         </Nota>
         <Input
           label="Contraseña actual"

@@ -31,3 +31,14 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
 export function clientLockKey(clientId: string): string {
   return `altas:${clientId}`;
 }
+
+/**
+ * Clave de los cambios de estado de un buzón en el motor (suspender,
+ * reactivar). Pone en fila las rutas con la corrección de las suspensiones
+ * antiguas (modules/suspensiones.ts), que lee el estado del panel y lo aplica:
+ * sin la fila, un buzón reactivado mientras tanto podía quedarse suspendido
+ * en el motor.
+ */
+export function mailboxStateLockKey(mailboxId: string): string {
+  return `estado-buzon:${mailboxId}`;
+}

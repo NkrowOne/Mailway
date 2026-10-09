@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.3.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.4.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -34,7 +34,7 @@ multi-cliente**:
 │ Traefik de Skyway :80/:443                                                      │
 │   ├─ panel.<d>      → skyway-mailway-panel:4100   (Node, desplegado por Skyway) │
 │   ├─ webmail.<d>    → mailway-webmail:80          (Roundcube, compose)          │
-│   ├─ mail.<d>       → mailway-mail:8080           (web y API del motor)         │
+│   ├─ mail.<d>       → mailway-mail:8080           (JMAP, autoconfig., salud)    │
 │   └─ autoconfig./autodiscover./mta-sts./marca blanca                            │
 │        → rutas dinámicas: Mailway /api/traefik/config → puente de Skyway        │
 │                                                                                 │
@@ -43,15 +43,17 @@ multi-cliente**:
 │   └─SMTP 587 (API de envío) ─► mailway-mail              red skyway-edge        │
 │ webmail ─IMAP 993 / SMTP 465 / Sieve 4190─► mailway-mail red mailway-internal   │
 │                                                          (10.203.53.0/24)       │
-│ mailway-mail: Stalwart v0.15.5 — :25 :465 :587 :993 :4190 directos al host      │
+│ mailway-mail: Stalwart 0.16 (0.15 hasta migrar) — :25 :465 :587 :993 :4190      │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Pieza | Qué es | Cómo se despliega | Por qué separada |
 |---|---|---|---|
 | Panel (`server/` + `web/`) | Fastify + React; toda la lógica multi-cliente | Skyway desde GitHub (o `docker-compose.standalone.yml`) | Es una web normal: un puerto, TLS de Traefik, despliegue por cambio de rama |
-| Motor (Stalwart v0.15.5) | SMTP, IMAP, ManageSieve, antispam, DKIM | `deploy/docker-compose.mail.yml` | Necesita cinco puertos del host; Skyway publica uno por servicio |
+| Motor (Stalwart 0.16; 0.15 en las instalaciones sin migrar) | SMTP, IMAP, ManageSieve, antispam, DKIM | `deploy/docker-compose.mail.yml` con `deploy/motor/<motor>/compose.yml` | Necesita cinco puertos del host; Skyway publica uno por servicio |
 | Webmail (Roundcube 1.7) | Cliente web IMAP en español | Mismo compose | Imagen oficial con parches de seguridad activos |
+| Pasarela HTTP del motor (nginx) | Calcula la IP real (redes de Docker y rangos de Cloudflare) y se la pasa al motor como única dirección | Mismo compose (`deploy/motor/pasarela`), con los dos motores | Traefik puede confiar en Cloudflare sin que el cliente elija la IP que ve el motor |
+| Correo web nuevo (Bulwark 1.13, beta) | Webmail JMAP con calendario, contactos y la marca de cada cliente, elegido por cliente | Perfil `bulwark` del mismo compose con su pasarela nginx, solo con `sudo mailway bulwark on` (`deploy/bulwark/README.md`) | Solo funciona con Stalwart 0.16; el panel lo configura por su API de administración |
 
 El servidor se organiza en `server/src/modules/` (un módulo por área),
 `server/src/engine/` (drivers del motor) y `server/src/core/` (base de datos,
@@ -63,13 +65,33 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
 
 ### 3.1 Motor y datos
 
-1. **Stalwart como motor, fijado a v0.15.5.** Un solo contenedor con SMTP,
-   IMAP, antispam, DKIM y **API REST de gestión**, sin pegamento
-   Postfix + Dovecot + Rspamd. La v0.16 eliminó la API REST (migró a JMAP):
-   actualizar exige un driver nuevo (sección 6).
+1. **Stalwart como motor, con la versión exacta de cada serie.** Un solo
+   contenedor con SMTP, IMAP, antispam, DKIM y API de gestión, sin pegamento
+   Postfix + Dovecot + Rspamd. Las instalaciones nuevas usan la **0.16**
+   (gestión por JMAP); las anteriores siguen en la **0.15** (API REST) hasta
+   que se migran (decisión 31). Cada serie vive en su fichero
+   (`deploy/motor/stalwart-0.15/compose.yml` y `stalwart-0.16/compose.yml`:
+   imagen, volúmenes, credenciales, rutas de Traefik y salud) y
+   `MAILWAY_MOTOR` de `deploy/.env` elige cuál incorpora el servicio
+   `mailway-mail` con `extends`. Sin ese valor, la 0.15: una instalación
+   anterior resuelve exactamente la misma configuración que antes.
 2. **Driver de motor intercambiable.** Las rutas nunca hablan con Stalwart:
    usan `MailEngine` (`server/src/engine/types.ts`) mediante `getEngine()`.
-   Drivers: `stalwart` y `demo` (todo el panel funciona sin motor real).
+   Drivers: `stalwart` (la URL del motor es la misma con las dos versiones:
+   averigua qué API habla, 0.15 o 0.16, y usa el driver de esa) y `demo`
+   (todo el panel funciona sin motor real).
+   **Suspender** un buzón le quita el permiso de autenticarse y le deja el rol
+   `user`, que es el que da `email-receive`: no entra por ningún protocolo y el
+   correo le sigue llegando. En 0.15 se quitan `authenticate` y
+   `authenticate-oauth`, y el rol se añade con `addItem`, nunca con `set`:
+   roles, listas y grupos son una misma relación y `set roles` saca al buzón
+   de todos sus alias. En 0.16 basta `authenticate`, que el motor exige con
+   cualquier credencial (también un token OAuth o una clave de API). Las
+   versiones anteriores suspendían con `roles: []` (el correo se devolvía al
+   remitente y el buzón salía de sus alias); lo que dejaron lo corrige una
+   sola vez `modules/suspensiones.ts` al arrancar (o el vigilante, si el motor
+   no respondía): vuelve a suspender así los buzones suspendidos y fija de
+   nuevo los destinos de todos los alias.
 3. **Semántica de errores del motor.** Stalwart 0.15 devuelve los errores de
    gestión con **HTTP 200** y un cuerpo sin `data`
    (`{"error":"notFound"|"fieldAlreadyExists"|"other"|…}`). El driver los
@@ -262,19 +284,27 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     anuncia el ID del contenedor en su DNS), `http.use-x-forwarded=true`
     (sin él, un escáner que pide `/wp-login.php` por Traefik banea la IP de
     Traefik) y `server.allowed-ip.<red interna>` (exime del bloqueo solo al
-    webmail y, en la instalación autónoma, al panel).
+    webmail y, en la instalación autónoma, al panel). Con la 0.16, los mismos
+    ajustes (más el 587 con STARTTLS, que ya no viene por defecto, y sin el
+    autoservicio del motor) los aplica el panel también desde el instalador,
+    con su herramienta de terminal (`motor.js provisionar`): el instalador
+    no duplica esa lógica, y reinicia el motor cuando una escucha nueva lo
+    pide. Traefik quita la cabecera `Forwarded` antes del motor, que la
+    leería antes que `X-Forwarded-For`.
 25. **Red interna con subred fija** (`10.203.53.0/24`, motor en
     `10.203.53.10`). Poco común para no chocar con redes de Docker ni VPN, y
     fija para que la exención cubra solo al webmail. El webmail fija
     `mailway-mail` a esa IP (`extra_hosts`) para no entrar por la red del
     proxy.
-26. **Certificado del motor.** Preferido: ACME del propio Stalwart con DNS-01
-    en Cloudflare (no depende de Traefik ni del puerto 80, renueva 30 días
-    antes). Alternativa (perfil `tls`): el extractor propio
-    (`deploy/tls/extractor.py`) toma de Traefik solo el certificado del
-    servidor de correo, lo valida antes de usarlo, pide la recarga al motor,
-    comprueba 993/465 y vuelve al anterior si falla. El vigilante recarga
-    además los certificados a diario y avisa si caducan.
+26. **Certificado del motor.** Con la 0.16, siempre el de Traefik con el
+    extractor propio (perfil `tls`, `deploy/tls/extractor.py`): toma de
+    Traefik solo el certificado del servidor de correo, lo valida antes de
+    usarlo, lo da al motor (con la 0.16, un certificado de tipo «File» que
+    crea por JMAP), comprueba 993/465 y vuelve al anterior si falla. El ACME
+    de la 0.16 exigiría darle la gestión automática del DNS de un dominio.
+    Con la 0.15, además, el ACME del propio Stalwart con DNS-01 en
+    Cloudflare. El vigilante recarga los certificados a diario y avisa si
+    caducan.
 
 ### 3.7 Seguridad del panel
 
@@ -291,6 +321,121 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     `Bearer` no se lee la cookie.
 
 Detalle en [SEGURIDAD.md](SEGURIDAD.md).
+
+### 3.8 Actualizaciones
+
+29. **Parches automáticos, pero probados.** Todas las imágenes llevan su
+    versión exacta (Dockerfile y compose): nada cambia en un servidor sin
+    haber pasado la CI. Dependabot agrupa cada lunes los parches de npm, de
+    las imágenes y de las acciones, y `parches-automaticos.yml` fusiona un
+    grupo solo cuando han terminado bien todas las comprobaciones de su
+    commit, incluida la imagen del panel arrancada y, si cambian los compose,
+    la pila con Stalwart y Roundcube reales; sin ejecutar nunca el código del
+    PR con permisos de escritura. Solo parches, y los de Stalwart, cada
+    serie por su lado (una carpeta por motor) y solo si pasan además las
+    pruebas con los motores reales (el panel contra cada uno, la pila con
+    cada uno y la migración): un parche no migra los datos del motor; un
+    cambio de serie sí, y nunca llega solo (decisión 31).
+30. **Actualización del servidor con vuelta atrás.** `mailway update --auto`
+    (`deploy/mailway.sh`, cada noche con `mailway auto-update on`) no toca
+    nada sin versión nueva; con ella, exige que el servidor supere antes
+    `instalar.sh --comprobar` y `/api/health` del panel, guarda el commit
+    anterior en `deploy/.actualizacion`, aplica, comprueba durante tres
+    minutos y, si falla, vuelve al commit anterior con sus imágenes exactas
+    y lo comprueba (códigos 0, 1 y 2). No restaura bases de datos: las
+    migraciones del panel solo añaden y el panel anterior ignora las que no
+    conoce. Una versión que falla se reintenta una vez; una actualización
+    interrumpida se retoma. Avisa a la administración con `tools/avisar.js`
+    (Avisos y sus canales). Junto a Skyway, el panel lo sigue desplegando
+    Skyway desde GitHub y no se vuelve atrás desde aquí. Nunca cambia de
+    motor: con la 0.15 recuerda su fin de soporte (1 de diciembre de 2026) y
+    cómo migrar.
+
+### 3.9 Stalwart 0.16
+
+31. **Migración explícita, comprobada antes de abrir y con vuelta atrás.**
+    `instalar.sh --migrar-motor` (`sudo mailway migrar-motor`) sigue el
+    procedimiento oficial de Stalwart con el script oficial (descargado de
+    un commit fijo y comprobado con su sha256: su licencia no permite
+    incluirlo) y `stalwart-cli apply`, y lo adapta a Mailway: comprobaciones
+    sin cambiar nada; panel en mantenimiento y copia de los hashes de las
+    contraseñas (la 0.16 ya no los devuelve); copia de los datos de la 0.15
+    (montados en solo lectura) a volúmenes nuevos **con fecha**; modo
+    recuperación solo para `apply`; un primer arranque **sin puertos
+    públicos** para los ajustes del panel (también las suspensiones, que el
+    script no conserva), el certificado y la comparación con el volcado; y
+    solo entonces el motor definitivo. Cualquier fallo antes de su
+    comprobación vuelve a la 0.15 sola. El volumen de la 0.15 nunca se
+    escribe: es la copia de seguridad, la vuelta atrás (`--revertir-motor`)
+    y solo se borra con una orden aparte que pide su nombre
+    (`--retirar-motor-anterior`). Una migración nueva nunca reutiliza los
+    volúmenes de un intento: nada hay que borrar para repetirla.
+32. **En modo recuperación no se aplica ningún ajuste.** Si allí se crea una
+    escucha, los ajustes de autenticación o un registro de eventos, el
+    primer arranque normal ya no crea los suyos por defecto (se queda sin
+    escuchar en 25, 465 y 993, o con los roles de usuario vacíos). Por eso
+    el panel provisiona con el motor ya arrancado normalmente; la única
+    excepción es el registro de eventos en la salida estándar, que se crea a
+    propósito para que no se cree el de `/var/log/stalwart` (que la imagen no
+    tiene).
+33. **Administrador de recuperación como única credencial.** La 0.16 acepta
+    `STALWART_RECOVERY_ADMIN` en cada arranque (también fuera del modo de
+    recuperación), y sale de la misma `STALWART_ADMIN_PASSWORD` de
+    `deploy/.env`. La cuenta `admin@<servidor>` que crea el primer arranque
+    se borra (aún vacía). El dominio por defecto del sistema es el propio
+    nombre del servidor, reservado: así ningún dominio de un cliente queda
+    como el del sistema (el motor no deja borrarlo).
+34. **En `mail.<dominio>`, solo lo que necesitan los programas de correo.**
+    La 0.16 sirve una web de administración y otra de autoservicio desde las
+    que un titular podría cambiar su contraseña o crearse contraseñas de
+    aplicación a espaldas de Mailway: Traefik publica una lista de rutas
+    permitidas (JMAP, `.well-known`, DAV, autoconfiguración, salud) y
+    responde 403 a todo lo demás, también a lo que añada un parche.
+
+### 3.10 Correo web nuevo (Bulwark, beta)
+
+35. **Por cliente y solo en sus webmail propios.** Roundcube sigue siendo el
+    predeterminado y la dirección general del webmail. La administración
+    elige el correo web nuevo para un cliente (cambia lo que ven todos sus
+    usuarios y abre el CORS del motor); exige Bulwark instalado (las tres
+    variables `MAILWAY_BULWARK_*`) y Stalwart 0.16, porque el navegador habla
+    JMAP directamente con el motor. Las rutas de Traefik eligen el destino
+    nombre a nombre (`mailway-bulwark` o `mailway-webmail`) y vuelven solas a
+    Roundcube si Bulwark deja de estar disponible o el motor no es 0.16. Para
+    decidirlo sin esperar al motor en cada sondeo de Traefik, el panel guarda
+    la última versión que lo ha visto responder (`engine/apiconocida.ts`).
+36. **CORS del motor solo mientras hace falta, y bloqueos que caducan.** El
+    primer cliente que elige el correo web nuevo abre `Http.usePermissiveCors`
+    **antes** de guardarse la elección (nunca hay un cliente servido por
+    Bulwark con el CORS cerrado) y el último que vuelve a Roundcube lo cierra.
+    Con 0.16 los ajustes recomendados fijan además una hora de bloqueo por
+    fallos de acceso (`Security.authBanPeriod`; por defecto, para siempre):
+    con Bulwark los usuarios llegan al motor desde su IP real y una pestaña
+    abierta tras cambiar la contraseña sigue reintentando con la antigua, lo
+    que bloquearía para siempre una oficina entera tras NAT. «Mi buzón» pide
+    además cerrar el correo web tras el cambio.
+37. **Imágenes de marca subidas a Bulwark, con nombre por contenido.** El
+    panel las guarda (es la fuente de verdad) y las sube a Bulwark
+    (`POST /api/admin/branding`), en lugar de servirlas él: así se ven en el
+    mismo origen del correo web, con las cabeceras de Bulwark, sin depender
+    del panel en cada pantalla de acceso, y Bulwark puede generar con ellas el
+    icono de la aplicación, que solo genera a partir de ficheros propios. Como Bulwark
+    nombra el fichero por nombre de host y hueco, y el navegador (una hora) y
+    Bulwark (en memoria, el icono) guardan cada dirección, el panel sube cada
+    imagen con un «host» sacado de su sha256 (`mw-<32 hex>`): cada versión
+    tiene su dirección, la misma imagen en varios webmail se sube una vez y la
+    que deja de usarse se retira. Solo PNG, JPEG o WebP comprobados por su
+    contenido (y sus dimensiones leídas de la cabecera, sin decodificar),
+    nunca SVG: en el origen del correo web sería código.
+38. **Sincronización idempotente con una sola sesión.** Bulwark limita los
+    inicios de sesión de administración (también los buenos), así que el
+    panel usa un único cliente de su API para todo el proceso y reutiliza la
+    sesión. Guarda la huella de lo último aplicado: si no cambia, no se
+    conecta (salvo una revisión cada 6 horas que repone lo que alguien haya
+    tocado o un volumen perdido), y si cambia solo escribe lo que difiere. Va
+    en segundo plano, bajo el cerrojo `bulwark`, sin bloquear ninguna ruta;
+    los fallos se reintentan con espera creciente (o la que pida Bulwark) y
+    avisan al tercero seguido.
 
 ## 4. Modelo de datos
 
@@ -311,12 +456,16 @@ edita una ya publicada.
 | `009-perfil-de-buzones` | `mailbox_photos`: foto de cada buzón (tipo comprobado por su firma, bytes y fecha para invalidar la caché), aparte de `mailboxes` para que los listados no carguen imágenes. |
 | `010-enlaces-recuperables` | `setup_links.token_enc`: token del enlace cifrado con la clave maestra para que la administración pueda volver a enviarlo; se vacía al caducar o revocar. |
 | `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado, o el que ya existía en el cliente, y revocación). |
+| `013-webmail-automatico` | `webmail_descartados`: nombres de webmail de marca eliminados a mano, que el alta automática de `webmail.<dominio>` no vuelve a crear (darlo de alta a mano lo saca de la lista); `clients.webmail_automatico` (interruptor del cliente, activado por defecto) y `client_domains.automatico` (lo dio de alta el webmail automático: es lo que se retira al desactivarlo). |
 | `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
+| `014-credenciales-locales` | `credenciales_buzon`: copia cifrada del hash `$6$` de la contraseña principal de cada buzón (Stalwart 0.16 enmascara los secretos); columnas de `app_passwords` (`verifier`, `engine_api`, `invalidated_at`, `invalidation_notified_at`) y de la credencial SMTP de `api_keys` y `forms` (`smtp_engine_api`, `smtp_invalidated_at`) para el cambio de versión del motor. |
+| `015-correo-web-por-cliente` | `clients.webmail_motor` (`roundcube` por defecto o `bulwark`), `webmail_marca` (nombre, nombre corto, empresa y enlaces de la marca del correo web nuevo) y `webmail_marca_imagenes` (logotipos e iconos: tipo comprobado, bytes, sha256 y dimensiones; aparte para no leer los bytes al comparar). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
 clients            cliente → plan, suspensión, notas internas (solo la administración),
-                   external_ref (p. ej. skyway:project:<id>)
+                   external_ref (p. ej. skyway:project:<id>), webmail_motor
+                   (roundcube | bulwark)
 users              usuarios del panel: admin (todo) | client (su cliente); deshabilitables
 sessions           sesiones del panel (hash del token, caducidad, IP, agente)
 management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, revocación
@@ -344,6 +493,9 @@ send_idempotency   Idempotency-Key de /v1/send: hash del valor y del cuerpo, res
                    guardada 24 h por clave de API
 cloudflare_accounts  cuentas de Cloudflare (token cifrado; client_id NULL = instancia)
 client_domains     dominios de marca blanca (webmail | panel) y su estado
+webmail_marca      marca del correo web nuevo de cada cliente (textos y enlaces)
+webmail_marca_imagenes  sus logotipos e iconos (PNG, JPEG o WebP; sha256 y dimensiones)
+credenciales_buzon copia cifrada del hash $6$ de la contraseña principal de cada buzón
 alerts             incidencias del vigilante (una abierta por dedupe_key, índice parcial)
 audit_log          quién hizo qué, cuándo, desde qué IP y con qué token (el cliente no ve
                    la IP ni el correo de la administración)
@@ -452,6 +604,35 @@ controles táctiles de 44 px y un paso a la vez.
   existe en el mismo cliente: elige una contraseña nueva en lugar de crear
   otro acceso (nunca para la administración ni para otro cliente).
 
+### Hecho en la 1.4
+
+- **Stalwart 0.16** con su driver por JMAP: el panel averigua solo qué versión
+  tiene delante (también si cambia con el panel en marcha) y guarda una copia
+  cifrada del hash de cada buzón, que 0.16 ya no da; las contraseñas de
+  aplicación que no sobreviven a la migración se marcan, se avisa a cada
+  titular y Skyway vuelve a conectar sus servicios.
+- **Suspender un buzón** ya no devuelve su correo ni lo saca de sus alias, y
+  una corrección única arregla lo que dejó la forma anterior.
+- **Actualizaciones automáticas** (`mailway auto-update on`), con comprobación
+  y vuelta atrás, y parches de dependencias e imágenes fusionados solos si
+  pasan todas las pruebas.
+- **Webmail de marca automático** para cada dominio y webmail detrás del
+  proxy de Cloudflare cuando su certificado lo cubre.
+- Traefik borra la cabecera `Forwarded` antes de llegar al motor.
+- Las instalaciones nuevas usan Stalwart 0.16: primer arranque sin asistente,
+  ajustes de Mailway con la herramienta del motor del panel, certificado de
+  Traefik con el extractor y solo las rutas de los programas de correo en
+  `mail.<dominio>` (decisiones 31 a 34).
+- `mailway migrar-motor`, `revertir-motor` y `retirar-motor-anterior` para
+  las instalaciones con la 0.15; `mailway update` nunca cambia de motor.
+- CI con los motores reales: el panel contra la 0.16 y la 0.15, la pila con
+  cada motor y la migración con su vuelta atrás.
+- **Correo web nuevo (beta), por cliente**: Roundcube o Bulwark, con la marca
+  de cada cliente (textos, logotipos e iconos) aplicada por el panel con su
+  política, rutas de Traefik nombre a nombre, CORS del motor solo mientras
+  hace falta y bloqueos por fallos que caducan en una hora (decisiones 35 a
+  38).
+
 ### Límites conocidos
 
 - La cola del motor se muestra agregada (pendientes), sin detalle por mensaje.
@@ -461,21 +642,25 @@ controles táctiles de 44 px y un paso a la vez.
   falsearla al hablar con `mailway-mail:8080`. Es necesario para no banear la
   IP de Traefik; se resolverá con una red dedicada Traefik–Stalwart.
 - MTA-STS se publica en modo `testing`.
+- Stalwart 0.15 deja de recibir parches de seguridad el 1 de diciembre de
+  2026: las instalaciones que no se migren a la 0.16 se quedan sin ellos.
+- Al migrar a la 0.16 se pierden las contraseñas de aplicación de la 0.15
+  (la 0.16 no las conserva): el panel avisa y se crean de nuevo. El correo
+  que llega a la 0.16 después de migrar no está en la 0.15 si se vuelve
+  atrás.
 
 ### Hoja de ruta, por orden de valor
 
-1. **Driver JMAP para Stalwart ≥ 0.16**, cuando se estabilice su superficie de
-   gestión (hoy la imagen queda fijada a 0.15.5).
-2. **Webhooks de estado de envío** (entregado, rebotado) hacia las
+1. **Webhooks de estado de envío** (entregado, rebotado) hacia las
    aplicaciones de los clientes.
-3. **Plantillas transaccionales** con variables (`{{codigo}}`) y versiones.
-4. **Red dedicada Traefik–Stalwart** para no confiar en `X-Forwarded-For` de
+2. **Plantillas transaccionales** con variables (`{{codigo}}`) y versiones.
+3. **Red dedicada Traefik–Stalwart** para no confiar en `X-Forwarded-For` de
    toda la red del proxy.
-5. **Passkeys** para el panel (mismo enfoque que Skyway).
-6. **Módulo antiabuso**: umbrales de rebote por clave y pausa automática.
-7. **Importación y exportación** de buzones (migración desde cPanel y otros).
-8. **Detalle de la cola** por mensaje y reintento manual.
-9. **MTA-STS en modo `enforce`** cuando el certificado del motor lleve un
+4. **Passkeys** para el panel (mismo enfoque que Skyway).
+5. **Módulo antiabuso**: umbrales de rebote por clave y pausa automática.
+6. **Importación y exportación** de buzones (migración desde cPanel y otros).
+7. **Detalle de la cola** por mensaje y reintento manual.
+8. **MTA-STS en modo `enforce`** cuando el certificado del motor lleve un
    tiempo estable.
 
 ## 7. Desarrollo local

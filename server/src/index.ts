@@ -1,6 +1,8 @@
 import { buildApp } from './app';
 import { config } from './config';
 import { applyAdminFromEnv } from './modules/adminenv';
+import { capturarSiProcede } from './modules/credenciales';
+import { iniciarReparacionSuspensiones } from './modules/suspensiones';
 import { liberarIdempotenciaInterrumpida } from './modules/transactional';
 import { startWatchdog } from './modules/watchdog';
 
@@ -33,7 +35,27 @@ async function main(): Promise<void> {
     `Mailway escuchando en http://${config.host}:${config.port} (datos en ${config.dataDir})`,
   );
 
+  // Sin esperarla: corrige una vez en el motor lo que dejó la forma anterior
+  // de suspender (buzones que devolvían su correo y alias sin sus destinos).
+  // Si el motor aún no responde (arrancan a la vez), la reintenta el vigilante.
+  iniciarReparacionSuspensiones({ info: (msg) => app.log.info(msg), warn: (msg) => app.log.warn(msg) });
   startWatchdog({ warn: (msg) => app.log.warn(msg) });
+
+  // Con Stalwart 0.15, copia en segundo plano el hash de los buzones que aún
+  // no lo tienen en el panel: 0.16 ya no los da, y la copia tiene que estar
+  // completa antes de migrar. No retrasa el arranque ni lo hace fallar.
+  void capturarSiProcede()
+    .then((resultado) => {
+      if (resultado && resultado.capturados > 0) {
+        app.log.info(`Copia local de contraseñas: ${resultado.capturados} buzón(es) copiados de Stalwart 0.15.`);
+      }
+      if (resultado && resultado.fallidos.length > 0) {
+        app.log.warn(
+          `Copia local de contraseñas: ${resultado.fallidos.length} buzón(es) sin copiar (${resultado.fallidos.slice(0, 5).join(', ')}${resultado.fallidos.length > 5 ? '…' : ''}).`,
+        );
+      }
+    })
+    .catch((err: unknown) => app.log.warn(`Copia local de contraseñas: ${(err as Error).message}`));
 }
 
 main().catch((err) => {

@@ -1,0 +1,127 @@
+# Actualizaciones de dependencias con Dependabot.
+#
+# Cada lunes de madrugada abre PR con lo nuevo de npm, de las imágenes de
+# Docker (Dockerfile del panel y compose de deploy/) y de las acciones de
+# GitHub. Los PARCHES (x.y.Z) de cada ecosistema van juntos en un grupo
+# «parches-…», y los de seguridad de npm en «seguridad-npm»:
+# .github/workflows/parches-automaticos.yml los fusiona solo cuando todas las
+# comprobaciones de su commit han terminado bien, incluida la pila de correo
+# con contenedores reales (stack.yml) si tocan los compose. Lo demás (versiones
+# menores, y las de seguridad que no son un parche) llega en PR sueltos que
+# revisa una persona.
+#
+# En cada servidor, «mailway update --auto» (sudo mailway auto-update on) aplica
+# lo fusionado cada noche, lo comprueba y vuelve a la versión anterior si algo
+# falla (docs/DESPLIEGUE-SKYWAY.md, sección 8.1).
+version: 2
+updates:
+  # Un solo package-lock.json en la raíz para server/ y web/ (workspaces).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-npm:
+        applies-to: version-updates
+        update-types: [patch]
+      seguridad-npm:
+        applies-to: security-updates
+        update-types: [patch]
+
+  # Imagen base del panel (Dockerfile): Node con versión exacta.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-docker:
+        update-types: [patch]
+    ignore:
+      # Un salto de versión mayor (Node 22 → 24) siempre a mano.
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  # Webmail, extractor, Traefik propio, las pasarelas (nginx) y Bulwark
+  # (deploy/docker-compose.*.yml).
+  #
+  # Bulwark solo recibe parches (1.13.x), en un PR propio que no se fusiona
+  # solo (el grupo no es «parches-…»): publica versiones cada semana y su
+  # pasarela solo cierra las rutas que conoce, así que cada versión pasa por
+  # la lista «Actualizar Bulwark» de deploy/bulwark/README.md (CHANGELOG,
+  # rutas nuevas, README, prueba.sh y su prueba del servidor). La CI ensaya
+  # la imagen nueva (deploy/bulwark/prueba.sh y la pila con Bulwark). Una
+  # versión menor (1.14) se sube a mano, con la misma lista.
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      bulwark:
+        patterns: ['ghcr.io/bulwarkmail/*']
+        update-types: [patch]
+      parches-compose:
+        exclude-patterns: ['ghcr.io/bulwarkmail/*']
+        update-types: [patch]
+    ignore:
+      - dependency-name: 'ghcr.io/bulwarkmail/webmail'
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  # Cada motor en su carpeta (deploy/motor/stalwart-0.15 y stalwart-0.16, el
+  # de las instalaciones nuevas, con el CLI de Stalwart que usa la
+  # migración): así cada uno solo ve su versión y sube solo dentro de su
+  # serie. Los parches (0.15.x, 0.16.x) se fusionan solos si pasan las
+  # pruebas con los motores reales (contrato del panel, pila y migración, en
+  # stack.yml). Un cambio de serie (0.15 → 0.16, o a la 0.17) cambia la
+  # gestión o los datos del motor y nunca llega por aquí: de la 0.15 a la
+  # 0.16 se pasa con «mailway migrar-motor».
+  - package-ecosystem: docker-compose
+    directory: /deploy/motor/stalwart-0.16
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-motor-016:
+        update-types: [patch]
+    ignore:
+      - dependency-name: stalwartlabs/stalwart
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: docker-compose
+    directory: /deploy/motor/stalwart-0.15
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-motor-015:
+        update-types: [patch]
+    ignore:
+      - dependency-name: stalwartlabs/stalwart
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-actions:
+        update-types: [patch]

@@ -468,14 +468,14 @@ test('si falla el INSERT de la clave se retira la contraseña de aplicación del
   const retiradas: string[] = [];
   const add = engine.addAppPassword.bind(engine);
   const remove = engine.removeAppPassword.bind(engine);
-  engine.addAppPassword = async (email, password, label) => {
-    const stored = await add(email, password, label);
-    anadidas.push(stored);
-    return stored;
+  engine.addAppPassword = async (email, label, propuesta) => {
+    const creada = await add(email, label, propuesta);
+    anadidas.push(creada.ref);
+    return creada;
   };
-  engine.removeAppPassword = async (email, stored) => {
-    retiradas.push(stored);
-    await remove(email, stored);
+  engine.removeAppPassword = async (email, ref) => {
+    retiradas.push(ref);
+    await remove(email, ref);
   };
   db.exec(
     "CREATE TEMP TRIGGER fallo_alta_clave BEFORE INSERT ON api_keys BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END;",

@@ -14,6 +14,8 @@ export interface AppPasswordInfo {
   name: string;
   createdAt: number;
   revokedAt: number | null;
+  /** Dejó de funcionar con la actualización del servidor de correo; null si sigue valiendo. */
+  invalidatedAt: number | null;
 }
 
 export interface ClientUser {

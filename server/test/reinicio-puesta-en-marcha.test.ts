@@ -11,6 +11,7 @@ import {
   createDomain,
   createMailbox,
   type TestContext,
+  motorAcepta,
 } from './helpers';
 
 /*
@@ -145,7 +146,7 @@ test('reinicia todos los buzones activos del cliente, salta los suspendidos y no
   assert.deepEqual(r, { reset: 2, skipped: 1, failed: [] }, 'solo los recuentos: nunca contraseñas');
 
   for (const b of [ana, luis]) {
-    assert.equal(await engine.verifyCredentials(b.email, b.password), false, `${b.email}: la contraseña anterior ya no vale`);
+    assert.equal(await motorAcepta(b.email, b.password), false, `${b.email}: la contraseña anterior ya no vale`);
     assert.equal(enlaces(b.mailboxId), 0, `${b.email}: sin enlaces (tampoco uno nuevo)`);
     assert.equal(configuredAt(b.mailboxId), null, `${b.email}: vuelve a estar sin configurar`);
     assert.equal(envios(b.mailboxId), 0, `${b.email}: sin correos de configuración`);
@@ -157,7 +158,7 @@ test('reinicia todos los buzones activos del cliente, salta los suspendidos y no
   const me = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie: rastroAna.portalCookie } });
   assert.equal(me.statusCode, 401);
   // Por defecto, las contraseñas de aplicación siguen (pueden ser de integraciones).
-  assert.equal(await engine.verifyCredentials(ana.email, rastroAna.appPassword), true);
+  assert.equal(await motorAcepta(ana.email, rastroAna.appPassword), true);
   const activas = db
     .prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ? AND revoked_at IS NULL')
     .get(ana.mailboxId) as { c: number };
@@ -168,7 +169,7 @@ test('reinicia todos los buzones activos del cliente, salta los suspendidos y no
   assert.ok(configuredAt(pausado.mailboxId));
 
   // El otro cliente, intacto.
-  assert.equal(await engine.verifyCredentials(ajeno.email, ajeno.password), true);
+  assert.equal(await motorAcepta(ajeno.email, ajeno.password), true);
   assert.equal(enlaces(ajeno.mailboxId), 1);
   assert.ok(configuredAt(ajeno.mailboxId));
   assert.equal(envios(ajeno.mailboxId), 1);
@@ -208,7 +209,7 @@ test('con revokeAppPasswords también retira las contraseñas de aplicación y s
   const res = await reiniciarCliente(cliente.clientId, { revokeAppPasswords: true });
   assert.equal(res.statusCode, 200, res.body);
   assert.deepEqual(res.json(), { reset: 1, skipped: 0, failed: [] });
-  assert.equal(await engine.verifyCredentials(b.email, appPassword), false);
+  assert.equal(await motorAcepta(b.email, appPassword), false);
   const filas = db.prepare('SELECT COUNT(*) AS c FROM app_passwords WHERE mailbox_id = ?').get(b.mailboxId) as { c: number };
   assert.equal(filas.c, 0);
   const [registro] = auditoria('client.onboarding_reset', cliente.clientId);
@@ -274,7 +275,7 @@ test('solo la administración con sesión del panel: ni el cliente, ni otro clie
     config.demoMode = true;
   }
 
-  assert.equal(await engine.verifyCredentials(b.email, b.password), true, 'nada de lo anterior ha cambiado la contraseña');
+  assert.equal(await motorAcepta(b.email, b.password), true, 'nada de lo anterior ha cambiado la contraseña');
   assert.equal(auditoria('client.onboarding_reset', cliente.clientId).length, 0);
 });
 
@@ -311,10 +312,10 @@ test('un buzón que falla en el motor no detiene los demás y se informa en fail
   assert.ok(r.failed[1]!.error.length > 0);
 
   // El que funcionó, reiniciado; los que fallaron, como estaban (se puede repetir).
-  assert.equal(await engine.verifyCredentials(bien.email, bien.password), false);
+  assert.equal(await motorAcepta(bien.email, bien.password), false);
   assert.equal(enlaces(bien.mailboxId), 0);
   for (const b of [falla, rara]) {
-    assert.equal(await engine.verifyCredentials(b.email, b.password), true);
+    assert.equal(await motorAcepta(b.email, b.password), true);
     assert.equal(enlaces(b.mailboxId), 1);
   }
   const [registro] = auditoria('client.onboarding_reset', cliente.clientId);
@@ -329,5 +330,5 @@ test('un buzón que falla en el motor no detiene los demás y se informa en fail
   // Repetir reintenta los que fallaron.
   const otraVez = await reiniciarCliente(cliente.clientId);
   assert.deepEqual(otraVez.json(), { reset: 3, skipped: 0, failed: [] });
-  assert.equal(await engine.verifyCredentials(falla.email, falla.password), false);
+  assert.equal(await motorAcepta(falla.email, falla.password), false);
 });

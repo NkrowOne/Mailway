@@ -222,6 +222,26 @@ test('la selección quita TLSA y los nombres ajenos al dominio', () => {
   assert.ok(!sel.some((r) => r.name === `otro${dominio}`), 'un sufijo no es un subdominio');
 });
 
+test('la selección quita lo que Stalwart 0.16 propone y Mailway no enruta: PACC, _validation-persist y CAA', () => {
+  // Registros nuevos de 0.16 (network/dns/records.rs), en minúsculas y mayúsculas.
+  const de016: EngineDnsRecord[] = [
+    ...delMotor,
+    { type: 'CNAME', name: `ua-auto-config.${dominio}.`, content: 'mail.nkrow.com.' },
+    { type: 'TXT', name: `_ua-auto-config.${dominio}.`, content: `v=UAAC1; a=sha256; d=AbCdEf` },
+    { type: 'TXT', name: `_validation-persist.${dominio}.`, content: 'letsencrypt.org; accounturi=https://acme/acct/1' },
+    { type: 'TXT', name: `_VALIDATION-PERSIST.mail.${dominio}.`, content: 'letsencrypt.org; accounturi=https://acme/acct/1' },
+    { type: 'CAA', name: `${dominio}.`, content: '0 issue "letsencrypt.org"' },
+  ];
+  const sel = seleccionarRegistros(dominio, de016);
+  assert.ok(!sel.some((r) => /^_?ua-auto-config\./.test(r.name)), 'PACC no tiene ruta en Traefik');
+  assert.ok(!sel.some((r) => r.name.split('.')[0] === '_validation-persist'));
+  assert.ok(!sel.some((r) => r.type === 'CAA'), 'CAA limitaría el certificado de la web del cliente');
+  // El resto sigue igual que con 0.15.
+  assert.deepEqual(sel, seleccionarRegistros(dominio, delMotor));
+  const zona = generarZona({ domain: dominio, records: de016, nivel: 'completo' });
+  assert.ok(!zona.includes('ua-auto-config') && !zona.includes('validation-persist') && !zona.includes('CAA'));
+});
+
 test('la selección deja nombres y destinos sin punto final', () => {
   const sel = seleccionarRegistros(dominio, delMotor);
   for (const r of sel) assert.ok(!r.name.endsWith('.'), `nombre con punto: ${r.name}`);

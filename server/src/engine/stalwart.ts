@@ -1,32 +1,92 @@
 import { HttpError, upstream } from '../core/errors';
 import { normalizeHostname } from '../core/hostnames';
-import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
+import { sha512Crypt } from '../core/sha512crypt';
+import { RutaDeGestionAusente } from './errores';
 import type {
+  AcmeInput,
+  CreatedAppPassword,
   CreateMailboxInput,
+  EngineAcmeStatus,
+  EngineApi,
+  EngineDirectory,
   EngineDnsRecord,
   EngineHealth,
   EngineReloadResult,
   EngineSettings,
+  EngineSettingsStatus,
+  MailboxCredentials,
   MailEngine,
   QueueSummary,
+  RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
 /** Dominio por el que se piden los registros para saber el nombre en ejecución. */
 const DOMINIO_SONDA = 'mailway.invalid';
 
+/** Identificador del proveedor ACME que crea Mailway en el motor (acme.mailway.*). */
+const ACME_ID = 'mailway';
+
+/** Claves ACME que se leen para el estado (las que escribe configureAcme, salvo el token). */
+const ACME_KEYS = ['directory', 'challenge', 'provider', 'contact.0', 'domains.0', 'origin'].map(
+  (k) => `acme.${ACME_ID}.${k}`,
+);
+
+/**
+ * Certificado por fichero (volcado de Traefik): el instalador lo configura con
+ * uno de estos dos identificadores (`certificate.mailway` es el actual y
+ * `certificate.default` el de las guías anteriores).
+ */
+const CERT_FILE_KEYS = ['certificate.mailway.cert', 'certificate.default.cert'];
+
+/**
+ * Permisos que se quitan a un buzón suspendido: entrar con contraseña (IMAP,
+ * SMTP, webmail, HTTP, también con sus contraseñas de aplicación) y con un
+ * token OAuth que ya tuviera. El rol «user» se conserva, porque es el que da
+ * `email-receive`: sin él (roles: [], como se suspendía antes) Stalwart 0.15.5
+ * acepta el mensaje en el 25 y después lo devuelve al remitente (comprobado
+ * con el motor real en test/panel-motor-real.test.ts). Así un buzón suspendido
+ * no entra por ningún lado y el correo le sigue llegando, como en 0.16.
+ */
+const PERMISOS_SUSPENSION = ['authenticate', 'authenticate-oauth'];
+
+/** Lo que el panel lee de un principal (GET /api/principal/<nombre>). */
+interface PrincipalLeido {
+  type?: string;
+  secrets?: string[] | string;
+  roles?: string[];
+  disabledPermissions?: string[];
+}
+
+/**
+ * ¿Está suspendido el buzón? Sin permiso para autenticarse (como suspende
+ * Mailway) o sin el rol «user» (como se suspendía antes). Ojo: Stalwart omite
+ * los campos vacíos, así que un buzón con roles: [] llega SIN la clave
+ * «roles»: su ausencia también es suspensión.
+ */
+function principalSuspendido(data: PrincipalLeido | null): boolean {
+  const roles = data?.roles;
+  const desactivados = data?.disabledPermissions;
+  if (!Array.isArray(roles) || !roles.includes('user')) return true;
+  return Array.isArray(desactivados) && desactivados.includes('authenticate');
+}
+
 /**
  * Driver para Stalwart Mail Server v0.12–v0.15 a través de su API REST de
  * gestión (`/api/...`). Verificado contra los docs 0.15 (stalw.art/docs/0.15)
  * y el código fuente del tag v0.15.5.
  *
- * Importante: Stalwart v0.16+ eliminó esta API REST (pasó a JMAP), por eso el
- * compose de Mailway fija la imagen a `stalwartlabs/stalwart:v0.15`.
+ * Stalwart 0.16 eliminó esta API (pasó a JMAP, ver stalwart016.ts); la fachada
+ * de engine/detector.ts averigua qué versión hay detrás de la URL y usa uno u
+ * otro driver.
  *
  * Autenticación: HTTP Basic con el "fallback admin" (authentication.fallback-admin).
- * Contraseñas: la API NO hashea; se envían ya en formato $6$ (sha512-crypt).
+ * Contraseñas: la API NO hashea; recibe ya el $6$ (sha512-crypt) que calcula
+ * el panel, que guarda una copia para comprobar contraseñas sin preguntar al
+ * motor (modules/credenciales.ts).
  */
-export class StalwartEngine implements MailEngine {
+export class Stalwart015Engine implements MailEngine {
   readonly kind = 'stalwart' as const;
 
   constructor(private settings: EngineSettings) {}
@@ -73,15 +133,16 @@ export class StalwartEngine implements MailEngine {
       if (res.status === 404) {
         // En 0.15 «no existe» llega con HTTP 200 y { error: "notFound" }. Un
         // 404 de verdad es una RUTA desconocida (URL del motor mal puesta, un
-        // proxy con otro prefijo o un motor sin esta API): si se tomara por
-        // «no existe», los borrados «tendrían éxito» sin hacer nada y los
-        // principales seguirían recibiendo correo y aceptando contraseñas.
-        throw new HttpError(
-          502,
-          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revisa la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart 0.15.`,
-          'engine_error',
+        // proxy con otro prefijo o un motor que ya no habla esta API, como un
+        // Stalwart migrado a 0.16): si se tomara por «no existe», los borrados
+        // «tendrían éxito» sin hacer nada y los principales seguirían
+        // recibiendo correo y aceptando contraseñas. La fachada lo usa para
+        // volver a averiguar la versión del motor.
+        throw new RutaDeGestionAusente(
+          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revisa la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart.`,
         );
       }
+      if (res.status === 401) throw credencialesRechazadas();
       // Errores en formato RFC 7807 (application/problem+json)
       const problem = parsed as { detail?: string; title?: string } | null;
       const detail = problem?.detail || problem?.title || text.slice(0, 300) || res.statusText;
@@ -111,12 +172,16 @@ export class StalwartEngine implements MailEngine {
     return parsed as T;
   }
 
+  async detectApi(): Promise<EngineApi> {
+    return 'rest015';
+  }
+
   async ping(): Promise<EngineHealth> {
     try {
       await this.request('GET', '/api/principal?types=domain&page=1&limit=1');
-      return { ok: true };
+      return { ok: true, api: 'rest015' };
     } catch (err) {
-      return { ok: false, detail: (err as Error).message };
+      return { ok: false, api: 'rest015', detail: (err as Error).message };
     }
   }
 
@@ -203,19 +268,25 @@ export class StalwartEngine implements MailEngine {
   }
 
   async createMailbox(input: CreateMailboxInput): Promise<void> {
+    exigirHash(input.passwordHash);
     try {
       await this.createMailboxPrincipal(input);
     } catch (err) {
       if (!(err instanceof HttpError) || err.code !== 'engine_exists') throw err;
       // Buzón huérfano en el motor (existía allí pero no en el panel): se
       // adopta y se deja exactamente como lo pide el panel, con la contraseña
-      // nueva y sin contraseñas de aplicación antiguas.
+      // nueva, sin contraseñas de aplicación antiguas y activo (aunque
+      // estuviera suspendido de cualquiera de las dos formas). «set roles»
+      // también lo saca de las listas del motor en las que siguiera (ver
+      // updateMailbox): ningún alias del panel apunta a un buzón que el panel
+      // aún no tenía.
       await this.updatePrincipal(input.email, [
         { action: 'set', field: 'description', value: input.displayName || '' },
         { action: 'set', field: 'quota', value: input.quotaBytes ?? 0 },
-        { action: 'set', field: 'secrets', value: [sha512Crypt(input.password)] },
+        { action: 'set', field: 'secrets', value: [input.passwordHash] },
         { action: 'set', field: 'emails', value: [input.email] },
         { action: 'set', field: 'roles', value: ['user'] },
+        { action: 'set', field: 'disabledPermissions', value: [] },
       ]);
     }
   }
@@ -226,7 +297,7 @@ export class StalwartEngine implements MailEngine {
       name: input.email,
       description: input.displayName || '',
       quota: input.quotaBytes ?? 0,
-      secrets: [sha512Crypt(input.password)],
+      secrets: [input.passwordHash],
       emails: [input.email],
       urls: [],
       memberOf: [],
@@ -239,13 +310,12 @@ export class StalwartEngine implements MailEngine {
     });
   }
 
-  async setMailboxPassword(email: string, password: string): Promise<void> {
+  async setMailboxPassword(email: string, passwordHash: string): Promise<void> {
+    exigirHash(passwordHash);
     // En Stalwart 0.15, "addItem" de un secreto que no es $app$ sustituye solo
     // la contraseña principal: las contraseñas de aplicación (claves de API,
     // dispositivos, Skyway) siguen funcionando.
-    await this.updatePrincipal(email, [
-      { action: 'addItem', field: 'secrets', value: sha512Crypt(password) },
-    ]);
+    await this.updatePrincipal(email, [{ action: 'addItem', field: 'secrets', value: passwordHash }]);
   }
 
   async updateMailbox(email: string, patch: UpdateMailboxPatch): Promise<void> {
@@ -257,8 +327,18 @@ export class StalwartEngine implements MailEngine {
       updates.push({ action: 'set', field: 'quota', value: patch.quotaBytes });
     }
     if (patch.suspended !== undefined) {
-      // Sin el rol "user" la cuenta no puede autenticarse (IMAP/SMTP/webmail).
-      updates.push({ action: 'set', field: 'roles', value: patch.suspended ? [] : ['user'] });
+      // Se quita el permiso de autenticarse, no el rol (ver
+      // PERMISOS_SUSPENSION). El rol se añade en los dos sentidos, para que
+      // un buzón suspendido como antes (roles: []) lo recupere, pero nunca
+      // con «set»: en Stalwart 0.15.5 roles, listas y grupos son la misma
+      // relación y «set roles» la reescribe entera, así que sacaba al buzón
+      // de todos sus alias. addItem no toca nada más (y no duplica el rol).
+      updates.push({ action: 'addItem', field: 'roles', value: 'user' });
+      updates.push({
+        action: 'set',
+        field: 'disabledPermissions',
+        value: patch.suspended ? PERMISOS_SUSPENSION : [],
+      });
     }
     if (updates.length > 0) await this.updatePrincipal(email, updates);
   }
@@ -314,35 +394,58 @@ export class StalwartEngine implements MailEngine {
     }
   }
 
-  async verifyCredentials(email: string, password: string): Promise<boolean | null> {
-    let data: { type?: string; secrets?: string[] | string; roles?: string[] } | null;
-    try {
-      data = await this.request<{ type?: string; secrets?: string[] | string; roles?: string[] }>(
-        'GET',
-        `/api/principal/${encodeURIComponent(email)}`,
-      );
-    } catch (err) {
-      if (err instanceof HttpError && err.code === 'engine_not_found') return false;
-      return null;
+  /**
+   * Lo que el motor guarda del buzón: es la única versión que lo expone (0.16
+   * devuelve los secretos enmascarados), y sirve para llenar la copia local
+   * del panel antes de migrar. Solo se lee: nunca se pide al motor que
+   * autentique (cada fallo contaría para su bloqueo automático de IPs).
+   */
+  async readMailboxCredentials(email: string): Promise<MailboxCredentials | null> {
+    const data = await this.request<PrincipalLeido | null>('GET', `/api/principal/${encodeURIComponent(email)}`);
+    // Una lista o un dominio con ese nombre no es un buzón.
+    if (data?.type !== undefined && data.type !== 'individual') {
+      throw new HttpError(502, `El motor de correo no tiene un buzón ${email}.`, 'engine_not_found');
     }
-    // Solo un buzón (principal individual) puede autenticarse.
-    if (data?.type !== undefined && data.type !== 'individual') return false;
-    // Sin el rol "user" la cuenta está suspendida y el motor la rechazaría.
-    // Ojo: Stalwart omite los campos vacíos, así que un buzón suspendido
-    // (roles: []) llega SIN la clave «roles»: su ausencia también es suspensión.
-    if (!Array.isArray(data?.roles) || !data.roles.includes('user')) return false;
     const raw = data?.secrets;
     const secrets = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : [];
+    let passwordHash: string | null = null;
+    const appPasswords: MailboxCredentials['appPasswords'] = [];
     for (const secret of secrets) {
       if (secret.startsWith('$app$')) {
-        // $app$<nombre>$<hash>: también valen para entrar (como en el motor).
-        const hash = secret.slice(secret.indexOf('$', 5) + 1);
-        if (hash.startsWith('$6$') && verifySha512Crypt(password, hash)) return true;
+        // $app$<etiqueta>$<hash>: la etiqueta nunca lleva «$» (la pone Mailway).
+        const fin = secret.indexOf('$', 5);
+        if (fin < 0) continue;
+        appPasswords.push({ label: secret.slice(5, fin), hash: secret.slice(fin + 1), ref: secret });
         continue;
       }
-      if (secret.startsWith('$6$') && verifySha512Crypt(password, secret)) return true;
+      // Solo un $6$ se puede comprobar en el panel; otro formato (otra vía de
+      // alta, otro algoritmo) cuenta como «sin hash»: hay que restablecerla.
+      if (passwordHash === null && secret.startsWith('$6$')) passwordHash = secret;
     }
-    return false;
+    return {
+      passwordHash,
+      appPasswords,
+      suspended: principalSuspendido(data),
+    };
+  }
+
+  /** Dominios, cuentas (buzones y remitentes) y listas (alias) del motor. */
+  async listDirectory(): Promise<EngineDirectory> {
+    const nombres = async (tipo: 'domain' | 'individual' | 'list'): Promise<string[]> => {
+      // limit=0 devuelve todos (como la ocupación de los buzones).
+      const result = await this.request<{ items?: { name?: string }[] }>(
+        'GET',
+        `/api/principal?types=${tipo}&page=1&limit=0&fields=name`,
+      );
+      const vistos = new Set<string>();
+      for (const item of result?.items || []) {
+        const nombre = (item.name || '').trim().toLowerCase();
+        if (nombre) vistos.add(nombre);
+      }
+      return [...vistos];
+    };
+    const [domains, accounts, lists] = await Promise.all([nombres('domain'), nombres('individual'), nombres('list')]);
+    return { domains, accounts, lists };
   }
 
   async getMailboxUsage(): Promise<Map<string, number>> {
@@ -359,7 +462,88 @@ export class StalwartEngine implements MailEngine {
     return usage;
   }
 
-  async applyServerSettings(values: Record<string, string>): Promise<EngineReloadResult> {
+  /**
+   * Ajustes que Mailway necesita detrás de Traefik: nombre del servidor, IP
+   * real por X-Forwarded-For y redes exentas del baneo automático. 0.15 no
+   * limita el número de contraseñas de aplicación por cuenta, así que
+   * `maxAppPasswords` no tiene equivalente aquí. `permissiveCors` tampoco: el
+   * correo web nuevo (Bulwark) necesita Stalwart 0.16 y con 0.15 sus nombres
+   * van a Roundcube, que entra por IMAP y no necesita CORS.
+   */
+  async applyRecommended(input: RecommendedInput): Promise<EngineReloadResult> {
+    const values: Record<string, string> = {
+      'server.hostname': input.hostname,
+      // Con esto Stalwart toma la IP real del visitante de X-Forwarded-For:
+      // sin él, un escáner que pide /wp-login.php a través de Traefik banea la
+      // IP de Traefik y deja fuera de servicio la web del motor para todos.
+      'http.use-x-forwarded': 'true',
+    };
+    for (const network of input.trustedNetworks) values[`server.allowed-ip.${network}`] = '';
+    const result = await this.applySettings(values);
+    // En 0.15 todo se aplica con la recarga: nada exige reiniciar.
+    return { ...result, restartRequired: [] };
+  }
+
+  async getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
+    const allowed = input.trustedNetworks.map((n) => `server.allowed-ip.${n}`);
+    const values = await this.getSettings([
+      'server.hostname',
+      'http.use-x-forwarded',
+      ...allowed,
+      ...ACME_KEYS,
+      ...CERT_FILE_KEYS,
+    ]);
+    const hostname = values['server.hostname'] ? normalizeHostname(values['server.hostname']) : '';
+    const acmeKey = (k: string) => values[`acme.${ACME_ID}.${k}`] || null;
+    const acme: EngineAcmeStatus | null = values[`acme.${ACME_ID}.directory`]
+      ? {
+          directory: acmeKey('directory'),
+          challenge: acmeKey('challenge'),
+          provider: acmeKey('provider'),
+          contact: acmeKey('contact.0'),
+          domain: acmeKey('domains.0'),
+          zone: acmeKey('origin'),
+        }
+      : null;
+    return {
+      api: 'rest015',
+      hostname: hostname || null,
+      forwardedHeaders: values['http.use-x-forwarded'] === 'true',
+      // Una red exenta se guarda con valor vacío: lo que cuenta es que la clave exista.
+      trustedNetworks: input.trustedNetworks.filter((n) => values[`server.allowed-ip.${n}`] !== undefined),
+      acme,
+      certificateFiles: CERT_FILE_KEYS.some((k) => Boolean(values[k])),
+      extra: {},
+      restartRequired: [],
+    };
+  }
+
+  /**
+   * ACME del propio motor con reto DNS-01 en Cloudflare. El token viaja en
+   * `acme.mailway.secret`: los errores de la recarga los depura la ruta antes
+   * de devolverlos.
+   */
+  async configureAcme(input: AcmeInput): Promise<EngineReloadResult> {
+    const prefix = `acme.${ACME_ID}`;
+    const result = await this.applySettings({
+      [`${prefix}.directory`]: input.directory,
+      [`${prefix}.challenge`]: 'dns-01',
+      [`${prefix}.provider`]: 'cloudflare',
+      [`${prefix}.secret`]: input.token,
+      [`${prefix}.contact.0`]: input.contact,
+      [`${prefix}.domains.0`]: input.hostname,
+      // La zona explícita evita que el motor la deduzca por la lista de
+      // sufijos públicos, que falla con zonas delegadas en un subdominio.
+      [`${prefix}.origin`]: input.zone,
+      [`${prefix}.renew-before`]: '30d',
+      // Por defecto también cuando el cliente no envía SNI (algunos móviles).
+      [`${prefix}.default`]: 'true',
+    });
+    return { ...result, restartRequired: [] };
+  }
+
+  /** Escribe ajustes (clave → valor) y recarga la configuración. */
+  private async applySettings(values: Record<string, string>): Promise<EngineReloadResult> {
     const entries = Object.entries(values);
     if (entries.length > 0) {
       await this.request('POST', '/api/settings', [
@@ -369,7 +553,7 @@ export class StalwartEngine implements MailEngine {
     return this.reload();
   }
 
-  async getServerSettings(keys: string[]): Promise<Record<string, string>> {
+  private async getSettings(keys: string[]): Promise<Record<string, string>> {
     if (keys.length === 0) return {};
     const data = await this.request<Record<string, string | null> | null>(
       'GET',
@@ -398,18 +582,19 @@ export class StalwartEngine implements MailEngine {
     await this.deletePrincipal(alias);
   }
 
-  async addAppPassword(email: string, password: string, label: string): Promise<string> {
-    // Formato verificado: $app$<nombre>$<hash>. El usuario se autentica con
-    // la contraseña en claro; Stalwart la compara contra el hash.
-    const stored = `$app$${label}$${sha512Crypt(password)}`;
-    await this.updatePrincipal(email, [{ action: 'addItem', field: 'secrets', value: stored }]);
-    return stored;
+  /**
+   * En 0.15 la contraseña la propone Mailway y el motor guarda su hash junto a
+   * una etiqueta ($app$<etiqueta>$<hash>): el secreto que vale es el
+   * propuesto, y la referencia para retirarla, el texto guardado.
+   */
+  async addAppPassword(email: string, label: string, proposedSecret: string): Promise<CreatedAppPassword> {
+    const ref = `$app$${label}$${sha512Crypt(proposedSecret)}`;
+    await this.updatePrincipal(email, [{ action: 'addItem', field: 'secrets', value: ref }]);
+    return { secret: proposedSecret, ref };
   }
 
-  async removeAppPassword(email: string, storedSecret: string): Promise<void> {
-    await this.updatePrincipal(email, [
-      { action: 'removeItem', field: 'secrets', value: storedSecret },
-    ]);
+  async removeAppPassword(email: string, ref: string): Promise<void> {
+    await this.updatePrincipal(email, [{ action: 'removeItem', field: 'secrets', value: ref }]);
   }
 
   async getQueueSummary(): Promise<QueueSummary> {
@@ -449,6 +634,26 @@ interface PrincipalUpdate {
   action: 'set' | 'addItem' | 'removeItem';
   field: string;
   value: unknown;
+}
+
+/** El motor rechazó el usuario o la contraseña de administración (HTTP 401). */
+export function credencialesRechazadas(): HttpError {
+  return new HttpError(
+    502,
+    'El motor de correo ha rechazado el usuario o la contraseña de administración (HTTP 401). Revisa las credenciales en Ajustes → Motor de correo.',
+    'engine_auth_failed',
+  );
+}
+
+/**
+ * Stalwart guarda TAL CUAL lo que recibe en `secrets`, también un texto en
+ * claro. Una contraseña que llegara sin cifrar por un error del panel
+ * quedaría legible en el motor: mejor fallar.
+ */
+function exigirHash(passwordHash: string): void {
+  if (!passwordHash.startsWith('$6$')) {
+    throw new Error('La contraseña del buzón debe llegar al motor cifrada en sha512-crypt ($6$).');
+  }
 }
 
 /**

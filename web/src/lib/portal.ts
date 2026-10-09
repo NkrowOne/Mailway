@@ -54,6 +54,10 @@ export interface PortalMe {
   thunderbirdAndroidQr: string;
   /** Foto del titular (/api/portal/photo?v=…), o null si no tiene. */
   photoUrl: string | null;
+  /** Contraseñas de aplicación sin revocar que dejaron de funcionar al actualizar el servidor de correo. */
+  invalidatedAppPasswords: number;
+  /** Su webmail es el correo web nuevo: tras cambiar la contraseña hay que cerrarlo y volver a entrar. */
+  newWebmail?: boolean;
 }
 
 export interface ContrasenaAplicacion {
@@ -63,7 +67,12 @@ export interface ContrasenaAplicacion {
   name: string;
   createdAt: number;
   revokedAt: number | null;
+  /** Dejó de funcionar con la actualización del servidor de correo; null si sigue valiendo. */
+  invalidatedAt: number | null;
 }
+
+/** Explicación común (panel y «Mi buzón») de una contraseña de aplicación invalidada. */
+export const TEXTO_INVALIDADA = 'Dejó de funcionar con la actualización del servidor de correo. Crea una nueva.';
 
 /** Fila de GET /api/mailboxes/:id/setup-links */
 export interface EnlaceConfiguracion {

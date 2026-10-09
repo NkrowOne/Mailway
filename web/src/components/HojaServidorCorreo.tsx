@@ -3,8 +3,9 @@ import { Server } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type User } from '../lib/api';
-import { formatDay } from '../lib/format';
+import { formatDate, formatDay } from '../lib/format';
 import {
+  nombreMotor,
   notaEnEjecucion,
   ORDEN_VEREDICTO,
   resumenTls,
@@ -17,13 +18,15 @@ import {
 } from '../lib/motor';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Field';
-import { AvisoError, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
+import { AvisoError, AvisoEspera, Hoja, Marca, Cargando, Vacio, type Veredicto } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { BandaAviso } from './gestion/comun';
 
 /**
- * Servidor de correo: nombre del servidor en el motor, ajustes recomendados
- * y certificado TLS (estado, emisión con Let's Encrypt mediante Cloudflare,
- * recarga). Se muestra en Ajustes.
+ * Servidor de correo: qué motor hay detrás (Stalwart 0.15 o 0.16), nombre del
+ * servidor en el motor, ajustes recomendados y certificado TLS (estado,
+ * emisión con Let's Encrypt mediante Cloudflare en 0.15, recarga). Se
+ * muestra en Ajustes.
  *
  * Los programas de correo exigen un certificado válido en IMAP y SMTP; por
  * eso el estado se mide conectando al puerto 993 como lo haría un móvil, y
@@ -45,6 +48,9 @@ export function HojaServidorCorreo() {
     onSuccess: (res) => {
       if (res.errors.length > 0) {
         toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
+      } else if (res.restartRequired && res.restartRequired.length > 0) {
+        // Guardado, pero un puerto nuevo solo se abre al reiniciar el contenedor.
+        toast('error', `Ajustes guardados. Reinicia el motor para aplicar: ${res.restartRequired.join('; ')}.`);
       } else if (res.running && res.running !== res.hostname) {
         // Guardado y recargado, pero el motor sigue anunciándose con otro
         // nombre: lo fija su configuración local, y eso no es un éxito.
@@ -117,9 +123,27 @@ export function HojaServidorCorreo() {
       className="min-w-0"
       flush
     >
+      {data.maintenance.active && (
+        <div className="px-4 pt-4">
+          <BandaAviso>
+            <strong className="font-semibold">El servidor de correo se está actualizando.</strong> Hasta que termine
+            {data.maintenance.until ? ` (como muy tarde, ${formatDate(data.maintenance.until)})` : ''} no se pueden
+            hacer cambios en dominios, buzones, alias ni contraseñas, y el vigilante no avisa de que el motor no responde.
+          </BandaAviso>
+        </div>
+      )}
       {data.engine.error && (
         <div className="px-4 pt-4">
           <BandaError texto={`No se ha podido leer la configuración del motor: ${data.engine.error}`} />
+        </div>
+      )}
+      {data.restartRequired.length > 0 && (
+        <div className="px-4 pt-4">
+          <BandaAviso>
+            <strong className="font-semibold">El motor necesita reiniciarse</strong> para aplicar lo que tiene guardado:{' '}
+            {data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo, «docker restart mailway-mail») y
+            pulsa «Comprobar de nuevo».
+          </BandaAviso>
         </div>
       )}
 
@@ -151,6 +175,9 @@ export function HojaServidorCorreo() {
           Comprobar de nuevo
         </Button>
       </div>
+      <AvisoEspera activo={aplicar.isPending} className="px-4 pb-3">
+        Aplicando los ajustes en el motor y recargándolo. Puede tardar un minuto o más.
+      </AvisoEspera>
       {!data.hostname.expected && (
         <p className="px-4 pb-3 text-sm text-tinta-3">
           Indica el nombre del servidor de correo en «Identidad del servidor» para poder aplicar los
@@ -158,12 +185,19 @@ export function HojaServidorCorreo() {
         </p>
       )}
 
-      {data.hostname.expected && (
+      {data.hostname.expected && data.acmeSupported && (
         <EmisionCertificado
           estado={data}
           tlsOk={tls.ok}
           onEmitido={refrescar}
         />
+      )}
+      {!data.acmeSupported && (
+        <p className="max-w-[75ch] border-t border-regla px-4 py-3 text-sm text-tinta-2">
+          Con Stalwart 0.16 el certificado del servidor de correo lo obtiene Traefik y el extractor lo copia al motor,
+          que lo recarga a diario: el motor ya no lo emite por sí mismo. Si caduca o aparece como autofirmado, revisa el
+          extractor («docker logs mailway-certs-dumper») o ejecuta «sudo bash deploy/instalar.sh --comprobar».
+        </p>
       )}
     </Hoja>
   );
@@ -183,6 +217,15 @@ export interface Fila {
 function construirFilas(data: EngineStatus): Fila[] {
   const filas: Fila[] = [];
   const esperado = data.hostname.expected;
+
+  // Qué versión del motor hay detrás de la URL: cambia lo que se puede
+  // gestionar (el ACME propio, el límite de contraseñas de aplicación…).
+  filas.push({
+    concepto: 'Motor de correo',
+    valor: nombreMotor(data.api),
+    veredicto: data.api ? 'normal' : 'sin-dato',
+    nota: data.api ? undefined : 'No se ha podido averiguar la versión del motor: no responde o rechaza las credenciales.',
+  });
 
   filas.push({
     concepto: 'Nombre guardado en el motor',
@@ -230,6 +273,21 @@ function construirFilas(data: EngineStatus): Fila[] {
     ),
   });
 
+  // Lo propio de cada versión del motor (en 0.16: puerto 587, límite de
+  // contraseñas de aplicación, autoservicio bloqueado…).
+  for (const comprobacion of data.extraChecks) {
+    filas.push({
+      concepto: comprobacion.label,
+      valor: comprobacion.ok ? 'Aplicado' : 'Pendiente',
+      veredicto: data.engine.error ? 'sin-dato' : comprobacion.ok ? 'normal' : 'vigilar',
+      nota: comprobacion.ok
+        ? undefined
+        : data.restartRequired.length > 0
+          ? 'Guardado en el motor: se aplica al reiniciar su contenedor.'
+          : 'Forma parte de los ajustes recomendados: aplícalos para fijarlo.',
+    });
+  }
+
   const tls = data.tls;
   const veredicto = veredictoTls(tls);
   let notaTls: ReactNode;
@@ -267,6 +325,9 @@ function construirFilas(data: EngineStatus): Fila[] {
     : data.certificateFiles
       ? 'Volcado de Traefik'
       : 'Sin configurar';
+  const sinEmision = data.acmeSupported
+    ? 'El motor no renueva ningún certificado por sí mismo.'
+    : 'El extractor de Traefik aún no ha dejado el certificado en el motor.';
   filas.push({
     concepto: 'Emisión y renovación',
     valor: origen,
@@ -281,7 +342,7 @@ function construirFilas(data: EngineStatus): Fila[] {
           .join(', ') || undefined
       : data.certificateFiles
         ? 'El motor lee el certificado que obtiene Traefik; se recarga a diario.'
-        : 'El motor no renueva ningún certificado por sí mismo.',
+        : sinEmision,
   });
 
   return filas.sort((a, b) => ORDEN_VEREDICTO[a.veredicto] - ORDEN_VEREDICTO[b.veredicto]);

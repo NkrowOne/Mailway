@@ -18,3 +18,6 @@ process.env.MAILWAY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mailway-te
 process.env.MAILWAY_DNS_OFFLINE = '1';
 process.env.MAILWAY_DEMO = '1';
 process.env.MAILWAY_WATCHDOG_DISABLED = '1';
+// El webmail automático de cada dominio crea registros y llama a Cloudflare
+// por su cuenta: las pruebas que lo necesitan lo activan (config.webmailAutomatico).
+process.env.MAILWAY_WEBMAIL_AUTOMATICO = '0';

@@ -1,0 +1,13 @@
+{
+  "name": "ventas",
+  "domainId": "d",
+  "description": "Alias gestionado por Mailway",
+  "aliases": {},
+  "memberTenantId": null,
+  "recipients": {
+    "ana@m016-74124c.test": true,
+    "fuera@externo-74124c.invalid": true
+  },
+  "emailAddress": "ventas@m016-74124c.test",
+  "id": "b"
+}

@@ -1,0 +1,111 @@
+# ============================================================================
+# Motor de correo: Stalwart 0.16 (gestión por JMAP en /jmap)
+# ----------------------------------------------------------------------------
+# NO se usa solo: docker-compose.mail.yml y docker-compose.standalone.yml lo
+# incorporan al servicio mailway-mail con «extends» cuando deploy/.env dice
+# MAILWAY_MOTOR=stalwart-0.16, el motor de las instalaciones nuevas. Las que
+# venían de la 0.15 llegan aquí con «mailway migrar-motor» (sección 8.3 de
+# docs/DESPLIEGUE-SKYWAY.md); un «mailway update» nunca cambia de motor.
+#
+# Lo que cambia frente a la 0.15:
+#   - Dos volúmenes nuevos: /etc/stalwart (config.json, que solo dice dónde
+#     está la base de datos) y /var/lib/stalwart (RocksDB con el correo y
+#     toda la configuración). El volumen de la 0.15 no se monta ni se toca.
+#   - La imagen corre como el usuario 2000, no como root.
+#   - Credencial de administración: STALWART_RECOVERY_ADMIN, que la 0.16
+#     acepta en cada arranque (también fuera del modo de recuperación) y que
+#     sustituye al administrador de respaldo de la 0.15. Sale de la misma
+#     STALWART_ADMIN_PASSWORD de deploy/.env.
+#   - Sin configuración, el primer arranque entra en modo «bootstrap» (solo
+#     8080); el instalador lo completa por JMAP y reinicia el motor.
+#   - Registro de eventos en la salida estándar: docker logs mailway-mail.
+#   - Certificado: siempre el de Traefik, con el extractor (perfil «tls»);
+#     el ACME propio del motor no se usa con la 0.16.
+#   - En el nombre del servidor de correo, Traefik solo deja pasar lo que
+#     necesitan los programas de correo (ver las etiquetas).
+#
+# Versión exacta: Dependabot propone los parches 0.16.x, que solo se fusionan
+# si pasan las pruebas con el motor real (contrato, pila y migración, en
+# .github/workflows/stack.yml). Una 0.17 nunca llega sola.
+# ============================================================================
+
+services:
+  mailway-mail:
+    image: stalwartlabs/stalwart:v0.16.25
+    environment:
+      # Administrador del motor para el panel, el instalador y el extractor
+      # (usuario «admin»). Al contrario que en la 0.15, vale lo que diga
+      # deploy/.env en cada arranque.
+      STALWART_RECOVERY_ADMIN: admin:${STALWART_ADMIN_PASSWORD:?Define STALWART_ADMIN_PASSWORD en deploy/.env}
+    volumes:
+      - mailway-stalwart-etc:/etc/stalwart
+      - mailway-stalwart-data:/var/lib/stalwart
+      # Certificado de MAIL_HOSTNAME que escribe el extractor (perfil `tls`),
+      # en la misma ruta que con la 0.15: el motor lo lee como un Certificate
+      # de tipo File que crea el propio extractor.
+      - mailway-mail-certs:/opt/stalwart/certs:ro
+    labels:
+      # HTTP siempre a HTTPS, como con la 0.15.
+      - traefik.http.routers.mailway-mail.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail.entrypoints=web
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.mailway-mail-https.redirectscheme.permanent=true
+      - traefik.http.routers.mailway-mail.middlewares=mailway-mail-https,mailway-mail-sin-forwarded
+      # El motor (con useXForwarded) toma la IP del cliente de la cabecera
+      # Forwarded ANTES que de X-Forwarded-For, y Traefik deja pasar Forwarded
+      # tal cual (solo reescribe X-Forwarded-*). Sin quitarla, cualquiera podía
+      # decir que venía de la red del webmail (exenta del bloqueo automático)
+      # y probar contraseñas sin límite contra https://MAIL_HOSTNAME. Un valor
+      # vacío borra la cabecera; X-Forwarded-For sigue llegando con la IP real.
+      # Va en los tres routers del motor.
+      - traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded=
+      # Por HTTPS, solo lo que necesitan los programas de correo: JMAP (para
+      # un cliente web futuro), los .well-known (JMAP, CalDAV/CardDAV,
+      # MTA-STS, autoconfiguración), DAV, la autoconfiguración de
+      # Thunderbird y Outlook y la salud. La 0.16 sirve además una web de
+      # administración (/admin) y otra de autoservicio (/account) con su
+      # inicio de sesión (/login, /api/auth…), desde las que un titular
+      # podría cambiar su contraseña o crear contraseñas de aplicación a
+      # espaldas de Mailway: esas, y cualquier ruta que llegue en un parche,
+      # caen en el router de abajo. Es una lista de lo permitido, no de lo
+      # prohibido.
+      - traefik.http.routers.mailway-mail-secure.rule=Host(`${MAIL_HOSTNAME}`) && (PathPrefix(`/jmap`) || PathPrefix(`/.well-known/`) || PathPrefix(`/dav/`) || Path(`/mail/config-v1.1.xml`) || PathPrefix(`/autodiscover/`) || PathPrefix(`/Autodiscover/`) || PathPrefix(`/AutoDiscover/`) || PathPrefix(`/healthz/`) || Path(`/robots.txt`))
+      - traefik.http.routers.mailway-mail-secure.entrypoints=websecure
+      - traefik.http.routers.mailway-mail-secure.tls.certresolver=le
+      - traefik.http.routers.mailway-mail-secure.service=mailway-mail
+      - traefik.http.routers.mailway-mail-secure.middlewares=mailway-mail-sin-forwarded
+      # Todo lo demás de ese nombre: 403. Lleva también el emisor de
+      # certificados, para que Traefik siga obteniendo el de MAIL_HOSTNAME,
+      # el que el extractor lleva a IMAP y SMTP. La lista de IP permitidas
+      # solo admite 127.0.0.1, que nunca es el origen de una petición que
+      # pasa por Traefik: es la forma de responder 403 sin otro servicio.
+      - traefik.http.routers.mailway-mail-bloqueo.rule=Host(`${MAIL_HOSTNAME}`)
+      - traefik.http.routers.mailway-mail-bloqueo.priority=1
+      - traefik.http.routers.mailway-mail-bloqueo.entrypoints=websecure
+      - traefik.http.routers.mailway-mail-bloqueo.tls.certresolver=le
+      - traefik.http.routers.mailway-mail-bloqueo.middlewares=mailway-mail-sin-forwarded,mailway-mail-bloqueo
+      - traefik.http.routers.mailway-mail-bloqueo.service=mailway-mail
+      - traefik.http.middlewares.mailway-mail-bloqueo.ipallowlist.sourcerange=127.0.0.1/32
+      # Traefik no llega al motor: el servicio es su pasarela (mailway-mail-gw,
+      # deploy/motor/pasarela), que le entrega una sola IP en X-Forwarded-For,
+      # la real, aunque Traefik conserve la cabecera que trae la petición (p. ej.
+      # si confía en Cloudflare). Sin ella, la primera dirección de esa
+      # cabecera la elegiría el cliente, también una de la red exenta.
+      - traefik.http.services.mailway-mail.loadbalancer.server.url=http://mailway-mail-gw:8080
+    healthcheck:
+      # La imagen 0.16 trae curl. /healthz/ready responde 200 cuando la base
+      # de datos está cargada. Con la cabecera, el motor (que confía en
+      # X-Forwarded-For detrás de Traefik) no anota en su registro cada
+      # comprobación como una petición sin ella.
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', '-H', 'X-Forwarded-For: 127.0.0.1', 'http://127.0.0.1:8080/healthz/ready']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Herramienta, no un servicio: nunca se arranca. Fija aquí la versión del
+  # CLI oficial de Stalwart que usa «mailway migrar-motor» (stalwart-cli
+  # apply) para que Dependabot la proponga y la CI la pruebe como las demás.
+  stalwart-cli:
+    image: stalwartlabs/cli:1.0.13
+    profiles: ['herramientas']

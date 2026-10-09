@@ -5,18 +5,31 @@ import { db } from '../core/db';
 import { decryptSecret } from '../core/crypto';
 import { badRequest, HttpError, notFound, upstream } from '../core/errors';
 import { normalizeHostname } from '../core/hostnames';
-import { engineConfigured, getEngine } from '../engine';
-import type { EngineReloadResult, EngineSettings, MailEngine } from '../engine/types';
+import { apiDelMotor, engineConfigured, getEngine } from '../engine';
+import { motorNoAdmite } from '../engine/errores';
+import type {
+  EngineApi,
+  EngineReloadResult,
+  EngineSettings,
+  EngineSettingsStatus,
+  MailEngine,
+  RecommendedInput,
+} from '../engine/types';
 import { fireAlert, resolveAlert, resolveAlertsOfType } from './alerts';
 import { audit } from './audit';
 import { requireAdmin } from './auth';
 import { rechazarSoloCliente } from './cloudflare';
+import { estadoMantenimiento, exigirSinMantenimiento } from './mantenimiento';
 import { getEngineSettings, getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
+import { corsPermisivoNecesario } from './webmailmotor';
+import { CADUCIDAD_BLOQUEO_MS } from '../engine/stalwart016';
 
 /**
  * Operaciones sobre el servidor de correo: ajustes recomendados del motor
- * (nombre del servidor, confianza en el proxy, rango exento de baneo),
- * estado y emisión del certificado TLS.
+ * (nombre del servidor, confianza en el proxy, rango exento de baneo y, en
+ * Stalwart 0.16, lo que trae desactivado o distinto), estado y emisión del
+ * certificado TLS. Todo pasa por operaciones del contrato del motor: cada
+ * versión de Stalwart lo guarda a su manera (claves en 0.15, objetos en 0.16).
  *
  * Por qué existe: Stalwart arranca con valores que funcionan en un portátil
  * pero no detrás de Traefik y junto a un webmail. Sin nombre fijado, anuncia
@@ -33,8 +46,6 @@ const TLS_TIMEOUT_MS = 5000;
 const TLS_WARNING_DAYS = 20;
 const TLS_CRITICAL_DAYS = 7;
 
-/** Identificador del proveedor ACME que crea Mailway en el motor. */
-const ACME_ID = 'mailway';
 const LETS_ENCRYPT_DIRECTORY = 'https://acme-v02.api.letsencrypt.org/directory';
 const CLOUDFLARE_API = 'https://api.cloudflare.com/client/v4';
 
@@ -63,28 +74,69 @@ export function trustedEngineNetworks(): string[] {
     .filter((s) => s && (IPV4.test(s) || IPV6.test(s)));
 }
 
-/** Ajustes que el motor necesita para funcionar bien detrás de Traefik. */
-export function recommendedEngineSettings(mailHostname: string): Record<string, string> {
-  const values: Record<string, string> = {
-    'server.hostname': mailHostname,
-    // Con esto Stalwart toma la IP real del visitante de X-Forwarded-For:
-    // sin él, un escáner que pide /wp-login.php a través de Traefik banea la
-    // IP de Traefik y deja fuera de servicio la web del motor para todos.
-    'http.use-x-forwarded': 'true',
+/**
+ * Máximo de contraseñas de aplicación por buzón que se pide al motor
+ * (Stalwart 0.16 admite 5 por defecto; 0.15 no tiene límite). Cada buzón
+ * puede necesitar a la vez:
+ * - 25 de dispositivos y servicios de Skyway (MAX_ACTIVE_APP_PASSWORDS);
+ * - una credencial SMTP interna por cada formulario que entrega en él: como
+ *   mucho 20, el máximo de formularios por cliente (MAX_FORMULARIOS_POR_CLIENTE);
+ * - una por cada clave de API que lo usa como remitente, sin tope propio.
+ * 100 cubre los dos primeros y deja sitio para 55 claves de API sobre el
+ * mismo buzón, mucho más de lo habitual (una o dos por aplicación). Se fija
+ * a mano y no se importan las constantes: engineops lo cargan módulos que
+ * esos dos importan, y las pruebas comprueban que la cuenta sigue cuadrando.
+ */
+export const MAX_CONTRASENAS_APLICACION_MOTOR = 100;
+
+/**
+ * Lo que Mailway pide al motor para funcionar bien detrás de Traefik. El
+ * CORS depende de si algún cliente usa el correo web nuevo
+ * (corsPermisivoNecesario); `permissiveCors` lo fija a mano para quien lo
+ * aplica justo antes de guardar esa elección (correoweb.ts).
+ */
+export function recommendedInput(mailHostname: string, opciones: { permissiveCors?: boolean } = {}): RecommendedInput {
+  return {
+    hostname: mailHostname,
+    trustedNetworks: trustedEngineNetworks(),
+    maxAppPasswords: MAX_CONTRASENAS_APLICACION_MOTOR,
+    permissiveCors: opciones.permissiveCors ?? corsPermisivoNecesario(),
   };
-  for (const network of trustedEngineNetworks()) values[`server.allowed-ip.${network}`] = '';
-  return values;
+}
+
+/** Descripción legible de lo aplicado (respuesta de la ruta y salida de la herramienta). */
+function descripcionAplicados(input: RecommendedInput, api: EngineApi | null): string[] {
+  const aplicados = [
+    `Nombre del servidor: ${input.hostname}`,
+    // Con esto el motor toma la IP real del visitante de X-Forwarded-For: sin
+    // él, un escáner que pide /wp-login.php a través de Traefik banea la IP de
+    // Traefik y deja fuera de servicio la web del motor para todos.
+    'IP real de los visitantes por X-Forwarded-For',
+    ...input.trustedNetworks.map((n) => `Red exenta del bloqueo automático: ${n}`),
+  ];
+  // 0.15 no limita las contraseñas de aplicación ni tiene correo web nuevo:
+  // no hay nada de eso que fijar.
+  if (api === 'jmap016') {
+    aplicados.push(`Máximo de contraseñas de aplicación por buzón: ${input.maxAppPasswords}`);
+    aplicados.push(
+      `Bloqueo automático por fallos de acceso con caducidad: ${Math.round(CADUCIDAD_BLOQUEO_MS / 60_000)} minutos como máximo`,
+    );
+    if (input.permissiveCors) aplicados.push('CORS permisivo en la web del motor (lo necesita el correo web nuevo)');
+  }
+  return aplicados;
 }
 
 /**
  * Aplica los ajustes recomendados en el motor indicado (por defecto, el
  * configurado). La puesta en marcha lo usa con el motor que acaba de probar,
- * antes de que quede guardado como el activo.
+ * antes de que quede guardado como el activo, y la herramienta de migración
+ * con el motor sin el guardián del mantenimiento.
  */
 export async function applyRecommendedEngineSettings(
   mailHostname: string,
   engine: MailEngine = getEngine(),
-): Promise<EngineReloadResult & { values: Record<string, string> }> {
+  opciones: { permissiveCors?: boolean } = {},
+): Promise<EngineReloadResult & { applied: string[]; restartRequired: string[]; input: RecommendedInput }> {
   const host = normalizeHostname(mailHostname);
   if (!host) {
     throw badRequest(
@@ -92,9 +144,49 @@ export async function applyRecommendedEngineSettings(
       'mail_hostname_missing',
     );
   }
-  const values = recommendedEngineSettings(host);
-  const result = await engine.applyServerSettings(values);
-  return { ...result, values };
+  const input = recommendedInput(host, opciones);
+  const result = await engine.applyRecommended(input);
+  const api = await engine.detectApi().catch(() => null);
+  return {
+    ...result,
+    restartRequired: result.restartRequired ?? [],
+    applied: descripcionAplicados(input, api),
+    input,
+  };
+}
+
+/**
+ * Nombre legible de las comprobaciones propias de cada versión del motor
+ * (`extra` del estado). Las claves las fija el driver; una desconocida se
+ * enseña con un nombre genérico en vez de esconderse.
+ */
+const ETIQUETAS_COMPROBACIONES: Record<string, string> = {
+  submission587: 'Puerto 587 (STARTTLS)',
+  maxAppPasswords: 'Límite de contraseñas de aplicación',
+  selfServiceBlocked: 'Autoservicio del motor bloqueado',
+  defaultDomain: 'Dominio por defecto de la instancia',
+  logToStdout: 'Registro del motor en la salida estándar',
+  authBanExpiry: 'Caducidad del bloqueo por fallos de acceso',
+  permissiveCors: 'CORS del motor para el correo web nuevo',
+};
+
+export function etiquetaComprobacion(clave: string): string {
+  return ETIQUETAS_COMPROBACIONES[clave] ?? `Comprobación «${clave}»`;
+}
+
+/**
+ * ¿Están aplicados los ajustes recomendados? Nombre, IP real, redes exentas
+ * y las comprobaciones propias de la versión del motor (`extra`).
+ */
+export function ajustesRecomendadosAplicados(status: EngineSettingsStatus, expectedHostname: string): boolean {
+  const esperado = normalizeHostname(expectedHostname);
+  return (
+    Boolean(esperado) &&
+    normalizeHostname(status.hostname ?? '') === esperado &&
+    status.forwardedHeaders &&
+    trustedEngineNetworks().every((n) => status.trustedNetworks.includes(n)) &&
+    Object.values(status.extra).every(Boolean)
+  );
 }
 
 /* ------------------------------- Estado TLS ------------------------------- */
@@ -255,9 +347,9 @@ const ALERT_WARNING = 'engine_tls_warning';
 const ALERT_CRITICAL = 'engine_tls_critical';
 
 const TLS_REMEDY =
-  'En Ajustes → Servidor de correo puedes emitir un certificado de Let’s Encrypt mediante Cloudflare ' +
-  'o recargar el certificado actual. Si el certificado lo copia el extractor desde Traefik (perfil tls ' +
-  'del compose), revisa «docker logs mailway-certs-dumper» o ejecuta «sudo bash deploy/instalar.sh --comprobar».';
+  'En Ajustes → Servidor de correo puedes recargar el certificado actual (y, con Stalwart 0.15, emitir uno de Let’s Encrypt mediante Cloudflare). ' +
+  'Si el certificado lo copia el extractor desde Traefik (perfil tls del compose; siempre con Stalwart 0.16), ' +
+  'revisa «docker logs mailway-certs-dumper» o ejecuta «sudo bash deploy/instalar.sh --comprobar».';
 
 /**
  * Traduce el estado del certificado a avisos. Separado de la comprobación
@@ -489,17 +581,6 @@ interface StoredAcme {
   configuredAt: number;
 }
 
-const ACME_KEYS = ['directory', 'challenge', 'provider', 'contact.0', 'domains.0', 'origin'].map(
-  (k) => `acme.${ACME_ID}.${k}`,
-);
-/** Certificado por fichero (volcado de Traefik): se configura con uno de estos dos identificadores. */
-const CERT_FILE_KEYS = ['certificate.mailway.cert', 'certificate.default.cert'];
-
-function statusKeys(): string[] {
-  const networks = trustedEngineNetworks().map((n) => `server.allowed-ip.${n}`);
-  return ['server.hostname', 'http.use-x-forwarded', ...networks, ...ACME_KEYS, ...CERT_FILE_KEYS];
-}
-
 /* -------------------------------- Rutas ----------------------------------- */
 
 const acmeSchema = z.object({
@@ -523,50 +604,49 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     const expected = normalizeHostname(instance.mailHostname);
     const settings = getEngineSettings();
     const kind = settings?.kind ?? null;
+    const networks = trustedEngineNetworks();
 
-    let values: Record<string, string> = {};
+    let status: EngineSettingsStatus | null = null;
     let engineError: string | null = null;
-    // Lo guardado (server.hostname) y lo que el motor usa de verdad pueden no
-    // coincidir: se leen las dos cosas, en paralelo.
+    // Lo guardado (el nombre del servidor) y lo que el motor usa de verdad
+    // pueden no coincidir: se leen las dos cosas, en paralelo.
     let running: string | null = null;
     let runningError: string | null = null;
+    let api: EngineApi | null = null;
     if (!settings) {
       engineError = 'El motor de correo aún no está configurado.';
     } else {
       const engine = getEngine();
-      const [leidos, enEjecucion] = await Promise.allSettled([
-        engine.getServerSettings(statusKeys()),
+      const [leido, enEjecucion] = await Promise.allSettled([
+        engine.getSettingsStatus({ trustedNetworks: networks, permissiveCors: corsPermisivoNecesario() }),
         engine.getRunningHostname(),
       ]);
-      if (leidos.status === 'fulfilled') values = leidos.value;
-      else engineError = errorMessage(leidos.reason);
+      if (leido.status === 'fulfilled') status = leido.value;
+      else engineError = errorMessage(leido.reason);
       if (enEjecucion.status === 'fulfilled') running = enEjecucion.value;
       else runningError = errorMessage(enEjecucion.reason);
+      // Sin estado se intenta saber al menos qué versión hay detrás.
+      api = status?.api ?? (await apiDelMotor());
     }
 
-    const configured = values['server.hostname'] ? normalizeHostname(values['server.hostname']) : null;
-    const networks = trustedEngineNetworks();
-    const recommendedApplied =
-      !engineError &&
-      Boolean(expected) &&
-      configured === expected &&
-      values['http.use-x-forwarded'] === 'true' &&
-      networks.every((n) => values[`server.allowed-ip.${n}`] !== undefined);
+    const configured = status?.hostname ? normalizeHostname(status.hostname) || null : null;
+    const extra = status?.extra ?? {};
+    const recommendedApplied = !engineError && status !== null && ajustesRecomendadosAplicados(status, expected);
 
-    const acmeProvider = values[`acme.${ACME_ID}.provider`];
     const stored = getJsonSetting<StoredAcme>('engine_acme');
-    const acme = values[`acme.${ACME_ID}.directory`]
+    const acme = status?.acme
       ? {
           configured: true,
-          provider: acmeProvider || null,
-          challenge: values[`acme.${ACME_ID}.challenge`] || null,
-          contact: values[`acme.${ACME_ID}.contact.0`] || null,
-          domain: values[`acme.${ACME_ID}.domains.0`] || null,
-          zone: values[`acme.${ACME_ID}.origin`] || null,
+          provider: status.acme.provider,
+          challenge: status.acme.challenge,
+          contact: status.acme.contact,
+          domain: status.acme.domain,
+          zone: status.acme.zone,
           accountId: stored?.accountId ?? null,
           accountLabel: stored?.accountLabel ?? null,
         }
       : { configured: false, provider: null };
+    const mantenimiento = estadoMantenimiento();
 
     let tlsStatus: EngineTlsStatus;
     if (kind !== 'stalwart') {
@@ -584,6 +664,8 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
 
     return {
       engine: { kind, error: engineError },
+      // API de gestión detectada: rest015 (Stalwart 0.15), jmap016 (0.16) o demo.
+      api,
       hostname: {
         configured,
         expected: expected || null,
@@ -594,15 +676,25 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
         runningError: engineError ? null : runningError,
       },
       trustedNetworks: networks,
-      forwardedHeaders: values['http.use-x-forwarded'] === 'true',
+      forwardedHeaders: status?.forwardedHeaders ?? false,
       recommendedApplied,
+      // Comprobaciones propias de la versión del motor (en 0.16: puerto 587,
+      // límite de contraseñas de aplicación, autoservicio bloqueado…), con su
+      // nombre para enseñarlas.
+      extra,
+      extraChecks: Object.entries(extra).map(([key, ok]) => ({ key, label: etiquetaComprobacion(key), ok })),
+      // Cambios guardados que solo se aplican al reiniciar el contenedor del motor.
+      restartRequired: status?.restartRequired ?? [],
       tls: tlsStatus,
       acme,
-      certificateFiles: CERT_FILE_KEYS.some((k) => Boolean(values[k])),
+      // En 0.16 el certificado lo pone el extractor de Traefik: no hay ACME del motor.
+      acmeSupported: api !== 'jmap016',
+      certificateFiles: status?.certificateFiles ?? false,
+      maintenance: { active: mantenimiento.activo, until: mantenimiento.hasta },
     };
   });
 
-  /** Nombre del servidor, confianza en el proxy y rango exento de baneo. */
+  /** Nombre del servidor, confianza en el proxy, rango exento de baneo y lo propio de la versión. */
   app.post('/api/engine/recommended', async (req) => {
     requireAdmin(req);
     const host = normalizeHostname(getInstanceSettings().mailHostname);
@@ -617,21 +709,27 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     audit(req, 'engine.recommended_applied', {
       hostname: host,
       trustedNetworks: trustedEngineNetworks(),
+      maxAppPasswords: MAX_CONTRASENAS_APLICACION_MOTOR,
+      permissiveCors: result.input.permissiveCors,
       errors: result.errors.length,
+      restartRequired: result.restartRequired.length,
     });
     return {
-      applied: Object.keys(result.values),
+      applied: result.applied,
       hostname: host,
       running,
       errors: result.errors,
       warnings: result.warnings,
+      restartRequired: result.restartRequired,
     };
   });
 
   /**
    * Emisión automática del certificado con el ACME del propio motor, reto
-   * DNS-01 en Cloudflare. Es la vía preferida: no depende de Traefik ni del
-   * puerto 80, renueva sola y sirve también para IMAP y SMTP.
+   * DNS-01 en Cloudflare: no depende de Traefik ni del puerto 80, renueva sola
+   * y sirve también para IMAP y SMTP. Solo Stalwart 0.15: en 0.16 el ACME del
+   * motor exigiría darle la gestión del DNS de un dominio, y el certificado
+   * lo pone el extractor de Traefik.
    */
   app.post('/api/engine/acme', async (req) => {
     requireAdmin(req);
@@ -639,6 +737,14 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     // nombre de un cliente, aunque el token de gestión sea de administración.
     rechazarSoloCliente(req.query);
     const body = acmeSchema.parse(req.body);
+    // Antes de tocar Cloudflare: en mantenimiento, o con 0.16, no se va a poder.
+    exigirSinMantenimiento();
+    const engine = getEngine();
+    if ((await engine.detectApi()) === 'jmap016') {
+      throw motorNoAdmite(
+        'Con Stalwart 0.16 el certificado del servidor de correo lo obtiene Traefik y el extractor lo copia al motor: el motor ya no emite certificados por sí mismo. Si el certificado falla, revisa el extractor («docker logs mailway-certs-dumper»).',
+      );
+    }
     const host = normalizeHostname(getInstanceSettings().mailHostname);
     if (!host) {
       throw badRequest(
@@ -678,25 +784,17 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       );
     }
 
-    const prefix = `acme.${ACME_ID}`;
-    const values: Record<string, string> = {
-      [`${prefix}.directory`]: LETS_ENCRYPT_DIRECTORY,
-      [`${prefix}.challenge`]: 'dns-01',
-      [`${prefix}.provider`]: 'cloudflare',
-      [`${prefix}.secret`]: token,
-      [`${prefix}.contact.0`]: body.email,
-      [`${prefix}.domains.0`]: host,
-      // La zona explícita evita que el motor la deduzca por la lista de
-      // sufijos públicos, que falla con zonas delegadas en un subdominio.
-      [`${prefix}.origin`]: zone.name,
-      [`${prefix}.renew-before`]: '30d',
-      // Por defecto también cuando el cliente no envía SNI (algunos móviles).
-      [`${prefix}.default`]: 'true',
-    };
-
     let result: EngineReloadResult;
     try {
-      result = await getEngine().applyServerSettings(values);
+      // La zona explícita evita que el motor la deduzca por la lista de
+      // sufijos públicos, que falla con zonas delegadas en un subdominio.
+      result = await engine.configureAcme({
+        directory: LETS_ENCRYPT_DIRECTORY,
+        token,
+        contact: body.email,
+        hostname: host,
+        zone: zone.name,
+      });
     } catch (err) {
       // El mensaje del motor nunca incluye el token, pero se asegura igual.
       if (err instanceof HttpError) throw new HttpError(err.status, err.message.split(token).join('•••'), err.code);
