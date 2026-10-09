@@ -605,7 +605,9 @@ la sección 2.2; `null` si el motor no respondió), `extraChecks`
 0.16: `submission587`, `maxAppPasswords`, `selfServiceBlocked`,
 `defaultDomain` y `logToStdout`; `extra` las da como mapa `{ key: ok }`),
 `restartRequired` (cambios guardados en el motor que solo se aplican al
-reiniciar su contenedor, como abrir el puerto 587 en 0.16), `acmeSupported`
+reiniciar su contenedor, como abrir el puerto 587 en 0.16; se guardan en la
+base de datos del panel, así que el aviso sigue tras reiniciar el panel o
+tras `provisionar`, y desaparece solo cuando el motor ha arrancado de nuevo), `acmeSupported`
 (`false` con 0.16: el certificado lo obtiene Traefik y el extractor lo lleva
 al motor) y `maintenance: { active, until }` (sección 2.10).
 `POST /api/engine/recommended` devuelve también `restartRequired`; no es un

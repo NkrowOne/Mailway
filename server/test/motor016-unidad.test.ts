@@ -7,7 +7,9 @@ import path from 'node:path';
 import { HttpError } from '../src/core/errors';
 import { RutaDeGestionAusente } from '../src/engine/errores';
 import { ClienteJmap } from '../src/engine/jmap';
-import { Stalwart016Engine } from '../src/engine/stalwart016';
+import { AJUSTE_REINICIOS, almacenReiniciosEnBase } from '../src/engine/reinicios';
+import { almacenReiniciosEnMemoria, Stalwart016Engine } from '../src/engine/stalwart016';
+import { getSetting, setJsonSetting } from '../src/modules/settings';
 import type { EngineSettings } from '../src/engine/types';
 
 /*
@@ -1400,6 +1402,37 @@ describe('ajustes recomendados y estado', () => {
     motorFalso.reiniciar();
     assert.deepEqual((await motor.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, []);
     assert.deepEqual((await motor.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 })).restartRequired, []);
+  });
+
+  test('el aviso del 587 lo ve otro driver con el mismo almacén: el panel tras reiniciarse, o tras la herramienta de migración', async () => {
+    const almacen = almacenReiniciosEnMemoria();
+    const herramienta = new Stalwart016Engine(ajustes(), { tiempos: RAPIDOS, reinicios: almacen });
+    const aplicado = await herramienta.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 });
+    assert.equal(aplicado.restartRequired?.length, 1);
+
+    const panel = new Stalwart016Engine(ajustes(), { tiempos: RAPIDOS, reinicios: almacen });
+    const estado = await panel.getSettingsStatus({ trustedNetworks: REDES });
+    assert.deepEqual(estado.restartRequired, aplicado.restartRequired, 'la escucha está guardada, pero aún no abierta');
+
+    // Un aviso que esta versión del panel no conoce no se muestra.
+    almacen.guardar({ ...almacen.leer(), 'aviso-de-otra-version': null });
+    assert.deepEqual((await panel.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, aplicado.restartRequired);
+
+    motorFalso.reiniciar();
+    assert.deepEqual((await panel.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, []);
+    assert.deepEqual(almacen.leer(), {}, 'tras reiniciar el motor no queda nada guardado');
+  });
+
+  test('almacenReiniciosEnBase: los avisos van a la base de datos del panel', () => {
+    almacenReiniciosEnBase.guardar({ submission587: '1@2026-10-09T10:00:00Z' });
+    assert.deepEqual(almacenReiniciosEnBase.leer(), { submission587: '1@2026-10-09T10:00:00Z' });
+    // Lo que no tiene la forma esperada no rompe nada.
+    setJsonSetting(AJUSTE_REINICIOS, ['no', 'es', 'un', 'objeto']);
+    assert.deepEqual(almacenReiniciosEnBase.leer(), {});
+    setJsonSetting(AJUSTE_REINICIOS, { submission587: 7 });
+    assert.deepEqual(almacenReiniciosEnBase.leer(), { submission587: null });
+    almacenReiniciosEnBase.guardar({});
+    assert.equal(getSetting(AJUSTE_REINICIOS), null);
   });
 
   test('redes: una más amplia ya dada de alta vale; una mal escrita es un error y el resto se aplica', async () => {

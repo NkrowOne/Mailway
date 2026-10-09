@@ -1,6 +1,7 @@
 import { upstream } from '../core/errors';
 import { RutaDeGestionAusente } from './errores';
 import { credencialesRechazadas, Stalwart015Engine } from './stalwart';
+import { almacenReiniciosEnBase } from './reinicios';
 import { Stalwart016Engine } from './stalwart016';
 import type {
   AcmeInput,
@@ -47,7 +48,7 @@ export interface FabricaDrivers {
 
 const FABRICA_POR_DEFECTO: FabricaDrivers = {
   rest015: (settings) => new Stalwart015Engine(settings),
-  jmap016: (settings) => new Stalwart016Engine(settings),
+  jmap016: (settings) => new Stalwart016Engine(settings, { reinicios: almacenReiniciosEnBase }),
 };
 
 /**

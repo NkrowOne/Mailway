@@ -124,7 +124,36 @@ const ESCUCHA_587 = {
   useTls: true,
   tlsImplicit: false,
 };
-const AVISO_REINICIO_587 = 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor.';
+
+/**
+ * Cambios guardados que solo se aplican al reiniciar el contenedor del motor:
+ * clave estable (la que se guarda) → aviso para el administrador.
+ */
+const AVISOS_REINICIO: Record<string, string> = {
+  submission587: 'Puerto 587 (envío con STARTTLS): se abre al reiniciar el contenedor del motor.',
+};
+
+/**
+ * Dónde se recuerdan los cambios que esperan a un reinicio del motor (clave
+ * de AVISOS_REINICIO → marca de arranque del motor al guardarlos). El panel
+ * usa su base de datos (engine/reinicios.ts): así el aviso sobrevive a un
+ * reinicio del panel y lo ve aunque lo haya dejado la herramienta de
+ * migración, que es otro proceso. Sin almacén, en memoria.
+ */
+export interface AlmacenReinicios {
+  leer(): Record<string, string | null>;
+  guardar(pendientes: Record<string, string | null>): void;
+}
+
+export function almacenReiniciosEnMemoria(): AlmacenReinicios {
+  let guardados: Record<string, string | null> = {};
+  return {
+    leer: () => ({ ...guardados }),
+    guardar: (pendientes) => {
+      guardados = { ...pendientes };
+    },
+  };
+}
 
 /* ------------------------------ Tipos de JMAP ------------------------------ */
 
@@ -329,7 +358,7 @@ export class Stalwart016Engine implements MailEngine {
    * de arranque del motor cuando se guardaron: cuando la marca cambia, el
    * motor ya ha arrancado de nuevo y el aviso sobra.
    */
-  private readonly pendientesDeReinicio = new Map<string, string | null>();
+  private readonly reinicios: AlmacenReinicios;
   /** Lo último que pidió el panel para el límite de contraseñas de aplicación. */
   private maxAppPasswordsPedido: number | null = null;
 
@@ -337,9 +366,10 @@ export class Stalwart016Engine implements MailEngine {
 
   constructor(
     private settings: EngineSettings,
-    opciones: { tiempos?: Partial<TiemposDriver> } = {},
+    opciones: { tiempos?: Partial<TiemposDriver>; reinicios?: AlmacenReinicios } = {},
   ) {
     this.tiempos = { ...TIEMPOS, ...opciones.tiempos };
+    this.reinicios = opciones.reinicios ?? almacenReiniciosEnMemoria();
     this.jmap = new ClienteJmap({
       url: settings.url,
       usuario: settings.adminUser,
@@ -827,7 +857,11 @@ export class Stalwart016Engine implements MailEngine {
     if (patch.suspended !== undefined) {
       // Suspender = quitar el permiso de autenticarse, como hace el SCIM del
       // propio Stalwart con active=false: no entra por IMAP, SMTP ni webmail
-      // y el correo le sigue llegando.
+      // y el correo le sigue llegando. En 0.16 no hay un permiso aparte para
+      // OAuth (0.15 tenía authenticate-oauth): Server::authenticate exige
+      // `authenticate` con cualquier credencial, también un token OAuth, una
+      // clave de API o una contraseña de aplicación (crates/common/src/auth/
+      // authentication.rs, v0.16.25).
       cambio.permissions = patch.suspended
         ? { '@type': 'Merge', enabledPermissions: {}, disabledPermissions: { authenticate: true } }
         : { '@type': 'Inherit' };
@@ -1020,14 +1054,31 @@ export class Stalwart016Engine implements MailEngine {
   }
 
   private async pendientesActuales(): Promise<string[]> {
-    if (this.pendientesDeReinicio.size === 0) return [];
+    const pendientes = this.reinicios.leer();
+    const claves = Object.keys(pendientes);
+    if (claves.length === 0) return [];
     const marca = await this.marcaDeArranque();
-    for (const [aviso, marcaAlGuardar] of this.pendientesDeReinicio) {
-      if (marca !== null && marcaAlGuardar !== null && marca !== marcaAlGuardar) {
-        this.pendientesDeReinicio.delete(aviso);
+    for (const clave of claves) {
+      const marcaAlGuardar = pendientes[clave] ?? null;
+      // Ya ha reiniciado desde que se guardó, o es un aviso que esta versión
+      // del panel ya no conoce.
+      if (!AVISOS_REINICIO[clave] || (marca !== null && marcaAlGuardar !== null && marca !== marcaAlGuardar)) {
+        delete pendientes[clave];
       }
     }
-    return [...this.pendientesDeReinicio.keys()];
+    if (Object.keys(pendientes).length !== claves.length) this.reinicios.guardar(pendientes);
+    return Object.keys(pendientes).map((clave) => AVISOS_REINICIO[clave]!);
+  }
+
+  private anotarReinicio(clave: string, marca: string | null): void {
+    this.reinicios.guardar({ ...this.reinicios.leer(), [clave]: marca });
+  }
+
+  private olvidarReinicio(clave: string): void {
+    const pendientes = this.reinicios.leer();
+    if (!(clave in pendientes)) return;
+    delete pendientes[clave];
+    this.reinicios.guardar(pendientes);
   }
 
   async applyRecommended(input: RecommendedInput): Promise<EngineReloadResult> {
@@ -1200,7 +1251,7 @@ export class Stalwart016Engine implements MailEngine {
     if (creado587) {
       // Los sockets solo se abren al arrancar: la recarga analiza la escucha
       // nueva pero no la pone a escuchar (comprobado en 0.16.25).
-      this.pendientesDeReinicio.set(AVISO_REINICIO_587, marca);
+      this.anotarReinicio('submission587', marca);
     }
 
     errors.push(...(await this.recargar()));
@@ -1261,7 +1312,7 @@ export class Stalwart016Engine implements MailEngine {
     });
 
     // Si alguien ha quitado la escucha, ya no hay reinicio que esperar por ella.
-    if (!tiene587) this.pendientesDeReinicio.delete(AVISO_REINICIO_587);
+    if (!tiene587) this.olvidarReinicio('submission587');
 
     return {
       api: 'jmap016',
