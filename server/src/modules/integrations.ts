@@ -327,6 +327,9 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // Interruptor general del webmail automático (webmail.<dominio> de
         // cada dominio). Que exista la clave dice que Mailway lo admite.
         webmailAutomatico: webmailAutomaticoGlobal(),
+        // Enlaces de bienvenida del cliente (`/api/clients/:id/invites`):
+        // Skyway solo ofrece «Enviar configuración inicial» si lo ve.
+        invites: true,
       },
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:
