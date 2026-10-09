@@ -1,25 +1,47 @@
 name: Pila de correo
 
-# Prueba el despliegue con contenedores reales: Stalwart v0.15.5, Roundcube y
-# el extractor del certificado (perfil «tls») con la topología de
-# deploy/docker-compose.mail.yml (red interna con subred fija), montados por
-# deploy/instalar.sh, con certificados de laboratorio y credenciales
-# desechables. Complementa a ci.yml; no lo sustituye.
+# Prueba el despliegue con contenedores reales, con certificados de
+# laboratorio y credenciales desechables. Complementa a ci.yml; no lo
+# sustituye:
+#   - el panel (driver y rutas) contra Stalwart 0.16 y 0.15 de verdad;
+#   - la pila montada por deploy/instalar.sh con cada motor: Stalwart 0.16
+#     (instalaciones nuevas) y 0.15 (las anteriores), Roundcube y el extractor
+#     del certificado (perfil «tls») con la topología de
+#     deploy/docker-compose.mail.yml;
+#   - la migración de la 0.15 a la 0.16 (instalar.sh --migrar-motor) con
+#     datos de verdad, su vuelta atrás automática, --revertir-motor y
+#     --retirar-motor-anterior.
 
 on:
   push:
     branches: [main]
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'server/src/tools/motor.ts'
+      - 'server/src/modules/cambiomotor.ts'
+      - 'server/src/modules/engineops.ts'
+      - 'server/test/motor01*'
+      - 'server/test/panel-motor-real.test.ts'
       - '.github/workflows/stack.yml'
+  # Incluye los PR de Dependabot que suben una imagen de los compose
+  # (deploy/docker-compose*.yml y deploy/motor/*/compose.yml, también los
+  # parches de Stalwart 0.15.x y 0.16.x): parches-automaticos.yml no los
+  # fusiona hasta que estas pruebas con contenedores reales terminan bien.
   pull_request:
     paths:
       - 'deploy/**'
+      - 'server/src/engine/**'
+      - 'server/src/tools/motor.ts'
+      - 'server/src/modules/cambiomotor.ts'
+      - 'server/src/modules/engineops.ts'
+      - 'server/test/motor01*'
+      - 'server/test/panel-motor-real.test.ts'
       - '.github/workflows/stack.yml'
   workflow_dispatch:
-  # Las imágenes de Roundcube (1.7.x) y de Python (3.13) siguen su versión
-  # menor: una ejecución semanal detecta a tiempo una actualización que rompa
-  # la pila.
+  # Las imágenes van con versión exacta, pero una misma etiqueta puede volver
+  # a publicarse con arreglos de su sistema base: una ejecución semanal
+  # detecta a tiempo una que rompa la pila.
   schedule:
     - cron: '17 6 * * 1'
 
@@ -32,7 +54,7 @@ concurrency:
 
 jobs:
   estatica:
-    name: Extractor, diagnóstico y Compose (sin contenedores)
+    name: Extractor, motor, diagnóstico y Compose (sin contenedores)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -41,12 +63,17 @@ jobs:
       - name: Pruebas unitarias del extractor del certificado
         run: python3 -m unittest discover -s deploy/tls -v
 
-      - name: Sintaxis de Python, PHP y Bash
+      - name: Pruebas unitarias del ayudante de la migración del motor
+        run: python3 -m unittest discover -s deploy/motor -v
+
+      - name: Sintaxis de Python, PHP, JavaScript y Bash
         run: |
           python3 -m py_compile deploy/tls/extractor.py deploy/tls/laboratorio.py \
-            deploy/tls/test_extractor.py deploy/prueba-stack.py
+            deploy/tls/test_extractor.py deploy/motor/migracion.py deploy/motor/test_migracion.py \
+            deploy/prueba-stack.py
           php -l deploy/roundcube/diagnostico/comprobar.php
           php -l deploy/roundcube/mailway.php
+          node --check deploy/prueba-panel-motor.js
           for f in deploy/*.sh; do bash -n "$f"; done
           shellcheck -x -S style deploy/*.sh
 
@@ -56,7 +83,13 @@ jobs:
       - name: Migración desde la 0.x en el instalador (docker y motor simulados)
         run: bash deploy/prueba-migracion.sh
 
-      - name: Compose con un entorno ficticio (con y sin el perfil tls)
+      - name: Actualización automática y vuelta atrás de mailway (git real; docker y systemd simulados)
+        run: bash deploy/prueba-actualizacion.sh
+
+      - name: Motor de correo en el instalador (0.15 y 0.16; migración y vuelta atrás simuladas)
+        run: bash deploy/prueba-motor016.sh
+
+      - name: Compose con un entorno ficticio (cada motor, con y sin el perfil tls)
         run: |
           cat > "$RUNNER_TEMP/ficticio.env" <<'EOF'
           MAILWAY_INSTALACION='skyway'
@@ -67,24 +100,114 @@ jobs:
           ROUNDCUBE_DES_KEY='0123456789abcdef01234567'
           TRAEFIK_ACME_VOLUME='skyway_traefik-letsencrypt'
           EOF
-          for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
-            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
-            docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+          for motor in '' stalwart-0.15 stalwart-0.16; do
+            for f in deploy/docker-compose.mail.yml deploy/docker-compose.standalone.yml; do
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config -q
+              MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" --profile tls config -q
+              # El motor no debe recibir la cabecera Forwarded del cliente: la
+              # lee antes que X-Forwarded-For y Traefik la deja pasar (ver los
+              # compose de cada motor). Con cualquier motor, en todos sus routers.
+              config=$(MAILWAY_MOTOR=$motor docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f "$f" config)
+              grep -qF 'traefik.http.middlewares.mailway-mail-sin-forwarded.headers.customrequestheaders.Forwarded: ""' <<<"$config"
+              routers=$(grep -oE 'traefik\.http\.routers\.mailway-mail[a-z-]*\.rule' <<<"$config" | cut -d. -f4 | sort -u)
+              [ "$(wc -l <<<"$routers")" -ge 2 ]
+              while read -r router; do
+                grep -qE "traefik\.http\.routers\.$router\.middlewares: ([^ ]*,)?mailway-mail-sin-forwarded(,|\$)" <<<"$config"
+              done <<<"$routers"
+            done
           done
+          # Sin MAILWAY_MOTOR, la 0.15: las instalaciones anteriores a la 0.16
+          # siguen exactamente igual.
+          docker compose --env-file "$RUNNER_TEMP/ficticio.env" -f deploy/docker-compose.mail.yml config --images |
+            grep -qx 'stalwartlabs/stalwart:v0.15.5'
 
-  pila:
-    name: Stalwart y Roundcube reales (TLS, IMAP, SMTP y renovación)
+  # El driver de Stalwart 0.16 y el panel de extremo a extremo contra los
+  # motores de verdad, con las versiones de deploy/motor/*/compose.yml (las
+  # que sube Dependabot). Cada prueba con su propio motor: dejan datos en él.
+  contrato:
+    name: Panel contra Stalwart 0.16 y 0.15 reales
     needs: estatica
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
 
-      # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
-      # comprueba TLS en 993/465, IMAP (webmail y directo), SMTP AUTH en
-      # 465/587, la renovación con el extractor, --comprobar y --probar-acceso,
-      # y lo retira todo al terminar. Ver deploy/prueba-stack.py.
+      - name: Driver de Stalwart 0.16 (JMAP)
+        run: |
+          MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
+          export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-contrato-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
+          trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          # Primero la salida y después el eval: «eval "$(…)"» daría por bueno
+          # un arranque fallido, y la prueba, sin sus variables, se omitiría.
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
+          cd server && node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts
+
+      - name: Panel contra Stalwart 0.16
+        run: |
+          MOTOR016_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.16/compose.yml)
+          export MOTOR016_IMAGEN MOTOR016_CONTENEDOR=mailway-panel-016
+          : "${MOTOR016_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.16/compose.yml}"
+          trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          variables=$(server/test/motor016-arrancar.sh)
+          eval "$variables"
+          cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
+            test/panel-motor-real.test.ts
+
+      - name: Panel contra Stalwart 0.15
+        run: |
+          MOTOR015_IMAGEN=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(stalwartlabs/stalwart:[^[:space:]]+).*#\1#p' deploy/motor/stalwart-0.15/compose.yml)
+          export MOTOR015_IMAGEN MOTOR015_CONTENEDOR=mailway-panel-015
+          : "${MOTOR015_IMAGEN:?sin la imagen de Stalwart en deploy/motor/stalwart-0.15/compose.yml}"
+          trap 'docker rm -f "$MOTOR015_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
+          variables=$(server/test/motor015-arrancar.sh)
+          eval "$variables"
+          cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
+            test/panel-motor-real.test.ts
+
+  # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
+  # comprueba TLS en 993/465 (y 587 con STARTTLS en la 0.16), IMAP (webmail y
+  # directo), SMTP AUTH en 465/587, la renovación con el extractor,
+  # --comprobar y --probar-acceso, y lo retira todo al terminar. Con la 0.16,
+  # además, el primer arranque, los ajustes de Mailway con la herramienta del
+  # motor del panel y las rutas de Traefik. Ver deploy/prueba-stack.py.
+  pila:
+    name: Pila con Stalwart ${{ matrix.motor }} (TLS, IMAP, SMTP y renovación)
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        motor: ['0.16', '0.15']
+    steps:
+      - uses: actions/checkout@v4
       - name: Pila completa montada por el instalador
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
-        run: python3 deploy/prueba-stack.py
+          MOTOR: stalwart-${{ matrix.motor }}
+        run: python3 deploy/prueba-stack.py --motor "$MOTOR"
+
+  # Un servidor con la 0.15 y datos de verdad pasa a la 0.16: primero un
+  # intento que falla a propósito (vuelve solo a la 0.15), después la
+  # migración (el mismo correo con la misma contraseña; alias, DKIM y
+  # suspensiones), --revertir-motor, otra migración y
+  # --retirar-motor-anterior. Descarga el script oficial de Stalwart y sus
+  # dependencias, fijados con su sha256, como lo haría un servidor.
+  migracion:
+    name: Migración de Stalwart 0.15 a 0.16 y vuelta atrás
+    needs: estatica
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migración con contenedores reales
+        env:
+          MAILWAY_PRUEBA_DESECHABLE: '1'
+        run: python3 deploy/prueba-stack.py --migracion

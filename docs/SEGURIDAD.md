@@ -372,7 +372,20 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
   - `http.use-x-forwarded=true` hace que el motor vea la IP real de quien llega
-    por Traefik, en lugar de bloquear la IP de Traefik para todos.
+    por Traefik, en lugar de bloquear la IP de Traefik para todos;
+  - Traefik **borra la cabecera `Forwarded`** antes de llegar al motor
+    (middleware `mailway-mail-sin-forwarded` de los compose). Stalwart lee
+    `Forwarded: for=` antes que `X-Forwarded-For`, y Traefik solo reescribe
+    las `X-Forwarded-*`: sin el middleware, cualquiera podía decir que venía de
+    la red exenta y probar contraseñas sin límite contra
+    `https://MAIL_HOSTNAME`. La CI comprueba que el middleware sigue en los dos
+    compose.
+- **Pendiente con el proxy de Cloudflare**: si Traefik confía en las IP de
+  Cloudflare (`forwardedHeaders.trustedIPs`), conserva el `X-Forwarded-For`
+  que llega por Cloudflare, cuya primera dirección pone el cliente, y
+  Stalwart toma justo esa. Antes de confiar en Cloudflare en el Traefik que
+  sirve `MAIL_HOSTNAME`, el motor necesita delante una pasarela que calcule la
+  IP real (la última que no es de un proxy de confianza) y le pase solo esa.
 - **Compromiso conocido**: con `http.use-x-forwarded=true`, un contenedor
   conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar con
   `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
@@ -479,7 +492,47 @@ cualquier argumento que parezca un token antes de leer nada, no lee desde un
 terminal, limita el tamaño de la entrada y no repite nunca lo recibido; el
 token queda cifrado en la base y fuera de `deploy/.env` y de la actividad.
 
-## 11. Recomendaciones operativas
+La de avisos (`tools/avisar.js`, que usa la actualización automática) no
+recibe secretos: limpia los textos de colores y caracteres de control, los
+acorta, no repite las opciones que no reconoce y nunca muestra las URL ni los
+tokens de los canales.
+
+## 11. Actualizaciones
+
+Los parches de seguridad llegan solos, pero solo después de probarse:
+
+- **Versiones exactas.** El `Dockerfile` y los compose fijan cada imagen con
+  su versión completa (p. ej. `node:22.23.3-alpine`,
+  `roundcube/roundcubemail:1.7.4-apache`, Stalwart `v0.15.5`): un `pull` o
+  una reconstrucción nunca traen una versión que no haya pasado la CI.
+- **Solo parches, y tras todas las comprobaciones.** Dependabot agrupa los
+  parches (x.y.Z) de npm, de las imágenes y de las acciones.
+  `.github/workflows/parches-automaticos.yml` fusiona uno solo si el PR es de
+  Dependabot, sale de una rama de este repositorio hacia la principal, su
+  último commit es de Dependabot y es exactamente el probado, todas sus
+  dependencias suben solo un parche y han terminado bien todas las
+  comprobaciones del commit: la CI, la imagen del panel construida y
+  arrancada y, si cambian los compose, la pila de correo real. Las versiones
+  menores y mayores, y Stalwart fuera de la 0.15, las revisa una persona.
+- **El workflow con permisos no ejecuta el código del PR.** Corre por
+  `workflow_run` con la configuración de la rama principal y permiso de
+  escritura, así que nunca hace checkout ni ejecuta nada del PR: solo consulta
+  la API con `gh`, y lo que llega del evento pasa por variables de entorno,
+  nunca dentro del script.
+- **Vuelta atrás en el servidor.** `mailway update --auto` (activado con
+  `sudo mailway auto-update on`) no hace nada si no hay versión nueva; si la
+  hay, comprueba el servidor antes y después, y si falla vuelve al commit
+  anterior y a sus imágenes. No toca los volúmenes ni restaura bases de datos
+  (los parches de Stalwart no migran sus datos), no inicia sesión en ningún
+  buzón y no prueba los puertos desde fuera (esas conexiones llegarían desde
+  una IP sin exención y contarían para el bloqueo automático del motor). En
+  el registro del sistema se tapan los secretos que el resumen del instalador
+  muestra a quien instala a mano. Se niega a actualizar si hay cambios hechos
+  a mano en la copia (volver atrás los borraría).
+
+Detalle en la sección 8.1 de [DESPLIEGUE-SKYWAY.md](DESPLIEGUE-SKYWAY.md).
+
+## 12. Recomendaciones operativas
 
 - Mantén cerrados en el cortafuegos todos los puertos salvo 22, 25, 80, 443,
   465, 587, 993 y 4190.
@@ -493,5 +546,8 @@ token queda cifrado en la base y fuera de `deploy/.env` y de la actividad.
   certificado.
 - Revisa **Actividad** y **Avisos** con regularidad y configura al menos un
   canal de aviso.
+- Activa la actualización automática (`sudo mailway auto-update on`): los
+  parches de seguridad llegan probados y, si algo falla al aplicarlos, el
+  servidor vuelve solo a la versión anterior.
 - Guarda cifradas las copias de `/data`, del volumen del motor y de
   `deploy/.env`.
