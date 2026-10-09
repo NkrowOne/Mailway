@@ -279,7 +279,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       <div id="contrasenas-aplicacion" className="scroll-mt-4">
         <HojaContrasenasAplicacion />
       </div>
-      <HojaCambioContrasena />
+      <HojaCambioContrasena correoWebNuevo={me.newWebmail === true} />
     </MarcoPortal>
   );
 }
@@ -576,20 +576,25 @@ function HojaContrasenasAplicacion() {
 
 /* --------------------------- Cambio de contraseña -------------------------- */
 
-function HojaCambioContrasena() {
+function HojaCambioContrasena({ correoWebNuevo }: { correoWebNuevo: boolean }) {
   const toast = useToast();
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
   const [repetida, setRepetida] = useState('');
   const [error, setError] = useState('');
+  // El correo web nuevo no vuelve solo al acceso tras un cambio de contraseña:
+  // sigue intentándolo con la anterior y el servidor acaba bloqueando la conexión.
+  const [cerrarCorreoWeb, setCerrarCorreoWeb] = useState(false);
 
   const cambiar = useMutation({
-    mutationFn: () => api.post('/api/portal/password', { current: actual, next: nueva }),
-    onSuccess: () => {
+    mutationFn: () =>
+      api.post<{ ok: boolean; reopenWebmail?: boolean }>('/api/portal/password', { current: actual, next: nueva }),
+    onSuccess: (data) => {
       setActual('');
       setNueva('');
       setRepetida('');
       setError('');
+      setCerrarCorreoWeb(Boolean(data?.reopenWebmail));
       toast('ok', 'Se ha cambiado la contraseña del buzón.');
     },
     onError: (err) => setError(mensajeError(err, 'No se ha podido cambiar la contraseña.')),
@@ -609,9 +614,20 @@ function HojaCambioContrasena() {
   return (
     <Hoja title="Cambiar la contraseña">
       <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
+        {cerrarCorreoWeb && (
+          <AvisoAtencion titulo="Cierra el correo web y vuelve a entrar">
+            <p>
+              Si tienes el correo web abierto en alguna pestaña o dispositivo, ciérralo y vuelve a entrar con la
+              contraseña nueva. Mientras siga abierto, intentará conectar con la anterior y el servidor de correo
+              puede bloquear tu conexión durante una hora; en ese tiempo, desde esa red tampoco se sincronizarán
+              tu móvil ni tu ordenador.
+            </p>
+          </AvisoAtencion>
+        )}
         <Nota>
           Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzcas en ellos
           la nueva. Los que utilizan una contraseña de aplicación no se ven afectados.
+          {correoWebNuevo && ' Si tienes el correo web abierto, después tendrás que cerrarlo y volver a entrar.'}
         </Nota>
         <Input
           label="Contraseña actual"
