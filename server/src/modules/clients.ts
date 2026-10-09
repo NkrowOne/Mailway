@@ -93,6 +93,11 @@ export interface Client {
   createdAt: number;
   /** Referencia en un sistema externo (p. ej. "skyway:project:<id>"), o null. */
   externalRef: string | null;
+  /**
+   * Correo web elegido para sus webmail propios: Roundcube o el nuevo
+   * (Bulwark, beta). Se cambia con PUT /api/clients/:id/webmail (correoweb.ts).
+   */
+  webmailMotor: 'roundcube' | 'bulwark';
 }
 
 interface ClientRow {
@@ -105,6 +110,7 @@ interface ClientRow {
   notes: string;
   created_at: number;
   external_ref: string | null;
+  webmail_motor: 'roundcube' | 'bulwark';
 }
 
 function toClient(row: ClientRow): Client {
@@ -118,6 +124,7 @@ function toClient(row: ClientRow): Client {
     notes: row.notes,
     createdAt: row.created_at,
     externalRef: row.external_ref ?? null,
+    webmailMotor: row.webmail_motor === 'bulwark' ? 'bulwark' : 'roundcube',
   };
 }
 

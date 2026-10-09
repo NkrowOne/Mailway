@@ -18,6 +18,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
@@ -266,7 +267,7 @@ export class MotorStalwart implements MailEngine {
   applyRecommended(input: RecommendedInput): Promise<EngineReloadResult> {
     return this.llamar((d) => d.applyRecommended(input));
   }
-  getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus> {
+  getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
     return this.llamar((d) => d.getSettingsStatus(input));
   }
   configureAcme(input: AcmeInput): Promise<EngineReloadResult> {

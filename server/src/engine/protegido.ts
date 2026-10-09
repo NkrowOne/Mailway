@@ -1,4 +1,5 @@
 import { exigirSinMantenimiento } from '../modules/mantenimiento';
+import { anotarApiDelMotor } from './apiconocida';
 import type {
   AcmeInput,
   CreatedAppPassword,
@@ -13,6 +14,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
@@ -25,6 +27,9 @@ import type {
  *
  * Se comprueba en cada llamada y no al crear el motor: el mantenimiento lo
  * activa otro proceso (la herramienta de terminal) con el panel en marcha.
+ *
+ * Como todo lo del panel pasa por aquí, también anota la versión del motor
+ * cada vez que se averigua (engine/apiconocida.ts).
  */
 export class MotorProtegido implements MailEngine {
   constructor(private readonly motor: MailEngine) {}
@@ -35,11 +40,17 @@ export class MotorProtegido implements MailEngine {
 
   /* ------------------------------ Lecturas ------------------------------- */
 
-  detectApi(): Promise<EngineApi> {
-    return this.motor.detectApi();
+  // La versión que se averigua aquí queda anotada (engine/apiconocida.ts):
+  // la necesitan las rutas de Traefik sin esperar al motor.
+  async detectApi(): Promise<EngineApi> {
+    const api = await this.motor.detectApi();
+    anotarApiDelMotor(api);
+    return api;
   }
-  ping(): Promise<EngineHealth> {
-    return this.motor.ping();
+  async ping(): Promise<EngineHealth> {
+    const salud = await this.motor.ping();
+    if (salud.api) anotarApiDelMotor(salud.api);
+    return salud;
   }
   getDnsRecords(domain: string): Promise<EngineDnsRecord[]> {
     return this.motor.getDnsRecords(domain);
@@ -53,7 +64,7 @@ export class MotorProtegido implements MailEngine {
   getMailboxUsage(): Promise<Map<string, number>> {
     return this.motor.getMailboxUsage();
   }
-  getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus> {
+  getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
     return this.motor.getSettingsStatus(input);
   }
   getRunningHostname(): Promise<string | null> {

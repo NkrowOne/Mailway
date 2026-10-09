@@ -33,6 +33,7 @@ import {
   mobileconfigPlist,
   publicBaseUrl,
   thunderbirdAndroidQrPayload,
+  webmailPropio,
   type ConnectionSettings,
 } from './connection';
 import {
@@ -45,6 +46,7 @@ import {
   leerFoto,
   nombreSchema,
 } from './perfil';
+import { motorCorreoWebEnServicio } from './webmailmotor';
 
 /**
  * Portal del titular del buzón y enlaces de configuración de dispositivos.
@@ -211,6 +213,14 @@ export function buzonDelPanel(req: FastifyRequest, mailboxId: string): Titular {
   if (!titular) throw notFound('Buzón no encontrado.');
   requireClientAccess(req, titular.clientId);
   return titular;
+}
+
+/**
+ * ¿Entra el titular al correo web por el nuevo (Bulwark)? Su cliente lo usa y
+ * su webmail es uno propio en servicio (la dirección general sigue en Roundcube).
+ */
+function usaCorreoWebNuevo(titular: Titular): boolean {
+  return motorCorreoWebEnServicio(titular.clientId) === 'bulwark' && webmailPropio(titular.clientId, titular.domain) !== null;
 }
 
 /** Datos de conexión en la forma de GET /api/mailboxes/:id/connection. */
@@ -1207,6 +1217,9 @@ export function registerPortalRoutes(app: FastifyInstance): void {
       // Contraseñas de aplicación que dejaron de funcionar al actualizar el
       // servidor de correo: «Mi buzón» avisa arriba para que cree otras.
       invalidatedAppPasswords: contrasenasInvalidadas(titular.id),
+      // Su webmail es el correo web nuevo (Bulwark): tras cambiar la
+      // contraseña hay que cerrarlo y volver a entrar (ver la ruta siguiente).
+      newWebmail: usaCorreoWebNuevo(titular),
     };
   });
 
@@ -1224,7 +1237,11 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     await cambiarContrasenaBuzon(titular, body.next);
     alCambiarContrasenaBuzon(titular.id, tokenHash);
     auditTitular(req, titular.clientId, 'portal.password_changed', { email: titular.email });
-    return { ok: true };
+    // El correo web nuevo no vuelve al acceso al cambiar la contraseña: sigue
+    // reintentando con la anterior desde la IP del titular y el motor acaba
+    // bloqueándola (deploy/bulwark/README.md, «Riesgos»). «Mi buzón» pide
+    // cerrarlo y volver a entrar.
+    return { ok: true, reopenWebmail: usaCorreoWebNuevo(titular) };
   });
 
   app.get('/api/portal/mobileconfig', async (req, reply) => {

@@ -56,6 +56,8 @@ export interface PortalMe {
   photoUrl: string | null;
   /** Contraseñas de aplicación sin revocar que dejaron de funcionar al actualizar el servidor de correo. */
   invalidatedAppPasswords: number;
+  /** Su webmail es el correo web nuevo: tras cambiar la contraseña hay que cerrarlo y volver a entrar. */
+  newWebmail?: boolean;
 }
 
 export interface ContrasenaAplicacion {

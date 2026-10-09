@@ -86,7 +86,12 @@ services:
       - traefik.http.routers.mailway-mail-bloqueo.middlewares=mailway-mail-sin-forwarded,mailway-mail-bloqueo
       - traefik.http.routers.mailway-mail-bloqueo.service=mailway-mail
       - traefik.http.middlewares.mailway-mail-bloqueo.ipallowlist.sourcerange=127.0.0.1/32
-      - traefik.http.services.mailway-mail.loadbalancer.server.port=8080
+      # Traefik no llega al motor: el servicio es su pasarela (mailway-mail-gw,
+      # deploy/motor/pasarela), que le entrega una sola IP en X-Forwarded-For,
+      # la real, aunque Traefik conserve la cabecera que trae la petición (p. ej.
+      # si confía en Cloudflare). Sin ella, la primera dirección de esa
+      # cabecera la elegiría el cliente, también una de la red exenta.
+      - traefik.http.services.mailway-mail.loadbalancer.server.url=http://mailway-mail-gw:8080
     healthcheck:
       # La imagen 0.16 trae curl. /healthz/ready responde 200 cuando la base
       # de datos está cargada. Con la cabecera, el motor (que confía en

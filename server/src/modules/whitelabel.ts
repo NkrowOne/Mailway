@@ -19,6 +19,7 @@ import {
 } from './autoconfig';
 import { instanceAutoconfigBase, publicBaseUrl, webmailUrlForClient } from './connection';
 import { getInstanceSettings, getSetting, setSetting } from './settings';
+import { clientesConBulwarkEnServicio, estadoBulwark, motorCorreoWebDe } from './webmailmotor';
 
 export type DomainKind = 'webmail' | 'panel';
 export type DomainStatus = 'pending_dns' | 'issuing' | 'active' | 'error';
@@ -125,13 +126,41 @@ function normalizeHostname(input: string): string {
   return host;
 }
 
-/** Backend al que Traefik debe enviar el tráfico de cada tipo de dominio. */
-function backendFor(kind: DomainKind): string {
+/** Backend al que Traefik debe enviar el tráfico de cada tipo de dominio (sin mirar el cliente). */
+function backendDelTipo(kind: DomainKind): string {
   return kind === 'webmail' ? config.traefik.webmailBackend : config.traefik.panelBackend;
 }
 
 export function kindAvailable(kind: DomainKind): boolean {
-  return Boolean(backendFor(kind));
+  return Boolean(backendDelTipo(kind));
+}
+
+/**
+ * Servicio y destino de Traefik para un nombre concreto. Los webmail de un
+ * cliente con el correo web nuevo van a Bulwark (su pasarela) mientras se
+ * pueda servir (`conBulwark`: Bulwark disponible y Stalwart 0.16); si no,
+ * a Roundcube, como los de los demás clientes: nunca se quedan sin destino.
+ * La dirección general del webmail no pasa por aquí y sigue en Roundcube.
+ */
+export function backendFor(
+  row: { kind: DomainKind; client_id: string },
+  conBulwark: ReadonlySet<string>,
+): { servicio: string; url: string } | null {
+  if (row.kind === 'webmail' && conBulwark.has(row.client_id) && config.bulwark.backendUrl) {
+    return { servicio: 'mailway-bulwark', url: config.bulwark.backendUrl };
+  }
+  const url = backendDelTipo(row.kind);
+  return url ? { servicio: `mailway-${row.kind}`, url } : null;
+}
+
+/**
+ * Un webmail de un cliente con el correo web nuevo ha entrado en servicio o
+ * ha salido: su marca en Bulwark tiene que seguirlo (sin esperar al vigilante).
+ */
+function avisarCorreoWeb(clientId: string): void {
+  if (motorCorreoWebDe(clientId) !== 'bulwark') return;
+  // Importación diferida: correoweb.ts carga engineops, que acaba cargando este módulo.
+  void import('./correoweb').then((m) => m.programarSincronizacionBulwark()).catch(() => undefined);
 }
 
 /** Dominios propios por cliente: cada uno supone un certificado y un router más. */
@@ -790,6 +819,9 @@ export function applyClientDomainCheck(
        WHERE id = ? RETURNING *`,
     )
     .get(status, detail, now(), status, now(), id) as DomainRow;
+  if (domain.kind === 'webmail' && (domain.status === 'active') !== (status === 'active')) {
+    avisarCorreoWeb(domain.clientId);
+  }
   return toDomain(row);
 }
 
@@ -943,6 +975,7 @@ export async function retirarWebmailsAutomaticos(clientId: string): Promise<numb
     resolveAlert(`whitelabel:${domain.id}`);
     auditSystem('whitelabel.domain_deleted', { id: domain.id, hostname: domain.hostname, automatico: true }, clientId);
   }
+  if (automaticos.some((d) => d.status === 'active')) avisarCorreoWeb(clientId);
   return automaticos.length;
 }
 
@@ -1036,12 +1069,14 @@ export function buildTraefikConfig(): Record<string, unknown> {
     };
   };
 
+  // Un servicio por destino: Roundcube (mailway-webmail), Bulwark
+  // (mailway-bulwark, solo los webmail de sus clientes) y el panel.
+  const conBulwark = clientesConBulwarkEnServicio();
   for (const row of rows) {
-    const backend = backendFor(row.kind);
-    if (!backend) continue;
-    const serviceName = `mailway-${row.kind}`;
-    services[serviceName] = { loadBalancer: { servers: [{ url: backend }] } };
-    addHost(`mailway-${row.id}`, row.hostname, serviceName);
+    const destino = backendFor(row, conBulwark);
+    if (!destino) continue;
+    services[destino.servicio] = { loadBalancer: { servers: [{ url: destino.url }] } };
+    addHost(`mailway-${row.id}`, row.hostname, destino.servicio);
   }
 
   // Autoconfiguración (autoconfig., autodiscover., mta-sts.): la sirve el
@@ -1145,6 +1180,8 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
       tokenFromEnv: Boolean(config.traefikTokenOverride),
       certResolver,
       webmailBackend: config.traefik.webmailBackend,
+      // Destino de los webmail de los clientes con el correo web nuevo (null si no está disponible).
+      bulwarkBackend: estadoBulwark().disponible ? config.bulwark.backendUrl : null,
       panelBackend: config.traefik.panelBackend,
       panelDomainsAvailable: kindAvailable('panel'),
       panelUrl: publicBaseUrl(req),
@@ -1349,6 +1386,7 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
     resolveAlert(`whitelabel:${id}`);
     audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname }, domain.clientId);
+    if (domain.kind === 'webmail' && domain.status === 'active') avisarCorreoWeb(domain.clientId);
     // Traefik dejará de enrutarlo en su siguiente sondeo (unos segundos).
     return { ok: true };
   });

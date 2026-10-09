@@ -4,7 +4,8 @@ Punto de entrada para navegar Mailway. Arquitectura, decisiones y modelo de
 datos en **[docs/PLAN.md](docs/PLAN.md)**; despliegue en
 **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**; API de envío en
 **[docs/API.md](docs/API.md)**; API de gestión e integraciones (tokens,
-Skyway, Cloudflare, autoconfiguración, portal, marca blanca) en
+Skyway, Cloudflare, autoconfiguración, portal, marca blanca, correo web
+nuevo) en
 **[docs/INTEGRACIONES.md](docs/INTEGRACIONES.md)**; modelo de seguridad en
 **[docs/SEGURIDAD.md](docs/SEGURIDAD.md)**. Sistema de diseño de la web en
 **[DESIGN.md](DESIGN.md)** y producto en **[PRODUCT.md](PRODUCT.md)**.
@@ -17,7 +18,8 @@ Cloudflare, con verificación de propiedad), buzones, alias, contraseñas de
 aplicación y claves de API; los titulares configuran sus dispositivos con un
 enlace de configuración o desde «Mi buzón». Motor Stalwart con versión
 exacta por serie: 0.16.25 en las instalaciones nuevas y 0.15.5 en las
-anteriores hasta que se migran (`mailway migrar-motor`); webmail Roundcube,
+anteriores hasta que se migran (`mailway migrar-motor`); webmail Roundcube
+(y, por cliente y en beta, el correo web nuevo, Bulwark, con Stalwart 0.16);
 panel Node + SQLite. Se despliega junto a
 [Skyway](https://github.com/NkrowOne/Skyway) (≥ 0.34 lo gestiona por
 proyecto y publica sus rutas de Traefik) o de forma autónoma.
@@ -44,11 +46,19 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `alerts`, `watchdog`, `dashboard`, `suspensiones` (corrección única, al
     arrancar o desde el vigilante, de lo que dejó la suspensión anterior:
-    buzones con `roles: []` y alias sin sus destinos).
-  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.
+    buzones con `roles: []` y alias sin sus destinos). Correo web nuevo:
+    `webmailmotor` (si Bulwark está instalado y qué clientes lo usan; sin
+    dependencias de otros módulos, lo importan Traefik y los ajustes del
+    motor), `bulwark` (cliente de su API de administración: marca por
+    dominio, imágenes y política) y `correoweb` (elección por cliente, su
+    marca y la sincronización con Bulwark, que nunca bloquea una ruta).
+  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`;
+    `apiconocida.ts` guarda la última versión del motor vista (las rutas de
+    Traefik la usan sin esperar al motor).
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
-    sha512-crypt.
+    sha512-crypt e imágenes (`imagenes.ts`: tipo y dimensiones por el
+    contenido).
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
@@ -63,15 +73,19 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   en `src/lib/`, esqueleto y navegación en `src/shell/AppShell.tsx`.
 - `deploy/` — `instalar.sh` (instalador idempotente), `mailway.sh` (la orden
   `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`;
-  `update --auto`, con comprobación antes y después y vuelta atrás, y
-  `auto-update on|off|status`, su temporizador de systemd), pruebas de los
+  `update --auto`, con comprobación antes y después y vuelta atrás,
+  `auto-update on|off|status`, su temporizador de systemd, y
+  `bulwark on|off|status`, el correo web beta), pruebas de los
   scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), el motor de cada serie
   (`motor/stalwart-0.15/compose.yml` y `motor/stalwart-0.16/compose.yml`, que
-  elige `MAILWAY_MOTOR`), el ayudante de la migración (`motor/migracion.py`),
-  las pruebas de la pila con contenedores reales (`prueba-stack.py`,
-  `prueba-motor016.sh`, `prueba-panel-motor.js`), `.env.example`, configuración de
+  elige `MAILWAY_MOTOR`), la pasarela HTTP del motor (`motor/pasarela`: nginx
+  con la IP real, delante de sus rutas de Traefik), el ayudante de la
+  migración (`motor/migracion.py`), Bulwark y su pasarela (`bulwark/`, ver su
+  README), las pruebas de la pila con contenedores reales (`prueba-stack.py`,
+  también con `--bulwark`; `prueba-pasarela.sh`, `prueba-motor016.sh`,
+  `prueba-panel-motor.js`), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
   (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
   del override de Traefik y punto de entrada de la imagen.
@@ -155,6 +169,13 @@ prueba que lo reproduce.
   `modules/connection.ts` para que panel, portal, enlaces y rutas públicas
   digan lo mismo. Solo se publican en Traefik los nombres cuyo DNS ya apunta
   al servidor.
+- **Correo web nuevo (Bulwark)**: se habla con él solo con
+  `ClienteAdminBulwark` (la sesión compartida de `correoweb.ts`: Bulwark
+  limita los inicios de sesión, también los buenos) y bajo
+  `withLock('bulwark')`. Los cambios que afectan a su marca llaman a
+  `programarSincronizacionBulwark()`: la sincronización va en segundo plano
+  y ninguna ruta la espera. Imágenes de marca: PNG, JPEG o WebP comprobados
+  por su contenido, nunca SVG.
 - **Web**: seguir `DESIGN.md` (tarjetas blancas, un solo acento petróleo,
   sin adornos de instrumento). Estados de carga (`Cargando`), vacío (`Vacio`,
   con el icono de la vista) y error (`AvisoError`) en cada vista; tablas

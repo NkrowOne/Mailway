@@ -146,6 +146,7 @@ async function fotoDeAjustes(): Promise<string> {
     ['SystemSettings', ['singleton']],
     ['Http', ['singleton']],
     ['Authentication', ['singleton']],
+    ['Security', ['singleton']],
     ['AllowedIp', null],
     ['NetworkListener', null],
     ['Tracer', null],
@@ -469,6 +470,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
       ['x:SystemSettings/get', { ids: ['singleton'] }, 's'],
       ['x:Http/get', { ids: ['singleton'] }, 'h'],
       ['x:Authentication/get', { ids: ['singleton'] }, 'a'],
+      ['x:Security/get', { ids: ['singleton'] }, 'g'],
       ['x:NetworkListener/get', { ids: null }, 'l'],
       ['x:Tracer/get', { ids: null }, 't'],
       ['x:Role/get', { ids: null }, 'r'],
@@ -484,6 +486,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
       hostname: NOMBRE_SERVIDOR,
       trustedNetworks: REDES,
       maxAppPasswords: 100,
+      permissiveCors: false,
     });
     assert.deepEqual(primera.errors, []);
     const habia587 = respuestaDe(inicial.body, 'l').list.some((e: any) => Object.keys(e.bind).some((b) => b.endsWith(':587')));
@@ -493,7 +496,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
 
     // Idempotente: la segunda vez no cambia nada.
     const antes = await fotoDeAjustes();
-    const segunda = await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100 });
+    const segunda = await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
     assert.deepEqual(segunda.errors, []);
     assert.equal(await fotoDeAjustes(), antes);
 
@@ -504,14 +507,42 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
     assert.deepEqual(estado.trustedNetworks, REDES);
     assert.equal(estado.acme, null);
     assert.equal(estado.certificateFiles, false);
+    // Sin clientes con el correo web nuevo, el CORS cerrado no es una comprobación.
     assert.deepEqual(estado.extra, {
       submission587: true,
       maxAppPasswords: true,
       selfServiceBlocked: true,
       defaultDomain: true,
       logToStdout: true,
+      authBanExpiry: true,
     });
     if (!habia587) assert.equal(estado.restartRequired.length, 1);
+    // El bloqueo por fallos de acceso caduca a la hora (por defecto, nunca).
+    const [seguridad] = await leer<{ authBanPeriod?: number | null }>('Security', ['singleton'], ['authBanPeriod']);
+    assert.equal(seguridad?.authBanPeriod, 3_600_000);
+
+    // CORS para el correo web nuevo: se abre cuando hace falta y se cierra después.
+    await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: true });
+    const [abierto] = await leer<{ usePermissiveCors?: boolean }>('Http', ['singleton'], ['usePermissiveCors']);
+    assert.equal(abierto?.usePermissiveCors, true);
+    const conCors = await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: true });
+    assert.equal(conCors.extra.permissiveCors, true);
+    // Lo que pregunta el navegador antes de hablar JMAP desde webmail.<dominio>.
+    const preflight = await fetch(`${URL_MOTOR}/jmap/`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://webmail.cliente.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization, content-type',
+      },
+    });
+    assert.equal(preflight.headers.get('access-control-allow-origin'), '*', 'el motor responde al preflight con CORS');
+    // Sin nadie que lo necesite, está abierto de más.
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: false })).extra.permissiveCors, false);
+    await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
+    const [cerrado] = await leer<{ usePermissiveCors?: boolean }>('Http', ['singleton'], ['usePermissiveCors']);
+    assert.equal(cerrado?.usePermissiveCors, false);
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: false })).extra.permissiveCors, undefined);
 
     // El dominio por defecto es el reservado del servidor y la raíz ya no
     // lleva al autoservicio del motor.

@@ -4,6 +4,7 @@ import { checkDnsbl } from '../core/dns';
 import { engineConfigured, getEngine } from '../engine';
 import { fireAlert, resolveAlert } from './alerts';
 import { refreshAutoconfigHosts } from './autoconfig';
+import { vigilarCorreoWebNuevo } from './correoweb';
 import { capturarSiProcede } from './credenciales';
 import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
@@ -425,6 +426,9 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
       await paso('certificado del motor', checkTlsDelMotor, log);
       await paso('nombre del motor', checkNombreDelMotor, log);
       await paso('copia de las contraseñas', checkCopiaDeContrasenas, log);
+      // El correo web nuevo (Bulwark), si está configurado: su salud y la
+      // marca y la política pendientes. Se para con el motor, como el webmail.
+      await paso('correo web nuevo', vigilarCorreoWebNuevo, log);
     }
     // Limpieza: las alertas resueltas hace más de 30 días no aportan nada.
     await paso('limpieza', async () => {

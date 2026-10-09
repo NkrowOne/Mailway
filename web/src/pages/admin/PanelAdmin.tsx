@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Building2, Globe2, History, Inbox, KeyRound, Radar } from 'lucide-react';
-import { api, type AdminDashboard, type AuditEntry, type ServerHealth } from '../../lib/api';
+import { api, type AdminDashboard, type AuditEntry, type ResumenCorreoWebNuevo, type ServerHealth } from '../../lib/api';
 import {
   AvisoError,
   CabeceraMedidas,
@@ -147,6 +147,10 @@ export default function PanelAdmin() {
           : undefined,
     },
   ];
+
+  // El correo web nuevo (Bulwark), solo si está configurado.
+  const bulwark = dashboard.data.bulwark;
+  if (bulwark) constantes.push(constanteCorreoWebNuevo(bulwark));
 
   // El veredicto de la cabecera resume TODAS las constantes, no solo el motor:
   // decir «todo en orden» con una fila en rojo justo debajo sería mentir al lector.
@@ -392,6 +396,55 @@ export default function PanelAdmin() {
       </div>
     </>
   );
+}
+
+/**
+ * El correo web nuevo en «Tu servicio»: si responde, si se sirve (Stalwart
+ * 0.16) y si la marca de los clientes está aplicada.
+ */
+function constanteCorreoWebNuevo(b: ResumenCorreoWebNuevo): Constante {
+  const usan =
+    b.clientes === 0
+      ? 'Ningún cliente lo usa todavía.'
+      : b.clientes === 1
+        ? 'Lo usa 1 cliente.'
+        : `Lo usan ${b.clientes} clientes.`;
+  if (!b.disponible) {
+    return {
+      concepto: 'Correo web nuevo (beta)',
+      valor: 'Incompleto',
+      referencia: 'En marcha',
+      veredicto: 'vigilar',
+      nota: b.motivo ?? undefined,
+    };
+  }
+  if (!b.salud.ok) {
+    return {
+      concepto: 'Correo web nuevo (beta)',
+      valor: 'Sin respuesta',
+      referencia: 'En marcha',
+      veredicto: 'fuera',
+      nota: `${b.salud.detalle ?? 'No responde a la comprobación de salud.'} ${usan}`,
+    };
+  }
+  if (b.sincronizacion.error) {
+    return {
+      concepto: 'Correo web nuevo (beta)',
+      valor: 'En marcha',
+      referencia: 'En marcha',
+      veredicto: 'vigilar',
+      nota: `La marca de los clientes no se ha podido aplicar. ${b.sincronizacion.error.mensaje} Se reintenta sola.`,
+    };
+  }
+  return {
+    concepto: 'Correo web nuevo (beta)',
+    valor: 'En marcha',
+    referencia: 'En marcha',
+    veredicto: b.enServicio || b.clientes === 0 ? 'normal' : 'vigilar',
+    nota: b.enServicio
+      ? usan
+      : `${usan} Mientras el servidor de correo no sea Stalwart 0.16, sus webmail se sirven con Roundcube.`,
+  };
 }
 
 /** Cifra del estado general: enlaza a la vista que la detalla. */

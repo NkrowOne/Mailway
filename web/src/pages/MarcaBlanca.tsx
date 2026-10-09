@@ -33,6 +33,7 @@ import {
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
+import { HojasCorreoWeb } from '../components/CorreoWeb';
 import { HojaWebmailAutomatico } from '../components/WebmailAutomatico';
 
 const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: string; pista: string }> = {
@@ -200,6 +201,8 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
         </Hoja>
       )}
 
+      {/* El correo web de sus webmail propios (Roundcube o el nuevo) y su marca. */}
+      {clienteDelInterruptor && <HojasCorreoWeb clientId={clienteDelInterruptor} isAdmin={isAdmin} />}
       {clienteDelInterruptor && <HojaWebmailAutomatico clientId={clienteDelInterruptor} isAdmin={isAdmin} />}
 
       {me.isError || domains.isError ? (
