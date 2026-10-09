@@ -661,6 +661,8 @@ comprobar "pasos en orden" en_orden "$REGISTRO" \
   "migracion.py comprobar" "docker rm -f mailway-mail-016-previo" "docker compose[stalwart-0.16] --env-file" \
   "motor.js provisionar" "comprobar_instalacion" "motor.js tras-migrar" "motor.js mantenimiento off"
 comprobar "el motor de recuperación arranca en modo recuperación" contiene "$REGISTRO" "-e STALWART_RECOVERY_ADMIN -e STALWART_RECOVERY_MODE=1"
+comprobar "el ayudante corre con el usuario de la orden (dueño de la carpeta de trabajo)" \
+  contiene "$REGISTRO" "--security-opt no-new-privileges --user $(id -u):$(id -g) "
 comprobar "los temporales, en la IP y con el alias del motor, sin publicar puertos" \
   contiene "$REGISTRO" "--network mailway-internal --ip 10.203.53.10 --network-alias mailway-mail --label mailway.migracion=recuperacion stalwartlabs/stalwart:v0.16.25"
 comprobar "y en la red de Traefik con el mismo alias" contiene "$REGISTRO" "docker network connect --alias mailway-mail skyway-edge mailway-mail-016-previo"

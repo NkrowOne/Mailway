@@ -3617,7 +3617,10 @@ limpiar_trabajo_migracion() {
 # capacidades y con todo en solo lectura salvo la carpeta de trabajo. La
 # contraseña del motor va por su entrada estándar. Su línea JSON queda en
 # HM_SALIDA (se lee con hm_campo) y su texto (también el del script oficial)
-# se muestra como información.
+# se muestra como información. Corre con el mismo usuario que la orden: la
+# carpeta de trabajo es suya (700, ficheros 600) y, sin capacidades, ni el
+# root del contenedor puede leerla si no es su dueño (con sudo, los dos son
+# root; con un usuario del grupo docker, como en la CI, no).
 #   ayudante <orden> [opciones]
 ayudante() {
   local codigo=0 linea
@@ -3626,6 +3629,7 @@ ayudante() {
   preparar_errores_herramienta
   HM_SALIDA=$(printf '%s\n' "$STALWART_ADMIN_PASSWORD" | docker run --rm -i --network mailway-internal \
     --read-only --tmpfs /tmp:size=64m --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" \
     -v "$MIG_DIR:/trabajo" -v "$DEPLOY_DIR/motor:/mailway:ro" ${extra[@]+"${extra[@]}"} \
     "$IMAGEN_PYTHON" python -I -B /mailway/migracion.py "$@" 2>"$ERR_TMP") || codigo=$?
   while IFS= read -r linea || [ -n "$linea" ]; do

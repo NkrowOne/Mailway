@@ -147,7 +147,11 @@ jobs:
           # un arranque fallido, y la prueba, sin sus variables, se omitiría.
           variables=$(server/test/motor016-arrancar.sh)
           eval "$variables"
-          cd server && node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts
+          cd server
+          node --test --import tsx --import ./test/env.ts test/motor016-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR016_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
 
       - name: Panel contra Stalwart 0.16
         run: |
@@ -157,8 +161,11 @@ jobs:
           trap 'docker rm -f "$MOTOR016_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
           variables=$(server/test/motor016-arrancar.sh)
           eval "$variables"
-          cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
-            test/panel-motor-real.test.ts
+          cd server
+          node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts test/panel-motor-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR016_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
 
       - name: Panel contra Stalwart 0.15
         run: |
@@ -168,8 +175,11 @@ jobs:
           trap 'docker rm -f "$MOTOR015_CONTENEDOR" >/dev/null 2>&1 || true' EXIT
           variables=$(server/test/motor015-arrancar.sh)
           eval "$variables"
-          cd server && node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts \
-            test/panel-motor-real.test.ts
+          cd server
+          node --test --import tsx --import ./test/env.ts --import ./test/env-real.ts test/panel-motor-real.test.ts || {
+            echo "::group::Registro del motor"; docker logs --tail 300 "$MOTOR015_CONTENEDOR" 2>&1; echo "::endgroup::"
+            exit 1
+          }
 
   # Monta la pila con deploy/instalar.sh --actualizar y un Skyway simulado,
   # comprueba TLS en 993/465 (y 587 con STARTTLS en la 0.16), IMAP (webmail y

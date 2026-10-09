@@ -194,6 +194,27 @@ def cifrar(clave: str) -> str:
                           check=True).stdout.strip()
 
 
+def carpetas_imap(sesion: imaplib.IMAP4) -> list[str]:
+    """Nombres de todas las carpetas del buzón (respuesta a LIST), sin comillas."""
+    _, lineas = sesion.list()
+    nombres = []
+    for linea in lineas or []:
+        if not isinstance(linea, bytes):
+            continue
+        m = re.match(r'\([^)]*\) (?:"(?:[^"\\]|\\.)*"|NIL) (.+)$', linea.decode())
+        if not m:
+            continue
+        nombre = m.group(1).strip()
+        if len(nombre) >= 2 and nombre.startswith('"') and nombre.endswith('"'):
+            nombre = re.sub(r'\\(.)', r'\1', nombre[1:-1])
+        nombres.append(nombre)
+    return nombres or ['INBOX']
+
+
+def comillas_imap(valor: str) -> str:
+    return '"' + valor.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 def basica(usuario: str, clave: str) -> str:
     return 'Basic ' + base64.b64encode(f'{usuario}:{clave}'.encode()).decode()
 
@@ -360,8 +381,14 @@ class Pila:
         registrar('OK: puesta en marcha del panel de verdad (emparejar.js), con el motor del entorno.')
 
     def guardar_estado_panel(self, estado: dict) -> None:
-        self.estado_panel.write_text(json.dumps(estado, indent=2))
-        self.estado_panel.chmod(0o666)
+        # Con un temporal y un renombrado, como la herramienta simulada: el
+        # fichero que deja ella es del usuario node del contenedor y, si la
+        # prueba no corre como root (la CI), no se puede sobrescribir, pero sí
+        # sustituir (la carpeta es 777).
+        temporal = self.estado_panel.with_name('estado.json.prueba')
+        temporal.write_text(json.dumps(estado, indent=2))
+        temporal.chmod(0o666)
+        os.replace(temporal, self.estado_panel)
 
     def leer_estado_panel(self) -> dict:
         return json.loads(self.estado_panel.read_text())
@@ -741,13 +768,22 @@ class Pila:
         registrar(f'OK: correo «{self.asunto}» entregado por el 25 y leído por IMAP.')
 
     def correo_entregado(self) -> bool:
+        # En todas las carpetas, no solo INBOX: con salida a Internet (la CI)
+        # el filtro de spam del motor lleva el mensaje de prueba, de un
+        # remitente sin SPF, DKIM ni DMARC, a la de correo no deseado, y lo que
+        # se comprueba es que llegó al buzón.
         with self.imap(BUZON, self.clave_buzon) as sesion:
-            sesion.select('INBOX', readonly=True)
-            _, encontrados = sesion.search(None, 'SUBJECT', f'"{self.asunto}"')
-            if not encontrados[0].split():
-                return False
-            _, partes = sesion.fetch(encontrados[0].split()[0], '(BODY.PEEK[TEXT])')
-            return f'Cuerpo de {self.asunto}' in partes[0][1].decode()
+            for carpeta in carpetas_imap(sesion):
+                tipo, _ = sesion.select(comillas_imap(carpeta), readonly=True)
+                if tipo != 'OK':
+                    continue
+                _, encontrados = sesion.search(None, 'SUBJECT', f'"{self.asunto}"')
+                if not encontrados[0].split():
+                    continue
+                _, partes = sesion.fetch(encontrados[0].split()[0], '(BODY.PEEK[TEXT])')
+                if f'Cuerpo de {self.asunto}' in partes[0][1].decode():
+                    return True
+            return False
 
     def comprobar_datos(self, que: str) -> None:
         """El mismo correo con la misma contraseña, el otro dominio, y el suspendido sin poder entrar."""

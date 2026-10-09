@@ -110,7 +110,7 @@ function comillas(valor: string): string {
 }
 
 /** Nombres de las carpetas de una respuesta a LIST. */
-function carpetasDeList(respuesta: string): string[] {
+export function carpetasDeList(respuesta: string): string[] {
   const carpetas: string[] = [];
   const patron = /^\* LIST \([^)]*\) (?:"(?:[^"\\]|\\.)*"|NIL) (?:"((?:[^"\\]|\\.)*)"|([^\r\n]+))\r?$/gm;
   for (let m = patron.exec(respuesta); m; m = patron.exec(respuesta)) {
