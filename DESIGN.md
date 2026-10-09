@@ -379,8 +379,9 @@ por iniciales, ilustraciones ni glifos.
   sobre el centro para compensar el peso de la V. Los dos picos y la V
   llevan el mismo radio (4.6), para que la M se lea como una sola curva. Fuente: `Logotipo` en
   `ui/kit.tsx`, `deploy/roundcube/mailway_theme/logo.svg` y `docs/marca/`.
-- **Con nombre** (`docs/marca/`): la tesela y «Mailway» en Figtree 650 a
-  trazos. `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
+- **Con nombre** (`docs/marca/`): la tesela y «Mailway» en Outfit 600 a
+  trazos (geométrica y redonda, a juego con las curvas del sobre; la
+  interfaz sigue en Figtree). `mailway.svg` para fondo claro, `mailway-oscuro.svg` para oscuro y
   `mailway-isotipo.svg` solo la tesela. Dentro del producto el nombre que
   acompaña a la tesela es el de la instancia (marca blanca), en texto.
 - **No se hace**: girarla, recolorear la tesela fuera del petróleo, añadir
