@@ -102,6 +102,13 @@ muestra la dirección de la puesta en marcha
 Guía completa, variables de ejecución desatendida y camino manual en
 **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**.
 
+Para que el servidor reciba solo los parches de seguridad ya probados (y
+vuelva a la versión anterior si algo falla al aplicarlos):
+
+```bash
+sudo mailway auto-update on   # cada noche; «sudo mailway auto-update status» para ver cómo va
+```
+
 ## Desarrollo
 
 ```bash

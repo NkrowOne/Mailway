@@ -40,6 +40,11 @@
 #
 # IMPORTANTE: la imagen de Stalwart va FIJADA a v0.15.5. La v0.16 eliminó la
 # API REST de gestión que usa Mailway. No la subas sin migrar el driver.
+#
+# Todas las imágenes llevan su versión exacta (p. ej. 1.7.4-apache, no
+# 1.7.x): una versión nueva solo llega como un PR de Dependabot que pasa la CI
+# y la pila real (stack.yml) antes de fusionarse, y «mailway update» la aplica
+# con comprobación y vuelta atrás. Así un «pull» nunca trae nada sin probar.
 # ============================================================================
 
 # Nombre de proyecto fijo: los contenedores, redes y volúmenes no dependen del
@@ -106,7 +111,7 @@ services:
       start_period: 30s
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.x-apache
+    image: roundcube/roundcubemail:1.7.4-apache
     container_name: mailway-webmail
     restart: unless-stopped
     depends_on:
@@ -203,7 +208,7 @@ services:
   # Estado: docker exec mailway-certs-dumper python /app/extractor.py estado
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: python:3.13-alpine
+    image: python:3.13.16-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']

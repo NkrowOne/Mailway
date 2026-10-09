@@ -31,6 +31,7 @@ import datetime as dt
 import imaplib
 import json
 import os
+import re
 import secrets
 import smtplib
 import socket
@@ -52,8 +53,22 @@ MAIL = f'mail.{DOMINIO}'
 BUZON = f'prueba@{DOMINIO}'
 OTRO = 'web.otra-empresa.test'
 VOLUMEN_ACME = 'mailway-prueba-acme'
+
+
+def imagen_del_extractor() -> str:
+    """La imagen de Python del compose (la del extractor), con su versión exacta.
+
+    Se lee del compose para que siga a Dependabot, que solo actualiza ahí.
+    """
+    compose = (DEPLOY / 'docker-compose.mail.yml').read_text(encoding='utf-8')
+    encontrada = re.search(r'^\s*image:\s*(python:\S+)\s*$', compose, re.MULTILINE)
+    if not encontrada:
+        raise SystemExit('No se encuentra la imagen de Python en deploy/docker-compose.mail.yml.')
+    return encontrada.group(1)
+
+
 # La misma imagen que el extractor: una sola descarga para las tareas auxiliares.
-IMAGEN_AUX = 'python:3.13-alpine'
+IMAGEN_AUX = imagen_del_extractor()
 API = 'http://127.0.0.1:18080'
 SECRETOS: list = []
 

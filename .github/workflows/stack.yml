@@ -12,14 +12,17 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/stack.yml'
+  # Incluye los PR de Dependabot que suben una imagen de los compose
+  # (deploy/docker-compose*.yml): parches-automaticos.yml no los fusiona hasta
+  # que esta prueba con contenedores reales termina bien.
   pull_request:
     paths:
       - 'deploy/**'
       - '.github/workflows/stack.yml'
   workflow_dispatch:
-  # Las imágenes de Roundcube (1.7.x) y de Python (3.13) siguen su versión
-  # menor: una ejecución semanal detecta a tiempo una actualización que rompa
-  # la pila.
+  # Las imágenes van con versión exacta, pero una misma etiqueta puede volver
+  # a publicarse con arreglos de su sistema base: una ejecución semanal
+  # detecta a tiempo una que rompa la pila.
   schedule:
     - cron: '17 6 * * 1'
 
@@ -55,6 +58,9 @@ jobs:
 
       - name: Migración desde la 0.x en el instalador (docker y motor simulados)
         run: bash deploy/prueba-migracion.sh
+
+      - name: Actualización automática y vuelta atrás de mailway (git real; docker y systemd simulados)
+        run: bash deploy/prueba-actualizacion.sh
 
       - name: Compose con un entorno ficticio (con y sin el perfil tls)
         run: |

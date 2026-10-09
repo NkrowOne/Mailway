@@ -21,6 +21,9 @@
 # Diagnóstico de la pila (no cambia nada) y prueba de acceso a un buzón:
 #   sudo bash deploy/instalar.sh --comprobar
 #   sudo bash deploy/instalar.sh --probar-acceso
+#
+# Versiones exactas en todas las imágenes, como en docker-compose.mail.yml:
+# las nuevas llegan como PR de Dependabot que la CI prueba antes de fusionar.
 # ============================================================================
 
 name: mailway
@@ -128,7 +131,7 @@ services:
       start_period: 30s
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.x-apache
+    image: roundcube/roundcubemail:1.7.4-apache
     container_name: mailway-webmail
     restart: unless-stopped
     ports:
@@ -195,7 +198,7 @@ services:
   # OPCIONAL (perfil `proxy`): Traefik propio con Let's Encrypt en 80/443.
   # --------------------------------------------------------------------------
   mailway-proxy:
-    image: traefik:v3.7
+    image: traefik:v3.7.14
     container_name: mailway-proxy
     restart: unless-stopped
     profiles: ['proxy']
@@ -232,7 +235,7 @@ services:
   # docker-compose.mail.yml y en la sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: python:3.13-alpine
+    image: python:3.13.16-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']

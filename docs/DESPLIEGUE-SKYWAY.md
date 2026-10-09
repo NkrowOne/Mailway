@@ -838,8 +838,10 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
   Si aún no tienes la orden (instalaciones anteriores a la 1.3), créala una
   vez con `sudo bash /ruta/a/Mailway/deploy/mailway.sh update -y`. Se niega a
   seguir si hay cambios hechos a mano en ficheros del repositorio (no cuenta
-  `deploy/.env`). `mailway comprobar` y `mailway probar-acceso` son
-  `--comprobar` y `--probar-acceso` del instalador.
+  `deploy/.env`) o si ya hay otra actualización en curso. Al avanzar, muestra
+  la versión anterior y la orden para volver a ella. `mailway comprobar` y
+  `mailway probar-acceso` son `--comprobar` y `--probar-acceso` del
+  instalador.
   O a mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml pull && docker compose --env-file deploy/.env
   -f deploy/docker-compose.mail.yml up -d`. Los volúmenes no se tocan.
@@ -847,7 +849,10 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
   lo vuelve a desplegar (con `SKYWAY_TOKEN` o, si Skyway corre en este
   servidor, con un token temporal), y empareja de nuevo solo si Skyway no
   está ya conectado con el panel.
-  Stalwart está fijado a `v0.15.5`, así que `pull` nunca salta a la v0.16.
+  Todas las imágenes van con su versión exacta (p. ej. Stalwart `v0.15.5`,
+  `roundcube/roundcubemail:1.7.4-apache`, `python:3.13.16-alpine`): `pull`
+  nunca trae una versión que no se haya probado ni salta a la v0.16 de
+  Stalwart. Las versiones nuevas llegan con Dependabot (más abajo).
 - **Extractor del certificado** (perfil `tls`): `--actualizar` lo recrea con
   el código nuevo. A mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml --profile tls up -d --force-recreate
@@ -856,7 +861,87 @@ del certificado de `mailway-proxy` (perfil `tls`, sección 5.2).
   las claves de los demás dominios de Traefik (sección 5.2).
 - **Liberar espacio desde Skyway es seguro**: `docker image prune -f` y
   `docker builder prune -f` solo borran imágenes huérfanas y caché de
-  compilación, nunca volúmenes ni imágenes en uso.
+  compilación, nunca volúmenes ni imágenes en uso. Las de la versión anterior
+  se conservan (no son huérfanas), así que la vuelta atrás automática no
+  tiene que descargarlas.
+
+#### Actualización automática (parches probados, con vuelta atrás)
+
+Una vez por servidor:
+
+```bash
+sudo mailway auto-update on               # cada día a las 03:00, con margen antes de la de Skyway (04:30)
+sudo mailway auto-update on --hora 02:15  # a otra hora
+sudo mailway auto-update status           # si está activa, próxima ejecución, último resultado y registro
+sudo mailway auto-update off              # la retira
+```
+
+Crea un temporizador de systemd (`mailway-auto-update.timer`, con hasta 5
+minutos de margen y que se pone al día si el servidor estaba apagado) que
+ejecuta `mailway update --auto`:
+
+1. Trae lo nuevo de GitHub. **Si no hay nada nuevo, termina sin tocar ningún
+   contenedor**: nada se reinicia cada noche.
+2. Con una versión nueva, antes de tocar nada comprueba que el servidor está
+   sano: `instalar.sh --comprobar` (contenedores, ajustes y certificado del
+   motor, IMAP y SMTP con TLS desde el webmail, por la red interna exenta
+   del bloqueo automático) más `/api/health` del panel y, junto a Skyway, su
+   Traefik. Si ya fallaba, no aplica nada y avisa.
+3. Guarda la versión anterior (el commit) en `deploy/.actualizacion`, avanza
+   la copia (solo avance rápido) y aplica con `instalar.sh --actualizar`.
+   Los secretos que el resumen del instalador enseña a quien instala a mano
+   (token de puesta en marcha, contraseña de una cuenta nueva) se tapan en el
+   registro.
+4. Repite la comprobación cada 15 segundos durante 3 minutos.
+5. Si no la supera, o si el instalador falla, **vuelve sola a la versión
+   anterior** (`git reset --hard` al commit guardado e `instalar.sh
+   --actualizar`, con las imágenes exactas de antes) y la comprueba igual.
+   Nunca toca los volúmenes ni restaura bases de datos: los parches de
+   Stalwart (0.15.x) no migran los datos del motor —por eso solo los parches
+   llegan solos— y el panel anterior funciona sobre las migraciones nuevas,
+   que solo añaden.
+6. Avisa a la administración con la herramienta del panel
+   (`tools/avisar.js`; sección 10): una línea por los canales (Discord,
+   Telegram o webhook) cuando actualiza, una incidencia en **Avisos** (y por
+   los canales) si vuelve atrás o no puede actualizar, y una crítica si la
+   vuelta atrás también falla. Sin el panel en marcha, queda solo en el
+   registro.
+
+| Código | Significado |
+|---|---|
+| 0 | Actualizado y comprobado, o nada que hacer. |
+| 1 | No se ha aplicado (el servidor ya fallaba, cambios a mano en la copia, sin conexión con GitHub…) o se ha vuelto a la versión anterior, que funciona. |
+| 2 | La versión nueva falló y la vuelta atrás también: revísalo con `sudo mailway comprobar`. |
+
+Una versión que falla se reintenta una sola vez más (la noche siguiente, por
+si fue algo pasajero); después no se insiste hasta que llegue otra versión o
+se aplique a mano con `sudo mailway update -y`. Una actualización
+interrumpida (apagado, tiempo agotado) se retoma en la siguiente ejecución, y
+nunca coinciden dos a la vez. El registro de cada ejecución está en `sudo
+mailway auto-update status` (o `journalctl -u mailway-auto-update`) y el
+código en `systemctl status mailway-auto-update`.
+
+**Qué llega solo y qué no.** Cada lunes, Dependabot propone en GitHub las
+versiones nuevas de npm, de las imágenes (Node, Roundcube, Python, Traefik y
+Stalwart) y de las acciones. Solo los **parches** (x.y.Z) se fusionan solos
+(`.github/workflows/parches-automaticos.yml`), y únicamente cuando han pasado
+todas las comprobaciones de su commit: la CI, la imagen del panel construida
+y arrancada y, si cambian los compose, la pila de correo real con Stalwart y
+Roundcube (sección 16). Las versiones menores y mayores (Roundcube 1.8,
+Node 24, Traefik 3.8…) llegan como PR que revisa una persona, y **Stalwart
+nunca pasa solo de la 0.15**: la 0.16 eliminó la API de gestión que usa
+Mailway y su migración es un proyecto aparte.
+
+**Con Skyway, el panel** lo sigue desplegando Skyway desde GitHub: la
+comprobación incluye su `/api/health`, pero la vuelta atrás de `mailway
+update --auto` devuelve a su versión anterior el motor, el webmail y su
+configuración, no el panel.
+
+**Parches del sistema operativo.** Junto a Skyway, los gestiona `sudo skyway
+auto-update on --sistema`: solo actualizaciones de seguridad y, si un parche
+lo exige, un reinicio una hora después de la actualización de Skyway (05:30
+por defecto), cuando la de Mailway (03:00) ya ha terminado. En una
+instalación autónoma, activa `unattended-upgrades` del sistema.
 
 ### 8.2 Migrar desde una versión 0.x
 
@@ -952,9 +1037,11 @@ docker rm -f mailway-webmail mailway-certs-dumper mailway-mail   # los volúmene
 docker network rm mailway-internal                               # se recrea con la subred fija
 
 # Usuarios del webmail: del servidor público al interno, con el webmail parado.
-# Sustituye mail.miempresa.com por el nombre de tu servidor de correo.
+# Sustituye mail.miempresa.com por el nombre de tu servidor de correo. La
+# imagen, la del compose (lleva su versión exacta).
+IMAGEN_WEBMAIL=$(grep -o 'roundcube/roundcubemail:[^[:space:]]*' deploy/docker-compose.mail.yml)
 docker run --rm -v deploy_mailway-webmail-db:/var/roundcube/db --entrypoint php \
-  roundcube/roundcubemail:1.7.x-apache -r '
+  "$IMAGEN_WEBMAIL" -r '
     $db = new PDO("sqlite:/var/roundcube/db/sqlite.db", null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     $q = $db->prepare("UPDATE OR IGNORE users SET mail_host = ? WHERE lower(mail_host) = ?");
     $q->execute(["mailway-mail", $argv[1]]);
@@ -1034,7 +1121,21 @@ En **Avisos → Canales de aviso** configura al menos uno:
 - **Webhook genérico**: recibe un JSON (útil para n8n o un sistema propio).
 
 Pulsa **Enviar aviso de prueba**. Skyway no vigila estos contenedores: el
-vigilante de Mailway es lo que cubre el correo.
+vigilante de Mailway es lo que cubre el correo. La actualización automática
+(sección 8.1) avisa por el mismo camino, desde el servidor, con la
+herramienta de terminal del panel:
+
+```bash
+docker exec -u node skyway-mailway-panel node server/dist/tools/avisar.js \
+  --nivel aviso --clave copias:fallida --titulo "La copia de seguridad ha fallado" \
+  --mensaje "Detalle…" --remedio "Qué hacer…"
+```
+
+`--nivel` es `info` (solo se envía por los canales y cierra las incidencias
+abiertas de su familia, lo que va antes del primer «:» de la clave), `aviso`
+o `critico` (abren una incidencia en **Avisos**, que no se repite mientras
+siga abierta con la misma clave). Sin canales configurados termina bien y no
+muestra nunca sus URL ni sus tokens.
 
 ---
 
@@ -1273,15 +1374,21 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | El instalador avisa de que el emparejado ha quedado pendiente | Panel aún no sano, Skyway en otro servidor o versiones sin las herramientas de emparejado | Resuelve el motivo del aviso y ejecuta `sudo bash deploy/instalar.sh --emparejar`; si no es posible, conecta a mano (sección 4.1). |
 | Se ha perdido la contraseña del administrador que mostró el instalador | No se guarda en ningún sitio | Sin terminal: en las variables del servicio del panel pon `MAILWAY_ADMIN_PASSWORD` (y `MAILWAY_ADMIN_EMAIL` si hay más de un administrador) y vuelve a desplegarlo (sección 14); mientras la dejes, es la contraseña de esa cuenta. Ojo: `STALWART_ADMIN_PASSWORD` es la del motor, no la del panel. Con terminal: `docker exec -u node skyway-mailway-panel node server/dist/tools/reset-password.js <correo>` genera una nueva y la muestra una vez (sección 13; para elegirla, por la entrada estándar con `-`). |
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
+| Aviso «Actualización automática detenida» o «pendiente» | Cambios hechos a mano en la copia de Mailway, sin conexión con GitHub, o el servidor ya no superaba la comprobación antes de actualizar | `sudo mailway auto-update status` muestra el motivo; resuélvelo (`git -C /ruta/a/Mailway stash`, `sudo mailway comprobar`) y la siguiente ejecución sigue sola. |
+| Aviso «Actualización automática revertida» | La versión nueva no superó la comprobación y el servidor volvió a la anterior | El detalle está en `sudo mailway auto-update status`. Se reintenta una vez más; después, cuando lo hayas revisado, `sudo mailway update -y` la aplica a mano. |
 
 ---
 
 ## 16. Pruebas automáticas del despliegue
 
-Además de `ci.yml` (compilación y pruebas del panel), el workflow
-`.github/workflows/stack.yml` prueba el despliegue cuando cambia `deploy/`, a
-mano y cada semana (las imágenes de Roundcube y de Python siguen su versión
-menor):
+Además de `ci.yml` (compilación y pruebas del panel, y la imagen del panel
+construida con su `Dockerfile` y arrancada hasta que responde en
+`/api/health`), el workflow `.github/workflows/stack.yml` prueba el despliegue
+cuando cambia `deploy/` (también en los PR de Dependabot que suben una imagen
+de los compose), a mano y cada semana (una misma etiqueta puede volver a
+publicarse con arreglos de su sistema base). `parches-automaticos.yml` solo
+fusiona un parche de Dependabot cuando todo esto ha terminado bien en su
+commit (sección 8.1):
 
 1. **Sin contenedores**: pruebas unitarias del extractor
    (`python3 -m unittest discover -s deploy/tls`, con un motor de laboratorio
@@ -1303,7 +1410,19 @@ menor):
    SQLite con el esquema de Roundcube (necesita php con `pdo_sqlite`) y el
    override de Traefik copiado a mano se retira; y también que no cambia un
    certificado propio, un webmail que ya usaba `mailway-mail` ni un override
-   ajeno.
+   ajeno. `deploy/prueba-actualizacion.sh` prueba `mailway update --auto` y
+   `mailway auto-update` con git de verdad sobre repositorios locales y
+   `docker`, `systemctl`, la espera y el instalador simulados: sin nada nuevo
+   no se toca nada; una versión que funciona se aplica una vez (con
+   reintentos si tarda en estar sana) y se tapan los secretos del resumen;
+   una que falla la comprobación, que no se puede aplicar o que deja el panel
+   sin responder vuelve a la anterior (código 1), y si la vuelta atrás falla
+   termina con 2; una versión fallida se reintenta una vez y después no; con
+   el servidor ya enfermo, sin el Traefik de Skyway, con cambios a mano o con
+   otra actualización en curso no se toca nada; una interrumpida se retoma; y
+   `auto-update on/off/status` escribe y retira las unidades de systemd.
+   El aviso al panel (`tools/avisar.js`) se prueba en
+   `server/test/avisar.test.ts`.
 2. **Con contenedores reales** (`deploy/prueba-stack.py`): monta con
    `deploy/instalar.sh --actualizar` Stalwart v0.15.5, Roundcube y el
    extractor con la topología de producción (subred interna fija, un Skyway

@@ -4,5 +4,10 @@
 .env.*
 !.env.example
 
+# Estado de «mailway update» (versión anterior y resultado), sus temporales y
+# el cerrojo que impide dos actualizaciones a la vez (ver mailway.sh).
+.actualizacion
+.actualizacion.*
+
 # Caché de Python que dejan las pruebas del extractor (deploy/tls).
 __pycache__/
