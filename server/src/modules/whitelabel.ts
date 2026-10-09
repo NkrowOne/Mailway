@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import https from 'node:https';
 import { domainToUnicode } from 'node:url';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -293,6 +294,8 @@ export function dnsInstructions(hostname: string): DnsInstruction[] {
 export interface DnsCheckResult {
   status: 'ok' | 'failed' | 'unknown';
   detail: string;
+  /** Apunta aquí a través del proxy de Cloudflare (comprobado con su API). */
+  viaCloudflare?: boolean;
 }
 
 /**
@@ -424,30 +427,57 @@ async function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
       detail: 'El dominio todavía no existe en el DNS. Crea el registro y espera unos minutos.',
     };
   }
-  if (!ips.includes(instance.publicIp)) {
-    let cuentaCloudflare = false;
-    if (ips.every(esIpDeCloudflare)) {
+  return evaluarIps(domain, ips, instance, {
+    proxyApuntaAqui: async (d) => {
       // Importación diferida: cloudflare.ts ya importa este módulo.
       const { registroProxyApuntaAqui } = await import('./cloudflare');
-      const apunta = await registroProxyApuntaAqui(domain);
-      if (apunta) {
-        return { status: 'ok', detail: 'El dominio apunta a este servidor a través del proxy de Cloudflare.' };
-      }
-      cuentaCloudflare = apunta === false;
-    }
-    return {
-      status: 'failed',
-      detail: detalleIpAjena({
-        hostname,
-        ips,
-        publicIp: instance.publicIp,
-        mailHostname: instance.mailHostname,
-        comodin: await respondeComodin(hostname, ips),
-        cuentaCloudflare,
-      }),
-    };
+      return registroProxyApuntaAqui(d);
+    },
+    respondeComodin,
+  });
+}
+
+/**
+ * Veredicto del DNS a partir de las IP a las que resuelve el nombre. Aparte
+ * de checkDns para probarlo sin red: las consultas a Cloudflare y al
+ * comodín llegan como funciones.
+ */
+export async function evaluarIps(
+  domain: ClientDomain,
+  ips: string[],
+  instance: { publicIp: string; mailHostname: string },
+  deps: {
+    proxyApuntaAqui: (domain: ClientDomain) => Promise<boolean | null>;
+    respondeComodin: (hostname: string, ips: string[]) => Promise<boolean>;
+  },
+): Promise<DnsCheckResult> {
+  const hostname = domain.hostname;
+  if (ips.includes(instance.publicIp)) {
+    return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
   }
-  return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
+  let cuentaCloudflare = false;
+  if (ips.length > 0 && ips.every(esIpDeCloudflare)) {
+    const apunta = await deps.proxyApuntaAqui(domain);
+    if (apunta) {
+      return {
+        status: 'ok',
+        detail: 'El dominio apunta a este servidor a través del proxy de Cloudflare.',
+        viaCloudflare: true,
+      };
+    }
+    cuentaCloudflare = apunta === false;
+  }
+  return {
+    status: 'failed',
+    detail: detalleIpAjena({
+      hostname,
+      ips,
+      publicIp: instance.publicIp,
+      mailHostname: instance.mailHostname,
+      comodin: await deps.respondeComodin(hostname, ips),
+      cuentaCloudflare,
+    }),
+  };
 }
 
 /**
@@ -522,6 +552,163 @@ export async function checkHttps(hostname: string): Promise<{ ok: boolean; detai
       detail: `Todavía no responde por HTTPS (${message.slice(0, 120)}). Vuelve a intentarlo en un minuto.`,
     };
   }
+}
+
+/** Lo que interesa de una respuesta HEAD, o el error si no la hubo. */
+export type RespuestaHead =
+  | { status: number; location: string | null; mitigada: boolean }
+  | { error: Error };
+
+/**
+ * HEAD directamente a este servidor (su IP pública), con el nombre en el SNI
+ * y en Host: lo que ve Cloudflare al llegar al origen, sin pasar por él. El
+ * certificado se valida contra el nombre, como hace Cloudflare en «Completo
+ * (estricto)».
+ */
+export function headAlOrigen(
+  hostname: string,
+  ip: string,
+  // Solo para las pruebas: un servidor local en otro puerto y con su propia CA.
+  opciones: { puerto?: number; ca?: string } = {},
+): Promise<RespuestaHead> {
+  return new Promise((resolve) => {
+    let terminado = false;
+    const terminar = (r: RespuestaHead) => {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(limite);
+      resolve(r);
+    };
+    const req = https.request(
+      {
+        host: ip,
+        port: opciones.puerto ?? 443,
+        method: 'HEAD',
+        path: '/',
+        servername: hostname,
+        headers: { host: hostname },
+        // También mientras conecta, no solo cuando ya hay conexión.
+        timeout: 8000,
+        ...(opciones.ca ? { ca: opciones.ca } : {}),
+      },
+      (res) => {
+        res.resume();
+        const location = res.headers.location;
+        terminar({ status: res.statusCode ?? 0, location: typeof location === 'string' ? location : null, mitigada: false });
+      },
+    );
+    // Un tope total, por si el servidor acepta la conexión y no contesta nunca.
+    const limite = setTimeout(() => req.destroy(new Error('timeout')), 10_000);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (error) => terminar({ error }));
+    req.end();
+  });
+}
+
+/** HEAD por el camino de cualquier visitante: el DNS público, es decir, Cloudflare. */
+async function headPublico(hostname: string): Promise<RespuestaHead> {
+  try {
+    const res = await fetch(`https://${hostname}/`, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(8000),
+    });
+    // Cloudflare marca así las respuestas de su protección (desafío o bloqueo).
+    return { status: res.status, location: res.headers.get('location'), mitigada: res.headers.has('cf-mitigated') };
+  } catch (err) {
+    return { error: err as Error };
+  }
+}
+
+function textoDeError(err: Error): string {
+  const cause = String((err as { cause?: unknown }).cause ?? '');
+  const code = String((err as { code?: unknown }).code ?? '');
+  return `${err.message || ''} ${cause} ${code}`.toLowerCase();
+}
+
+/**
+ * HTTPS de un dominio detrás del proxy de Cloudflare. Se comprueba primero
+ * este servidor directamente: es lo que depende de Mailway (la ruta en
+ * Traefik y el certificado). Luego, el camino de los visitantes, solo para
+ * lo que añade Cloudflare: el bucle del modo «Flexible» y sus errores 52x.
+ * Que Cloudflare desafíe o bloquee a esta comprobación automática (protección
+ * contra bots, modo «Bajo ataque») no la hace fallar: si contara, activar la
+ * protección sacaría el webmail de servicio y el panel volvería al general.
+ */
+export async function checkHttpsDetrasDeCloudflare(
+  hostname: string,
+  publicIp: string,
+  deps: {
+    origen: (hostname: string, ip: string) => Promise<RespuestaHead>;
+    publico: (hostname: string) => Promise<RespuestaHead>;
+  } = { origen: headAlOrigen, publico: headPublico },
+): Promise<{ ok: boolean; detail: string }> {
+  const origen = await deps.origen(hostname, publicIp);
+  if ('error' in origen) {
+    const texto = textoDeError(origen.error);
+    if (texto.includes('certificate') || texto.includes('altname') || texto.includes('cert_') || texto.includes('self-signed') || texto.includes('self signed')) {
+      return {
+        ok: false,
+        detail:
+          'El certificado de este servidor para el dominio todavía no está emitido. Let\'s Encrypt suele tardar menos de un minuto; vuelve a comprobarlo.',
+      };
+    }
+    if (texto.includes('timeout') || texto.includes('aborted')) {
+      return { ok: false, detail: 'Este servidor no ha respondido a tiempo por HTTPS. Vuelve a intentarlo en un minuto.' };
+    }
+    return {
+      ok: false,
+      detail: `Este servidor todavía no responde por HTTPS para el dominio (${origen.error.message.slice(0, 120)}). Vuelve a intentarlo en un minuto.`,
+    };
+  }
+  if (origen.status === 404) {
+    return {
+      ok: false,
+      detail:
+        'Este servidor responde con 404 para el dominio: su ruta aún no está publicada. Si acaba de entrar, espera unos segundos; si no, revisa la conexión de Traefik con Mailway en Ajustes.',
+    };
+  }
+  if (origen.status < 200 || origen.status >= 400) {
+    return { ok: false, detail: `Este servidor responde con HTTP ${origen.status} para el dominio. Revisa el servicio del webmail.` };
+  }
+
+  const publico = await deps.publico(hostname);
+  if ('error' in publico) {
+    return {
+      ok: true,
+      detail: 'HTTPS responde en este servidor. No se ha podido comprobar el camino a través de Cloudflare en este momento.',
+    };
+  }
+  if (publico.status >= 300 && publico.status < 400 && redirigeASiMismo(hostname, publico.location)) {
+    return {
+      ok: false,
+      detail:
+        'A través de Cloudflare, HTTPS redirige a la misma dirección sin fin. Cambia el modo de cifrado SSL/TLS de la zona a «Completo» o «Completo (estricto)»: en «Flexible», Cloudflare llega a este servidor por HTTP y este lo devuelve a HTTPS una y otra vez.',
+    };
+  }
+  if (publico.status >= 200 && publico.status < 400) {
+    return { ok: true, detail: `HTTPS responde correctamente a través de Cloudflare (HTTP ${publico.status}).` };
+  }
+  if (publico.mitigada || publico.status === 403 || publico.status === 429) {
+    return {
+      ok: true,
+      detail:
+        'HTTPS responde en este servidor. Cloudflare aplica su protección a esta comprobación automática, así que no se ha comprobado su camino; los visitantes pasan por esa protección.',
+    };
+  }
+  if (publico.status === 526 || publico.status === 525) {
+    return {
+      ok: false,
+      detail: `Cloudflare no acepta la conexión segura con este servidor (HTTP ${publico.status}). Si el certificado se acaba de emitir, vuelve a comprobarlo en un minuto; si no, revisa el modo SSL/TLS de la zona.`,
+    };
+  }
+  if (publico.status >= 520 && publico.status <= 530) {
+    return {
+      ok: false,
+      detail: `Cloudflare no consigue llegar a este servidor (HTTP ${publico.status}). Revisa que el registro apunte al servidor de correo y el modo SSL/TLS de la zona.`,
+    };
+  }
+  return { ok: false, detail: `A través de Cloudflare, HTTPS responde con HTTP ${publico.status}.` };
 }
 
 /**
@@ -609,8 +796,15 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   const domain = getClientDomain(id);
   const dns = await checkDns(domain);
   // Solo se prueba HTTPS cuando el DNS ya apunta aquí: antes no puede haber certificado.
-  const https = dns.status === 'ok' ? await checkHttps(domain.hostname) : null;
-  return applyClientDomainCheck(id, dns, https);
+  let resultadoHttps: { ok: boolean; detail: string } | null = null;
+  if (dns.status === 'ok') {
+    resultadoHttps = dns.viaCloudflare
+      ? dnsOffline()
+        ? { ok: false, detail: 'Comprobación HTTPS desactivada (modo sin red).' }
+        : await checkHttpsDetrasDeCloudflare(domain.hostname, getInstanceSettings().publicIp)
+      : await checkHttps(domain.hostname);
+  }
+  return applyClientDomainCheck(id, dns, resultadoHttps);
 }
 
 /* ------------------ Configuración dinámica para Traefik ------------------- */

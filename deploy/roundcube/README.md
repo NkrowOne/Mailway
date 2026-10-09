@@ -129,6 +129,12 @@ acceso normal fallido sigue igual. No depende del panel.
 complemento de contraseña y de perfil, ManageSieve, marca, formato de fecha y
 letra del editor); el compose lo monta en `/var/roundcube/config/`.
 
+- **IP real detrás del proxy de Cloudflare**: cuando quien conecta con
+  Traefik es una IP de Cloudflare (sus rangos IPv4 e IPv6, fijados en
+  `mailway.php`), Roundcube toma la del visitante de `CF-Connecting-IP` para
+  la sesión y los registros. Si no, la cabecera se ignora: cualquiera puede
+  enviarla conectando directamente con el servidor.
+
 `diagnostico/comprobar.php` es el diagnóstico de línea de órdenes que usan
 `deploy/instalar.sh --comprobar` y `--probar-acceso`: abre IMAP y SMTP con la
 configuración efectiva de Roundcube, verifica el certificado público del

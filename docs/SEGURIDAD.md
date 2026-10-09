@@ -223,7 +223,10 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   vea la zona, el dominio no se publica en Traefik. El webmail solo toma la IP
   del visitante de `CF-Connecting-IP` cuando quien conectó con Traefik es una
   IP de Cloudflare: el servidor tiene la IP pública y cualquiera podría enviar
-  esa cabecera directamente.
+  esa cabecera directamente. Queda el límite habitual de fiarse de los rangos
+  de Cloudflare: quien consiga llegar desde una IP de Cloudflare (un Worker u
+  otra zona de Cloudflare apuntada al servidor) puede elegir esa IP. Solo
+  cambia la IP anotada en la sesión y en los registros; no da acceso a nada.
 - **Dominios en zonas del operador**: si la administración escribió el DNS de
   un dominio con una cuenta de la instancia, sus registros (MX, TXT de
   verificación) siguen en la zona del operador aunque el dominio se borre, y

@@ -1089,8 +1089,12 @@ webs de Skyway con proxy):
   excepción. Mientras no hay certificado, Cloudflare responde con un error 526
   y el dominio sigue en «Emitiendo certificado».
 - El webmail toma la IP real del visitante de `CF-Connecting-IP`, solo cuando
-  la conexión llega de una IP de Cloudflare, para que su límite de intentos
-  fallidos siga contando por persona (deploy/roundcube/README.md).
+  la conexión llega de una IP de Cloudflare, para que la sesión y los
+  registros (los accesos fallidos, por ejemplo) muestren la del visitante y no
+  la del nodo de Cloudflare (deploy/roundcube/README.md). El límite de
+  intentos fallidos de Roundcube no depende de la IP: lo lleva por usuario.
+- El nombre del servidor de correo (`mail.…`) sigue sin proxy: lo necesitan
+  IMAP y SMTP, y es el destino del CNAME del webmail.
 
 **Webmail principal**: si un cliente tiene varios dominios de webmail en
 servicio, el marcado como principal (`isPrimary`) es el que usan su inicio,

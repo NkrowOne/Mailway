@@ -2329,3 +2329,61 @@ test('un token revocado en Cloudflare se anota como no válido, no como falta de
 
   await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${cuentaId}`, headers: { cookie: ctx.adminCookie } });
 });
+
+test('marca blanca: la excepción de la cuenta de la instancia vale solo para la zona ya aplicada, no para otra más específica', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const padre = cf.zona('zona-padre.es');
+  const TOKEN_INSTANCIA = 'cfut_zonapadre0123456789abcdefghijklmnopq';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [padre.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  const altaDominio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'zona-padre.es', clientId: cliente.clientId, autoDns: true },
+  });
+  assert.equal(altaDominio.statusCode, 200, altaDominio.body);
+
+  // El token del operador ve además una zona propia para el nombre del webmail.
+  const hija = cf.zona('webmail.zona-padre.es');
+  cf.tokens.get(TOKEN_INSTANCIA)!.zoneIds.push(hija.id);
+
+  // En nombre del cliente: esa zona nunca se le ha abierto, no se escribe.
+  cf.llamadas = [];
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.zona-padre.es' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  assert.equal(cf.enZona(hija.id).length, 0);
+  assert.equal(cf.enZona(padre.id).filter((r) => r.name === 'webmail.zona-padre.es').length, 0);
+  const wid = (alta.json() as { domain: { id: string } }).domain.id;
+  const pedir = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: {},
+  });
+  assert.equal(pedir.statusCode, 400);
+  assert.match((pedir.json() as { error: string }).error, /solicita al administrador/);
+
+  // La administración sí puede: usa las cuentas de la instancia como siempre.
+  const admin = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: ctx.adminCookie },
+    payload: {},
+  });
+  assert.equal(admin.statusCode, 200, admin.body);
+  assert.equal(cf.enZona(hija.id).filter((r) => r.proxied).length, 1);
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});

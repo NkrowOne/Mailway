@@ -1285,17 +1285,20 @@ export async function aplicarDnsDominio(
 /* -------------------------- Marca blanca (webmail) ------------------------ */
 
 /**
- * Cuenta de Cloudflare con la que se aplicó el DNS del dominio de correo del
- * que cuelga `hostname` (el más específico del cliente), o null.
+ * Cuenta y zona de Cloudflare con las que se aplicó el DNS del dominio de
+ * correo del que cuelga `hostname` (el más específico del cliente).
  */
-function cuentaDelDominioPadre(clientId: string, hostname: string): string | null {
+function asociacionDelDominioPadre(
+  clientId: string,
+  hostname: string,
+): { accountId: string | null; zoneId: string | null } {
   const filas = db
-    .prepare('SELECT domain, cloudflare_account_id FROM domains WHERE client_id = ?')
-    .all(clientId) as { domain: string; cloudflare_account_id: string | null }[];
+    .prepare('SELECT domain, cloudflare_account_id, cloudflare_zone_id FROM domains WHERE client_id = ?')
+    .all(clientId) as { domain: string; cloudflare_account_id: string | null; cloudflare_zone_id: string | null }[];
   const padre = filas
     .filter((d) => hostname.endsWith(`.${d.domain}`))
     .sort((a, b) => b.domain.length - a.domain.length)[0];
-  return padre?.cloudflare_account_id ?? null;
+  return { accountId: padre?.cloudflare_account_id ?? null, zoneId: padre?.cloudflare_zone_id ?? null };
 }
 
 /** Registro que debe tener un dominio de marca blanca: CNAME al servidor de correo o, sin nombre, A a la IP. */
@@ -1335,14 +1338,34 @@ function deseadoDeMarcaBlanca(destino: ClientDomain): Deseado {
  * - solo se escribe un registro con un valor fijo (el servidor de correo o su
  *   IP), y con esa cuenta nunca se reemplaza lo que haya (aplicarDnsMarcaBlanca).
  */
-async function resolverZonaMarcaBlanca(destino: ClientDomain, permitirInstancia: boolean) {
+async function resolverZonaMarcaBlanca(
+  destino: ClientDomain,
+  permitirInstancia: boolean,
+): Promise<{ resolucion: Resolucion | null; motivo: string }> {
   const host = sinPunto(destino.hostname);
-  return resolverZona(host, {
+  const padre = asociacionDelDominioPadre(destino.clientId, host);
+  const r = await resolverZona(host, {
     clientId: destino.clientId,
-    storedAccountId: cuentaDelDominioPadre(destino.clientId, host),
+    storedAccountId: padre.accountId,
     permitirInstancia,
     permitirGuardadaDeInstancia: true,
   });
+  // La excepción vale para la MISMA zona en la que ya escribió la
+  // administración: si el token del operador viera además una zona más
+  // específica para este nombre, esa no se ha abierto nunca a este cliente.
+  if (
+    r.resolucion &&
+    r.resolucion.cuenta.client_id === null &&
+    !permitirInstancia &&
+    r.resolucion.zona.id !== padre.zoneId
+  ) {
+    return {
+      resolucion: null,
+      motivo:
+        'La zona de este nombre está en la cuenta de Cloudflare de la instancia y no es la del dominio de correo que configuró el administrador: solicita al administrador que aplique el registro.',
+    };
+  }
+  return r;
 }
 
 /**
