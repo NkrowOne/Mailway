@@ -4320,6 +4320,9 @@ definitivo_016() {
   compose_q up -d --remove-orphans || fallo "Compose no ha podido arrancar el webmail."
   compose_q --profile tls up -d certs-dumper || fallo "No se pudo arrancar el extractor del certificado."
   esperar_sano mailway-webmail 180 || fallo "El webmail no vuelve a estar sano. Revisa: docker logs mailway-webmail"
+  # La pasarela arranca con el «up» de arriba: hasta que su comprobación de
+  # salud pasa, la comprobación final la daría por caída y volvería atrás.
+  esperar_sano mailway-mail-gw 60 || fallo "La pasarela del motor no arranca. Revisa: docker logs mailway-mail-gw"
   titulo "Comprobación final (la de sudo mailway comprobar)"
   if [ "$MIG_CERT_015" = 0 ]; then TOLERAR_CERTIFICADO=1; fi
   comprobar_instalacion || fallo "La comprobación final no pasa (detalle arriba)."
@@ -4367,6 +4370,7 @@ volver_a_015() {
     docker rm -f mailway-certs-dumper >/dev/null 2>&1
   fi
   if esperar_sano mailway-webmail 180; then ok "Webmail en marcha."; else aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"; fi
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
   desactivar_mantenimiento || fallos=$((fallos + 1))
   limpiar_trabajo_migracion
   printf '\n'
@@ -4491,6 +4495,7 @@ revertir_motor() {
     arrancar_extractor || aviso "No se pudo arrancar el extractor del certificado."
   fi
   esperar_sano mailway-webmail 180 || aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
   if [ "$panel_listo" = 1 ]; then
     titulo "Panel"
     if herramienta_motor "$PANEL_MOTOR" 900 provisionar && [ "$(hm_campo '.ok')" = true ]; then
