@@ -120,7 +120,12 @@ prueba que lo reproduce.
   cuerpo `{ error }`; el driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
   `engine_unreachable`). Los ajustes de Stalwart (`POST /api/settings`)
-  exigen `assert_empty`.
+  exigen `assert_empty`. Suspender un buzón le quita los permisos
+  `authenticate` y `authenticate-oauth` y le deja el rol `user` (el que da
+  `email-receive`): no inicia sesión, pero el correo le sigue llegando. Nunca
+  `set` sobre `roles` de un buzón existente: en Stalwart 0.15 roles, listas y
+  grupos son la misma relación y `set roles` lo saca de todos sus alias; el
+  rol se añade con `addItem`.
 - **Contraseñas de buzón**: se verifican en local contra el hash `$6$`
   (`engine.verifyCredentials`), nunca pidiendo al motor que autentique: los
   fallos alimentarían su bloqueo automático de IPs. Cambiar la principal con

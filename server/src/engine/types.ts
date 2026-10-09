@@ -102,7 +102,11 @@ export interface CreateMailboxInput {
 export interface UpdateMailboxPatch {
   displayName?: string;
   quotaBytes?: number;
-  /** true = cuenta suspendida (no puede iniciar sesión). */
+  /**
+   * true = cuenta suspendida: no puede iniciar sesión por ningún protocolo
+   * (tampoco con sus contraseñas de aplicación), pero el correo le sigue
+   * llegando. false = activa.
+   */
   suspended?: boolean;
 }
 

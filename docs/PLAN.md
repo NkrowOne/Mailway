@@ -70,6 +70,12 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
 2. **Driver de motor intercambiable.** Las rutas nunca hablan con Stalwart:
    usan `MailEngine` (`server/src/engine/types.ts`) mediante `getEngine()`.
    Drivers: `stalwart` y `demo` (todo el panel funciona sin motor real).
+   **Suspender** un buzón le quita los permisos `authenticate` y
+   `authenticate-oauth` y le deja el rol `user`, que es el que da
+   `email-receive`: no entra por ningún protocolo y el correo le sigue
+   llegando. El rol se añade con `addItem`, nunca con `set`: en Stalwart 0.15
+   roles, listas y grupos son una misma relación y `set roles` saca al buzón
+   de todos sus alias.
 3. **Semántica de errores del motor.** Stalwart 0.15 devuelve los errores de
    gestión con **HTTP 200** y un cuerpo sin `data`
    (`{"error":"notFound"|"fieldAlreadyExists"|"other"|…}`). El driver los

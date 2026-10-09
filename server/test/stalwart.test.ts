@@ -11,7 +11,13 @@ import { StalwartEngine } from '../src/engine/stalwart';
  * - «notFound» lleva en `item` el nombre que no existe (el principal de la
  *   ruta o un miembro de la lista);
  * - los miembros de una lista deben existir y se validan antes de escribir;
- * - un GET omite los campos vacíos (un buzón suspendido llega SIN «roles»);
+ * - un GET omite los campos vacíos (un buzón sin roles llega SIN «roles»);
+ * - el rol «user» da los permisos de un buzón, entre ellos `authenticate`
+ *   (entrar) y `email-receive` (recibir correo), y `disabledPermissions` los
+ *   quita uno a uno (comprobado con el 0.15.5 real: sin el rol, el correo que
+ *   llega se devuelve al remitente);
+ * - roles, listas y grupos son una misma relación: «set roles» la reescribe
+ *   entera (el principal sale de todas sus listas) y «addItem» solo añade;
  * - un HTTP 404 solo significa «ruta desconocida».
  */
 
@@ -19,6 +25,7 @@ interface Principal {
   type: 'individual' | 'list' | 'domain';
   secrets?: string[];
   roles?: string[];
+  disabledPermissions?: string[];
   members?: string[];
   externalMembers?: string[];
 }
@@ -47,6 +54,13 @@ function sinVacios(p: Principal): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(p).filter(([, v]) => !(Array.isArray(v) && v.length === 0) && v !== undefined),
   );
+}
+
+/** Como «set roles» en 0.15.5: reescribe roles, listas y grupos a la vez. */
+function sacarDeLasListas(nombre: string): void {
+  for (const p of principales.values()) {
+    if (p.type === 'list' && p.members) p.members = p.members.filter((m) => m !== nombre);
+  }
 }
 
 function faltaMiembro(miembros: unknown): string | null {
@@ -91,6 +105,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       type: nuevo.type,
       secrets: nuevo.secrets,
       roles: nuevo.roles,
+      disabledPermissions: nuevo.disabledPermissions,
       members: nuevo.members,
       externalMembers: nuevo.externalMembers,
     });
@@ -110,7 +125,15 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       const falta = c.field === 'members' ? faltaMiembro(c.value) : null;
       if (falta) return respuesta(200, { error: 'notFound', item: falta });
     }
-    for (const c of cambios) if (c.action === 'set') (actual as Record<string, unknown>)[c.field] = c.value;
+    for (const c of cambios) {
+      if (c.action === 'set') {
+        (actual as Record<string, unknown>)[c.field] = c.value;
+        if (c.field === 'roles') sacarDeLasListas(nombre);
+      } else if (c.action === 'addItem' && c.field === 'roles') {
+        const roles = actual.roles ?? [];
+        if (!roles.includes(c.value as string)) actual.roles = [...roles, c.value as string];
+      }
+    }
     return respuesta(200, { data: null });
   }
   return respuesta(404, { status: 404, title: 'Not Found' });
@@ -140,6 +163,22 @@ const motor = new StalwartEngine({
 function buzon(nombre: string, extra: Partial<Principal> = {}): void {
   principales.set(nombre, { type: 'individual', secrets: [sha512Crypt('clave-correcta')], roles: ['user'], ...extra });
 }
+
+/** ¿Tiene el principal ese permiso? Como en 0.15.5: lo da el rol «user» y lo quita disabledPermissions. */
+function tienePermiso(nombre: string, permiso: string): boolean {
+  const p = principales.get(nombre);
+  return Boolean(p?.roles?.includes('user')) && !(p?.disabledPermissions ?? []).includes(permiso);
+}
+
+/** Lo que se pide al motor al suspender y al reactivar un buzón. */
+const SUSPENDER = [
+  { action: 'addItem', field: 'roles', value: 'user' },
+  { action: 'set', field: 'disabledPermissions', value: ['authenticate', 'authenticate-oauth'] },
+];
+const REACTIVAR = [
+  { action: 'addItem', field: 'roles', value: 'user' },
+  { action: 'set', field: 'disabledPermissions', value: [] },
+];
 
 /* --------------------------------- Alias ---------------------------------- */
 
@@ -213,16 +252,115 @@ test('un borrado de algo que ya no existe ({ error: "notFound" }) sigue siendo i
   await motor.deleteAlias('nada@acme.test');
 });
 
+/* ------------------------------- Suspensión -------------------------------- */
+
+test('suspender un buzón le impide entrar, también con sus contraseñas de aplicación, pero el correo le sigue llegando', async () => {
+  buzon('ana@acme.test', { secrets: [sha512Crypt('clave-correcta'), `$app$movil$${sha512Crypt('clave-de-app')}`] });
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(llamadas.at(-1)?.body, SUSPENDER);
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false, 'no entra por IMAP, SMTP ni webmail');
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate-oauth'), false, 'ni con un token OAuth que tuviera');
+  // Antes se le quitaba el rol «user» y con él email-receive: el correo rebotaba.
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true, 'el correo le sigue llegando');
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), false);
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-de-app'), false);
+
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.deepEqual(llamadas.at(-1)?.body, REACTIVAR);
+  assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), true);
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-de-app'), true);
+});
+
+test('suspender de nuevo un buzón suspendido como antes (sin el rol «user») le devuelve el correo', async () => {
+  // Así lo dejaba la versión anterior: sin el rol, el motor devolvía su correo.
+  buzon('ana@acme.test', { roles: [] });
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), false);
+
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(llamadas.at(-1)?.body, SUSPENDER);
+  assert.equal(tienePermiso('ana@acme.test', 'email-receive'), true);
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false);
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), false);
+});
+
+test('un buzón suspendido como antes (sin el rol «user») se reactiva del todo', async () => {
+  buzon('ana@acme.test', { roles: [] });
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.deepEqual(llamadas.at(-1)?.body, REACTIVAR);
+  assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), true);
+});
+
+test('cambiar el nombre o la cuota no toca la suspensión', async () => {
+  buzon('ana@acme.test', { disabledPermissions: ['authenticate', 'authenticate-oauth'] });
+  await motor.updateMailbox('ana@acme.test', { displayName: 'Ana', quotaBytes: 1024 });
+  assert.deepEqual(llamadas.at(-1)?.body, [
+    { action: 'set', field: 'description', value: 'Ana' },
+    { action: 'set', field: 'quota', value: 1024 },
+  ]);
+  assert.equal(tienePermiso('ana@acme.test', 'authenticate'), false);
+});
+
+test('suspender y reactivar no sacan al buzón de sus alias', async () => {
+  buzon('ana@acme.test');
+  buzon('bob@acme.test');
+  principales.set('ventas@acme.test', { type: 'list', members: ['ana@acme.test', 'bob@acme.test'], externalMembers: [] });
+
+  await motor.updateMailbox('ana@acme.test', { suspended: true });
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+  await motor.updateMailbox('ana@acme.test', { suspended: false });
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+
+  // Un buzón sin el rol (suspendido como antes) lo recupera sin salir de nada.
+  principales.get('bob@acme.test')!.roles = [];
+  await motor.updateMailbox('bob@acme.test', { suspended: true });
+  assert.deepEqual(principales.get('bob@acme.test')?.roles, ['user']);
+  assert.deepEqual(principales.get('ventas@acme.test')?.members, ['ana@acme.test', 'bob@acme.test']);
+});
+
+test('adoptar un buzón huérfano suspendido, de la forma actual o de la anterior, lo deja activo y fuera de las listas que le quedaran', async () => {
+  for (const suspension of [{ disabledPermissions: ['authenticate', 'authenticate-oauth'] }, { roles: [] }]) {
+    principales.clear();
+    buzon('ana@acme.test', suspension);
+    // Una lista huérfana del motor que el panel no conoce.
+    principales.set('vieja@acme.test', { type: 'list', members: ['ana@acme.test'], externalMembers: [] });
+    await motor.createMailbox({ email: 'ana@acme.test', password: 'nueva-clave-segura' });
+    assert.deepEqual(
+      (llamadas.at(-1)?.body as { field: string; value: unknown }[]).filter(
+        (c) => c.field === 'roles' || c.field === 'disabledPermissions',
+      ),
+      [
+        { action: 'set', field: 'roles', value: ['user'] },
+        { action: 'set', field: 'disabledPermissions', value: [] },
+      ],
+    );
+    assert.ok(tienePermiso('ana@acme.test', 'authenticate') && tienePermiso('ana@acme.test', 'email-receive'));
+    assert.equal(await motor.verifyCredentials('ana@acme.test', 'nueva-clave-segura'), true);
+    assert.deepEqual(principales.get('vieja@acme.test')?.members, []);
+  }
+});
+
 /* --------------------------- verifyCredentials ----------------------------- */
 
-test('verifyCredentials: un buzón suspendido llega sin «roles» y se rechaza', async () => {
+test('verifyCredentials rechaza un buzón suspendido de la forma actual y de la anterior (sin «roles»)', async () => {
   buzon('ana@acme.test');
   assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), true);
   assert.equal(await motor.verifyCredentials('ana@acme.test', 'otra'), false);
 
-  // Suspendido: roles [] → el GET omite la clave.
+  // Como suspende ahora: con el rol, sin permiso para autenticarse.
+  principales.get('ana@acme.test')!.disabledPermissions = ['authenticate', 'authenticate-oauth'];
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), false);
+
+  // Como suspendía antes: roles [] → el GET omite la clave.
+  principales.get('ana@acme.test')!.disabledPermissions = [];
   principales.get('ana@acme.test')!.roles = [];
   assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), false);
+
+  // Otro permiso desactivado no impide entrar.
+  principales.get('ana@acme.test')!.roles = ['user'];
+  principales.get('ana@acme.test')!.disabledPermissions = ['email-send'];
+  assert.equal(await motor.verifyCredentials('ana@acme.test', 'clave-correcta'), true);
 
   assert.equal(await motor.verifyCredentials('nadie@acme.test', 'clave-correcta'), false);
 
