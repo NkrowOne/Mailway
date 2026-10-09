@@ -2851,6 +2851,7 @@ resumen() {
   info "  $copia"
   printf '\n'
   info "Actualizar Mailway (git pull y reaplicar):        mailway update -y"
+  info "Parches probados cada noche, con vuelta atrás:     sudo mailway auto-update on"
   info "Diagnóstico en cualquier momento (no cambia nada): mailway comprobar"
   info "Prueba de acceso a un buzón desde el webmail:      mailway probar-acceso"
   printf '\n'
