@@ -47,7 +47,7 @@ updates:
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
 
-  # Motor, webmail, extractor y Traefik propio (deploy/docker-compose.*.yml).
+  # Webmail, extractor y Traefik propio (deploy/docker-compose.*.yml).
   - package-ecosystem: docker-compose
     directory: /deploy
     schedule:
@@ -59,13 +59,46 @@ updates:
       parches-compose:
         update-types: [patch]
     ignore:
-      # Stalwart solo recibe parches (0.15.x, que no migran los datos del
-      # motor). La 0.16 eliminó la API REST de gestión que usa el driver: su
-      # migración es un proyecto aparte, a mano (docs/PLAN.md, sección 6).
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  # Cada motor en su carpeta (deploy/motor/stalwart-0.15 y stalwart-0.16, el
+  # de las instalaciones nuevas, con el CLI de Stalwart que usa la
+  # migración): así cada uno solo ve su versión y sube solo dentro de su
+  # serie. Los parches (0.15.x, 0.16.x) se fusionan solos si pasan las
+  # pruebas con los motores reales (contrato del panel, pila y migración, en
+  # stack.yml). Un cambio de serie (0.15 → 0.16, o a la 0.17) cambia la
+  # gestión o los datos del motor y nunca llega por aquí: de la 0.15 a la
+  # 0.16 se pasa con «mailway migrar-motor».
+  - package-ecosystem: docker-compose
+    directory: /deploy/motor/stalwart-0.16
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-motor-016:
+        update-types: [patch]
+    ignore:
       - dependency-name: stalwartlabs/stalwart
         update-types: ['version-update:semver-minor', 'version-update:semver-major']
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
+
+  - package-ecosystem: docker-compose
+    directory: /deploy/motor/stalwart-0.15
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: Europe/Madrid
+    groups:
+      parches-motor-015:
+        update-types: [patch]
+    ignore:
+      - dependency-name: stalwartlabs/stalwart
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
