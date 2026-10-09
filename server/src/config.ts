@@ -59,7 +59,7 @@ function parseTrustProxy(): boolean | number | string {
 
 export const config = {
   /** Versión publicada; va sincronizada con los package.json y la documentación. */
-  version: '1.3.0',
+  version: '1.4.0',
   port,
   trustProxy: parseTrustProxy(),
   host: process.env.HOST || '0.0.0.0',
@@ -120,6 +120,35 @@ export const config = {
     /** Nombre del certresolver de Traefik. En Skyway es "le". */
     certResolver: process.env.MAILWAY_TRAEFIK_CERTRESOLVER || 'le',
   },
+
+  /**
+   * Bulwark, el correo web «beta» que se elige por cliente (Roundcube sigue
+   * siendo el predeterminado; deploy/bulwark/README.md). Solo está disponible
+   * con los tres valores, que son un contrato con el despliegue (compose e
+   * instalador):
+   * - `url`: su API de administración por la red interna, nunca la pasarela
+   *   (http://mailway-bulwark:3000). Con ella el panel aplica la marca de
+   *   cada cliente y la política.
+   * - `adminPassword`: su ADMIN_PASSWORD. Nunca sale en errores ni registros.
+   * - `backendUrl`: el destino de Traefik para los nombres de los clientes que
+   *   lo usan, su pasarela (http://mailway-bulwark-gw:8080).
+   * Se leen al usarlos (nadie los copia) para que las pruebas puedan cambiarlos.
+   */
+  bulwark: {
+    url: process.env.MAILWAY_BULWARK_URL?.trim() || '',
+    // Sin recortar: Bulwark la compara con su ADMIN_PASSWORD tal cual.
+    adminPassword: process.env.MAILWAY_BULWARK_ADMIN_PASSWORD || '',
+    backendUrl: process.env.MAILWAY_BULWARK_BACKEND_URL?.trim() || '',
+  },
+
+  /**
+   * Webmail de marca de cada dominio sin que nadie lo pida: al comprobarse la
+   * propiedad de un dominio de correo se da de alta webmail.<dominio> y su
+   * registro en Cloudflare (whitelabel.ts, asegurarWebmailDeDominio). Es el
+   * valor del interruptor general mientras no se cambie en Ajustes;
+   * MAILWAY_WEBMAIL_AUTOMATICO=0 lo deja apagado. Las pruebas lo apagan.
+   */
+  webmailAutomatico: process.env.MAILWAY_WEBMAIL_AUTOMATICO !== '0',
 
   /** Vigilante: cada cuántos segundos se comprueba la salud del sistema. */
   watchdogIntervalSeconds: Number(process.env.MAILWAY_WATCHDOG_INTERVAL || 60),

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
 import { badRequest, conflict, HttpError, notFound } from '../core/errors';
+import { apiDelMotor } from '../engine';
 import { audit } from './audit';
 import { requireAdmin, requireAuth, requireClientAccess } from './auth';
 import { getClient, getClientUsage, getPlan } from './clients';
@@ -11,7 +12,7 @@ import { getConnectionSettings, publicBaseUrl } from './connection';
 import { listDomains } from './domains';
 import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
-import { getTraefikToken } from './whitelabel';
+import { getTraefikToken, webmailAutomaticoCliente, webmailAutomaticoGlobal, webmailsDelCliente } from './whitelabel';
 
 /**
  * API de integraciones: lo que necesita un sistema externo (Skyway, un
@@ -170,6 +171,8 @@ interface SummaryAppPassword {
   name: string;
   createdAt: number;
   revokedAt: number | null;
+  /** Dejó de funcionar al cambiar de versión el servidor de correo (ms); null si sigue valiendo. */
+  invalidatedAt: number | null;
 }
 
 /*
@@ -247,10 +250,10 @@ function summaryApiKeys(clientId: string): SummaryApiKey[] {
 }
 
 function summaryAppPasswords(clientId: string): SummaryAppPassword[] {
-  // Nunca se selecciona stored_secret: no sale del servidor.
+  // Nunca se seleccionan stored_secret ni verifier: no salen del servidor.
   const rows = db
     .prepare(
-      `SELECT ap.id, ap.mailbox_id, ap.name, ap.created_at, ap.revoked_at, m.local_part, d.domain
+      `SELECT ap.id, ap.mailbox_id, ap.name, ap.created_at, ap.revoked_at, ap.invalidated_at, m.local_part, d.domain
        FROM app_passwords ap
        JOIN mailboxes m ON m.id = ap.mailbox_id
        JOIN domains d ON d.id = m.domain_id
@@ -263,6 +266,7 @@ function summaryAppPasswords(clientId: string): SummaryAppPassword[] {
     name: string;
     created_at: number;
     revoked_at: number | null;
+    invalidated_at: number | null;
     local_part: string;
     domain: string;
   }[];
@@ -273,6 +277,7 @@ function summaryAppPasswords(clientId: string): SummaryAppPassword[] {
     name: row.name,
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
+    invalidatedAt: row.invalidated_at ?? null,
   }));
 }
 
@@ -304,6 +309,10 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
     const instance = getInstanceSettings();
     // Un cliente con webmail de marca propia lo recibe en lugar del global.
     const settings = getConnectionSettings('', user.role === 'client' ? user.clientId : null);
+    // La API del motor (null si no hay motor o no responde a tiempo): cuando
+    // cambia (Stalwart 0.15 → 0.16), las contraseñas de aplicación anteriores
+    // dejan de funcionar y quien integra debe volver a conectar sus servicios.
+    const api = await apiDelMotor();
     return {
       version: config.version,
       brandName: instance.brandName,
@@ -314,6 +323,7 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
       smtp: settings.smtp,
       submission: settings.smtpAlt,
       user,
+      engine: { api },
       features: {
         cloudflare: cloudflareAvailable(user),
         autoconfig: Boolean(config.traefik.panelBackend),
@@ -324,6 +334,16 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // registro existente, y la cuenta de Cloudflare de la instancia
         // asociada a un dominio nunca se usa en nombre de un cliente.
         cloudflareSoloCrear: true,
+        // Interruptor general del webmail automático (webmail.<dominio> de
+        // cada dominio). Que exista la clave dice que Mailway lo admite.
+        webmailAutomatico: webmailAutomaticoGlobal(),
+        // Enlaces de bienvenida del cliente (`/api/clients/:id/invites`):
+        // Skyway solo ofrece «Enviar configuración inicial» si lo ve.
+        invites: true,
+        // Las contraseñas de aplicación llevan `invalidatedAt` cuando dejan de
+        // funcionar porque el motor ha cambiado de versión: Skyway detecta
+        // así las de sus servicios y las vuelve a crear.
+        appPasswordInvalidation: true,
       },
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:
@@ -487,7 +507,10 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         slug: client.slug,
         externalRef: externalRefOf(id),
         suspended: client.suspended,
+        webmailAutomatico: webmailAutomaticoCliente(id),
       },
+      // Los webmail del cliente (los automáticos y los dados de alta a mano).
+      webmailDomains: webmailsDelCliente(id),
       plan: getPlan(client.planId),
       usage: getClientUsage(id),
       domains: listDomains(id),

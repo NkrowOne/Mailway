@@ -1,0 +1,49 @@
+{
+  "name": "ana",
+  "domainId": "d",
+  "credentials": {
+    "0": {
+      "credentialId": "a",
+      "secret": "****",
+      "expiresAt": null,
+      "allowedIps": {},
+      "@type": "Password"
+    },
+    "1": {
+      "credentialId": "b",
+      "description": "mw-prueba",
+      "secret": "****",
+      "createdAt": "2026-10-09T15:15:19Z",
+      "expiresAt": null,
+      "permissions": {
+        "@type": "Inherit"
+      },
+      "allowedIps": {},
+      "@type": "AppPassword"
+    }
+  },
+  "createdAt": "2026-10-09T15:15:19Z",
+  "memberGroupIds": {},
+  "memberTenantId": null,
+  "roles": {
+    "@type": "User"
+  },
+  "permissions": {
+    "@type": "Inherit"
+  },
+  "quotas": {
+    "maxDiskQuota": 1234567
+  },
+  "aliases": {},
+  "externalId": null,
+  "description": "Ana Cambiada",
+  "locale": "en-US",
+  "timeZone": null,
+  "encryptionAtRest": {
+    "@type": "Disabled"
+  },
+  "@type": "User",
+  "usedDiskQuota": 0,
+  "emailAddress": "ana@m016-74124c.test",
+  "id": "c"
+}

@@ -21,6 +21,8 @@ import { getEngineSettings, getInstanceSettings } from './settings';
 import { audit } from './audit';
 import { requireAuth, requireClientAccess } from './auth';
 import { assertClientActive, getClient, getPlan } from './clients';
+import { esDeOtroMotor } from './credenciales';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { getMailbox, type Mailbox } from './mailboxes';
 import { bloquesClaveApi, publicBaseUrl } from './connection';
 
@@ -48,14 +50,22 @@ interface ApiKeyRow {
   key_hash: string;
   sender_mailbox_id: string;
   smtp_password_enc: string;
+  /** API del motor en que se creó la credencial SMTP (NULL = Stalwart 0.15, antes de guardarla). */
+  smtp_engine_api: string | null;
+  /** La credencial SMTP dejó de funcionar al cambiar de motor y no se pudo renovar. */
+  smtp_invalidated_at: number | null;
   daily_limit: number | null;
   revoked_at: number | null;
   last_used_at: number | null;
   created_at: number;
 }
 
-/** Credenciales SMTP de una clave: { plain, stored } cifradas en la BD. */
-function parseSmtpCredentials(encrypted: string): { plain: string; stored: string } {
+/**
+ * Credenciales SMTP de una clave (o de un formulario): { plain, stored }
+ * cifradas en la BD. `plain` es el secreto que vale (el que devolvió el
+ * motor) y `stored`, la referencia con la que el motor la retira.
+ */
+export function parseSmtpCredentials(encrypted: string): { plain: string; stored: string } {
   const raw = decryptSecret(encrypted);
   try {
     const parsed = JSON.parse(raw) as { plain?: string; stored?: string };
@@ -64,6 +74,11 @@ function parseSmtpCredentials(encrypted: string): { plain: string; stored: strin
     // Formato antiguo: solo la contraseña en claro.
     return { plain: raw, stored: '' };
   }
+}
+
+/** Lo que se guarda (cifrado) de una credencial SMTP interna. */
+export function cifrarCredencialSmtp(plain: string, stored: string): string {
+  return encryptSecret(JSON.stringify({ plain, stored }));
 }
 
 function todayKey(): string {
@@ -464,31 +479,28 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     }
 
     // Contraseña de aplicación dedicada: la clave de API envía con ella sin
-    // conocer (ni tocar) la contraseña real del buzón.
-    const smtpPassword = generateMailboxPassword(24);
+    // conocer (ni tocar) la contraseña real del buzón. El motor puede imponer
+    // su propio secreto (Stalwart 0.16): se guarda el que devuelve.
     const engine = getEngine();
     const { key, prefix, hash } = newApiKey();
     const id = randomId('key');
-    const storedSecret = await engine.addAppPassword(
-      mailbox.email,
-      smtpPassword,
-      `mailway-${prefix}`,
-    );
+    const smtp = await engine.addAppPassword(mailbox.email, `mailway-${prefix}`, generateMailboxPassword(24));
+    const smtpApi = await engine.detectApi().catch(() => null);
     try {
       db.prepare(
         `INSERT INTO api_keys (id, client_id, name, prefix, key_hash, sender_mailbox_id,
-           smtp_password_enc, daily_limit, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           smtp_password_enc, smtp_engine_api, daily_limit, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id, clientId, body.name, prefix, hash, mailbox.id,
-        encryptSecret(JSON.stringify({ plain: smtpPassword, stored: storedSecret })),
+        cifrarCredencialSmtp(smtp.secret, smtp.ref), smtpApi,
         dailyLimit, now(),
       );
     } catch (err) {
       // Sin fila en la BD, la contraseña de aplicación quedaría en el motor
       // como una credencial SMTP válida que nadie puede ver ni revocar.
       try {
-        await engine.removeAppPassword(mailbox.email, storedSecret);
+        await engine.removeAppPassword(mailbox.email, smtp.ref);
       } catch (rollbackErr) {
         req.log.error(
           { err: rollbackErr, mailbox: mailbox.email },
@@ -517,14 +529,18 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     if (!row) throw notFound('Clave no encontrada.');
     requireClientAccess(req, row.client_id);
     if (row.revoked_at) throw conflict('Esta clave ya estaba revocada.');
+    // Su credencial se retira del motor después de marcarla: durante el
+    // mantenimiento del motor no se podría, y seguiría siendo válida en él.
+    exigirSinMantenimiento();
     db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(now(), id);
     forgetApiKey(id);
-    // Se retira también la contraseña de aplicación del motor.
+    // Se retira también la contraseña de aplicación del motor, salvo si es de
+    // otra versión del motor (ya no existe en este).
     try {
       const engine = getEngine();
       const mailbox = getMailbox(row.sender_mailbox_id);
       const credentials = parseSmtpCredentials(row.smtp_password_enc);
-      if (credentials.stored) {
+      if (credentials.stored && !esDeOtroMotor(row.smtp_engine_api, await engine.detectApi())) {
         await engine.removeAppPassword(mailbox.email, credentials.stored);
       }
     } catch (err) {

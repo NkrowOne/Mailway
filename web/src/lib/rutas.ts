@@ -108,6 +108,8 @@ export interface CuentaCloudflare {
 export interface ResultadoCloudflareMarcaBlanca {
   applied: { action: string; type: string; name: string }[];
   errors: { type: string; name: string; error: string }[];
+  /** Lo que no se ha tocado (un conflicto sin confirmar), con el motivo. */
+  skipped: { type: string; name: string; reason: string }[];
   domain: ClientDomain;
 }
 

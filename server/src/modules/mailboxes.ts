@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
-import { clientLockKey, withLock } from '../core/locks';
+import { clientLockKey, mailboxStateLockKey, withLock } from '../core/locks';
 import { generateMailboxPassword, randomId } from '../core/crypto';
 import { HttpError, badRequest, conflict, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
@@ -16,7 +16,9 @@ import {
   getClientUsage,
   getPlan,
 } from './clients';
+import { cambiarContrasenaBuzon, crearBuzonEnMotor, guardarHashBuzon } from './credenciales';
 import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
+import { exigirSinMantenimiento } from './mantenimiento';
 import { alCambiarContrasenaBuzon, enlaceConContrasena, olvidarBuzonConfigurado } from './portal';
 import { MENSAJE_DIRECCION_RESERVADA, assertDireccionNoReservada, esDireccionReservada } from './remitente';
 
@@ -371,23 +373,27 @@ async function createMailboxRecord(input: {
   const password = input.password || generateMailboxPassword();
 
   const engine = getEngine();
-  await engine.createMailbox({
-    email,
-    password,
-    displayName: input.displayName,
-    quotaBytes: quotaMb * 1024 * 1024,
-  });
+  // El hash se calcula una vez: lo recibe el motor y el panel guarda su copia.
+  const passwordHash = await crearBuzonEnMotor(
+    { email, password, displayName: input.displayName, quotaBytes: quotaMb * 1024 * 1024 },
+    engine,
+  );
 
   const id = randomId('mbx');
   const t = now();
   try {
-    // Un buzón recién creado está vacío: así el listado no tiene que
-    // consultar al motor solo por él.
-    db.prepare(
-      `INSERT INTO mailboxes (id, domain_id, local_part, display_name, quota_mb, created_at,
-         used_bytes, usage_checked_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
-    ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
+    // La fila y su copia del hash, juntas: un buzón sin copia no podría
+    // entrar en «Mi buzón» con el motor 0.16.
+    db.transaction(() => {
+      // Un buzón recién creado está vacío: así el listado no tiene que
+      // consultar al motor solo por él.
+      db.prepare(
+        `INSERT INTO mailboxes (id, domain_id, local_part, display_name, quota_mb, created_at,
+           used_bytes, usage_checked_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
+      guardarHashBuzon(id, passwordHash, 'panel');
+    })();
   } catch (err) {
     // Otra petición ya registró esta dirección: el principal del motor es
     // SUYO (con su contraseña). Borrarlo dejaría su buzón en el panel sin
@@ -615,6 +621,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     }
 
     if (ownershipError) throw conflict(ownershipError, 'domain_ownership_pending');
+    // Cada buzón del lote falla por separado: durante el mantenimiento del
+    // motor fallarían todos, mejor un 503 claro antes de empezar.
+    exigirSinMantenimiento();
     if (valid.length === 0) {
       throw badRequest('Ninguna dirección de la lista es válida. Revisa la lista e inténtalo de nuevo.', 'bulk_empty');
     }
@@ -725,15 +734,19 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       quotaBytes: quotaMb !== undefined && quotaMb !== mailbox.quotaMb ? quotaMb * 1024 * 1024 : undefined,
       suspended: body.status !== undefined && body.status !== mailbox.status ? body.status === 'suspended' : undefined,
     };
-    if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
-      await getEngine().updateMailbox(mailbox.email, patch);
-    }
-
-    db.prepare(
-      `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
-         quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
-       WHERE id = ?`,
-    ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
+    // Motor y panel cambian juntos, en fila con los demás cambios de estado
+    // del buzón (mailboxStateLockKey): la corrección de las suspensiones
+    // antiguas lee este estado y lo aplica en el motor.
+    await withLock(mailboxStateLockKey(id), async () => {
+      if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
+        await getEngine().updateMailbox(mailbox.email, patch);
+      }
+      db.prepare(
+        `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
+           quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
+         WHERE id = ?`,
+      ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
+    });
 
     const changes: Record<string, unknown> = {};
     if (patch.displayName !== undefined) changes.displayName = patch.displayName;
@@ -749,8 +762,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const { mailbox, domain } = requireMailboxAccess(req, id);
     const body = z.object({ password: passwordSchema.optional() }).parse(req.body ?? {});
     const password = body.password || generateMailboxPassword();
-    // El motor conserva las contraseñas de aplicación: solo cambia la principal.
-    await getEngine().setMailboxPassword(mailbox.email, password);
+    // El motor conserva las contraseñas de aplicación: solo cambia la principal
+    // (y la copia del panel con la que se comprueba).
+    await cambiarContrasenaBuzon(mailbox, password);
     // La contraseña anterior deja de valer: se borra de los enlaces de
     // configuración que la llevaban y se cierran las sesiones de «Mi buzón».
     alCambiarContrasenaBuzon(id);

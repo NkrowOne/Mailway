@@ -13,12 +13,18 @@ import {
 import {
   comentarioPropio,
   construirLote,
+  cubiertoPorCertificadoCloudflare,
   deseadosDeInstancia,
   ejecutarPlan,
   fusionarSpf,
   planificar,
+  registroProxyApuntaAqui,
   type Deseado,
 } from '../src/modules/cloudflare';
+import { config } from '../src/config';
+import { esperarWebmailsEnPreparacion } from '../src/modules/domains';
+import { asegurarWebmailDeDominio, getClientDomain } from '../src/modules/whitelabel';
+import { checkWebmailsAutomaticos } from '../src/modules/watchdog';
 import { decryptSecret } from '../src/core/crypto';
 import type { CfRegistro } from '../src/core/cloudflare';
 import { db } from '../src/core/db';
@@ -1071,7 +1077,7 @@ test('DNS de la plataforma: A del servidor, webmail y panel, y CNAME de autoconf
   await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
 });
 
-test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async () => {
+test('marca blanca: el webmail propio se apunta con un CNAME al servidor, con el proxy de Cloudflare', async () => {
   setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
   const cliente = await createClient(ctx, { withUser: true });
   const z = cf.zona('marca.es');
@@ -1098,7 +1104,7 @@ test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async
   const cname = cf.enZona(z.id).find((r) => r.name === 'webmail.marca.es')!;
   assert.equal(cname.type, 'CNAME');
   assert.equal(cname.content, 'mail.plataforma.es');
-  assert.equal(cname.proxied, false);
+  assert.equal(cname.proxied, true);
 
   const otro = await createClient(ctx, { withUser: true });
   const ajeno = await ctx.app.inject({
@@ -1108,6 +1114,36 @@ test('marca blanca: el dominio propio se apunta con un CNAME al servidor', async
     payload: {},
   });
   assert.equal(ajeno.statusCode, 403);
+});
+
+test('marca blanca: un webmail a dos niveles de la zona va sin proxy (el certificado gratuito de Cloudflare no lo cubre)', async () => {
+  assert.equal(cubiertoPorCertificadoCloudflare('marca.es', 'marca.es'), true);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.marca.es.', 'Marca.es'), true);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.correo.marca.es', 'marca.es'), false);
+  assert.equal(cubiertoPorCertificadoCloudflare('webmail.otra.es', 'marca.es'), false);
+  assert.equal(cubiertoPorCertificadoCloudflare('xmarca.es', 'marca.es'), false);
+
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('nivel.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const id = 'wld_prueba_nivel';
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+  ).run(id, cliente.clientId, 'webmail.correo.nivel.es', Date.now());
+
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${id}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: {},
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const cname = cf.enZona(z.id).find((r) => r.name === 'webmail.correo.nivel.es')!;
+  assert.equal(cname.type, 'CNAME');
+  assert.equal(cname.content, 'mail.plataforma.es');
+  assert.equal(cname.proxied, false);
 });
 
 /* -------------------- soloCliente (Skyway con token de admin) ------------- */
@@ -1785,7 +1821,7 @@ test('un registro con «Mailway» en el comentario que no es de esta instancia e
   assert.equal(planificar([srv], ajenos, { apex: 'otra.es' })[0]!.action, 'conflict');
 });
 
-test('marca blanca con soloCrear: no se quita el proxy de un registro existente', async () => {
+test('marca blanca: el alta crea sola el registro del webmail con proxy y soloCrear no toca uno existente', async () => {
   setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
   const cliente = await createClient(ctx);
   const z = cf.zona('marca-proxy.es');
@@ -1793,8 +1829,9 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
   const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
   assert.equal(cuenta.statusCode, 200, cuenta.body);
-  const { domainId } = await createDomain(ctx, cliente.clientId, 'marca-proxy.es');
-  void domainId;
+  await createDomain(ctx, cliente.clientId, 'marca-proxy.es');
+
+  // Alta por la administración: el registro se crea solo, con proxy.
   const alta = await ctx.app.inject({
     method: 'POST',
     url: '/api/whitelabel/domains',
@@ -1803,9 +1840,17 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   });
   assert.equal(alta.statusCode, 200, alta.body);
   const wid = (alta.json() as { domain: { id: string } }).domain.id;
-  cf.registro(z.id, { type: 'CNAME', name: 'webmail.marca-proxy.es', content: 'mail.plataforma.es', proxied: true });
+  const creado = cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!;
+  assert.equal(creado.type, 'CNAME');
+  assert.equal(creado.content, 'mail.plataforma.es');
+  assert.equal(creado.proxied, true);
+  assert.equal(creado.comment, comentarioPropio());
 
-  cf.llamadas = [];
+  // Un registro puesto a mano sin proxy: soloCrear no lo modifica...
+  cf.reset();
+  const z2 = cf.zona('marca-proxy.es');
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z2.id] });
+  cf.registro(z2.id, { type: 'CNAME', name: 'webmail.marca-proxy.es', content: 'mail.plataforma.es' });
   let res = await ctx.app.inject({
     method: 'POST',
     url: `/api/whitelabel/domains/${wid}/cloudflare`,
@@ -1815,9 +1860,9 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
   assert.equal(res.statusCode, 200, res.body);
   assert.deepEqual(modificaciones(), []);
   assert.match((res.json() as { skipped: { reason: string }[] }).skipped[0]!.reason, /no modifica registros existentes/);
-  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, true);
+  assert.equal(cf.enZona(z2.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, false);
 
-  // Sin soloCrear (el botón de la ficha, tras verlo), sí se quita el proxy.
+  // ...y el botón de la ficha (sin soloCrear) le activa el proxy.
   res = await ctx.app.inject({
     method: 'POST',
     url: `/api/whitelabel/domains/${wid}/cloudflare`,
@@ -1825,13 +1870,153 @@ test('marca blanca con soloCrear: no se quita el proxy de un registro existente'
     payload: {},
   });
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, false);
+  assert.equal(cf.enZona(z2.id).find((r) => r.name === 'webmail.marca-proxy.es')!.proxied, true);
 
   await ctx.app.inject({
     method: 'DELETE',
     url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
     headers: { cookie: ctx.adminCookie },
   });
+});
+
+test('marca blanca: el cliente usa la cuenta de la instancia solo en la zona cuyo DNS aplicó la administración', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const aplicada = cf.zona('aplicada-por-admin.es');
+  const ajena = cf.zona('sin-aplicar.es');
+  const TOKEN_INSTANCIA = 'cfut_instanciamarca0123456789abcdefghijklm';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [aplicada.id, ajena.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+
+  // La administración da de alta el dominio del cliente con el DNS automático:
+  // la cuenta de la instancia queda asociada a ese dominio.
+  const altaDominio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'aplicada-por-admin.es', clientId: cliente.clientId, autoDns: true },
+  });
+  assert.equal(altaDominio.statusCode, 200, altaDominio.body);
+  // El otro dominio del cliente se verifica sin pasar por Cloudflare (el plan
+  // de las pruebas admite uno: se amplía solo para este alta).
+  const limite = db.prepare('SELECT max_domains AS m FROM plans WHERE id = ?').get(cliente.planId) as { m: number };
+  db.prepare('UPDATE plans SET max_domains = 2 WHERE id = ?').run(cliente.planId);
+  try {
+    await createDomain(ctx, cliente.clientId, 'sin-aplicar.es');
+  } finally {
+    db.prepare('UPDATE plans SET max_domains = ? WHERE id = ?').run(limite.m, cliente.planId);
+  }
+
+  // El cliente da de alta su webmail: se crea en la zona ya aplicada...
+  cf.llamadas = [];
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.aplicada-por-admin.es' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const creado = cf.enZona(aplicada.id).find((r) => r.name === 'webmail.aplicada-por-admin.es');
+  assert.ok(creado, 'el registro del webmail debería existir');
+  assert.equal(creado!.proxied, true);
+
+  // ...pero en la otra zona del operador, cuyo DNS nunca escribió la
+  // administración para este cliente, no se escribe nada.
+  const antes = cf.enZona(ajena.id).length;
+  cf.llamadas = [];
+  const otra = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.sin-aplicar.es' },
+  });
+  assert.equal(otra.statusCode, 200, otra.body);
+  assert.equal(cf.enZona(ajena.id).length, antes);
+  assert.ok(cf.llamadas.every((l) => l.auth !== `Bearer ${TOKEN_INSTANCIA}`));
+
+  // Con la cuenta de la instancia en nombre del cliente, un conflicto no se
+  // reemplaza ni pidiéndolo.
+  const wid = (alta.json() as { domain: { id: string } }).domain.id;
+  cf.reset();
+  const z = cf.zona('aplicada-por-admin.es');
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [z.id] });
+  db.prepare('UPDATE domains SET cloudflare_zone_id = ? WHERE domain = ?').run(z.id, 'aplicada-por-admin.es');
+  cf.registro(z.id, { type: 'A', name: 'webmail.aplicada-por-admin.es', content: '198.51.100.7' });
+  const reemplazo = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: { replaceConflicts: true },
+  });
+  assert.equal(reemplazo.statusCode, 200, reemplazo.body);
+  assert.deepEqual(modificaciones(), []);
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.aplicada-por-admin.es')!.content, '198.51.100.7');
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});
+
+test('marca blanca detrás del proxy: Cloudflare confirma adónde apunta el registro', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('confirma.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  await createDomain(ctx, cliente.clientId, 'confirma.es');
+  const id = 'wld_prueba_proxy';
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+  ).run(id, cliente.clientId, 'webmail.confirma.es', Date.now());
+  const dominio = getClientDomain(id);
+
+  // Sin ninguna cuenta que vea la zona: no se sabe.
+  assert.equal(await registroProxyApuntaAqui(dominio), null);
+
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  // La cuenta ve la zona, pero no hay registro: no apunta aquí.
+  assert.equal(await registroProxyApuntaAqui(dominio), false);
+
+  // Con proxy y hacia el servidor de correo: sí.
+  cf.registro(z.id, { type: 'CNAME', name: 'webmail.confirma.es', content: 'mail.plataforma.es', proxied: true });
+  assert.equal(await registroProxyApuntaAqui(dominio), true);
+
+  // Con proxy pero hacia otro sitio: no.
+  cf.reset();
+  const z2 = cf.zona('confirma.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z2.id] });
+  cf.registro(z2.id, { type: 'CNAME', name: 'webmail.confirma.es', content: 'otro.servidor.es', proxied: true });
+  assert.equal(await registroProxyApuntaAqui(dominio), false);
+});
+
+test('plan del webmail con proxy: crear con proxy, activárselo a uno propio y conservar uno equivalente', () => {
+  const d: Deseado = { type: 'CNAME', name: 'webmail.plan.es', content: 'mail.plataforma.es', required: true, proxied: true };
+  const ctxPlan = { apex: 'plan.es', publicIp: '203.0.113.10' };
+  const [crear] = planificar([d], [], ctxPlan);
+  assert.equal(crear!.action, 'create');
+  assert.equal(crear!.operaciones!.posts[0]!.proxied, true);
+
+  const gris = { id: 'r1', type: 'CNAME', name: 'webmail.plan.es', content: 'mail.plataforma.es', proxied: false } as CfRegistro;
+  const [activar] = planificar([d], [gris], ctxPlan);
+  assert.equal(activar!.action, 'update');
+  assert.deepEqual(activar!.operaciones!.patches, [{ id: 'r1', proxied: true }]);
+
+  const naranja = { ...gris, proxied: true } as CfRegistro;
+  assert.equal(planificar([d], [naranja], ctxPlan)[0]!.action, 'keep');
+
+  // Un A a la IP del servidor equivale al CNAME: sin proxy se le activa.
+  const a = { id: 'r2', type: 'A', name: 'webmail.plan.es', content: '203.0.113.10', proxied: false } as CfRegistro;
+  const [conA] = planificar([d], [a], ctxPlan);
+  assert.equal(conA!.action, 'update');
+  assert.deepEqual(conA!.operaciones!.patches, [{ id: 'r2', proxied: true }]);
+  assert.equal(planificar([d], [{ ...a, proxied: true } as CfRegistro], ctxPlan)[0]!.action, 'keep');
+
+  // Sin proxy pedido (el panel de marca blanca), nada cambia.
+  const sinProxy: Deseado = { ...d, proxied: false };
+  assert.equal(planificar([sinProxy], [gris], ctxPlan)[0]!.action, 'keep');
+  assert.equal(planificar([sinProxy], [], ctxPlan)[0]!.operaciones!.posts[0]!.proxied, false);
 });
 
 /* ------- Reserva de los dominios cuyo DNS escribió la administración ------ */
@@ -2177,4 +2362,385 @@ test('un token revocado en Cloudflare se anota como no válido, no como falta de
   assert.match(anotada.lastError || '', /no es válido/);
 
   await ctx.app.inject({ method: 'DELETE', url: `/api/cloudflare/accounts/${cuentaId}`, headers: { cookie: ctx.adminCookie } });
+});
+
+test('marca blanca: la excepción de la cuenta de la instancia vale solo para la zona ya aplicada, no para otra más específica', async () => {
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx, { withUser: true });
+  const padre = cf.zona('zona-padre.es');
+  const TOKEN_INSTANCIA = 'cfut_zonapadre0123456789abcdefghijklmnopq';
+  cf.token(TOKEN_INSTANCIA, { zoneIds: [padre.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN_INSTANCIA);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  const altaDominio = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: 'zona-padre.es', clientId: cliente.clientId, autoDns: true },
+  });
+  assert.equal(altaDominio.statusCode, 200, altaDominio.body);
+
+  // El token del operador ve además una zona propia para el nombre del webmail.
+  const hija = cf.zona('webmail.zona-padre.es');
+  cf.tokens.get(TOKEN_INSTANCIA)!.zoneIds.push(hija.id);
+
+  // En nombre del cliente: esa zona nunca se le ha abierto, no se escribe.
+  cf.llamadas = [];
+  const alta = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.zona-padre.es' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  assert.equal(cf.enZona(hija.id).length, 0);
+  assert.equal(cf.enZona(padre.id).filter((r) => r.name === 'webmail.zona-padre.es').length, 0);
+  const wid = (alta.json() as { domain: { id: string } }).domain.id;
+  const pedir = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: cliente.userCookie! },
+    payload: {},
+  });
+  assert.equal(pedir.statusCode, 400);
+  assert.match((pedir.json() as { error: string }).error, /solicita al administrador/);
+
+  // La administración sí puede: usa las cuentas de la instancia como siempre.
+  const admin = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/whitelabel/domains/${wid}/cloudflare`,
+    headers: { cookie: ctx.adminCookie },
+    payload: {},
+  });
+  assert.equal(admin.statusCode, 200, admin.body);
+  assert.equal(cf.enZona(hija.id).filter((r) => r.proxied).length, 1);
+
+  await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+});
+
+/* --------------------- Webmail automático de cada dominio ------------------ */
+
+/** Activa el webmail automático durante la prueba (las pruebas lo tienen apagado). */
+function conWebmailAutomatico(t: { after: (fn: () => void) => void }): void {
+  config.webmailAutomatico = true;
+  t.after(() => {
+    config.webmailAutomatico = false;
+  });
+}
+
+async function esperar(cond: () => boolean, ms = 3000): Promise<void> {
+  const fin = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > fin) throw new Error('No ha ocurrido a tiempo');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** Alta de un dominio de un cliente por la administración, con su DNS en Cloudflare. */
+async function dominioAplicado(clientId: string, dominio: string): Promise<string> {
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { domain: dominio, clientId, autoDns: true },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  // El webmail de marca se prepara en segundo plano al comprobarse la
+  // propiedad: se espera aquí para que no se cruce con lo que la prueba
+  // cambie después (el interruptor general, sobre todo).
+  await esperarWebmailsEnPreparacion();
+  return (res.json() as { domain: { id: string } }).domain.id;
+}
+
+const filaWebmail = (hostname: string) =>
+  db.prepare('SELECT id, client_id, kind FROM client_domains WHERE hostname = ?').get(hostname) as
+    | { id: string; client_id: string; kind: string }
+    | undefined;
+
+test('webmail automático: al comprobarse el dominio, webmail.<dominio> se da de alta y se crea con proxy', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const cliente = await createClient(ctx);
+  const z = cf.zona('auto-uno.es');
+  const TOKEN = 'cfut_autouno0123456789abcdefghijklmnopqrst';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Nadie da de alta el webmail: basta con que el dominio quede comprobado.
+  await dominioAplicado(cliente.clientId, 'auto-uno.es');
+  await esperar(() => cf.enZona(z.id).some((r) => r.name === 'webmail.auto-uno.es'));
+  const fila = filaWebmail('webmail.auto-uno.es');
+  assert.ok(fila);
+  assert.equal(fila!.client_id, cliente.clientId);
+  assert.equal(fila!.kind, 'webmail');
+  const registro = cf.enZona(z.id).find((r) => r.name === 'webmail.auto-uno.es')!;
+  assert.equal(registro.type, 'CNAME');
+  assert.equal(registro.content, 'mail.plataforma.es');
+  assert.equal(registro.proxied, true);
+  const actividad = db
+    .prepare("SELECT detail FROM audit_log WHERE action = 'whitelabel.domain_created' AND client_id = ?")
+    .get(cliente.clientId) as { detail: string } | undefined;
+  assert.match(actividad?.detail ?? '', /"automatico":true/);
+
+  // Pedirlo después (Skyway, el propio cliente) devuelve el mismo, sin error.
+  const otraVez = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { hostname: 'webmail.auto-uno.es', clientId: cliente.clientId },
+  });
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  assert.equal((otraVez.json() as { domain: { id: string } }).domain.id, fila!.id);
+});
+
+test('webmail automático: no toca un nombre que se usa para otra cosa, no recrea uno eliminado y obedece al interruptor', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const zAjeno = cf.zona('auto-ajeno.es');
+  const zLibre = cf.zona('auto-libre.es');
+  const zApagado = cf.zona('auto-apagado.es');
+  const TOKEN = 'cfut_autodos0123456789abcdefghijklmnopqrst';
+  cf.token(TOKEN, { zoneIds: [zAjeno.id, zLibre.id, zApagado.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Los dominios se dan de alta con el automático apagado; luego se pide a mano.
+  config.webmailAutomatico = false;
+  const ajeno = await createClient(ctx);
+  const libre = await createClient(ctx);
+  const apagado = await createClient(ctx);
+  cf.registro(zAjeno.id, { type: 'A', name: 'webmail.auto-ajeno.es', content: '198.51.100.7' });
+  const idAjeno = await dominioAplicado(ajeno.clientId, 'auto-ajeno.es');
+  const idLibre = await dominioAplicado(libre.clientId, 'auto-libre.es');
+  const idApagado = await dominioAplicado(apagado.clientId, 'auto-apagado.es');
+
+  // Apagado: nada.
+  assert.equal(await asegurarWebmailDeDominio(idApagado), null);
+  assert.equal(filaWebmail('webmail.auto-apagado.es'), undefined);
+  config.webmailAutomatico = true;
+
+  // Ya hay un webmail.<dominio> que apunta a otro sitio: ni se da de alta ni se toca.
+  cf.llamadas = [];
+  assert.equal(await asegurarWebmailDeDominio(idAjeno), null);
+  assert.equal(filaWebmail('webmail.auto-ajeno.es'), undefined);
+  assert.deepEqual(modificaciones(), []);
+  assert.equal(cf.enZona(zAjeno.id).find((r) => r.name === 'webmail.auto-ajeno.es')!.content, '198.51.100.7');
+
+  // Libre: se crea. Si alguien lo elimina, no vuelve a aparecer solo...
+  const creado = await asegurarWebmailDeDominio(idLibre);
+  assert.ok(creado);
+  assert.equal(await asegurarWebmailDeDominio(idLibre), null, 'una segunda vez no hace nada');
+  const borrar = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/whitelabel/domains/${creado!.id}`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(borrar.statusCode, 200, borrar.body);
+  assert.equal(await asegurarWebmailDeDominio(idLibre), null);
+  assert.equal(filaWebmail('webmail.auto-libre.es'), undefined);
+  // ...ni con el repaso del vigilante.
+  await checkWebmailsAutomaticos();
+  assert.equal(filaWebmail('webmail.auto-libre.es'), undefined);
+
+  // Darlo de alta a mano lo vuelve a querer.
+  const aMano = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: ctx.adminCookie },
+    payload: { hostname: 'webmail.auto-libre.es', clientId: libre.clientId },
+  });
+  assert.equal(aMano.statusCode, 200, aMano.body);
+  assert.equal(db.prepare('SELECT 1 FROM webmail_descartados WHERE hostname = ?').get('webmail.auto-libre.es'), undefined);
+});
+
+test('webmail automático: el vigilante prepara los dominios que ya existían y reintenta los pendientes', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const z = cf.zona('auto-viejo.es');
+  const TOKEN = 'cfut_autotres0123456789abcdefghijklmnopqr';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+
+  // Un dominio de antes de esta función (comprobado con el automático apagado).
+  config.webmailAutomatico = false;
+  const cliente = await createClient(ctx);
+  await dominioAplicado(cliente.clientId, 'auto-viejo.es');
+  assert.equal(filaWebmail('webmail.auto-viejo.es'), undefined);
+  config.webmailAutomatico = true;
+
+  // Y un webmail pendiente sin registro (Cloudflare falló al crearlo).
+  const otro = await createClient(ctx);
+  const zOtro = cf.zona('auto-pendiente.es');
+  cf.tokens.get(TOKEN)!.zoneIds.push(zOtro.id);
+  config.webmailAutomatico = false;
+  await dominioAplicado(otro.clientId, 'auto-pendiente.es');
+  config.webmailAutomatico = true;
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES ('wld_pendiente', ?, 'webmail.auto-pendiente.es', 'webmail', ?)`,
+  ).run(otro.clientId, Date.now());
+
+  db.prepare("DELETE FROM settings WHERE key = 'watchdog_last_webmail-automatico'").run();
+  await checkWebmailsAutomaticos();
+  assert.ok(filaWebmail('webmail.auto-viejo.es'), 'el dominio antiguo tiene ya su webmail');
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.auto-viejo.es')?.proxied, true);
+  assert.equal(cf.enZona(zOtro.id).find((r) => r.name === 'webmail.auto-pendiente.es')?.proxied, true);
+});
+
+test('interruptor del cliente: desactivarlo retira los webmail automáticos y su registro; activarlo los vuelve a crear', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const z = cf.zona('interruptor.es');
+  const TOKEN = 'cfut_interruptor0123456789abcdefghijklmno';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+  const cliente = await createClient(ctx, { withUser: true });
+  config.webmailAutomatico = false;
+  const idDominio = await dominioAplicado(cliente.clientId, 'interruptor.es');
+  config.webmailAutomatico = true;
+  assert.ok(await asegurarWebmailDeDominio(idDominio));
+  // Un registro ajeno en la misma zona, que nunca se toca.
+  cf.registro(z.id, { type: 'A', name: 'www.interruptor.es', content: '198.51.100.9' });
+
+  const poner = (activo: boolean, cookie = cliente.userCookie!) =>
+    ctx.app.inject({
+      method: 'PUT',
+      url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+      headers: { cookie },
+      payload: { activo },
+    });
+
+  // Lo desactiva el propio cliente: el webmail automático desaparece, y su registro con él.
+  const off = await poner(false);
+  assert.equal(off.statusCode, 200, off.body);
+  const cuerpoOff = off.json() as { webmailAutomatico: boolean; webmailDomains: unknown[] };
+  assert.equal(cuerpoOff.webmailAutomatico, false);
+  assert.equal(cuerpoOff.webmailDomains.length, 0);
+  assert.equal(filaWebmail('webmail.interruptor.es'), undefined);
+  assert.equal(cf.enZona(z.id).some((r) => r.name === 'webmail.interruptor.es'), false);
+  assert.equal(cf.enZona(z.id).some((r) => r.name === 'www.interruptor.es'), true);
+  // Desactivado: ni el alta automática ni el vigilante lo crean.
+  assert.equal(await asegurarWebmailDeDominio(idDominio), null);
+
+  // Otro cliente no puede tocar su interruptor.
+  const otro = await createClient(ctx, { withUser: true });
+  const ajeno = await ctx.app.inject({
+    method: 'PUT',
+    url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+    headers: { cookie: otro.userCookie! },
+    payload: { activo: true },
+  });
+  assert.equal(ajeno.statusCode, 403);
+
+  // Activarlo lo vuelve a crear en el momento (no estaba descartado).
+  const on = await poner(true, ctx.adminCookie);
+  assert.equal(on.statusCode, 200, on.body);
+  const cuerpoOn = on.json() as { webmailAutomatico: boolean; webmailDomains: { hostname: string; automatico: boolean }[] };
+  assert.equal(cuerpoOn.webmailAutomatico, true);
+  assert.deepEqual(cuerpoOn.webmailDomains.map((d) => [d.hostname, d.automatico]), [['webmail.interruptor.es', true]]);
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.interruptor.es')?.proxied, true);
+
+  // Pedirlo a mano lo convierte en «pedido»: desactivar ya no lo retira.
+  const aMano = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.interruptor.es' },
+  });
+  assert.equal(aMano.statusCode, 200, aMano.body);
+  assert.equal((aMano.json() as { domain: { automatico: boolean } }).domain.automatico, false);
+  assert.equal((await poner(false)).statusCode, 200);
+  assert.ok(filaWebmail('webmail.interruptor.es'), 'el pedido a mano se queda');
+});
+
+test('interruptor general: lo cambia la administración, manda sobre la variable y se ve en la API de integraciones', async (t) => {
+  t.after(() => {
+    db.prepare("DELETE FROM settings WHERE key = 'webmail_automatico'").run();
+  });
+  const cliente = await createClient(ctx, { withUser: true });
+
+  // Sin guardar, el de la variable (apagado en las pruebas).
+  let info = await ctx.app.inject({ method: 'GET', url: '/api/integrations/info', headers: { cookie: ctx.adminCookie } });
+  assert.equal((info.json() as { features: { webmailAutomatico: boolean } }).features.webmailAutomatico, false);
+
+  // Un cliente no puede cambiar el general.
+  const cliente403 = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: cliente.userCookie! },
+    payload: { activo: true },
+  });
+  assert.equal(cliente403.statusCode, 403);
+
+  const on = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: ctx.adminCookie },
+    payload: { activo: true },
+  });
+  assert.equal(on.statusCode, 200, on.body);
+  assert.equal((on.json() as { webmailAutomatico: boolean }).webmailAutomatico, true);
+  info = await ctx.app.inject({ method: 'GET', url: '/api/integrations/info', headers: { cookie: ctx.adminCookie } });
+  assert.equal((info.json() as { features: { webmailAutomatico: boolean } }).features.webmailAutomatico, true);
+
+  // El resumen del cliente (lo que usa Skyway) trae su interruptor y sus webmail.
+  const resumen = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/integrations/clients/${cliente.clientId}/summary`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(resumen.statusCode, 200, resumen.body);
+  const r = resumen.json() as { client: { webmailAutomatico: boolean }; webmailDomains: unknown[] };
+  assert.equal(r.client.webmailAutomatico, true);
+  assert.deepEqual(r.webmailDomains, []);
+
+  const estado = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+    headers: { cookie: cliente.userCookie! },
+  });
+  assert.equal(estado.statusCode, 200, estado.body);
+  assert.deepEqual(estado.json(), { webmailAutomatico: true, global: true, webmailDomains: [] });
+
+  const off = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: ctx.adminCookie },
+    payload: { activo: false },
+  });
+  assert.equal((off.json() as { webmailAutomatico: boolean }).webmailAutomatico, false);
 });

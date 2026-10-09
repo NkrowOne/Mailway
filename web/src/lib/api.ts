@@ -99,6 +99,8 @@ export interface Client {
   createdAt: number;
   /** Referencia en un sistema externo; «skyway:…» si lo gestiona Skyway. */
   externalRef: string | null;
+  /** Correo web de sus webmail propios: Roundcube o el nuevo (beta). Servidores anteriores no lo envían. */
+  webmailMotor?: 'roundcube' | 'bulwark';
   plan?: Plan;
   usage?: ClientUsage;
   users?: { id: string; email: string; name: string; disabled: boolean; lastLoginAt: number | null }[];
@@ -337,9 +339,31 @@ export interface AdminDashboard {
     apiKeys: number;
   };
   messages: { last24h: number; failed24h: number; last30d: number };
-  engine: { ok: boolean; detail?: string };
+  /** Salud del motor y API de gestión detectada (rest015, jmap016 o demo). */
+  engine: { ok: boolean; api?: 'rest015' | 'jmap016' | 'demo'; detail?: string };
   queue: { pending: number; oldestSeconds: number | null };
   instance: InstanceSettings;
+  /** El correo web nuevo (Bulwark), si está configurado; null o ausente si no. */
+  bulwark?: ResumenCorreoWebNuevo | null;
+}
+
+/** Estado del correo web nuevo para el panel de control (GET /api/dashboard/admin). */
+export interface ResumenCorreoWebNuevo {
+  disponible: boolean;
+  motivo: string | null;
+  /** Disponible y con Stalwart 0.16: los webmail de sus clientes van a Bulwark. */
+  enServicio: boolean;
+  salud: { ok: boolean; detalle: string | null };
+  clientes: number;
+  sincronizacion: SincronizacionCorreoWeb;
+}
+
+export interface SincronizacionCorreoWeb {
+  pendiente: boolean;
+  aplicadaEn: number | null;
+  error: { mensaje: string; codigo: string } | null;
+  reintentarDesde: number | null;
+  clavesFijadas: string[];
 }
 
 export interface ClientDashboard {
@@ -417,6 +441,8 @@ export interface ClientDomain {
   lastCheckedAt: number | null;
   activatedAt: number | null;
   createdAt: number;
+  /** Lo dio de alta el webmail automático (no una persona). */
+  automatico: boolean;
 }
 
 export interface DnsInstruction {

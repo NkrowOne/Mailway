@@ -3,17 +3,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type BloqueVariables } from '../../lib/api';
 import { formatDate, plural } from '../../lib/format';
 import { mensajeDe, type AppPasswordInfo } from '../../lib/gestion';
+import { TEXTO_INVALIDADA } from '../../lib/portal';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
 import { MarcaFondo, Cargando, Muestra } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { VariablesIntegracion } from '../VariablesIntegracion';
-import { BandaError } from './comun';
+import { BandaAviso, BandaError } from './comun';
 
 /**
  * Contraseñas de aplicación de un buzón: una por dispositivo o programa. Se
  * revocan una a una sin cambiar la contraseña principal, de modo que perder un
- * móvil no obliga a reconfigurar todo lo demás.
+ * móvil no obliga a reconfigurar todo lo demás. Las que murieron con una
+ * actualización del servidor de correo se marcan para crear otras.
  */
 export function ContrasenasAplicacion({
   mailboxId,
@@ -82,7 +84,9 @@ export function ContrasenasAplicacion({
   }
 
   const items = list.data?.appPasswords ?? [];
-  const activas = items.filter((i) => !i.revokedAt).length;
+  // Las invalidadas siguen sin revocar, pero ya no abren nada: no son activas.
+  const activas = items.filter((i) => !i.revokedAt && !i.invalidatedAt).length;
+  const invalidadas = items.filter((i) => !i.revokedAt && i.invalidatedAt).length;
   // Las revocadas no caducan nunca de la lista: se pliegan para que las
   // activas, que son las que importan, no queden enterradas.
   const revocadas = items.filter((i) => i.revokedAt).length;
@@ -138,6 +142,15 @@ export function ContrasenasAplicacion({
         </div>
       )}
 
+      {invalidadas > 0 && (
+        <BandaAviso>
+          {invalidadas === 1
+            ? 'Una contraseña de aplicación dejó de funcionar con la actualización del servidor de correo.'
+            : `${invalidadas} contraseñas de aplicación dejaron de funcionar con la actualización del servidor de correo.`}{' '}
+          Los dispositivos que las usaban no pueden conectarse: crea una nueva para cada uno y revoca las antiguas.
+        </BandaAviso>
+      )}
+
       <form onSubmit={submit} noValidate className="flex flex-wrap items-end gap-2">
         <div className="min-w-[12rem] flex-1">
           <Input
@@ -190,12 +203,19 @@ export function ContrasenasAplicacion({
                       </>
                     )}
                   </p>
+                  {item.invalidatedAt && !item.revokedAt && (
+                    <p className="text-sm text-tinta-2">{TEXTO_INVALIDADA}</p>
+                  )}
                 </div>
                 {item.revokedAt ? (
                   <MarcaFondo veredicto="sin-dato">Revocada</MarcaFondo>
                 ) : aRevocar === item.id ? (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-sm text-tinta-2">El dispositivo que la use dejará de conectarse.</span>
+                    <span className="text-sm text-tinta-2">
+                      {item.invalidatedAt
+                        ? 'Ya no funciona en ningún dispositivo: solo se quita de la lista.'
+                        : 'El dispositivo que la use dejará de conectarse.'}
+                    </span>
                     <Button variant="plano" className="px-2" onClick={() => setARevocar(null)}>
                       Cancelar
                     </Button>
@@ -205,7 +225,11 @@ export function ContrasenasAplicacion({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <MarcaFondo veredicto="normal">Activa</MarcaFondo>
+                    {item.invalidatedAt ? (
+                      <MarcaFondo veredicto="fuera">Dejó de funcionar</MarcaFondo>
+                    ) : (
+                      <MarcaFondo veredicto="normal">Activa</MarcaFondo>
+                    )}
                     <Button variant="plano" className="px-2" onClick={() => setARevocar(item.id)}>
                       Revocar
                     </Button>
