@@ -189,7 +189,7 @@ services:
   # Estado: docker exec mailway-certs-dumper python /app/extractor.py estado
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: python:3.13.16-alpine
+    image: python:3.14.8-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']
