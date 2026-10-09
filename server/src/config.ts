@@ -59,7 +59,7 @@ function parseTrustProxy(): boolean | number | string {
 
 export const config = {
   /** Versión publicada; va sincronizada con los package.json y la documentación. */
-  version: '1.3.0',
+  version: '1.4.0',
   port,
   trustProxy: parseTrustProxy(),
   host: process.env.HOST || '0.0.0.0',

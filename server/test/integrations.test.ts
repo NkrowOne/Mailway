@@ -70,7 +70,7 @@ test('info: datos de la instancia; el token de Traefik solo para administradores
   });
   assert.equal(res.statusCode, 200, res.body);
   const info = res.json() as Record<string, any>;
-  assert.equal(info.version, '1.3.0');
+  assert.equal(info.version, '1.4.0');
   assert.equal(info.user.role, 'admin');
   assert.equal(info.imap.port, 993);
   assert.equal(info.smtp.port, 465);

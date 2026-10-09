@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.3.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.4.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -551,8 +551,21 @@ controles táctiles de 44 px y un paso a la vez.
   existe en el mismo cliente: elige una contraseña nueva en lugar de crear
   otro acceso (nunca para la administración ni para otro cliente).
 
-### Stalwart 0.16
+### Hecho en la 1.4
 
+- **Stalwart 0.16** con su driver por JMAP: el panel averigua solo qué versión
+  tiene delante (también si cambia con el panel en marcha) y guarda una copia
+  cifrada del hash de cada buzón, que 0.16 ya no da; las contraseñas de
+  aplicación que no sobreviven a la migración se marcan, se avisa a cada
+  titular y Skyway vuelve a conectar sus servicios.
+- **Suspender un buzón** ya no devuelve su correo ni lo saca de sus alias, y
+  una corrección única arregla lo que dejó la forma anterior.
+- **Actualizaciones automáticas** (`mailway auto-update on`), con comprobación
+  y vuelta atrás, y parches de dependencias e imágenes fusionados solos si
+  pasan todas las pruebas.
+- **Webmail de marca automático** para cada dominio y webmail detrás del
+  proxy de Cloudflare cuando su certificado lo cubre.
+- Traefik borra la cabecera `Forwarded` antes de llegar al motor.
 - Las instalaciones nuevas usan Stalwart 0.16: primer arranque sin asistente,
   ajustes de Mailway con la herramienta del motor del panel, certificado de
   Traefik con el extractor y solo las rutas de los programas de correo en
