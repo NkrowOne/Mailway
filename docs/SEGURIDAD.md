@@ -110,8 +110,19 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
 
 ### 3.4 Titulares de buzones
 
-- La contraseña se comprueba **en el panel**, contra el hash `$6$` que guarda
-  el motor, nunca pidiéndole al motor que autentique (sección 7).
+- La contraseña se comprueba **en el panel**, contra su propia copia del hash
+  `$6$` de la contraseña principal, nunca pidiéndole al motor que autentique
+  (sección 7). El panel calcula ese hash una sola vez, al dar de alta el buzón
+  o cambiar su contraseña, y es el mismo que recibe el motor; la contraseña en
+  claro no se guarda. Los buzones anteriores a la copia toman el hash de
+  Stalwart 0.15 la primera vez que se comprueba su contraseña, al arrancar el
+  panel, en el vigilante y con `motor.js capturar` antes de actualizar el
+  motor. Sin copia y con un motor que ya no la da (0.16), la respuesta es
+  `409 password_unverifiable`: hay que restablecer la contraseña del buzón.
+- La suspensión que cuenta es la del panel (el buzón o su cliente): un buzón
+  suspendido no entra en «Mi buzón» aunque el motor lo tenga activo (tras
+  actualizar a 0.16, hasta que `motor.js provisionar` lo vuelve a suspender en
+  él).
 - 5 fallos por buzón y 20 por IP cada 15 minutos; los contadores sobreviven a
   un reinicio.
 - La misma respuesta (`401 bad_credentials`, «La dirección de correo o la
@@ -121,11 +132,13 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   electrónico o la contraseña no son correctos.».
 - Una **contraseña de aplicación** no sirve para entrar en «Mi buzón» ni para
   cambiar la contraseña principal: quien encuentre un móvil perdido no puede
-  adueñarse del buzón.
+  adueñarse del buzón. El panel las reconoce por un verificador irreversible
+  (sección 6), también las que dejaron de funcionar al actualizar el motor.
 - Máximo de **25 contraseñas de aplicación activas** por buzón, con la misma
   respuesta (`409 app_password_limit`) en el panel, en «Mi buzón» y en las
   integraciones: cada una es una puerta más al buzón, y decenas suelen indicar
-  que no se revocan las antiguas.
+  que no se revocan las antiguas. Las invalidadas por una actualización del
+  motor ya no abren nada y no cuentan.
 - Cambiar la contraseña cierra las demás sesiones de «Mi buzón» y borra la
   contraseña guardada en los enlaces de configuración.
 - Suspender el buzón o su cliente corta las sesiones abiertas del portal.
@@ -287,6 +300,15 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   cada formulario, secreto de Turnstile de un formulario, contraseña opcional
   de un enlace de configuración, contraseña de la cuenta remitente
   `configuration@` de cada dominio.
+- **Copia del hash `$6$`** (sha512-crypt) de la contraseña principal de cada
+  buzón (`credenciales_buzon`), cifrada además con la clave maestra: una copia
+  de la base de datos sin esa clave no sirve para atacar los hashes sin
+  conexión. Si la clave cambia, la copia deja de poder leerse y se vuelve a
+  tomar del motor (0.15) o hay que restablecer la contraseña.
+- **Verificador `$6$`** de cada contraseña de aplicación (irreversible), solo
+  para reconocerla y rechazarla donde hace falta la principal. No permite
+  recuperarla: las contraseñas de aplicación, como las demás, se muestran una
+  sola vez.
 - **Solo hash** (HMAC-SHA256 con la clave maestra) de lo que no hay que
   recuperar: sesiones, tokens de gestión, claves de API, tokens de enlaces.
 - Contraseñas, tokens y claves se devuelven **una sola vez**. Los bloques
@@ -319,15 +341,32 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   hacer que el panel enviase la contraseña guardada, o las credenciales SMTP de
   las claves de API, a un servidor ajeno. La URL solo admite `http(s)` y sin
   usuario ni contraseña incrustados.
+- **Versión del motor**: el panel averigua si habla con Stalwart 0.15 (API
+  REST) o 0.16 (JMAP) preguntando al propio motor con su usuario de
+  administración (`/jmap/session` y, si no anuncia la gestión de 0.16,
+  `/api/principal`). Unas credenciales rechazadas dan
+  `502 engine_auth_failed`, nunca se toman por otra versión.
 - **Rutas desconocidas**: un HTTP 404 del motor se trata como un error
   (`engine_error`), nunca como «el elemento no existe»; si no, los borrados
   darían por buena una eliminación que el motor no ha hecho y los buzones
-  seguirían recibiendo correo.
+  seguirían recibiendo correo. Antes, el panel vuelve a averiguar la versión
+  (el motor puede haberse actualizado con el panel en marcha) y repite la
+  operación una sola vez, y solo si la versión ha cambiado: así no se repite
+  una escritura que el mismo motor ya rechazó.
 - **Bloqueo automático**: Stalwart bloquea para siempre una IP tras 100 fallos
   de autenticación al día y al instante ante rutas típicas de escáneres
   (`*.php`, `/wp-*`…). Por eso:
   - el panel **nunca** pide al motor que autentique contraseñas de titulares
-    (portal, enlaces, webmail): las verifica en local;
+    (portal, enlaces, webmail): las verifica en local, contra su copia del
+    hash (sección 3.4). Hasta Stalwart 0.15 bastaba con leer el hash del
+    motor, pero 0.16 lo devuelve enmascarado; la copia evita volver a
+    autenticar contra el motor, que con unos cuantos errores tecleando
+    bloquearía la IP del webmail o del proxy para todos y serviría de oráculo
+    de contraseñas sin el límite de intentos del panel. Con 0.15, si la copia
+    no coincide con lo que guarda el motor (un cambio hecho fuera del panel),
+    se vuelve a leer del motor; con 0.16, Ajustes comprueba que el
+    autoservicio del motor esté bloqueado, para que nadie la cambie fuera del
+    panel;
   - el motor exime de su bloqueo **solo** la red interna `mailway-internal`
     (`10.203.53.0/24`), por la que llega el webmail, cuyos usuarios comparten
     IP. La red del proxy no se exime: por ella entra Internet;
@@ -337,15 +376,34 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   conectado a `skyway-edge` podría falsear `X-Forwarded-For` al hablar con
   `mailway-mail:8080`. La mejora prevista es una red dedicada entre Traefik y
   Stalwart.
-- **TLS**: IMAP y SMTP con certificado de Let's Encrypt (ACME del motor o
-  certificado de Traefik copiado por el extractor del perfil `tls`, que solo
-  lleva al volumen del motor el par del servidor de correo, nunca las claves
-  de otros dominios). El vigilante avisa si caduca, es autofirmado o no
-  corresponde al nombre. La API de envío verifica el certificado del SMTP
-  interno contra el nombre público; `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` solo
-  debe usarse mientras no hay certificado.
+- **TLS**: IMAP y SMTP con certificado de Let's Encrypt (ACME del motor, solo
+  con 0.15, o certificado de Traefik copiado por el extractor del perfil
+  `tls`, que solo lleva al volumen del motor el par del servidor de correo,
+  nunca las claves de otros dominios). El vigilante avisa si caduca, es
+  autofirmado o no corresponde al nombre. La API de envío verifica el
+  certificado del SMTP interno contra el nombre público;
+  `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` solo debe usarse mientras no hay
+  certificado.
 - La autenticación en claro solo se admite sobre TLS (IMAP, SMTP de envío,
   ManageSieve).
+- **Actualización del motor (0.15 → 0.16)**: se hace desde la terminal del
+  servidor (`motor.js`, [INTEGRACIONES.md, sección 2.10](INTEGRACIONES.md#210-actualización-del-motor-stalwart-015--016)),
+  con el **modo mantenimiento** activo: el panel, «Mi buzón» y las
+  integraciones no pueden escribir en un motor a medio migrar
+  (`503 engine_maintenance`) y el vigilante no lo da por caído. Solo se
+  activa desde la terminal (ninguna ruta HTTP lo hace: un token de gestión no
+  puede bloquear el panel) y caduca solo, como mucho a las 24 horas. Lo que la
+  migración no conserva se resuelve sin exponer secretos:
+  - las suspensiones: los buzones suspendidos vuelven activos en 0.16 hasta
+    que `motor.js provisionar` los suspende de nuevo a partir de la base del
+    panel, que es la fuente de verdad. Entre el arranque del motor nuevo y la
+    provisión, un buzón suspendido podría entrar por IMAP o SMTP; la provisión
+    informa de los que no ha podido volver a suspender;
+  - las contraseñas de aplicación de 0.15 dejan de funcionar: se marcan como
+    invalidadas (ya no cuentan ni se ofrecen como activas), se avisa a la
+    administración y a cada titular, y se revocan sin llamar al motor;
+  - las credenciales SMTP internas de las claves de API y de los formularios
+    se renuevan en el motor nuevo y se guardan cifradas, como antes.
 
 ## 8. Rutas públicas
 

@@ -96,12 +96,26 @@ ownerRole, ownerClientId, ownerClientName, current }`.
   `{ "error": "<mensaje en español listo para mostrar>", "code": "<código>" }`;
   los de validación (`400 validation`) añaden `issues: [{ path, message }]`.
 - Los errores del motor de correo se devuelven como `502` con
-  `engine_unreachable`, `engine_error`, `engine_not_found` o `engine_exists`.
-  `engine_not_found` significa que el motor no encuentra un elemento concreto
-  (Stalwart 0.15 lo comunica con HTTP 200 y `{ error }`). Un HTTP 404 del
-  motor es otra cosa, una ruta de gestión desconocida por una URL del motor
-  mal configurada, y se devuelve como `engine_error`: tomarlo por «no existe»
-  daría por hechos borrados que no se han realizado.
+  `engine_unreachable`, `engine_error`, `engine_not_found`, `engine_exists` o
+  `engine_auth_failed` (el motor rechaza el usuario o la contraseña de
+  administración que guarda el panel; se corrige en Ajustes → Motor de
+  correo). `engine_not_found` significa que el motor no encuentra un elemento
+  concreto (Stalwart 0.15 lo comunica con HTTP 200 y `{ error }`). Un HTTP 404
+  del motor es otra cosa, una ruta de gestión desconocida, y se devuelve como
+  `engine_error`: tomarlo por «no existe» daría por hechos borrados que no se
+  han realizado. Antes de darlo, el panel vuelve a averiguar la versión del
+  motor (por si se ha actualizado con el panel en marcha) y, solo si ha
+  cambiado, repite la operación una vez.
+- `503 engine_maintenance`: el servidor de correo se está actualizando
+  (sección 2.10). Se rechaza, sin aplicar nada, todo lo que cambiaría algo en
+  el motor: altas y bajas de dominios, buzones, alias, claves de API y
+  formularios; cambios de buzones y alias; contraseñas de buzón y de
+  aplicación; suspensiones de clientes y buzones, y ajustes y certificado del
+  motor. Las lecturas y lo que solo vive en el panel (planes, usuarios,
+  tokens, marca blanca…) siguen funcionando. Es temporal: muestra `error` y
+  repite más tarde, sin tratarlo como un fallo definitivo.
+- `409 engine_unsupported`: la versión del motor no admite la operación (la
+  emisión del certificado con el ACME del motor en Stalwart 0.16).
 - Contraseñas, tokens y claves se devuelven **una sola vez**, en la respuesta
   que los crea.
 - Un usuario de cliente solo ve lo suyo: los filtros `clientId` de las rutas
@@ -111,12 +125,12 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear, webmailAutomatico, invites }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.webmailAutomatico` es el interruptor general del webmail automático (sección 7.1); que exista la clave indica que este Mailway lo admite. `features.invites` (siempre `true`) indica que admite los enlaces de bienvenida del cliente (`/api/clients/:id/invites`); Skyway no ofrece «Enviar configuración inicial» a un Mailway que no lo declare. `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, engine: { api }, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear, webmailAutomatico, invites, appPasswordInvalidation }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.webmailAutomatico` es el interruptor general del webmail automático (sección 7.1); que exista la clave indica que este Mailway lo admite. `features.invites` (siempre `true`) indica que admite los enlaces de bienvenida del cliente (`/api/clients/:id/invites`); Skyway no ofrece «Enviar configuración inicial» a un Mailway que no lo declare. `engine.api` es la API de gestión del motor: `'rest015'` (Stalwart 0.15, API REST), `'jmap016'` (Stalwart 0.16, JMAP), `'demo'` (modo demostración) o `null` (sin motor configurado, o no ha respondido en 3 segundos; `null` no indica un cambio de versión). `features.appPasswordInvalidation` (siempre `true`) indica que las contraseñas de aplicación llevan `invalidatedAt` cuando dejan de funcionar por una actualización del motor (secciones 2.6 y 3.5). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
 | `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (ver debajo); sin el parámetro, siempre. |
-| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended, webmailAutomatico }, webmailDomains, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. `client.webmailAutomatico` es el interruptor del webmail automático del cliente y `webmailDomains` sus webmail de marca (`{ id, hostname, status, detail, automatico, isPrimary, … }`; sección 7.1). Un usuario de otro cliente recibe `403` exista o no el id. |
+| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended, webmailAutomatico }, webmailDomains, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. `client.webmailAutomatico` es el interruptor del webmail automático del cliente y `webmailDomains` sus webmail de marca (`{ id, hostname, status, detail, automatico, isPrimary, … }`; sección 7.1). Cada elemento de `appPasswords` es `{ id, mailboxId, email, name, createdAt, revokedAt, invalidatedAt }`, como en la sección 2.6. Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 `_`, `-`), empezando por letra o número; p. ej. `skyway:workspace:<id>`. Es
@@ -371,22 +385,48 @@ dirección completa del buzón.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/mailboxes/:id/app-passwords` | `{ appPasswords: [{ id, mailboxId, email, name, createdAt, revokedAt }] }`. |
+| `GET /api/mailboxes/:id/app-passwords` | `{ appPasswords: [{ id, mailboxId, email, name, createdAt, revokedAt, invalidatedAt }] }`. Las fechas, en milisegundos desde 1970. |
 | `POST /api/mailboxes/:id/app-passwords` | `{ name (1–60) }` → `{ appPassword, password, snippets }` con `Cache-Control: no-store`; **`password` y `snippets` solo aparecen aquí**. Máximo 25 activas por buzón: `409 app_password_limit`. |
-| `DELETE /api/mailboxes/:id/app-passwords/:appId` | Revoca al instante → `{ ok }`. |
+| `DELETE /api/mailboxes/:id/app-passwords/:appId` | Revoca al instante → `{ ok }`. Idempotente: una ya revocada responde `{ ok }` sin cambios. |
 
-El máximo de 25 contraseñas activas por buzón se comprueba al crearlas, sea cual
-sea la vía: este panel y las integraciones con token (también la conexión de un
-servicio desde Skyway) y «Mi buzón» (`POST /api/portal/app-passwords`). Todas
-responden `409 app_password_limit`; hay que revocar alguna antes de crear otra.
-Con el cliente o el buzón suspendido no se crean (`400 client_suspended`,
-`400 mailbox_suspended`). Las altas de un mismo buzón se ejecutan en fila, así
-que varias peticiones simultáneas no superan el máximo. No cuentan las
-credenciales SMTP que crea cada clave de API ([API.md](API.md)).
+`password` es opaco: con Stalwart 0.16 lo genera el propio motor, así que no
+supongas su longitud ni su formato.
+
+El máximo de 25 contraseñas activas (sin revocar ni invalidadas) por buzón se
+comprueba al crearlas, sea cual sea la vía: este panel y las integraciones con
+token (también la conexión de un servicio desde Skyway) y «Mi buzón»
+(`POST /api/portal/app-passwords`). Todas responden `409 app_password_limit`;
+hay que revocar alguna antes de crear otra. Con el cliente o el buzón
+suspendido no se crean (`400 client_suspended`, `400 mailbox_suspended`). Las
+altas de un mismo buzón se ejecutan en fila, así que varias peticiones
+simultáneas no superan el máximo. No cuentan las credenciales SMTP que crea
+cada clave de API ([API.md](API.md)).
 
 Una contraseña de aplicación **no sirve** para entrar en «Mi buzón» ni para
 cambiar la contraseña principal (`400 app_password_not_allowed`): quien
 encuentre un móvil perdido no puede adueñarse del buzón.
+
+**Contraseñas invalidadas por una actualización del motor.** Las contraseñas
+de aplicación creadas con Stalwart 0.15 no funcionan en 0.16. Al terminar la
+actualización (sección 2.10) se marcan con `invalidatedAt` (milisegundos desde
+1970; `null` mientras sigue valiendo) y siguen en la lista, con
+`revokedAt: null`, hasta que alguien las revoca:
+
+- ya no abren IMAP ni SMTP y **no cuentan** para el máximo de 25;
+- se revocan con el mismo `DELETE /api/mailboxes/:id/app-passwords/:appId`,
+  que no llama al motor (no queda nada que retirar en él), así que también
+  funciona durante el mantenimiento y es idempotente;
+- su sustituta se crea con `POST /api/mailboxes/:id/app-passwords`, como
+  cualquier otra.
+
+El panel y «Mi buzón» las muestran con el texto «Dejó de funcionar con la
+actualización del servidor de correo. Crea una nueva.»; «Mi buzón» avisa
+arriba del todo y el titular de un buzón activo (de un cliente activo y un
+dominio con la propiedad comprobada) recibe un correo desde
+`configuration@<dominio>` con las que debe sustituir, una sola vez. Las
+`skyway:<servicio>` no entran en esos avisos: las renueva la integración que
+las creó (sección 3.5). `invalidatedAt` aparece igual en
+`GET /api/portal/app-passwords` y en el resumen del cliente (sección 2.2).
 
 **Variables listas para copiar.** La respuesta del alta (en el panel y en
 `POST /api/portal/app-passwords`) incluye `snippets`, bloques
@@ -559,6 +599,24 @@ un aviso (`engine_hostname`) que se cierra solo al coincidir; no reinicia el
 estado DNS de los dominios, que se vuelven a medir con su frecuencia habitual.
 Ni la puesta en marcha ni Ajustes se bloquean por ello.
 
+**Versión del motor.** `GET /api/engine/status` incluye además `api` (la de
+la sección 2.2; `null` si el motor no respondió), `extraChecks`
+(`[{ key, label, ok }]`, comprobaciones propias de la versión; con Stalwart
+0.16: `submission587`, `maxAppPasswords`, `selfServiceBlocked`,
+`defaultDomain` y `logToStdout`; `extra` las da como mapa `{ key: ok }`),
+`restartRequired` (cambios guardados en el motor que solo se aplican al
+reiniciar su contenedor, como abrir el puerto 587 en 0.16), `acmeSupported`
+(`false` con 0.16: el certificado lo obtiene Traefik y el extractor lo lleva
+al motor) y `maintenance: { active, until }` (sección 2.10).
+`POST /api/engine/recommended` devuelve también `restartRequired`; no es un
+error: tras reiniciar el motor, volver a aplicarlos lo deja vacío. Con 0.16 los
+ajustes recomendados suben además a 100 el máximo de contraseñas de aplicación
+por buzón del motor (5 por defecto), que cubre las 25 de dispositivos, las
+credenciales SMTP de las claves de API y las de los formularios.
+`POST /api/engine/acme` responde `409 engine_unsupported` con 0.16.
+`POST /api/settings/engine/test` y `GET /api/dashboard/admin` (`engine.api`)
+indican también la versión detectada.
+
 **Entregabilidad del servidor.** `GET /api/deliverability/server` incluye
 `hostnameIpv6` (AAAA del nombre del servidor; `null` si no se pudo consultar,
 vacío si solo tiene IPv4) e `ipv6Ok`: `false` si alguna IPv6 tiene un inverso
@@ -590,6 +648,50 @@ recibe además `engineConfigured`, `demoMode`, `engineFromEnv`, `engineDefaults`
 (URL, usuario y servidor SMTP del motor del entorno, y `hasPassword`; nunca la
 contraseña) e `instance` completa (nombre y IP pública del servidor, URL del
 panel y del webmail).
+
+### 2.10 Actualización del motor (Stalwart 0.15 → 0.16)
+
+El cambio de versión se hace con el panel en marcha, desde la terminal del
+servidor, con la orden `motor` del contenedor del panel (la ejecuta el
+instalador):
+
+```bash
+docker exec -u node <panel> node server/dist/tools/motor.js <orden> [opciones]
+```
+
+Imprime **una sola línea JSON** por la salida estándar (el texto para
+personas va a la salida de errores; nunca imprime secretos). Código de salida:
+`0` si todo ha ido bien, `1` si hay un problema (la línea lleva `ok: false` y
+`error`) y `2` si la orden no es válida (`{ ok: false, error }`).
+
+| Orden | Respuesta |
+|---|---|
+| `estado` | `{ ok, api, mantenimiento: { activo, hasta }, buzones: { total, conHash, sinHash }, contrasenasAplicacion: { porApi: { rest015?, jmap016?, demo? }, invalidadas }, credencialesInternas: { porApi, invalidadas } }`. `api` es `null` (y `ok: false`) si el motor no responde. |
+| `capturar` | `{ ok, capturados, yaEstaban, fallidos: [direcciones] }`. Copia en el panel el hash de la contraseña de **todos** los buzones (sección 3.4 de [SEGURIDAD.md](SEGURIDAD.md)). Código 1 si falla alguno o si el motor no es Stalwart 0.15. |
+| `mantenimiento on [--minutos N]` | `{ ok, activo, hasta }`. Activa el modo mantenimiento durante `N` minutos (de 1 a 1440; 120 por defecto); repetirla fija el plazo de nuevo desde ese momento. |
+| `mantenimiento off` | `{ ok, activo, hasta }`. |
+| `provisionar` | `{ ok, api, aplicados: [textos], avisos: [textos], restartRequired: [textos], errores: [textos], suspensiones: { reaplicadas, fallidas: [direcciones] }, faltan: { dominios, buzones, alias } }`. Aplica los ajustes recomendados, vuelve a suspender en el motor los buzones suspendidos (la migración los deja activos) y comprueba que el motor tiene todos los dominios, buzones y alias del panel. Código 1 ante cualquier error o si falta algo. `restartRequired` no vacío **no** es un error: se reinicia el motor y se repite la orden, que entonces lo devuelve vacío. |
+| `tras-migrar` | `{ ok, api, credencialesInternas: { renovadas, fallidas: [textos] }, contrasenasInvalidadas, avisados, avisosFallidos: [direcciones], sinCopia }`. Renueva en el motor nuevo las credenciales SMTP internas de las claves de API y de los formularios, marca como invalidadas las contraseñas de aplicación creadas con el motor anterior (sección 2.6), avisa a la administración y a los titulares, y cuenta los buzones sin copia del hash (`sinCopia`: sus titulares no podrán entrar en «Mi buzón» hasta que se restablezca su contraseña). Idempotente: repetirla solo reintenta lo que falló. Código 1 si el motor no responde o falla alguna credencial interna (un aviso que no se ha podido enviar no lo es: queda en `avisosFallidos` y se reintenta al repetirla). |
+
+`capturar`, `provisionar` y `tras-migrar` funcionan con el modo mantenimiento
+activo: son la propia migración. Las fechas (`hasta`) van en milisegundos desde
+1970.
+
+**Modo mantenimiento.** Mientras está activo, la API responde
+`503 engine_maintenance` a lo que cambiaría algo en el motor (sección 2.1) y
+el vigilante deja en pausa lo que depende del motor (si responde, su cola, el
+webmail, el certificado, el nombre en ejecución y el DNS de los dominios), así
+que no avisa de una caída que es la propia actualización. Caduca solo (como
+mucho, a las 24 horas), para que un instalador interrumpido no deje el panel
+bloqueado. Solo se activa desde la terminal del servidor: ninguna ruta HTTP lo
+hace, así que un token de gestión no puede bloquear el panel. Ajustes →
+Servidor de correo lo muestra mientras dura.
+
+**Qué cambia para quien integra.** `engine.api` pasa de `rest015` a
+`jmap016`. Las claves de API (`mw_…`) y los formularios siguen funcionando: el
+panel renueva sus credenciales internas. Las contraseñas de aplicación
+anteriores dejan de funcionar y llevan `invalidatedAt`; las de los servicios
+conectados con una integración hay que volver a crearlas (sección 3.5).
 
 ---
 
@@ -665,6 +767,9 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
   - Conectar de nuevo crea una credencial nueva, pero **no revoca la
     anterior**: retírala en Mailway (contraseñas de aplicación del buzón o
     **API de envío**) si ya no se usa.
+  - Si el motor de correo se actualiza, las contraseñas `skyway:<servicio>`
+    dejan de funcionar y hay que volver a conectar esos servicios
+    (sección 3.5).
 - **Webmail propio**: los webmail de marca del cliente (`webmail.<dominio>`)
   con su estado y el interruptor del webmail automático
   (`PUT /api/clients/:id/webmail-automatico`, sección 7.1). Es del cliente:
@@ -707,6 +812,46 @@ Rutas de Traefik** (sección 7.3).
 Cuando el panel se despliega con Skyway, Mailway deduce el nombre de su
 contenedor (`skyway-<SKYWAY_PROJECT>-<SKYWAY_SERVICE>`, para las rutas de
 Traefik) y su URL pública (`PUBLIC_URL`, si no se define `MAILWAY_PANEL_URL`).
+
+### 3.5 Tras actualizar el motor de correo
+
+Al pasar de Stalwart 0.15 a 0.16 (sección 2.10), las contraseñas de aplicación
+anteriores dejan de funcionar, también las `skyway:<servicio>` que Skyway
+inyecta en los servicios conectados en modo SMTP (`SMTP_PASS`). Mailway no
+puede renovarlas por su cuenta (no sabe dónde se usan), así que quien las creó
+debe volver a conectar esos servicios. Un Mailway que lo admite declara
+`features.appPasswordInvalidation: true` en `GET /api/integrations/info`.
+
+**Cómo detectarlo.**
+
+- `engine.api` de `GET /api/integrations/info` cambia (de `rest015` a
+  `jmap016`). Compara solo valores no nulos: `null` significa que el motor no
+  ha respondido a tiempo (por ejemplo, mientras se reinicia), no un cambio.
+- En el resumen del cliente (`GET /api/integrations/clients/:id/summary`) o
+  en `GET /api/mailboxes/:id/app-passwords`, una contraseña con
+  `invalidatedAt` distinto de `null` y `revokedAt: null` es una que dejó de
+  funcionar. Esta comprobación basta por sí sola: el cambio de `engine.api`
+  solo indica cuándo conviene hacerla.
+
+**Qué hacer con cada `skyway:<servicio>` invalidada**, en este orden:
+
+1. Crear otra con el mismo nombre en el mismo buzón
+   (`POST /api/mailboxes/:id/app-passwords`). La invalidada no cuenta para el
+   máximo de 25, así que no lo impide.
+2. Sustituir `SMTP_PASS` en el servicio por la contraseña nueva (`password`
+   de la respuesta, que solo aparece ahí) y, si procede, volver a
+   desplegarlo.
+3. Revocar la invalidada (`DELETE /api/mailboxes/:id/app-passwords/:appId`).
+   No llama al motor y es idempotente: si se repite tras un fallo, responde
+   `{ ok }` igual.
+
+Revocarla al final hace que, si algo falla a mitad, la invalidada siga
+indicando qué servicio falta por reconectar; al repetirlo, revoca también la
+contraseña nueva que no llegó a usarse. Durante la actualización, el alta
+puede responder
+`503 engine_maintenance`: hay que reintentarla más tarde, no darla por
+fallida. Los servicios conectados en modo *API* (`MAILWAY_API_KEY`) no
+necesitan nada: las claves de API siguen funcionando.
 
 ---
 
