@@ -127,7 +127,7 @@ services:
   # motor todo lo que entra por HTTP, con la IP real como única dirección de
   # X-Forwarded-For y sin la cabecera Forwarded. Ver docker-compose.mail.yml.
   mailway-mail-gw:
-    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7
     container_name: mailway-mail-gw
     restart: unless-stopped
     command: ['nginx', '-c', '/etc/nginx/mailway/nginx.conf', '-g', 'daemon off;']
@@ -344,7 +344,7 @@ services:
       start_period: 30s
 
   mailway-bulwark-gw:
-    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7
     container_name: mailway-bulwark-gw
     restart: unless-stopped
     profiles: ['bulwark']
