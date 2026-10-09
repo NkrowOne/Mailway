@@ -68,7 +68,7 @@ ESCUCHAS = [
     ('manageSieve', 4190, False),
     ('http', 8080, False),
 ]
-DESCRIPCION_RESERVADO = 'Servidor de correo de la instancia (reservado por Mailway)'
+DESCRIPCION_RESERVADO = 'Dominio reservado del servidor de correo (Mailway)'
 
 
 class Problema(Exception):
