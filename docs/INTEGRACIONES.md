@@ -111,12 +111,12 @@ ownerRole, ownerClientId, ownerClientName, current }`.
 
 | Método y ruta | Quién | Descripción |
 |---|---|---|
-| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
+| `GET /api/integrations/info` | cualquiera autenticado | `{ version, brandName, mailHostname, webmailUrl, panelUrl, imap, smtp, submission, user, features: { cloudflare, autoconfig, portal, cloudflareSoloCrear }, traefik }`. `imap` es 993 SSL/TLS, `smtp` 465 SSL/TLS y `submission` 587 STARTTLS. `traefik` = `{ configPath, token }` solo para la administración (`null` en otro caso). Un cliente con webmail de marca propia recibe su URL. `features.cloudflare` indica si ese usuario puede usar alguna cuenta de Cloudflare: la administración, cualquiera; un cliente, solo las suyas (las de la instancia no cuentan). `features.webmailAutomatico` es el interruptor general del webmail automático (sección 7.1); que exista la clave indica que este Mailway lo admite. `features.cloudflareSoloCrear` (siempre `true` desde la 1.1) es un compromiso para quien integra: el alta con `autoDns` y el registro de marca blanca con `soloCrear` solo crean lo que falta (nunca modifican un registro existente) y la cuenta de la instancia asociada a un dominio nunca se usa en nombre de un cliente; Skyway no pide el DNS automático del correo a un Mailway que no lo declare. |
 | `POST /api/integrations/clients/ensure` | administración | `{ externalRef, name, contactEmail?, planId? }` → `{ client, created }`. Idempotente: si ya existe un cliente con esa referencia se devuelve sin modificarlo. Sin `planId` usa el primer plan. |
 | `GET /api/integrations/clients/by-ref?externalRef=` | administración | `{ client }` o `404 client_not_found`. |
 | `PUT /api/integrations/clients/:id/link` | administración | `{ externalRef }` → `{ client }`. Vincula un cliente existente. |
 | `DELETE /api/integrations/clients/:id/link` | administración | Quita la referencia (no borra nada más) → `{ client }`. Con `?externalRef=<referencia>` solo la quita si sigue siendo esa (ver debajo); sin el parámetro, siempre. |
-| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended }, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. Un usuario de otro cliente recibe `403` exista o no el id. |
+| `GET /api/integrations/clients/:id/summary` | acceso al cliente | Todo en una llamada: `{ client: { id, name, slug, externalRef, suspended, webmailAutomatico }, webmailDomains, plan, usage, domains, mailboxes, apiKeys, appPasswords, connection: { imap, smtp, submission, webmailUrl } }`. `client.webmailAutomatico` es el interruptor del webmail automático del cliente y `webmailDomains` sus webmail de marca (`{ id, hostname, status, detail, automatico, isPrimary, … }`; sección 7.1). Un usuario de otro cliente recibe `403` exista o no el id. |
 
 Reglas de `externalRef`: de 3 a 200 caracteres (letras, números, `:`, `.`,
 `_`, `-`), empezando por letra o número; p. ej. `skyway:project:<id>`. Es
@@ -1072,7 +1072,17 @@ webmail que siguen esperando al DNS. Barandillas:
   vuelve a activar.
 - Respeta el máximo de 5 dominios propios por cliente y los nombres
   reservados.
-- `MAILWAY_WEBMAIL_AUTOMATICO=0` lo desactiva.
+- **Interruptores.** Uno general, en **Ajustes → Webmail automático**
+  (apagado, no se crea el de ningún dominio, pero no se retiran los que ya
+  existen; mientras no se cambie, su valor es el de
+  `MAILWAY_WEBMAIL_AUTOMATICO`, activado salvo que valga `0`), y uno por
+  cliente, en **Marca blanca** de su ficha y en el panel «Correo» del
+  proyecto en Skyway (activado por defecto). Desactivar el de un cliente
+  retira los webmail que se crearon solos (el panel vuelve al webmail
+  general) y borra su registro en Cloudflare si lo escribió Mailway; los
+  dados de alta a mano se mantienen. Activarlo los vuelve a crear en el
+  momento. Pedir a mano un webmail que se creó solo lo convierte en «pedido»:
+  desactivar el automático ya no lo retira.
 
 Cada buzón entra por el webmail de **su propio dominio** si está en servicio
 (quien tiene el correo en `b.com`, por `webmail.b.com`); si no, por el
@@ -1126,7 +1136,10 @@ servicio y, si no hay ninguno, la URL general del webmail de la instancia.
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /api/whitelabel/domains?clientId=` | `{ domains }`. |
+| `GET /api/whitelabel/domains?clientId=` | `{ domains }`. Cada dominio lleva `automatico` (`true` si lo dio de alta el webmail automático). |
+| `GET /api/clients/:id/webmail-automatico` | Acceso al cliente → `{ webmailAutomatico, global, webmailDomains }`: su interruptor, el general y sus webmail. |
+| `PUT /api/clients/:id/webmail-automatico` | Acceso al cliente. `{ activo }` → lo mismo que el anterior. Activarlo prepara en el momento el webmail de cada dominio comprobado; desactivarlo retira los que se crearon solos (y su registro en Cloudflare, si lo escribió Mailway). Es el botón de la ficha del cliente y el de Skyway. |
+| `GET` · `PUT /api/settings/webmail-automatico` | Solo administración. `{ activo }` → `{ webmailAutomatico }`: el interruptor general. |
 | `POST /api/whitelabel/domains` | `{ hostname, kind?, clientId? }` → `{ domain, instructions }` (CNAME recomendado hacia el servidor de correo o A hacia la IP). Si el nombre ya es de ese cliente y del mismo tipo (por ejemplo, porque lo creó el alta automática), devuelve el que hay; de otro cliente o de otro tipo, `409`. |
 | `GET /api/whitelabel/domains/:id` · `POST …/:id/verify` · `DELETE …/:id` | Ficha, comprobación y baja. |
 | `POST /api/whitelabel/domains/:id/cloudflare` | Crea el registro en Cloudflare (sección 4). |

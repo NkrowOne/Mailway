@@ -532,6 +532,14 @@ const migrations: { id: string; sql: string }[] = [
         client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
         created_at INTEGER NOT NULL
       );
+
+      -- Interruptor por cliente del webmail automático (activado por
+      -- defecto). Desactivarlo retira los que se crearon solos.
+      ALTER TABLE clients ADD COLUMN webmail_automatico INTEGER NOT NULL DEFAULT 1;
+
+      -- 1 = lo dio de alta el webmail automático, no una persona: son los
+      -- que se retiran al desactivar el interruptor del cliente.
+      ALTER TABLE client_domains ADD COLUMN automatico INTEGER NOT NULL DEFAULT 0;
     `,
   },
 ];

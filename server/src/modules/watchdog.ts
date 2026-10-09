@@ -13,6 +13,7 @@ import {
   listClientDomains,
   refreshClientDomain,
   reintentarWebmailPendiente,
+  webmailAutomaticoGlobal,
   type ClientDomain,
 } from './whitelabel';
 
@@ -272,7 +273,7 @@ async function checkWhitelabelDomains(): Promise<void> {
  * registro y se miden, por si el DNS se puso a mano.
  */
 export async function checkWebmailsAutomaticos(): Promise<void> {
-  if (!config.webmailAutomatico) return;
+  if (!webmailAutomaticoGlobal()) return;
   if (!due('webmail-automatico', HOUR)) return;
   markRun('webmail-automatico');
   const dominios = db

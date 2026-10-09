@@ -34,6 +34,8 @@ export interface ClientDomain {
   activatedAt: number | null;
   createdAt: number;
   isPrimary: boolean;
+  /** Lo dio de alta el webmail automático (no una persona). */
+  automatico: boolean;
 }
 
 interface DomainRow {
@@ -47,6 +49,7 @@ interface DomainRow {
   activated_at: number | null;
   created_at: number;
   is_primary: number;
+  automatico: number;
 }
 
 function toDomain(row: DomainRow): ClientDomain {
@@ -61,6 +64,7 @@ function toDomain(row: DomainRow): ClientDomain {
     activatedAt: row.activated_at,
     createdAt: row.created_at,
     isPrimary: row.is_primary === 1,
+    automatico: row.automatico === 1,
   };
 }
 
@@ -811,6 +815,34 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
 /* ------------------- Webmail automático de cada dominio ------------------ */
 
 /**
+ * Interruptor general (Ajustes): lo guardado manda; sin guardar, el valor de
+ * MAILWAY_WEBMAIL_AUTOMATICO (por defecto, activado).
+ */
+export function webmailAutomaticoGlobal(): boolean {
+  const guardado = getSetting('webmail_automatico');
+  if (guardado === '1') return true;
+  if (guardado === '0') return false;
+  return config.webmailAutomatico;
+}
+
+export function setWebmailAutomaticoGlobal(activo: boolean): void {
+  setSetting('webmail_automatico', activo ? '1' : '0');
+}
+
+/** Interruptor del cliente (activado por defecto). */
+export function webmailAutomaticoCliente(clientId: string): boolean {
+  const row = db.prepare('SELECT webmail_automatico FROM clients WHERE id = ?').get(clientId) as
+    | { webmail_automatico: number }
+    | undefined;
+  return row ? row.webmail_automatico === 1 : false;
+}
+
+/** Los webmail de un cliente, como los ven Skyway y la ficha del cliente. */
+export function webmailsDelCliente(clientId: string): ClientDomain[] {
+  return listClientDomains(clientId).filter((d) => d.kind === 'webmail');
+}
+
+/**
  * Webmail de marca de cada dominio de correo, sin que nadie lo pida: en
  * cuanto un dominio tiene la propiedad comprobada, webmail.<dominio> se da de
  * alta como webmail de marca blanca de su cliente y su registro se crea en
@@ -828,7 +860,7 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
  * Devuelve el dominio creado, o null si no corresponde o no se ha podido.
  */
 export async function asegurarWebmailDeDominio(domainId: string): Promise<ClientDomain | null> {
-  if (!config.webmailAutomatico || !kindAvailable('webmail')) return null;
+  if (!webmailAutomaticoGlobal() || !kindAvailable('webmail')) return null;
   const dominio = db
     .prepare('SELECT client_id, domain, owner_verified_at FROM domains WHERE id = ?')
     .get(domainId) as { client_id: string; domain: string; owner_verified_at: number | null } | undefined;
@@ -836,6 +868,7 @@ export async function asegurarWebmailDeDominio(domainId: string): Promise<Client
   const hostname = `webmail.${dominio.domain}`;
   if (!HOSTNAME_RE.test(hostname)) return null;
   const clientId = dominio.client_id;
+  if (!webmailAutomaticoCliente(clientId)) return null;
 
   return withLock(clientLockKey(clientId), async () => {
     if (db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname)) return null;
@@ -865,7 +898,7 @@ export async function asegurarWebmailDeDominio(domainId: string): Promise<Client
 
     const id = randomId('wld');
     db.prepare(
-      `INSERT INTO client_domains (id, client_id, hostname, kind, created_at) VALUES (?, ?, ?, 'webmail', ?)`,
+      `INSERT INTO client_domains (id, client_id, hostname, kind, automatico, created_at) VALUES (?, ?, ?, 'webmail', 1, ?)`,
     ).run(id, clientId, hostname, now());
     auditSystem('whitelabel.domain_created', { id, hostname, kind: 'webmail', automatico: true }, clientId);
 
@@ -890,6 +923,27 @@ export async function asegurarWebmailDeDominio(domainId: string): Promise<Client
     }
     return refreshClientDomain(id).catch(() => getClientDomain(id));
   });
+}
+
+/**
+ * Al desactivar el webmail automático de un cliente: retira los webmail que
+ * se crearon solos (no los que dio de alta una persona). Su registro en
+ * Cloudflare se borra si es el que escribió Mailway (retirarRegistroMarcaBlanca);
+ * cualquier otro se deja. No los anota como descartados: al volver a
+ * activarlo se crean otra vez. Devuelve cuántos se han retirado.
+ */
+export async function retirarWebmailsAutomaticos(clientId: string): Promise<number> {
+  const automaticos = webmailsDelCliente(clientId).filter((d) => d.automatico);
+  const { retirarRegistroMarcaBlanca } = await import('./cloudflare');
+  for (const domain of automaticos) {
+    await retirarRegistroMarcaBlanca(domain).catch(() => false);
+    db.prepare('DELETE FROM client_domains WHERE id = ?').run(domain.id);
+    fallosSeguidos.delete(domain.id);
+    // El vigilante ya no lo mirará: su alerta quedaría abierta para siempre.
+    resolveAlert(`whitelabel:${domain.id}`);
+    auditSystem('whitelabel.domain_deleted', { id: domain.id, hostname: domain.hostname, automatico: true }, clientId);
+  }
+  return automaticos.length;
 }
 
 /**
@@ -1156,7 +1210,11 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
       // automática, o Skyway lo pide otra vez): se devuelve el que hay, en
       // lugar de un error que haría fallar a quien integra.
       if (existing.client_id === clientId && existing.kind === body.kind) {
-        return { domain: toDomain(existing), instructions: dnsInstructions(hostname) };
+        // Pedido expresamente: desactivar el automático ya no lo retira.
+        if (existing.automatico === 1) {
+          db.prepare('UPDATE client_domains SET automatico = 0 WHERE id = ?').run(existing.id);
+        }
+        return { domain: getClientDomain(existing.id), instructions: dnsInstructions(hostname) };
       }
       throw conflict('Ese dominio ya está dado de alta.');
     }
@@ -1214,6 +1272,64 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
     const domain = setPrimaryWebmail(id);
     audit(req, 'whitelabel.primary_changed', { id, hostname: domain.hostname }, domain.clientId);
     return { domain };
+  });
+
+  /* ----------------------- Interruptores del automático ------------------- */
+
+  const interruptorSchema = z.object({ activo: z.boolean() });
+
+  /** Estado del webmail automático de un cliente y sus webmail. */
+  app.get('/api/clients/:id/webmail-automatico', async (req) => {
+    const { id } = req.params as { id: string };
+    requireClientAccess(req, id);
+    if (!db.prepare('SELECT 1 FROM clients WHERE id = ?').get(id)) throw notFound('Cliente no encontrado.');
+    return {
+      webmailAutomatico: webmailAutomaticoCliente(id),
+      global: webmailAutomaticoGlobal(),
+      webmailDomains: webmailsDelCliente(id),
+    };
+  });
+
+  /**
+   * Activa o desactiva el webmail automático de un cliente (el botón de su
+   * ficha y el de Skyway). Activarlo prepara ya webmail.<dominio> de cada
+   * dominio comprobado; desactivarlo retira los que se crearon solos.
+   */
+  app.put('/api/clients/:id/webmail-automatico', async (req) => {
+    const { id } = req.params as { id: string };
+    requireClientAccess(req, id);
+    if (!db.prepare('SELECT 1 FROM clients WHERE id = ?').get(id)) throw notFound('Cliente no encontrado.');
+    const { activo } = interruptorSchema.parse(req.body);
+    db.prepare('UPDATE clients SET webmail_automatico = ? WHERE id = ?').run(activo ? 1 : 0, id);
+    let retirados = 0;
+    if (activo) {
+      const dominios = db
+        .prepare('SELECT id FROM domains WHERE client_id = ? AND owner_verified_at IS NOT NULL ORDER BY created_at')
+        .all(id) as { id: string }[];
+      for (const d of dominios) await asegurarWebmailDeDominio(d.id).catch(() => null);
+    } else {
+      retirados = await retirarWebmailsAutomaticos(id);
+    }
+    audit(req, 'whitelabel.automatico_changed', { activo, retirados }, id);
+    return {
+      webmailAutomatico: activo,
+      global: webmailAutomaticoGlobal(),
+      webmailDomains: webmailsDelCliente(id),
+    };
+  });
+
+  /** Interruptor general del webmail automático (Ajustes). */
+  app.get('/api/settings/webmail-automatico', async (req) => {
+    requireAdmin(req);
+    return { webmailAutomatico: webmailAutomaticoGlobal() };
+  });
+
+  app.put('/api/settings/webmail-automatico', async (req) => {
+    requireAdmin(req);
+    const { activo } = interruptorSchema.parse(req.body);
+    setWebmailAutomaticoGlobal(activo);
+    audit(req, 'settings.webmail_automatico_changed', { activo });
+    return { webmailAutomatico: webmailAutomaticoGlobal() };
   });
 
   app.delete('/api/whitelabel/domains/:id', async (req) => {

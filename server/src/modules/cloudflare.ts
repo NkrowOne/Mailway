@@ -1433,6 +1433,29 @@ export async function estadoWebmailEnCloudflare(
 }
 
 /**
+ * Al retirar un webmail automático (interruptor del cliente desactivado):
+ * borra de Cloudflare el registro que escribió Mailway para él. Solo el
+ * propio (con el comentario exacto de esta instancia) y que apunta a este
+ * servidor; cualquier otro se deja. Con las mismas cuentas que lo crearon.
+ * Devuelve si ha borrado algo; un fallo no impide retirar el webmail.
+ */
+export async function retirarRegistroMarcaBlanca(destino: ClientDomain): Promise<boolean> {
+  const host = sinPunto(destino.hostname);
+  try {
+    const { resolucion } = await resolverZonaMarcaBlanca(destino, false);
+    if (!resolucion) return false;
+    const comentario = comentarioPropio();
+    const propios = (await existentesPara(resolucion.cliente, resolucion.zona.id, [host])).filter(
+      (r) => esPropio(r, comentario) && apuntaAlServidor(r),
+    );
+    for (const r of propios) await resolucion.cliente.deleteRecord(resolucion.zona.id, r.id);
+    return propios.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Con el proxy de Cloudflare, el DNS público devuelve IP de Cloudflare y no
  * dice adónde apunta el nombre: se pregunta a Cloudflare. true si el nombre
  * tiene, con proxy, un CNAME al servidor de correo o un A a la IP pública;

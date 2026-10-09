@@ -14,6 +14,7 @@ import {
   type UsoHost,
 } from '../../lib/rutas';
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
+import { HojaWebmailAutomaticoGeneral } from '../../components/WebmailAutomatico';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { AvisoError, Hoja, Marca, MarcaFondo, Membrete, Cargando, Muestra } from '../../ui/kit';
@@ -103,6 +104,7 @@ export default function Ajustes() {
           <HojaServidorCorreo />
         </div>
         <HojaAutoconfiguracion />
+        <HojaWebmailAutomaticoGeneral />
         <HojaTraefik />
       </div>
     </>

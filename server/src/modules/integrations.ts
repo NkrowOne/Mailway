@@ -11,7 +11,7 @@ import { getConnectionSettings, publicBaseUrl } from './connection';
 import { listDomains } from './domains';
 import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
-import { getTraefikToken } from './whitelabel';
+import { getTraefikToken, webmailAutomaticoCliente, webmailAutomaticoGlobal, webmailsDelCliente } from './whitelabel';
 
 /**
  * API de integraciones: lo que necesita un sistema externo (Skyway, un
@@ -324,6 +324,9 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // registro existente, y la cuenta de Cloudflare de la instancia
         // asociada a un dominio nunca se usa en nombre de un cliente.
         cloudflareSoloCrear: true,
+        // Interruptor general del webmail automático (webmail.<dominio> de
+        // cada dominio). Que exista la clave dice que Mailway lo admite.
+        webmailAutomatico: webmailAutomaticoGlobal(),
       },
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:
@@ -487,7 +490,10 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         slug: client.slug,
         externalRef: externalRefOf(id),
         suspended: client.suspended,
+        webmailAutomatico: webmailAutomaticoCliente(id),
       },
+      // Los webmail del cliente (los automáticos y los dados de alta a mano).
+      webmailDomains: webmailsDelCliente(id),
       plan: getPlan(client.planId),
       usage: getClientUsage(id),
       domains: listDomains(id),

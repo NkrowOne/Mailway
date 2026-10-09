@@ -417,6 +417,8 @@ export interface ClientDomain {
   lastCheckedAt: number | null;
   activatedAt: number | null;
   createdAt: number;
+  /** Lo dio de alta el webmail automático (no una persona). */
+  automatico: boolean;
 }
 
 export interface DnsInstruction {

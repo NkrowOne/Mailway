@@ -33,6 +33,7 @@ import {
 } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
+import { HojaWebmailAutomatico } from '../components/WebmailAutomatico';
 
 const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: string; pista: string }> = {
   pending_dns: {
@@ -147,6 +148,9 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
     (a, b) => ORDEN[a.status] - ORDEN[b.status] || a.hostname.localeCompare(b.hostname),
   );
   const principales = webmailsPrincipales(lista);
+  // El interruptor del webmail automático es de un cliente concreto: el de la
+  // ficha, el elegido en el filtro o, para un cliente, el suyo.
+  const clienteDelInterruptor = clienteFijo || (isAdmin ? filtro : (me.data?.user?.clientId ?? ''));
   // El ejemplo es del lector si es un cliente y de un tercero si es la administración.
   const ejemploDominio = isAdmin ? 'sucliente.com' : 'tuempresa.com';
 
@@ -195,6 +199,8 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
           )}
         </Hoja>
       )}
+
+      {clienteDelInterruptor && <HojaWebmailAutomatico clientId={clienteDelInterruptor} isAdmin={isAdmin} />}
 
       {me.isError || domains.isError ? (
         <AvisoError
@@ -590,6 +596,7 @@ function FichaDominio({
         <div className="min-w-0">
           <span className="valor block break-all text-md text-tinta">{domain.hostname}</span>
           {cliente && <span className="block text-sm text-tinta-3">{cliente}</span>}
+          {domain.automatico && <span className="block text-sm text-tinta-3">Creado automáticamente</span>}
           {principal && (
             <span className="mt-1 block text-sm text-tinta-2">
               {domain.isPrimary ? 'Webmail principal' : 'Webmail principal: el primero que entró en servicio'}

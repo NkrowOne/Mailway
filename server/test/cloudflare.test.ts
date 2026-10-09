@@ -2576,3 +2576,135 @@ test('webmail automático: el vigilante prepara los dominios que ya existían y 
   assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.auto-viejo.es')?.proxied, true);
   assert.equal(cf.enZona(zOtro.id).find((r) => r.name === 'webmail.auto-pendiente.es')?.proxied, true);
 });
+
+test('interruptor del cliente: desactivarlo retira los webmail automáticos y su registro; activarlo los vuelve a crear', async (t) => {
+  conWebmailAutomatico(t);
+  setInstanceSettings({ mailHostname: 'mail.plataforma.es', publicIp: '203.0.113.10' });
+  const z = cf.zona('interruptor.es');
+  const TOKEN = 'cfut_interruptor0123456789abcdefghijklmno';
+  cf.token(TOKEN, { zoneIds: [z.id] });
+  const cuenta = await conectar(ctx.adminCookie, TOKEN);
+  assert.equal(cuenta.statusCode, 200, cuenta.body);
+  t.after(async () => {
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/cloudflare/accounts/${(cuenta.json() as { account: { id: string } }).account.id}`,
+      headers: { cookie: ctx.adminCookie },
+    });
+  });
+  const cliente = await createClient(ctx, { withUser: true });
+  config.webmailAutomatico = false;
+  const idDominio = await dominioAplicado(cliente.clientId, 'interruptor.es');
+  config.webmailAutomatico = true;
+  assert.ok(await asegurarWebmailDeDominio(idDominio));
+  // Un registro ajeno en la misma zona, que nunca se toca.
+  cf.registro(z.id, { type: 'A', name: 'www.interruptor.es', content: '198.51.100.9' });
+
+  const poner = (activo: boolean, cookie = cliente.userCookie!) =>
+    ctx.app.inject({
+      method: 'PUT',
+      url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+      headers: { cookie },
+      payload: { activo },
+    });
+
+  // Lo desactiva el propio cliente: el webmail automático desaparece, y su registro con él.
+  const off = await poner(false);
+  assert.equal(off.statusCode, 200, off.body);
+  const cuerpoOff = off.json() as { webmailAutomatico: boolean; webmailDomains: unknown[] };
+  assert.equal(cuerpoOff.webmailAutomatico, false);
+  assert.equal(cuerpoOff.webmailDomains.length, 0);
+  assert.equal(filaWebmail('webmail.interruptor.es'), undefined);
+  assert.equal(cf.enZona(z.id).some((r) => r.name === 'webmail.interruptor.es'), false);
+  assert.equal(cf.enZona(z.id).some((r) => r.name === 'www.interruptor.es'), true);
+  // Desactivado: ni el alta automática ni el vigilante lo crean.
+  assert.equal(await asegurarWebmailDeDominio(idDominio), null);
+
+  // Otro cliente no puede tocar su interruptor.
+  const otro = await createClient(ctx, { withUser: true });
+  const ajeno = await ctx.app.inject({
+    method: 'PUT',
+    url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+    headers: { cookie: otro.userCookie! },
+    payload: { activo: true },
+  });
+  assert.equal(ajeno.statusCode, 403);
+
+  // Activarlo lo vuelve a crear en el momento (no estaba descartado).
+  const on = await poner(true, ctx.adminCookie);
+  assert.equal(on.statusCode, 200, on.body);
+  const cuerpoOn = on.json() as { webmailAutomatico: boolean; webmailDomains: { hostname: string; automatico: boolean }[] };
+  assert.equal(cuerpoOn.webmailAutomatico, true);
+  assert.deepEqual(cuerpoOn.webmailDomains.map((d) => [d.hostname, d.automatico]), [['webmail.interruptor.es', true]]);
+  assert.equal(cf.enZona(z.id).find((r) => r.name === 'webmail.interruptor.es')?.proxied, true);
+
+  // Pedirlo a mano lo convierte en «pedido»: desactivar ya no lo retira.
+  const aMano = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/whitelabel/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { hostname: 'webmail.interruptor.es' },
+  });
+  assert.equal(aMano.statusCode, 200, aMano.body);
+  assert.equal((aMano.json() as { domain: { automatico: boolean } }).domain.automatico, false);
+  assert.equal((await poner(false)).statusCode, 200);
+  assert.ok(filaWebmail('webmail.interruptor.es'), 'el pedido a mano se queda');
+});
+
+test('interruptor general: lo cambia la administración, manda sobre la variable y se ve en la API de integraciones', async (t) => {
+  t.after(() => {
+    db.prepare("DELETE FROM settings WHERE key = 'webmail_automatico'").run();
+  });
+  const cliente = await createClient(ctx, { withUser: true });
+
+  // Sin guardar, el de la variable (apagado en las pruebas).
+  let info = await ctx.app.inject({ method: 'GET', url: '/api/integrations/info', headers: { cookie: ctx.adminCookie } });
+  assert.equal((info.json() as { features: { webmailAutomatico: boolean } }).features.webmailAutomatico, false);
+
+  // Un cliente no puede cambiar el general.
+  const cliente403 = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: cliente.userCookie! },
+    payload: { activo: true },
+  });
+  assert.equal(cliente403.statusCode, 403);
+
+  const on = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: ctx.adminCookie },
+    payload: { activo: true },
+  });
+  assert.equal(on.statusCode, 200, on.body);
+  assert.equal((on.json() as { webmailAutomatico: boolean }).webmailAutomatico, true);
+  info = await ctx.app.inject({ method: 'GET', url: '/api/integrations/info', headers: { cookie: ctx.adminCookie } });
+  assert.equal((info.json() as { features: { webmailAutomatico: boolean } }).features.webmailAutomatico, true);
+
+  // El resumen del cliente (lo que usa Skyway) trae su interruptor y sus webmail.
+  const resumen = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/integrations/clients/${cliente.clientId}/summary`,
+    headers: { cookie: ctx.adminCookie },
+  });
+  assert.equal(resumen.statusCode, 200, resumen.body);
+  const r = resumen.json() as { client: { webmailAutomatico: boolean }; webmailDomains: unknown[] };
+  assert.equal(r.client.webmailAutomatico, true);
+  assert.deepEqual(r.webmailDomains, []);
+
+  const estado = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/clients/${cliente.clientId}/webmail-automatico`,
+    headers: { cookie: cliente.userCookie! },
+  });
+  assert.equal(estado.statusCode, 200, estado.body);
+  assert.deepEqual(estado.json(), { webmailAutomatico: true, global: true, webmailDomains: [] });
+
+  const off = await ctx.app.inject({
+    method: 'PUT',
+    url: '/api/settings/webmail-automatico',
+    headers: { cookie: ctx.adminCookie },
+    payload: { activo: false },
+  });
+  assert.equal((off.json() as { webmailAutomatico: boolean }).webmailAutomatico, false);
+});

@@ -1230,7 +1230,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `MAILWAY_PANEL_BACKEND_URL` | `http://skyway-<SKYWAY_PROJECT>-<SKYWAY_SERVICE>:<PORT>` | Contenedor del panel para Traefik (autoconfiguración y dominios de tipo panel). |
 | `MAILWAY_WEBMAIL_BACKEND_URL` | `http://mailway-webmail:80` | Contenedor del webmail para Traefik (marca blanca). |
 | `MAILWAY_TRAEFIK_CERTRESOLVER` | `le` | Nombre del emisor de certificados de Traefik. |
-| `MAILWAY_WEBMAIL_AUTOMATICO` | — | `0` desactiva el webmail de marca automático de cada dominio (`webmail.<dominio>`, docs/INTEGRACIONES.md, sección 7.1). |
+| `MAILWAY_WEBMAIL_AUTOMATICO` | — | Valor inicial del interruptor general del webmail de marca automático de cada dominio (`webmail.<dominio>`); `0` lo deja apagado. Después manda lo que se elija en **Ajustes** (docs/INTEGRACIONES.md, sección 7.1). |
 | `MAILWAY_ENGINE_TRUSTED_NETWORK` | `10.203.53.0/24` | Rangos que el motor exime de su bloqueo automático (separados por comas; vacío lo desactiva). Debe coincidir con `MAILWAY_INTERNAL_SUBNET`. |
 | `MAILWAY_TRUST_PROXY` | `1` | Proxies de confianza delante del panel: número de saltos, `true`/`false` o lista de IP/CIDR. |
 | `MAILWAY_DNS_RESOLVERS` | `1.1.1.1,8.8.8.8` | Resolutores para verificar el DNS de los dominios. |

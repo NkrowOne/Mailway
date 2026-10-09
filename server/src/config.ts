@@ -124,8 +124,9 @@ export const config = {
   /**
    * Webmail de marca de cada dominio sin que nadie lo pida: al comprobarse la
    * propiedad de un dominio de correo se da de alta webmail.<dominio> y su
-   * registro en Cloudflare (whitelabel.ts, asegurarWebmailDeDominio).
-   * MAILWAY_WEBMAIL_AUTOMATICO=0 lo desactiva; las pruebas lo apagan.
+   * registro en Cloudflare (whitelabel.ts, asegurarWebmailDeDominio). Es el
+   * valor del interruptor general mientras no se cambie en Ajustes;
+   * MAILWAY_WEBMAIL_AUTOMATICO=0 lo deja apagado. Las pruebas lo apagan.
    */
   webmailAutomatico: process.env.MAILWAY_WEBMAIL_AUTOMATICO !== '0',
 
