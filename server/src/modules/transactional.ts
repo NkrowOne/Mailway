@@ -915,6 +915,60 @@ const cuerpo = (campo: string) =>
     })
     .optional();
 
+/** Máximo de cabeceras adicionales por mensaje. */
+const MAX_CABECERAS = 30;
+
+/** Nombre de cabecera admitido: letras, cifras y guiones (RFC 5322, sin «:» ni espacios). */
+const NOMBRE_CABECERA = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+
+/**
+ * Cabeceras que no se pueden poner a mano en `headers`. nodemailer calcula el
+ * sobre SMTP con las de direcciones: un «Bcc» o un «Cc» puesto aquí añadía
+ * destinatarios sin pasar por la comprobación de direcciones ni por los
+ * límites de 50/20/20, y un «From» o un «Sender» cambiaba el remitente que
+ * fija la clave. Las de estructura (Content-*, MIME-Version) romperían el
+ * mensaje, y las de autenticación (DKIM, ARC, Authentication-Results) solo
+ * sirven para falsificar comprobaciones. Lo que tiene campo propio (to, cc,
+ * bcc, replyTo, subject) va por su campo.
+ */
+const CABECERA_RESERVADA =
+  /^(from|sender|to|cc|bcc|reply-to|subject|date|return-path|delivered-to|envelope-to|received|received-spf|mime-version|content-.*|resent-.*|dkim-signature|arc-.*|authentication-results)$/i;
+
+const cabecerasSchema = z
+  .record(
+    z
+      .string()
+      .max(500)
+      // Un salto de línea en el valor empezaría otra cabecera.
+      .refine((v) => !/[\r\n\0]/.test(v), {
+        message: 'El valor de una cabecera no puede contener saltos de línea.',
+      }),
+  )
+  .superRefine((cabeceras, ctx) => {
+    const nombres = Object.keys(cabeceras);
+    if (nombres.length > MAX_CABECERAS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Se admiten como máximo ${MAX_CABECERAS} cabeceras adicionales por mensaje.`,
+      });
+    }
+    for (const nombre of nombres) {
+      if (!NOMBRE_CABECERA.test(nombre)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [nombre],
+          message: `«${nombre.slice(0, 64)}» no es un nombre de cabecera válido: usa solo letras, cifras y guiones (p. ej. X-Campaign).`,
+        });
+      } else if (CABECERA_RESERVADA.test(nombre)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [nombre],
+          message: `La cabecera «${nombre}» no se puede indicar en «headers»: los destinatarios, el remitente y el asunto van en sus campos (to, cc, bcc, replyTo, subject) y la estructura del mensaje la pone Mailway.`,
+        });
+      }
+    }
+  });
+
 const sendSchema = z.object({
   to: z
     .union([z.string().email(), z.array(z.string().email()).min(1).max(50)])
@@ -926,7 +980,7 @@ const sendSchema = z.object({
   replyTo: z.string().email().optional(),
   cc: z.array(z.string().email()).max(20).optional(),
   bcc: z.array(z.string().email()).max(20).optional(),
-  headers: z.record(z.string().max(500)).optional(),
+  headers: cabecerasSchema.optional(),
   attachments: z
     .array(
       z.object({
