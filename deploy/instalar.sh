@@ -2146,7 +2146,10 @@ aplicar_ajustes_mailway() {
   if provisionar_motor "$panel" mailway-mail; then
     RESUMEN_AJUSTES="aplicados por el panel"
   else
-    RESUMEN_AJUSTES="INCOMPLETOS (detalle arriba): repite con sudo mailway update -y --reaplicar"
+    # Lo más común: el panel aún no ha hecho su puesta en marcha (la
+    # instalación autónoma la hace en el navegador) y su herramienta todavía
+    # no tiene motor.
+    RESUMEN_AJUSTES="INCOMPLETOS (detalle arriba): completa la puesta en marcha del panel si falta y repite con sudo mailway update -y --reaplicar"
   fi
 }
 
@@ -3795,7 +3798,7 @@ activar_mantenimiento() {
     fallo "El panel no ha podido entrar en mantenimiento: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada."
   [ "$(hm_campo '.activo')" = true ] || fallo "El panel no confirma el modo mantenimiento. No se ha cambiado nada."
   MIG_MANTENIMIENTO=1
-  ok "Panel en mantenimiento hasta las $(hora_de_ms "$(hm_campo '.hasta // empty')") como mucho (se quita al terminar): mientras dura, nada del panel cambia el motor."
+  ok "Panel en mantenimiento: mientras dura, nada del panel cambia el motor. Se quita al terminar; si la orden se cortara, caduca solo (ahora, a las $(hora_de_ms "$(hm_campo '.hasta // empty')"))."
 }
 
 # Prolonga el mantenimiento al empezar cada paso largo: con muchos datos, la
@@ -4596,14 +4599,14 @@ main() {
       compose_q up -d mailway-webmail
       ok "Webmail enlazado con el panel ($PANEL_INTERNAL_URL)."
     fi
-    # Con Stalwart 0.16, los ajustes de Mailway en el motor los aplica el
-    # panel, ya desplegado: antes del emparejado, que pone en marcha el panel
-    # con ese motor.
-    if [ "$MOTOR" = "$MOTOR_016" ]; then aplicar_ajustes_mailway "${PANEL_CONTENEDOR:-$(contenedor_panel_conocido)}"; fi
     configurar_proveedor_traefik
     # Lo último que puede fallar: así la contraseña del administrador que
     # crea el emparejado llega al resumen sin que nada la interrumpa.
     emparejar_al_terminar
+    # Con Stalwart 0.16, los ajustes de Mailway en el motor los aplica el
+    # panel con su herramienta del motor, que necesita la puesta en marcha
+    # del panel: la hace el emparejado. Nunca interrumpe la instalación.
+    if [ "$MOTOR" = "$MOTOR_016" ]; then aplicar_ajustes_mailway "${PANEL_CONTENEDOR:-$(contenedor_panel_conocido)}"; fi
     conectar_cloudflare_junto_a_skyway
     conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway

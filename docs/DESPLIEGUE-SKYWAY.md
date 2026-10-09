@@ -163,14 +163,17 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     - Con **Stalwart 0.16**: el certificado es siempre el de Traefik, que
       lleva al motor el extractor del perfil `tls` (sección 5.2); el
       instalador espera a que lo confirme servido en 993 y 465. Con el
-      panel en marcha, le pide sus ajustes (`motor.js provisionar`, la
-      herramienta del motor del panel): nombre del servidor, IP real detrás
-      de Traefik, exención de la red interna, envío por 587 con STARTTLS
-      (que la 0.16 ya no crea por defecto) y sin el autoservicio del motor.
-      El 587 solo se abre al reiniciar el motor: si el panel lo pide, el
-      instalador lo reinicia y repite. Nada de esto interrumpe la
-      instalación; lo pendiente queda en el resumen y se completa con
-      `sudo mailway update -y --reaplicar`.
+      panel en marcha y su puesta en marcha hecha (junto a Skyway la hace
+      el emparejado, así que este paso va después de él; en la instalación
+      autónoma, el asistente del navegador), le pide sus ajustes
+      (`motor.js provisionar`, la herramienta del motor del panel): nombre
+      del servidor, IP real detrás de Traefik, exención de la red interna,
+      envío por 587 con STARTTLS (que la 0.16 ya no crea por defecto) y sin
+      el autoservicio del motor. El 587 solo se abre al reiniciar el motor:
+      si el panel lo pide, o si sigue cerrado, el instalador lo reinicia y
+      repite. Nada de esto interrumpe la instalación; lo pendiente queda en
+      el resumen y se completa con `sudo mailway update -y --reaplicar` (en
+      la autónoma, después del asistente del navegador).
     - Con **Stalwart 0.15**: fija `server.hostname`,
       `http.use-x-forwarded` y la exención de la red interna (los mismos
       ajustes que «Aplicar ajustes recomendados» del panel) y configura el
@@ -904,6 +907,12 @@ Stalwart 0.16, el extractor del certificado que obtiene `mailway-proxy`
 certificado válido** (el instalador lo avisa, y `--migrar-motor` no empieza);
 con la 0.15, también el ACME del motor con Cloudflare desde **Ajustes →
 Servidor de correo**.
+
+Con Stalwart 0.16, la primera instalación autónoma termina con los ajustes
+del motor «INCOMPLETOS»: la herramienta del motor del panel necesita su
+puesta en marcha, que aquí se hace en el navegador. Después del asistente,
+`sudo mailway update -y --reaplicar` los completa y reinicia el motor para
+abrir el 587 (sección 2.3, paso 10).
 
 ---
 

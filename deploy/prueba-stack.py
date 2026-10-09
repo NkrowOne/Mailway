@@ -345,6 +345,19 @@ class Pila:
                entorno={'STALWART_ADMIN_PASSWORD': self.clave_admin})
         registrar('OK: panel simulado en marcha (herramienta del motor de prueba).')
 
+    def poner_en_marcha_panel(self) -> None:
+        """Con el panel de verdad: su puesta en marcha con el motor del entorno, la que hace el emparejado."""
+        r = docker('exec', '-u', 'node', PANEL, 'node', 'server/dist/tools/emparejar.js', '--email',
+                   f'sistemas@{DOMINIO}', comprobar=False)
+        try:
+            datos = json.loads(r.stdout.strip().splitlines()[-1])
+        except (IndexError, ValueError):
+            raise AssertionError(f'emparejar.js no ha respondido: {r.stderr.strip()[-600:]}') from None
+        ocultar(*[v for v in (datos.get('adminPassword'), datos.get('token')) if v])
+        registrar(r.stderr.strip())
+        assert r.returncode == 0, 'emparejar.js ha fallado'
+        registrar('OK: puesta en marcha del panel de verdad (emparejar.js), con el motor del entorno.')
+
     def guardar_estado_panel(self, estado: dict) -> None:
         self.estado_panel.write_text(json.dumps(estado, indent=2))
         self.estado_panel.chmod(0o666)
@@ -904,6 +917,12 @@ def prueba_015(pila: Pila) -> None:
 def prueba_016(pila: Pila) -> None:
     pila.preparar(volcado_antiguo=False)
     pila.instalar()
+    if PANEL_REAL:
+        # Junto a Skyway, el instalador empareja el panel (su puesta en marcha)
+        # y después le pide sus ajustes del motor; aquí no hay Skyway: se hace
+        # con su herramienta y se repite la instalación.
+        pila.poner_en_marcha_panel()
+        pila.instalar()
     pila.extractor_correcto(pila.primero)
     pila.comprobar_volumen()
     pila.sirve(pila.primero, 'el certificado de Traefik', con_587=True)
@@ -930,6 +949,8 @@ def prueba_migracion(pila: Pila) -> None:
     # Como un servidor instalado antes de la 0.16: deploy/.env sin MAILWAY_MOTOR.
     pila.env.write_text(''.join(linea for linea in pila.env.read_text().splitlines(keepends=True)
                                 if not linea.startswith('MAILWAY_MOTOR=')))
+    if PANEL_REAL:
+        pila.poner_en_marcha_panel()
     pila.extractor_correcto(pila.primero)
     pila.sirve(pila.primero, 'el certificado de Traefik')
     pila.crear_buzon()
