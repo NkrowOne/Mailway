@@ -183,6 +183,18 @@ function hostsDelServidor(domain: string, records: EngineDnsRecord[]): string[] 
     .filter((h) => h && h !== dominio && !h.endsWith(`.${dominio}`));
 }
 
+/** Webmail de marca que se están preparando en segundo plano (ver marcarPropiedadComprobada). */
+const webmailsEnPreparacion = new Set<Promise<unknown>>();
+
+/**
+ * Espera a que terminen los webmail de marca que se preparan en segundo plano.
+ * Para las pruebas: sin esto, uno que acaba tarde (con la máquina cargada)
+ * se cruza con lo que la prueba hace después.
+ */
+export async function esperarWebmailsEnPreparacion(): Promise<void> {
+  await Promise.allSettled([...webmailsEnPreparacion]);
+}
+
 /**
  * Deja constancia de que la propiedad quedó probada. Nunca se borra: un MX
  * que se mueve después (migración, avería) no convierte el dominio en ajeno.
@@ -196,9 +208,11 @@ export function marcarPropiedadComprobada(domainId: string): void {
   // respuesta y un fallo de Cloudflare no estropea la comprobación (el
   // vigilante lo reintenta). Importación diferida para no crear un ciclo.
   if (r.changes > 0) {
-    void import('./whitelabel')
+    const tarea: Promise<unknown> = import('./whitelabel')
       .then((m) => m.asegurarWebmailDeDominio(domainId))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => webmailsEnPreparacion.delete(tarea));
+    webmailsEnPreparacion.add(tarea);
   }
 }
 
