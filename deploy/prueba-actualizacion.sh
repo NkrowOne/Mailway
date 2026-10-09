@@ -16,7 +16,10 @@
 #     mano o con otra actualización en curso no se toca nada;
 #   - una actualización interrumpida se retoma;
 #   - auto-update on/off/status escribe y retira las unidades de systemd en
-#     una carpeta temporal y llama a systemctl.
+#     una carpeta temporal y llama a systemctl;
+#   - con Stalwart 0.15, «update» (a mano y --auto) avisa de su fin de
+#     soporte sin cambiar nunca de motor, y «migrar-motor», «revertir-motor» y
+#     «retirar-motor-anterior» pasan al instalador solo -y.
 #
 #   bash deploy/prueba-actualizacion.sh     # código 1 si alguna comprobación falla
 #
@@ -233,6 +236,12 @@ ejecutar_mailway() {
     MAILWAY_SYSTEMD_DIR="$TMP/systemd"
     # shellcheck source=/dev/null
     source "$ESC/servidor/deploy/mailway.sh"
+    # PRUEBA_HOY: la fecha del aviso del fin de soporte de Stalwart 0.15. La
+    # llaman las funciones de mailway.sh: SC2329 (SC2317 antes de la 0.11).
+    if [ -n "${PRUEBA_HOY:-}" ]; then
+      # shellcheck disable=SC2329,SC2317
+      date() { if [ "$*" = "-u +%F" ]; then echo "$PRUEBA_HOY"; else command date "$@"; fi; }
+    fi
     ENLACE="$TMP/enlace/mailway"
     main "$@"
   ) >"$SALIDA" 2>&1 </dev/null
@@ -488,6 +497,48 @@ comprobar "termina con 1" igual "$CODIGO" 1
 comprobar "pide sudo" contiene "$SALIDA" "sudo mailway auto-update on"
 comprobar "no escribe nada" no_existe "$SERVICIO"
 comprobar "ni llama a systemctl" no_contiene "$REGISTRO" "systemctl"
+
+echo "# Stalwart 0.15 (deploy/.env sin MAILWAY_MOTOR): update avisa del fin de soporte y no migra"
+nuevo_escenario
+ejecutar_mailway PRUEBA_HOY=2026-10-09 update -y
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "avisa de la fecha" contiene "$SALIDA" "El motor sigue en Stalwart 0.15, que deja de recibir parches de seguridad el 1 de diciembre de 2026."
+comprobar "y de cómo migrar" contiene "$SALIDA" "sudo mailway migrar-motor"
+comprobar "sin migrar" no_contiene "$REGISTRO" "motor"
+ejecutar_mailway PRUEBA_HOY=2026-12-01 update -y
+comprobar "desde el 1 de diciembre, ya sin parches" contiene "$SALIDA" "que ya no recibe parches de seguridad (desde el 1 de diciembre de 2026)"
+
+echo "# update --auto con la 0.15: el aviso de la actualización lo recuerda; nunca migra"
+nuevo_escenario
+publicar 1.3.1 >/dev/null
+ejecutar_mailway PRUEBA_HOY=2026-10-09 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "el aviso del panel recuerda el fin de soporte" contiene "$REGISTRO" "supera la comprobación. El motor sigue en Stalwart 0.15, que deja de recibir parches de seguridad el 1 de diciembre de 2026."
+comprobar "sin migrar" no_contiene "$REGISTRO" "--migrar-motor"
+
+echo "# Con Stalwart 0.16, sin aviso"
+nuevo_escenario
+echo "MAILWAY_MOTOR='stalwart-0.16'" >>"$ESC/servidor/deploy/.env"
+publicar 1.3.1 >/dev/null
+ejecutar_mailway PRUEBA_HOY=2026-12-02 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "sin aviso en la salida" no_contiene "$SALIDA" "Stalwart 0.15"
+comprobar "ni en el del panel" no_contiene "$REGISTRO" "Stalwart 0.15"
+
+echo "# migrar-motor, revertir-motor y retirar-motor-anterior: al instalador, solo con -y"
+nuevo_escenario
+ejecutar_mailway migrar-motor -y
+comprobar "migrar-motor -y llega al instalador" contiene "$REGISTRO" "instalar --migrar-motor 1.3.0"
+ejecutar_mailway revertir-motor
+comprobar "revertir-motor también" contiene "$REGISTRO" "instalar --revertir-motor 1.3.0"
+ejecutar_mailway retirar-motor-anterior
+comprobar "y retirar-motor-anterior" contiene "$REGISTRO" "instalar --retirar-motor-anterior 1.3.0"
+ejecutar_mailway migrar-motor --reaplicar
+comprobar "otra opción: termina con 1" igual "$CODIGO" 1
+comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
+ejecutar_mailway migrar-motor -y -y
+comprobar "más de una opción: termina con 1" igual "$CODIGO" 1
+comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
 
 echo "# Ningún doble ha recibido una llamada que no esperaba"
 comprobar "ninguna llamada sin simular" igual "$(cat "$IMPREVISTOS")" ""
