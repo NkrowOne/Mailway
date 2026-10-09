@@ -1,14 +1,14 @@
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { HttpError } from '../src/core/errors';
 import {
+  analizarNombreRecursoBulwark,
+  asegurarRecursosBulwark,
   ClienteAdminBulwark,
   ErrorBulwark,
   ID_APP_MI_BUZON,
@@ -18,229 +18,14 @@ import {
   normalizarMarcaBulwark,
   politicaBulwark,
   politicaCoincide,
+  recursoMarcaBulwark,
   sincronizarBulwark,
   type WebmailConMarca,
 } from '../src/modules/bulwark';
+import { analizarComoBulwark, bulwarkFalso, CONTRASENA } from './bulwark-falso';
 
 const RAIZ = path.resolve(__dirname, '../..');
 const leer = (relativa: string) => fs.readFileSync(path.join(RAIZ, relativa), 'utf8');
-
-/* ------------------------- Bulwark de administración falso ------------------------- */
-
-/*
- * Copia independiente de lo que hace Bulwark 1.13.0 (no de nuestro módulo):
- * - lib/admin/domain-branding.ts: parseDomainBranding (nombre, comodín,
- *   repetidos, campos conocidos y no vacíos);
- * - app/api/admin/config: PATCH sustituye la clave y responde 400 si el
- *   análisis descarta alguna entrada;
- * - lib/security/same-origin.ts: rechaza escrituras con Sec-Fetch-Site
- *   distinto de same-origin u Origin de otro host;
- * - lib/admin/rate-limit.ts: cada intento de inicio de sesión cuenta, también
- *   los correctos;
- * - app/api/admin/policy: la lectura sin sesión es la parte pública.
- */
-const CLAVES_MARCA = [
-  'appName', 'appShortName', 'appDescription', 'faviconUrl', 'pwaIconUrl', 'pwaScreenshotMobileUrl',
-  'pwaScreenshotDesktopUrl', 'pwaThemeColor', 'pwaBackgroundColor', 'appLogoLightUrl', 'appLogoDarkUrl',
-  'loginLogoLightUrl', 'loginLogoDarkUrl', 'loginCompanyName', 'loginImprintUrl', 'loginPrivacyPolicyUrl',
-  'loginWebsiteUrl',
-];
-const HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
-
-function analizarComoBulwark(raw: unknown): Record<string, string>[] {
-  if (!Array.isArray(raw)) return [];
-  const vistos = new Set<string>();
-  const salida: Record<string, string>[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const rec = item as Record<string, unknown>;
-    const host = (typeof rec.host === 'string' ? rec.host : '').trim().toLowerCase().replace(/\.+$/, '');
-    if (!host || !HOST_RE.test(host) || vistos.has(host)) continue;
-    vistos.add(host);
-    const entrada: Record<string, string> = { host };
-    for (const clave of CLAVES_MARCA) {
-      const v = rec[clave];
-      if (typeof v === 'string' && v.length > 0) entrada[clave] = v;
-    }
-    salida.push(entrada);
-  }
-  return salida;
-}
-
-interface Llamada {
-  metodo: string;
-  ruta: string;
-  cookie: string | undefined;
-  origin: string | undefined;
-  secFetchSite: string | undefined;
-  cuerpo: string;
-}
-
-interface BulwarkFalso {
-  url: string;
-  llamadas: Llamada[];
-  inicios: number;
-  marca: unknown;
-  politica: Record<string, unknown>;
-  /** Claves con source «admin» además de domainBranding. */
-  fijadas: Record<string, unknown>;
-  /** Inicios de sesión admitidos antes de responder 429. */
-  limite: number;
-  adminDesactivado: boolean;
-  retrasoMs: number;
-  /** Simula un proxy que añade Origin de otro sitio. */
-  exigirOrigen: boolean;
-  caducarSesiones(): void;
-  close(): void;
-}
-
-const CONTRASENA = 'clave-de-administracion-de-prueba-0123456789';
-const falsos: BulwarkFalso[] = [];
-after(() => {
-  for (const f of falsos) f.close();
-});
-
-async function bulwarkFalso(): Promise<BulwarkFalso> {
-  const sesiones = new Set<string>();
-  const falso: BulwarkFalso = {
-    url: '',
-    llamadas: [],
-    inicios: 0,
-    marca: [],
-    politica: {
-      restrictions: {},
-      features: { pluginsEnabled: false, filesEnabled: true, calendarEnabled: true, nuevaFuncion2027: true },
-      defaults: {},
-      themePolicy: { disabledBuiltinThemes: [], disabledThemes: [], defaultThemeId: null },
-      forceEnabledPlugins: [],
-      approvedPlugins: [],
-      forceEnabledThemes: [],
-      pushRelays: [],
-      pushRelayUrl: '',
-      pushRelayUrlLocked: false,
-      defaultSidebarApps: [],
-    },
-    fijadas: {},
-    limite: 5,
-    adminDesactivado: false,
-    retrasoMs: 0,
-    exigirOrigen: false,
-    caducarSesiones: () => sesiones.clear(),
-    close: () => {
-      servidor.closeAllConnections();
-      servidor.close();
-    },
-  };
-
-  const mismoOrigen = (req: http.IncomingMessage): boolean => {
-    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method ?? '')) return true;
-    const sitio = req.headers['sec-fetch-site'];
-    if (sitio !== undefined) return sitio === 'same-origin';
-    const origen = req.headers.origin;
-    if (falso.exigirOrigen) return false;
-    if (!origen) return true;
-    return new URL(origen).host === (req.headers['x-forwarded-host'] ?? req.headers.host);
-  };
-  const sesionValida = (req: http.IncomingMessage): boolean => {
-    const m = /(?:^|;\s*)admin_session=([^;]+)/.exec(req.headers.cookie ?? '');
-    return Boolean(m && sesiones.has(m[1]!));
-  };
-
-  const servidor = http.createServer((req, res) => {
-    let cuerpo = '';
-    req.on('data', (c) => (cuerpo += c));
-    req.on('end', () => {
-      const ruta = new URL(req.url ?? '/', 'http://bulwark').pathname;
-      falso.llamadas.push({
-        metodo: req.method ?? '',
-        ruta,
-        cookie: req.headers.cookie,
-        origin: req.headers.origin,
-        secFetchSite: req.headers['sec-fetch-site'] as string | undefined,
-        cuerpo,
-      });
-      const json = (status: number, datos: unknown, cabeceras: Record<string, string> = {}) => {
-        res.writeHead(status, { 'content-type': 'application/json', ...cabeceras });
-        res.end(JSON.stringify(datos));
-      };
-      const responder = () => {
-        if (ruta === '/api/health') return json(200, { status: 'healthy' });
-        if (ruta === '/api/admin/auth' && req.method === 'POST') {
-          if (!mismoOrigen(req)) return json(403, { error: 'Cross-origin request rejected' });
-          if (falso.adminDesactivado) return json(404, { error: 'Admin dashboard is not configured' });
-          falso.inicios++;
-          if (falso.inicios > falso.limite) {
-            return json(429, { error: 'Too many login attempts. Try again later.' }, { 'retry-after': '612' });
-          }
-          let password: unknown;
-          try {
-            password = (JSON.parse(cuerpo) as { password?: unknown }).password;
-          } catch {
-            return json(400, { error: 'Password is required' });
-          }
-          if (password !== CONTRASENA) return json(401, { error: 'Invalid password' });
-          const token = crypto.randomBytes(24).toString('base64');
-          sesiones.add(encodeURIComponent(token));
-          return json(200, { ok: true }, {
-            'set-cookie': `admin_session=${encodeURIComponent(token)}; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=lax`,
-          });
-        }
-        if (ruta === '/api/admin/policy' && req.method === 'GET') {
-          if (sesionValida(req)) return json(200, falso.politica);
-          return json(200, { ...falso.politica, defaultSidebarApps: [] }, { 'x-bulwark-policy-scope': 'public' });
-        }
-        if (ruta.startsWith('/api/admin/')) {
-          if (!mismoOrigen(req)) return json(403, { error: 'Cross-origin request rejected' });
-          if (!req.headers.cookie) return json(401, { error: 'Not authenticated' });
-          if (!sesionValida(req)) return json(401, { error: 'Session expired' });
-        }
-        if (ruta === '/api/admin/config' && req.method === 'GET') {
-          const config: Record<string, unknown> = {
-            appName: { value: 'Correo Mailway', source: 'env' },
-            sessionSecret: { source: 'env', hasValue: true },
-            domainBranding: { value: falso.marca, source: Array.isArray(falso.marca) && falso.marca.length ? 'admin' : 'default' },
-          };
-          for (const [clave, valor] of Object.entries(falso.fijadas)) config[clave] = { value: valor, source: 'admin' };
-          return json(200, config);
-        }
-        if (ruta === '/api/admin/config' && req.method === 'PATCH') {
-          const cambios = JSON.parse(cuerpo) as Record<string, unknown>;
-          const desconocidas = Object.keys(cambios).filter((k) => !['domainBranding', 'appName'].includes(k));
-          if (desconocidas.length) return json(400, { error: `Unknown config keys: ${desconocidas.join(', ')}` });
-          if ('domainBranding' in cambios) {
-            const entrada = cambios.domainBranding;
-            if (entrada != null && !Array.isArray(entrada)) return json(400, { error: 'domainBranding must be an array' });
-            const analizada = analizarComoBulwark(entrada);
-            if (analizada.length !== (Array.isArray(entrada) ? entrada.length : 0)) {
-              return json(400, { error: 'One or more domainBranding entries are invalid (each needs a unique, valid host).' });
-            }
-            falso.marca = analizada;
-          }
-          return json(200, { ok: true });
-        }
-        if (ruta === '/api/admin/policy' && req.method === 'PUT') {
-          const nueva = JSON.parse(cuerpo) as Record<string, unknown>;
-          falso.politica = {
-            ...falso.politica,
-            ...nueva,
-            features: {
-              ...(falso.politica.features as Record<string, unknown>),
-              ...((nueva.features as Record<string, unknown>) ?? {}),
-            },
-          };
-          return json(200, { ok: true });
-        }
-        return json(404, { error: 'Not found' });
-      };
-      if (falso.retrasoMs > 0) setTimeout(responder, falso.retrasoMs);
-      else responder();
-    });
-  });
-  await new Promise<void>((resolve) => servidor.listen(0, '127.0.0.1', resolve));
-  falso.url = `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`;
-  falsos.push(falso);
-  return falso;
-}
 
 async function error(promesa: Promise<unknown>): Promise<HttpError> {
   try {
@@ -596,6 +381,100 @@ test('sincronizarBulwark: aplica marca y política, devuelve la huella y avisa d
   assert.equal(segunda.marcaCambiada, false);
   assert.equal(segunda.politicaCambiada, false);
   assert.equal(falso.inicios, 1);
+});
+
+/* ----------------------------- Imágenes de marca ----------------------------- */
+
+/** PNG mínimo de 16 × 16 con un byte de diferencia por «variante». */
+function png(variante = 0): Buffer {
+  const datos = Buffer.alloc(64);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(datos, 0);
+  datos.writeUInt32BE(13, 8);
+  datos.write('IHDR', 12, 'latin1');
+  datos.writeUInt32BE(16, 16);
+  datos.writeUInt32BE(16, 20);
+  datos[40] = variante;
+  return datos;
+}
+
+test('recursoMarcaBulwark: el nombre depende del contenido y del hueco, y Bulwark lo admite', () => {
+  const a = recursoMarcaBulwark(png(1), 'image/png', 'appLogoLightUrl');
+  assert.match(a.nombre, /^domain__mw-[0-9a-f]{32}__appLogoLightUrl\.png$/);
+  assert.equal(a.ruta, `/api/admin/branding/${a.nombre}`);
+  assert.equal(a.host, `mw-${a.sha256.slice(0, 32)}`);
+  // Otra imagen, otro nombre; la misma en otro hueco, también.
+  assert.notEqual(recursoMarcaBulwark(png(2), 'image/png', 'appLogoLightUrl').nombre, a.nombre);
+  assert.notEqual(recursoMarcaBulwark(png(1), 'image/png', 'faviconUrl').nombre, a.nombre);
+  assert.equal(recursoMarcaBulwark(png(1), 'image/jpeg', 'appLogoLightUrl').nombre.endsWith('.jpg'), true);
+  assert.deepEqual(analizarNombreRecursoBulwark(a.nombre), { host: a.host, hueco: 'appLogoLightUrl' });
+  assert.equal(analizarNombreRecursoBulwark('domain__webmail.cliente.test__faviconUrl.png'), null);
+  assert.equal(analizarNombreRecursoBulwark('appLogoLightUrl.png'), null);
+  // La ruta pasa la validación de la marca (sin el sha de otro nombre).
+  const marca = marcaPorHostBulwark([{ host: 'webmail.cliente.test', nombre: 'Correo', logoClaroUrl: a.ruta }]);
+  assert.equal(marca[0]!.appLogoLightUrl, a.ruta);
+  assert.throws(() => recursoMarcaBulwark(png(), 'image/svg+xml' as never, 'faviconUrl'), /PNG, JPEG o WebP|no es válida/);
+});
+
+test('asegurarRecursosBulwark: sube lo que falta o difiere, una vez, y la lectura no pide sesión', async () => {
+  const falso = await bulwarkFalso();
+  const cliente = new ClienteAdminBulwark({ url: falso.url, contrasena: CONTRASENA });
+  const logo = recursoMarcaBulwark(png(1), 'image/png', 'appLogoLightUrl');
+  const icono = recursoMarcaBulwark(png(2), 'image/png', 'pwaIconUrl');
+  const subidos: string[] = [];
+
+  const primera = await asegurarRecursosBulwark(cliente, [logo, icono, logo], (n) => subidos.push(n));
+  assert.deepEqual(primera.subidos, [logo.nombre, icono.nombre]);
+  assert.deepEqual(subidos, primera.subidos);
+  assert.deepEqual(falso.ficheros.get(logo.nombre)?.datos, logo.datos);
+  assert.equal(falso.ficheros.get(logo.nombre)?.tipo, 'image/png');
+  // La subida añade su host sintético a domainBranding (lo retira la marca después).
+  assert.ok(analizarComoBulwark(falso.marca).some((e) => e.host === logo.host));
+
+  const antes = falso.llamadas.length;
+  assert.deepEqual((await asegurarRecursosBulwark(cliente, [logo, icono])).subidos, []);
+  const lecturas = falso.llamadas.slice(antes);
+  assert.ok(lecturas.every((l) => l.metodo === 'GET' && l.cookie === undefined), 'comprobar no gasta inicios de sesión');
+
+  // Un fichero estropeado en Bulwark se vuelve a subir.
+  falso.ficheros.set(logo.nombre, { datos: Buffer.from('otra cosa'), tipo: 'image/png' });
+  assert.deepEqual((await asegurarRecursosBulwark(cliente, [logo, icono])).subidos, [logo.nombre]);
+  assert.equal(falso.inicios, 1);
+
+  assert.equal(await cliente.leerRecurso(recursoMarcaBulwark(png(9), 'image/png', 'faviconUrl').nombre), null);
+  await assert.rejects(cliente.leerRecurso('../admin.json'), (err: HttpError) => err.code === 'bulwark_marca_invalida');
+});
+
+test('retirarRecurso: borra el fichero con su host y nunca llama sin host', async () => {
+  const falso = await bulwarkFalso();
+  const cliente = new ClienteAdminBulwark({ url: falso.url, contrasena: CONTRASENA });
+  const logo = recursoMarcaBulwark(png(3), 'image/png', 'appLogoDarkUrl');
+  await cliente.subirRecurso(logo);
+  await cliente.retirarRecurso(logo.nombre);
+  assert.equal(falso.ficheros.has(logo.nombre), false);
+  const borrado = falso.llamadas.find((l) => l.metodo === 'DELETE');
+  assert.deepEqual(JSON.parse(borrado!.cuerpo), { slot: 'appLogoDarkUrl', host: logo.host });
+  // Un nombre que no es del panel no se retira (sin host, Bulwark retiraría la marca de la instancia).
+  const borrados = falso.llamadas.filter((l) => l.metodo === 'DELETE').length;
+  await cliente.retirarRecurso('appLogoDarkUrl.png');
+  await cliente.retirarRecurso('domain__webmail.cliente.test__appLogoDarkUrl.png');
+  assert.equal(falso.llamadas.filter((l) => l.metodo === 'DELETE').length, borrados);
+});
+
+test('subirRecurso: si Bulwark guarda la imagen con otro nombre, es un error claro', async () => {
+  const falso = await bulwarkFalso();
+  const original = globalThis.fetch;
+  const otroNombre: typeof fetch = async (input, init) => {
+    const res = await original(input, init);
+    if (init?.method !== 'POST' || !String(input).endsWith('/api/admin/branding')) return res;
+    return new Response(JSON.stringify({ url: '/api/admin/branding/otro.png', filename: 'otro.png' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const cliente = new ClienteAdminBulwark({ url: falso.url, contrasena: CONTRASENA, fetch: otroNombre });
+  const err = await error(cliente.subirRecurso(recursoMarcaBulwark(png(4), 'image/png', 'faviconUrl')));
+  assert.equal(err.code, 'bulwark_error');
+  assert.match(err.message, /otro nombre.*no es compatible/);
 });
 
 test('cliente: configuración inválida antes de ninguna petición', () => {

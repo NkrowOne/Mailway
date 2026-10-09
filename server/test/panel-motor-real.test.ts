@@ -263,6 +263,7 @@ describe(`Panel contra un motor real (${API || 'sin motor'})`, { skip: omitir },
         selfServiceBlocked: true,
         defaultDomain: true,
         logToStdout: true,
+        authBanExpiry: true,
       });
       assert.ok(estado.extraChecks.every((c: { ok: boolean }) => c.ok));
     } else {

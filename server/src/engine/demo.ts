@@ -15,6 +15,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
@@ -153,7 +154,7 @@ export class DemoEngine implements MailEngine {
     return { errors: [], warnings: [], restartRequired: [] };
   }
 
-  async getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus> {
+  async getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
     const aplicadas = new Set(this.recommended?.trustedNetworks ?? []);
     return {
       api: 'demo',

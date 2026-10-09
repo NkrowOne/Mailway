@@ -126,6 +126,53 @@
       "a"
     ],
     [
+      "x:Security/get",
+      {
+        "accountId": "d333333",
+        "list": [
+          {
+            "abuseBanRate": {
+              "count": 35,
+              "period": 86400000
+            },
+            "abuseBanPeriod": null,
+            "authBanRate": {
+              "count": 100,
+              "period": 86400000
+            },
+            "authBanPeriod": null,
+            "loiterBanRate": {
+              "count": 150,
+              "period": 86400000
+            },
+            "loiterBanPeriod": null,
+            "scanBanPaths": {
+              "*.php*": true,
+              "*.cgi*": true,
+              "*.asp*": true,
+              "*/wp-*": true,
+              "*/php*": true,
+              "*/cgi-bin*": true,
+              "*xmlrpc*": true,
+              "*../*": true,
+              "*/..*": true,
+              "*joomla*": true,
+              "*wordpress*": true,
+              "*drupal*": true
+            },
+            "scanBanRate": {
+              "count": 30,
+              "period": 86400000
+            },
+            "scanBanPeriod": null,
+            "id": "singleton"
+          }
+        ],
+        "notFound": []
+      },
+      "g"
+    ],
+    [
       "x:NetworkListener/get",
       {
         "accountId": "d333333",

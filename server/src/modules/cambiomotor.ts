@@ -31,6 +31,7 @@ import {
   forgetTransport,
   getTransport,
 } from './transactional';
+import { corsPermisivoNecesario } from './webmailmotor';
 
 /**
  * Cambio de versión del motor de correo (Stalwart 0.15 → 0.16, o la vuelta
@@ -252,7 +253,10 @@ export async function provisionarMotor(engine?: MailEngine): Promise<ResultadoPr
       resultado.errores.push(`No se han podido aplicar los ajustes recomendados: ${mensaje(err)}`);
     }
     try {
-      const estado = await motor.getSettingsStatus({ trustedNetworks: trustedEngineNetworks() });
+      const estado = await motor.getSettingsStatus({
+        trustedNetworks: trustedEngineNetworks(),
+        permissiveCors: corsPermisivoNecesario(),
+      });
       for (const cambio of estado.restartRequired) {
         if (!resultado.restartRequired.includes(cambio)) resultado.restartRequired.push(cambio);
       }

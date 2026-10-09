@@ -138,6 +138,7 @@ class MotorFalso {
   sistema: any;
   http: any;
   autenticacion: any;
+  seguridad: any;
   cargado: { sistema: any; autenticacion: any };
   escuchas: any[];
   trazadores: any[];
@@ -152,6 +153,7 @@ class MotorFalso {
     this.sistema = copia(inicial('s').list[0]);
     this.http = copia(inicial('h').list[0]);
     this.autenticacion = copia(inicial('a').list[0]);
+    this.seguridad = copia(inicial('g').list[0]);
     this.cargado = { sistema: copia(this.sistema), autenticacion: copia(this.autenticacion) };
     this.escuchas = copia(inicial('l').list);
     this.trazadores = copia(inicial('t').list);
@@ -706,6 +708,12 @@ class MotorFalso {
   }
   setAuthentication(a: any): any {
     return this.setSingleton(this.autenticacion, a);
+  }
+  getSecurity(a: any): any {
+    return this.singleton(this.seguridad, a);
+  }
+  setSecurity(a: any): any {
+    return this.setSingleton(this.seguridad, a);
   }
 
   // Listas de ajustes
@@ -1341,18 +1349,20 @@ describe('ajustes recomendados y estado', () => {
     assert.deepEqual(estado.trustedNetworks, []);
     assert.equal(estado.acme, null);
     assert.equal(estado.certificateFiles, false);
+    // Sin clientes con el correo web nuevo, el CORS cerrado no es una comprobación.
     assert.deepEqual(estado.extra, {
       submission587: false,
       maxAppPasswords: false,
       selfServiceBlocked: false,
       defaultDomain: false,
       logToStdout: false,
+      authBanExpiry: false,
     });
     assert.deepEqual(estado.restartRequired, []);
   });
 
   test('aplicar: dominio reservado, ajustes, redes, 587, registro y autoservicio; después, nada que cambiar', async () => {
-    const resultado = await motor.applyRecommended({ hostname: 'Mail.Ejemplo.Test', trustedNetworks: REDES, maxAppPasswords: 100 });
+    const resultado = await motor.applyRecommended({ hostname: 'Mail.Ejemplo.Test', trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
     assert.deepEqual(resultado.errors, []);
     assert.equal(resultado.restartRequired?.length, 1);
     assert.match(resultado.restartRequired![0]!, /587/);
@@ -1377,10 +1387,13 @@ describe('ajustes recomendados y estado', () => {
     for (const p of ['sysAccountPasswordUpdate', 'sysAppPasswordCreate', 'sysAppPasswordDestroy', 'sysApiKeyCreate']) {
       assert.equal(rolUsuario.disabledPermissions[p], true, p);
     }
+    // El bloqueo por fallos de acceso caduca a la hora; sin correo web nuevo, sin CORS.
+    assert.equal(motorFalso.seguridad.authBanPeriod, 3_600_000);
+    assert.equal(motorFalso.http.usePermissiveCors, false);
 
     // Idempotente: la segunda vez solo recarga.
     const antes = motorFalso.llamadas.length;
-    const segunda = await motor.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 });
+    const segunda = await motor.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
     assert.deepEqual(segunda.errors, []);
     const sets = motorFalso.metodos().slice(antes).filter((m) => m.endsWith('/set'));
     assert.deepEqual(sets, ['x:Action/set']);
@@ -1395,19 +1408,20 @@ describe('ajustes recomendados y estado', () => {
       selfServiceBlocked: true,
       defaultDomain: true,
       logToStdout: true,
+      authBanExpiry: true,
     });
     assert.equal(estado.restartRequired.length, 1);
 
     // Tras reiniciar el contenedor, el aviso desaparece.
     motorFalso.reiniciar();
     assert.deepEqual((await motor.getSettingsStatus({ trustedNetworks: REDES })).restartRequired, []);
-    assert.deepEqual((await motor.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 })).restartRequired, []);
+    assert.deepEqual((await motor.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false })).restartRequired, []);
   });
 
   test('el aviso del 587 lo ve otro driver con el mismo almacén: el panel tras reiniciarse, o tras la herramienta de migración', async () => {
     const almacen = almacenReiniciosEnMemoria();
     const herramienta = new Stalwart016Engine(ajustes(), { tiempos: RAPIDOS, reinicios: almacen });
-    const aplicado = await herramienta.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100 });
+    const aplicado = await herramienta.applyRecommended({ hostname: HOST, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
     assert.equal(aplicado.restartRequired?.length, 1);
 
     const panel = new Stalwart016Engine(ajustes(), { tiempos: RAPIDOS, reinicios: almacen });
@@ -1441,6 +1455,7 @@ describe('ajustes recomendados y estado', () => {
       hostname: HOST,
       trustedNetworks: ['10.203.53.0/24', '2001:db8:1::/48', 'no-es-una-red', '192.0.2.7'],
       maxAppPasswords: 100,
+      permissiveCors: false,
     });
     assert.equal(resultado.errors.length, 1);
     assert.match(resultado.errors[0]!, /no-es-una-red/);
@@ -1452,15 +1467,56 @@ describe('ajustes recomendados y estado', () => {
 
   test('un nombre de servidor no válido no toca nada', async () => {
     await assert.rejects(
-      motor.applyRecommended({ hostname: 'no es un nombre', trustedNetworks: [], maxAppPasswords: 100 }),
+      motor.applyRecommended({ hostname: 'no es un nombre', trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false }),
       (err: HttpError) => err.status === 400 && err.code === 'invalid_hostname',
     );
     assert.ok(!motorFalso.metodos().some((m) => m.endsWith('/set')));
   });
 
+  test('CORS del correo web nuevo: se abre cuando hace falta, se cierra cuando sobra y el estado lo compara', async () => {
+    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: true });
+    assert.equal(motorFalso.http.usePermissiveCors, true);
+    // Sin indicar qué se quiere, el estado compara con lo último pedido.
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: [] })).extra.permissiveCors, true);
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: [], permissiveCors: true })).extra.permissiveCors, true);
+    // Abierto sin que nadie lo necesite: pendiente de cerrar.
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: [], permissiveCors: false })).extra.permissiveCors, false);
+
+    // Otra vez lo mismo: solo la recarga, nada se escribe.
+    const antes = motorFalso.llamadas.length;
+    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: true });
+    assert.deepEqual(motorFalso.metodos().slice(antes).filter((m) => m.endsWith('/set')), ['x:Action/set']);
+
+    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false });
+    assert.equal(motorFalso.http.usePermissiveCors, false);
+    const cerrado = await motor.getSettingsStatus({ trustedNetworks: [] });
+    assert.equal('permissiveCors' in cerrado.extra, false, 'cerrado y sin necesitarlo, no hay nada que enseñar');
+    // Hace falta y está cerrado: pendiente de abrir.
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: [], permissiveCors: true })).extra.permissiveCors, false);
+  });
+
+  test('caducidad del bloqueo: para siempre o más de una hora se corrige; una más corta se respeta', async () => {
+    for (const [inicial, esperado, aplicado] of [
+      [null, 3_600_000, false],
+      [0, 3_600_000, false],
+      [86_400_000, 3_600_000, false],
+      [600_000, 600_000, true],
+      [3_600_000, 3_600_000, true],
+    ] as [number | null, number, boolean][]) {
+      motorFalso.seguridad.authBanPeriod = inicial;
+      assert.equal((await motor.getSettingsStatus({ trustedNetworks: [] })).extra.authBanExpiry, aplicado, String(inicial));
+      const antes = motorFalso.llamadas.length;
+      await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false });
+      assert.equal(motorFalso.seguridad.authBanPeriod, esperado, String(inicial));
+      const escribio = motorFalso.llamadas.slice(antes).some(([m]) => m === 'x:Security/set');
+      assert.equal(escribio, !aplicado, `${inicial}: solo se escribe si hay que corregirlo`);
+      assert.equal((await motor.getSettingsStatus({ trustedNetworks: [] })).extra.authBanExpiry, true);
+    }
+  });
+
   test('límite de contraseñas de aplicación: no lo baja si ya es mayor; el estado compara con lo pedido', async () => {
     motorFalso.autenticacion.maxAppPasswords = 500;
-    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100 });
+    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false });
     assert.equal(motorFalso.autenticacion.maxAppPasswords, 500);
     motorFalso.autenticacion.maxAppPasswords = 50;
     assert.equal((await motor.getSettingsStatus({ trustedNetworks: [] })).extra.maxAppPasswords, false);
@@ -1469,7 +1525,7 @@ describe('ajustes recomendados y estado', () => {
   test('si el dominio del servidor ya existe (de un cliente o de antes), se usa ese', async () => {
     await motor.createDomain(HOST);
     const existente = [...motorFalso.dominios.values()].find((d) => d.name === HOST)!;
-    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100 });
+    await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false });
     assert.equal(motorFalso.sistema.defaultDomainId, existente.id);
     assert.equal([...motorFalso.dominios.values()].filter((d) => d.name === HOST).length, 1);
   });
@@ -1479,7 +1535,7 @@ describe('ajustes recomendados y estado', () => {
     motorFalso.setAction = () => ({
       notCreated: { r: { type: 'validationFailed', validationErrors: [{ type: 'Invalid', property: 'defaultHostname' }] } },
     });
-    const resultado = await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100 });
+    const resultado = await motor.applyRecommended({ hostname: HOST, trustedNetworks: [], maxAppPasswords: 100, permissiveCors: false });
     assert.equal(resultado.errors.length, 1);
     assert.match(resultado.errors[0]!, /recarga de la configuración.*validationFailed.*defaultHostname/);
     motorFalso.setAction = original;

@@ -20,6 +20,14 @@ import { HttpError, badRequest } from '../core/errors';
  *   si Bulwark descarta alguna entrada, responde 400 y no guarda nada.
  * - GET /api/admin/policy (con la sesión, la política completa) y
  *   PUT /api/admin/policy con la política entera.
+ * - POST /api/admin/branding (multipart: file, slot y host) guarda la imagen
+ *   en <ADMIN_CONFIG_DIR>/branding (el volumen de administración) como
+ *   domain__<host>__<slot><ext>, con la extensión del tipo declarado, borra
+ *   las demás versiones de ese host y hueco y, de paso, añade {host, slot:
+ *   url} a domainBranding. GET /api/admin/branding/<fichero> la sirve sin
+ *   sesión (con nosniff y CSP sandbox; la pasarela deja leerla) y
+ *   DELETE /api/admin/branding {slot, host} la retira (sin host retiraría la
+ *   de la instancia: nunca se llama así).
  * - Sin cabeceras Origin ni Sec-Fetch-Site, una llamada de servidor a
  *   servidor pasa su comprobación de mismo origen.
  * La API de administración no está documentada para automatizarla: cada
@@ -431,6 +439,82 @@ export function necesitaSincronizarBulwark(opciones: {
   return ahora - opciones.aplicadaEn >= (opciones.revisionMs ?? REVISION_BULWARK_MS);
 }
 
+/* ----------------------------- Recursos de marca ----------------------------- */
+
+/**
+ * Huecos de domainBranding con imagen subida por el panel. Los logotipos de
+ * la pantalla de acceso usan los mismos ficheros que los de la aplicación
+ * (marcaPorHostBulwark): no hace falta subirlos dos veces.
+ */
+export const HUECOS_RECURSO_BULWARK = ['faviconUrl', 'pwaIconUrl', 'appLogoLightUrl', 'appLogoDarkUrl'] as const;
+export type HuecoRecursoBulwark = (typeof HUECOS_RECURSO_BULWARK)[number];
+
+/** Solo mapas de bits: un SVG sería código en el origen del correo web. */
+export type TipoRecursoBulwark = 'image/png' | 'image/jpeg' | 'image/webp';
+
+/** La extensión que pone Bulwark según el tipo declarado de la subida. */
+const EXTENSION_RECURSO: Record<TipoRecursoBulwark, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+};
+
+const NOMBRE_RECURSO_RE = /^domain__(mw-[0-9a-f]{32})__(faviconUrl|pwaIconUrl|appLogoLightUrl|appLogoDarkUrl)\.(?:png|jpg|webp)$/;
+
+/**
+ * Imagen de marca que el panel sube a Bulwark (POST /api/admin/branding).
+ * Bulwark la guarda como domain__<host>__<hueco><ext>; el «host» de la subida
+ * no es un webmail, sino una sola etiqueta sacada del sha256 de la imagen
+ * (mw-<32 hex>), que no puede coincidir con un nombre de verdad. Así el nombre
+ * del fichero depende del contenido: cada versión tiene su dirección, el
+ * navegador (que guarda la imagen una hora) y Bulwark (que guarda en memoria
+ * el icono de la aplicación por dirección) no se quedan con la anterior, y la
+ * misma imagen en varios webmail se sube una sola vez.
+ */
+export interface RecursoMarcaBulwark {
+  /** Fichero en Bulwark. */
+  nombre: string;
+  /** Dirección relativa que se pone en domainBranding (/api/admin/branding/<nombre>). */
+  ruta: string;
+  host: string;
+  hueco: HuecoRecursoBulwark;
+  tipo: TipoRecursoBulwark;
+  sha256: string;
+  datos: Buffer;
+}
+
+function sha256Hex(datos: Buffer): string {
+  return crypto.createHash('sha256').update(datos).digest('hex');
+}
+
+/**
+ * Nombre, ruta y host de subida de una imagen a partir de su sha256: sirve
+ * para calcular la marca deseada sin leer los bytes.
+ */
+export function nombreRecursoBulwark(
+  sha256: string,
+  tipo: TipoRecursoBulwark,
+  hueco: HuecoRecursoBulwark,
+): Pick<RecursoMarcaBulwark, 'nombre' | 'ruta' | 'host'> {
+  if (!/^[0-9a-f]{64}$/.test(sha256) || !EXTENSION_RECURSO[tipo] || !HUECOS_RECURSO_BULWARK.includes(hueco)) {
+    throw badRequest('La imagen de marca no es válida para Bulwark.', 'bulwark_marca_invalida');
+  }
+  const host = `mw-${sha256.slice(0, 32)}`;
+  const nombre = `domain__${host}__${hueco}${EXTENSION_RECURSO[tipo]}`;
+  return { nombre, ruta: `/api/admin/branding/${nombre}`, host };
+}
+
+export function recursoMarcaBulwark(datos: Buffer, tipo: TipoRecursoBulwark, hueco: HuecoRecursoBulwark): RecursoMarcaBulwark {
+  const sha256 = sha256Hex(datos);
+  return { ...nombreRecursoBulwark(sha256, tipo, hueco), hueco, tipo, sha256, datos };
+}
+
+/** Host y hueco con que se subió un fichero del panel, o null si no es uno suyo. */
+export function analizarNombreRecursoBulwark(nombre: string): { host: string; hueco: HuecoRecursoBulwark } | null {
+  const m = NOMBRE_RECURSO_RE.exec(nombre);
+  return m ? { host: m[1]!, hueco: m[2] as HuecoRecursoBulwark } : null;
+}
+
 /* ------------------------- Cliente de administración ------------------------- */
 
 /** Error de Bulwark con el código estable del panel; `reintentarEnS` si limita. */
@@ -565,6 +649,51 @@ export class ClienteAdminBulwark {
     return r.datos;
   }
 
+  /**
+   * Bytes de una imagen subida por el panel, por la lectura pública de
+   * Bulwark (sin sesión), o null si no existe.
+   */
+  async leerRecurso(nombre: string): Promise<Buffer | null> {
+    if (!analizarNombreRecursoBulwark(nombre)) {
+      throw badRequest(`«${nombre}» no es una imagen de marca del panel.`, 'bulwark_marca_invalida');
+    }
+    const r = await this.peticion('GET', `/api/admin/branding/${nombre}`, undefined, undefined, true);
+    if (r.status === 404) return null;
+    if (r.status !== 200 || !Buffer.isBuffer(r.datos)) {
+      throw new ErrorBulwark(`Bulwark ha respondido ${r.status} al leer la imagen ${nombre}.`, 'bulwark_error');
+    }
+    return r.datos;
+  }
+
+  /** Sube una imagen de marca (sustituye la que hubiera con el mismo nombre). */
+  async subirRecurso(recurso: RecursoMarcaBulwark): Promise<void> {
+    const formulario = new FormData();
+    formulario.append('file', new Blob([recurso.datos], { type: recurso.tipo }), recurso.nombre);
+    formulario.append('slot', recurso.hueco);
+    formulario.append('host', recurso.host);
+    const r = await this.conSesion('POST', '/api/admin/branding', formulario);
+    this.exigirOk(r, `la imagen ${recurso.nombre}`);
+    const url = r.datos && typeof r.datos === 'object' ? (r.datos as { url?: unknown }).url : undefined;
+    if (url !== recurso.ruta) {
+      // Otra forma de nombrar los ficheros: domainBranding apuntaría a nada.
+      throw new ErrorBulwark(
+        `Bulwark ha guardado la imagen con otro nombre (${typeof url === 'string' ? url.slice(0, 200) : 'sin nombre'}): esta versión de Bulwark no es compatible con el panel.`,
+        'bulwark_error',
+      );
+    }
+  }
+
+  /**
+   * Retira una imagen subida por el panel. Siempre con su host: sin él,
+   * Bulwark retiraría la marca de la instancia de ese hueco.
+   */
+  async retirarRecurso(nombre: string): Promise<void> {
+    const partes = analizarNombreRecursoBulwark(nombre);
+    if (!partes) return;
+    const r = await this.conSesion('DELETE', '/api/admin/branding', { slot: partes.hueco, host: partes.host });
+    this.exigirOk(r, `la retirada de la imagen ${nombre}`);
+  }
+
   async aplicarPolitica(politica: PoliticaBulwark): Promise<{ cambiada: boolean }> {
     if (politicaCoincide(await this.leerPolitica(), politica)) return { cambiada: false };
     const r = await this.conSesion('PUT', '/api/admin/policy', politica);
@@ -693,30 +822,53 @@ export class ClienteAdminBulwark {
     return null;
   }
 
-  private async peticion(metodo: string, ruta: string, cuerpo?: unknown, cookie?: string): Promise<Respuesta> {
+  /**
+   * Una petición a Bulwark. El cuerpo va en JSON, salvo un FormData (la
+   * subida de imágenes), que lleva su propio tipo. Con `binario`, la
+   * respuesta 200 se devuelve en bytes (las imágenes subidas).
+   */
+  private async peticion(
+    metodo: string,
+    ruta: string,
+    cuerpo?: unknown,
+    cookie?: string,
+    binario = false,
+  ): Promise<Respuesta> {
     // Sin Origin ni Sec-Fetch-Site: así Bulwark la trata como de servidor a
     // servidor (su CSRF solo rechaza navegadores de otro origen).
-    const cabeceras: Record<string, string> = { accept: 'application/json' };
-    if (cuerpo !== undefined) cabeceras['content-type'] = 'application/json';
+    const formulario = cuerpo instanceof FormData;
+    const cabeceras: Record<string, string> = { accept: binario ? '*/*' : 'application/json' };
+    if (cuerpo !== undefined && !formulario) cabeceras['content-type'] = 'application/json';
     if (cookie) cabeceras.cookie = cookie;
+    const errorDeRed = (err: unknown): ErrorBulwark => {
+      const nombre = (err as { name?: unknown } | null)?.name;
+      if (nombre === 'TimeoutError' || nombre === 'AbortError') {
+        return new ErrorBulwark(
+          `Bulwark no ha respondido en ${Math.ceil(this.tiempoMaximoMs / 1000)} s (${this.base}).`,
+          'bulwark_inaccesible',
+        );
+      }
+      return new ErrorBulwark(`No se ha podido conectar con Bulwark en ${this.base} (${codigoRed(err)}).`, 'bulwark_inaccesible');
+    };
     let respuesta: Response;
     try {
       respuesta = await this.fetchImpl(this.base + ruta, {
         method: metodo,
         headers: cabeceras,
-        body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
+        body: cuerpo === undefined ? undefined : formulario ? (cuerpo as FormData) : JSON.stringify(cuerpo),
         redirect: 'manual',
         signal: AbortSignal.timeout(this.tiempoMaximoMs),
       });
     } catch (err) {
-      const nombre = (err as { name?: unknown } | null)?.name;
-      if (nombre === 'TimeoutError' || nombre === 'AbortError') {
-        throw new ErrorBulwark(
-          `Bulwark no ha respondido en ${Math.ceil(this.tiempoMaximoMs / 1000)} s (${this.base}).`,
-          'bulwark_inaccesible',
-        );
+      throw errorDeRed(err);
+    }
+    if (binario && respuesta.status === 200) {
+      try {
+        return { status: respuesta.status, datos: Buffer.from(await respuesta.arrayBuffer()), cabeceras: respuesta.headers };
+      } catch (err) {
+        // Cortada a medias (tiempo agotado leyendo el cuerpo): no es una imagen.
+        throw errorDeRed(err);
       }
-      throw new ErrorBulwark(`No se ha podido conectar con Bulwark en ${this.base} (${codigoRed(err)}).`, 'bulwark_inaccesible');
     }
     let datos: unknown = null;
     try {
@@ -728,6 +880,33 @@ export class ClienteAdminBulwark {
     }
     return { status: respuesta.status, datos, cabeceras: respuesta.headers };
   }
+}
+
+/**
+ * Deja en Bulwark las imágenes de marca que hacen falta: compara cada una con
+ * la que sirve Bulwark (sha256 de los bytes) y sube solo las que faltan o
+ * difieren. La lectura es pública y no gasta inicios de sesión; cada subida
+ * añade de paso una entrada a domainBranding que la marca deseada retira
+ * después (sincronizarBulwark), así que se llama antes que ella.
+ */
+export async function asegurarRecursosBulwark(
+  cliente: ClienteAdminBulwark,
+  recursos: readonly RecursoMarcaBulwark[],
+  /** Se llama tras cada subida, también si una posterior falla (para poder retirarla después). */
+  alSubir?: (nombre: string) => void,
+): Promise<{ subidos: string[] }> {
+  const subidos: string[] = [];
+  const vistos = new Set<string>();
+  for (const recurso of recursos) {
+    if (vistos.has(recurso.nombre)) continue;
+    vistos.add(recurso.nombre);
+    const actual = await cliente.leerRecurso(recurso.nombre);
+    if (actual && sha256Hex(actual) === recurso.sha256) continue;
+    await cliente.subirRecurso(recurso);
+    subidos.push(recurso.nombre);
+    alSubir?.(recurso.nombre);
+  }
+  return { subidos };
 }
 
 export interface ResultadoSincronizacionBulwark {

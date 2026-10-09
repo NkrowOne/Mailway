@@ -30,6 +30,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
@@ -54,6 +55,10 @@ import type {
  *   la lista ascendente y las ordena después, así que se solapan.
  * - Los ajustes (`SystemSettings`, `Http`, `AllowedIp`…) se aplican con la
  *   acción `ReloadSettings`; los puertos nuevos, solo al reiniciar.
+ * - `Security.authBanPeriod` es una duración en milisegundos (null, el valor
+ *   inicial, bloquea para siempre); con ella, cada `BlockedIp` que crea el
+ *   motor lleva su `expiresAt`. `Http.usePermissiveCors` abre CORS a
+ *   cualquier origen, sin credenciales de cookie.
  */
 
 /** Página de consultas y lecturas: `getMaxResults` por defecto de Stalwart. */
@@ -89,6 +94,22 @@ const TIEMPOS: TiemposDriver = {
 
 /** Límite de contraseñas de aplicación si el panel aún no ha pedido otro. */
 const MAX_APP_PASSWORDS_POR_DEFECTO = 100;
+
+/**
+ * Cuánto dura el bloqueo automático de una IP por fallos de acceso
+ * (`Security.authBanPeriod`, en milisegundos; null es para siempre, el valor
+ * del motor). Con el correo web nuevo los titulares entran con su IP real y
+ * una pestaña abierta tras cambiar la contraseña reintenta con la anterior:
+ * en minutos pasa el umbral y bloquearía para siempre la IP de una oficina
+ * entera (también IMAP y SMTP). Una hora frena igual la fuerza bruta (el
+ * umbral sigue siendo el del motor) y se arregla sola. Un periodo más corto
+ * que ya tenga el motor se respeta.
+ */
+export const CADUCIDAD_BLOQUEO_MS = 60 * 60 * 1000;
+
+function bloqueoConCaducidad(periodo: number | null | undefined): boolean {
+  return typeof periodo === 'number' && periodo > 0 && periodo <= CADUCIDAD_BLOQUEO_MS;
+}
 
 const DESCRIPCION_DOMINIO = 'Dominio gestionado por Mailway';
 const DESCRIPCION_RESERVADO = 'Dominio reservado del servidor de correo (Mailway)';
@@ -211,6 +232,11 @@ interface AjustesSistema {
 interface AjustesHttp {
   useXForwarded?: boolean;
   redirectRoot?: string | null;
+  usePermissiveCors?: boolean;
+}
+interface AjustesSeguridad {
+  /** Duración del bloqueo por fallos de acceso en milisegundos; null = para siempre. */
+  authBanPeriod?: number | null;
 }
 interface AjustesAutenticacion {
   defaultUserRoleIds?: Record<string, boolean>;
@@ -361,6 +387,8 @@ export class Stalwart016Engine implements MailEngine {
   private readonly reinicios: AlmacenReinicios;
   /** Lo último que pidió el panel para el límite de contraseñas de aplicación. */
   private maxAppPasswordsPedido: number | null = null;
+  /** Lo último que pidió el panel para el CORS (el estado lo compara si no se le dice otra cosa). */
+  private corsPedido: boolean | null = null;
 
   private readonly tiempos: TiemposDriver;
 
@@ -983,6 +1011,7 @@ export class Stalwart016Engine implements MailEngine {
     sistema: AjustesSistema;
     http: AjustesHttp;
     autenticacion: AjustesAutenticacion;
+    seguridad: AjustesSeguridad;
     escuchas: Escucha[];
     trazadores: Trazador[];
     roles: Rol[];
@@ -990,8 +1019,9 @@ export class Stalwart016Engine implements MailEngine {
   }> {
     const res = await this.peticion([
       ['x:SystemSettings/get', { ids: ['singleton'] }, 's'],
-      ['x:Http/get', { ids: ['singleton'], properties: ['useXForwarded', 'redirectRoot'] }, 'h'],
+      ['x:Http/get', { ids: ['singleton'], properties: ['useXForwarded', 'redirectRoot', 'usePermissiveCors'] }, 'h'],
       ['x:Authentication/get', { ids: ['singleton'], properties: ['defaultUserRoleIds', 'maxAppPasswords'] }, 'a'],
+      ['x:Security/get', { ids: ['singleton'], properties: ['authBanPeriod'] }, 'g'],
       ['x:NetworkListener/get', { ids: null, properties: ['name', 'protocol', 'bind', 'useTls', 'tlsImplicit'] }, 'l'],
       ['x:Tracer/get', { ids: null, properties: ['@type', 'enable'] }, 't'],
       ['x:Role/get', { ids: null, properties: ['disabledPermissions'] }, 'r'],
@@ -1001,6 +1031,7 @@ export class Stalwart016Engine implements MailEngine {
       sistema: res.de<ConLista<AjustesSistema>>('s').list?.[0] ?? {},
       http: res.de<ConLista<AjustesHttp>>('h').list?.[0] ?? {},
       autenticacion: res.de<ConLista<AjustesAutenticacion>>('a').list?.[0] ?? {},
+      seguridad: res.de<ConLista<AjustesSeguridad>>('g').list?.[0] ?? {},
       escuchas: res.de<ConLista<Escucha>>('l').list ?? [],
       trazadores: res.de<ConLista<Trazador>>('t').list ?? [],
       roles: res.de<ConLista<Rol>>('r').list ?? [],
@@ -1090,6 +1121,7 @@ export class Stalwart016Engine implements MailEngine {
     const errors: string[] = [];
     const warnings: string[] = [];
     this.maxAppPasswordsPedido = input.maxAppPasswords;
+    this.corsPedido = input.permissiveCors;
 
     // Cada ajuste por separado: si uno falla (una red mal escrita), el resto
     // se aplica igual y el fallo vuelve en `errors`. Un fallo de conexión o
@@ -1142,11 +1174,17 @@ export class Stalwart016Engine implements MailEngine {
     if (reservadoId && ajustes.sistema.defaultDomainId !== reservadoId) sistema.defaultDomainId = reservadoId;
     if (ajustes.sistema.services?.smtp?.cleartext !== true) sistema['services/smtp/cleartext'] = true;
 
-    // 3. IP real detrás de Traefik y sin la redirección de la raíz al
-    //    autoservicio del motor.
+    // 3. IP real detrás de Traefik, sin la redirección de la raíz al
+    //    autoservicio del motor y CORS permisivo solo mientras algún cliente
+    //    use el correo web nuevo (que habla JMAP con el motor desde otro
+    //    origen). Es global (Access-Control-Allow-Origin: *, sin credenciales
+    //    de cookie): no se deja abierto sin necesidad.
     const http: Argumentos = {};
     if (ajustes.http.useXForwarded !== true) http.useXForwarded = true;
     if (ajustes.http.redirectRoot !== null) http.redirectRoot = null;
+    if ((ajustes.http.usePermissiveCors === true) !== input.permissiveCors) {
+      http.usePermissiveCors = input.permissiveCors;
+    }
 
     // 4. Contraseñas de aplicación: el motor admite 5 por buzón por defecto y
     //    Mailway usa una por dispositivo, por clave de API y por formulario.
@@ -1154,6 +1192,11 @@ export class Stalwart016Engine implements MailEngine {
     if ((ajustes.autenticacion.maxAppPasswords ?? 0) < input.maxAppPasswords) {
       autenticacion.maxAppPasswords = input.maxAppPasswords;
     }
+
+    // 5. El bloqueo automático por fallos de acceso caduca (por defecto es
+    //    para siempre; ver CADUCIDAD_BLOQUEO_MS).
+    const seguridad: Argumentos = {};
+    if (!bloqueoConCaducidad(ajustes.seguridad.authBanPeriod)) seguridad.authBanPeriod = CADUCIDAD_BLOQUEO_MS;
 
     const llamadas: [LlamadaJmap, string][] = [];
     if (Object.keys(sistema).length) {
@@ -1168,8 +1211,11 @@ export class Stalwart016Engine implements MailEngine {
         'los ajustes de autenticación',
       ]);
     }
+    if (Object.keys(seguridad).length) {
+      llamadas.push([['x:Security/set', { update: { singleton: seguridad } }, 'g'], 'los ajustes de seguridad']);
+    }
 
-    // 5. Redes exentas del bloqueo automático (solo las que falten: una red
+    // 6. Redes exentas del bloqueo automático (solo las que falten: una red
     //    más amplia ya dada de alta también vale).
     const existentes = ajustes.redes.map(analizarRed).filter((r): r is Red => r !== null);
     const nuevas: Record<string, Argumentos> = {};
@@ -1187,7 +1233,7 @@ export class Stalwart016Engine implements MailEngine {
       llamadas.push([['x:AllowedIp/set', { create: nuevas }, 'i'], 'las redes de confianza']);
     }
 
-    // 6. Envío por el 587 con STARTTLS: el motor 0.16 ya no lo crea por
+    // 7. Envío por el 587 con STARTTLS: el motor 0.16 ya no lo crea por
     //    defecto y lo usan los programas de correo, Skyway y la API de envío.
     const crear587 = !Stalwart016Engine.tiene587(ajustes.escuchas);
     if (crear587) {
@@ -1200,7 +1246,7 @@ export class Stalwart016Engine implements MailEngine {
       ]);
     }
 
-    // 7. Registro de eventos por la salida estándar (`docker logs`). El de
+    // 8. Registro de eventos por la salida estándar (`docker logs`). El de
     //    ficheros por defecto escribe en /var/log/stalwart, que la imagen no
     //    crea: sin esto el motor no deja rastro de nada. Sin búfer, para que
     //    cada evento salga en el momento y no se pierda si el motor se cae.
@@ -1215,7 +1261,7 @@ export class Stalwart016Engine implements MailEngine {
       ]);
     }
 
-    // 8. Autoservicio del motor bloqueado en los roles de usuario por defecto.
+    // 9. Autoservicio del motor bloqueado en los roles de usuario por defecto.
     for (const rol of Stalwart016Engine.rolesDeUsuario(ajustes.autenticacion, ajustes.roles)) {
       const cambio: Argumentos = {};
       for (const permiso of PERMISOS_AUTOSERVICIO) {
@@ -1275,7 +1321,7 @@ export class Stalwart016Engine implements MailEngine {
     return [errorDeObjeto(res.notCreated?.r ?? { type: 'desconocido' }, 'la recarga de la configuración').message];
   }
 
-  async getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus> {
+  async getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
     const ajustes = await this.leerAjustes();
     const sistema = ajustes.sistema;
     const hostname = sistema.defaultHostname ? normalizeHostname(sistema.defaultHostname) : null;
@@ -1303,7 +1349,14 @@ export class Stalwart016Engine implements MailEngine {
       ),
       defaultDomain: !!hostname && !!dominioPorDefecto && normalizarDominio(dominioPorDefecto) === hostname,
       logToStdout: ajustes.trazadores.some((t) => t['@type'] === 'Stdout' && t.enable !== false),
+      authBanExpiry: bloqueoConCaducidad(ajustes.seguridad.authBanPeriod),
     };
+    // El CORS solo cuenta cuando hace falta (algún cliente usa el correo web
+    // nuevo) o cuando está abierto sin hacer falta (hay que cerrarlo). Cerrado
+    // y sin nadie que lo necesite, no hay nada que enseñar.
+    const corsDeseado = input.permissiveCors ?? this.corsPedido ?? false;
+    const corsAbierto = ajustes.http.usePermissiveCors === true;
+    if (corsDeseado || corsAbierto) extra.permissiveCors = corsAbierto === corsDeseado;
 
     const permitidas = ajustes.redes.map(analizarRed).filter((r): r is Red => r !== null);
     const trustedNetworks = input.trustedNetworks.filter((red) => {

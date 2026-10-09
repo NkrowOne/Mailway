@@ -174,6 +174,31 @@ test('el límite de contraseñas de aplicación del motor cubre las del panel, l
   assert.ok(MAX_CONTRASENAS_APLICACION_MOTOR >= MAX_ACTIVE_APP_PASSWORDS + MAX_FORMULARIOS_POR_CLIENTE + 50);
 });
 
+test('el CORS del motor sigue al correo web nuevo: solo con Bulwark disponible y algún cliente que lo use', () => {
+  const original = { ...config.bulwark };
+  try {
+    config.bulwark.url = 'http://mailway-bulwark:3000';
+    config.bulwark.adminPassword = 'clave';
+    config.bulwark.backendUrl = 'http://mailway-bulwark-gw:8080';
+    assert.equal(recommendedInput(HOST).permissiveCors, false, 'sin clientes que lo usen, cerrado');
+    db.prepare(`UPDATE clients SET webmail_motor = 'bulwark' WHERE id = ?`).run(clientId);
+    assert.equal(recommendedInput(HOST).permissiveCors, true);
+    // Quien lo aplica justo antes de guardar la elección lo fija a mano.
+    assert.equal(recommendedInput(HOST, { permissiveCors: false }).permissiveCors, false);
+    config.bulwark.backendUrl = '';
+    assert.equal(recommendedInput(HOST).permissiveCors, false, 'sin Bulwark disponible no hace falta');
+  } finally {
+    Object.assign(config.bulwark, original);
+    db.prepare(`UPDATE clients SET webmail_motor = 'roundcube' WHERE id = ?`).run(clientId);
+  }
+});
+
+test('las comprobaciones nuevas del motor 0.16 tienen nombre legible', async () => {
+  const { etiquetaComprobacion } = await import('../src/modules/engineops');
+  assert.equal(etiquetaComprobacion('authBanExpiry'), 'Caducidad del bloqueo por fallos de acceso');
+  assert.equal(etiquetaComprobacion('permissiveCors'), 'CORS del motor para el correo web nuevo');
+});
+
 test('emitir el certificado con Cloudflare configura el ACME del motor', async () => {
   insertCloudflareAccount('cf-instancia', null);
   const calls = mockCloudflare('mailway.test');

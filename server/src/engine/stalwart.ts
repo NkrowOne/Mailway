@@ -18,6 +18,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
 
@@ -465,7 +466,9 @@ export class Stalwart015Engine implements MailEngine {
    * Ajustes que Mailway necesita detrás de Traefik: nombre del servidor, IP
    * real por X-Forwarded-For y redes exentas del baneo automático. 0.15 no
    * limita el número de contraseñas de aplicación por cuenta, así que
-   * `maxAppPasswords` no tiene equivalente aquí.
+   * `maxAppPasswords` no tiene equivalente aquí. `permissiveCors` tampoco: el
+   * correo web nuevo (Bulwark) necesita Stalwart 0.16 y con 0.15 sus nombres
+   * van a Roundcube, que entra por IMAP y no necesita CORS.
    */
   async applyRecommended(input: RecommendedInput): Promise<EngineReloadResult> {
     const values: Record<string, string> = {
@@ -481,7 +484,7 @@ export class Stalwart015Engine implements MailEngine {
     return { ...result, restartRequired: [] };
   }
 
-  async getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus> {
+  async getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus> {
     const allowed = input.trustedNetworks.map((n) => `server.allowed-ip.${n}`);
     const values = await this.getSettings([
       'server.hostname',

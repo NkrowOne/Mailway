@@ -484,6 +484,7 @@ test('applyRecommended escribe nombre, X-Forwarded-For y redes exentas, y recarg
     hostname: 'mail.acme.test',
     trustedNetworks: ['10.203.53.0/24'],
     maxAppPasswords: 100,
+    permissiveCors: false,
   });
   assert.deepEqual(resultado, { errors: [], warnings: [], restartRequired: [] });
   assert.equal(ajustes.get('server.hostname'), 'mail.acme.test');
