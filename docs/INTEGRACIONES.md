@@ -8,7 +8,7 @@ Cómo conectar Mailway con otras piezas:
 - **Cloudflare**: DNS de correo en un clic (sección 4);
 - **programas de correo** de los titulares: autoconfiguración, enlaces de
   configuración y «Mi buzón» (secciones 5 y 6);
-- **Traefik**: marca blanca y rutas (sección 7);
+- **Traefik**: marca blanca, rutas y el correo web nuevo (sección 7);
 - **otras plataformas** que envían correo (sección 8);
 - **webs estáticas**: formularios de contacto sin claves secretas (sección 9).
 
@@ -162,7 +162,7 @@ comprobación y la llamada: si el cliente lleva otra referencia, responde
 | `POST /api/plans` · `PATCH /api/plans/:id` · `DELETE /api/plans/:id` | Campos: `name`, `maxDomains`, `maxMailboxes`, `maxAliases`, `mailboxQuotaMb` (64–1048576), `apiDailyLimit` (0 = sin límite), `apiPerMinuteLimit` (≥ 1), `notes`. Los dos límites de envío se aplican al cliente en conjunto, sumando todas sus claves ([API.md](API.md#17-límites)). Borrar: `409 plan_in_use` o `409 last_plan`. Nombre repetido: `409 plan_exists`. |
 | `GET /api/clients` | Clientes con `plan` y `usage` (`{ domains, mailboxes, aliases, apiKeys, messagesLast30d }`). |
 | `POST /api/clients` | `{ name, planId, contactEmail?, notes?, user?: { email, name, password? } }` → `{ client, user?, password? }` (`password` solo si se generó). |
-| `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente, que no recibe `notes`: son notas internas de la administración). |
+| `GET /api/clients/:id` | `{ client, plan, usage, users }` (también accesible al propio cliente, que no recibe `notes`: son notas internas de la administración). `client.webmailMotor` es el correo web de sus webmail propios: `roundcube` (el predeterminado) o `bulwark` (sección 7.4). |
 | `PATCH /api/clients/:id` | `{ name?, contactEmail?, planId?, notes?, suspended? }` → `{ client, suspension? }`. Un plan por debajo del uso actual: `409 plan_below_usage`. Suspender o reactivar se aplica a todos los buzones en el motor (como al suspender un buzón: no inician sesión y el correo les sigue llegando): `suspension = { updated, skipped, failed: [{ email, error }] }`; repetir la petición reintenta los fallidos. |
 | `DELETE /api/clients/:id` | `409 client_has_domains` si aún tiene dominios. |
 | `POST /api/clients/:id/users` | `{ email, name, password? }`. Correo repetido: `409 user_exists`. |
@@ -603,7 +603,11 @@ Ni la puesta en marcha ni Ajustes se bloquean por ello.
 la sección 2.2; `null` si el motor no respondió), `extraChecks`
 (`[{ key, label, ok }]`, comprobaciones propias de la versión; con Stalwart
 0.16: `submission587`, `maxAppPasswords`, `selfServiceBlocked`,
-`defaultDomain` y `logToStdout`; `extra` las da como mapa `{ key: ok }`),
+`defaultDomain`, `logToStdout`, `authBanExpiry` (el bloqueo automático por
+fallos de acceso caduca) y, solo mientras algún cliente usa el correo web
+nuevo o el CORS del motor sigue abierto, `permissiveCors` (sección 7.4);
+`extra` las da como mapa `{ key: ok }`; una clave ausente es una comprobación
+que no aplica),
 `restartRequired` (cambios guardados en el motor que solo se aplican al
 reiniciar su contenedor, como abrir el puerto 587 en 0.16; se guardan en la
 base de datos del panel, así que el aviso sigue tras reiniciar el panel o
@@ -616,7 +620,14 @@ ajustes recomendados suben además a 100 el máximo de contraseñas de aplicaci�
 por buzón del motor (5 por defecto), que cubre las 25 de dispositivos, las
 credenciales SMTP de las claves de API y las de los formularios, y quitan a
 los usuarios del motor el autoservicio de contraseñas, contraseñas de
-aplicación y claves de API. Con 0.16 aplicarlos tarda 15 segundos o más (el
+aplicación y claves de API. También fijan en una hora la duración del bloqueo
+automático de una IP por fallos de acceso (`Security.authBanPeriod`; el motor
+la deja para siempre por defecto) y abren el CORS del motor
+(`Http.usePermissiveCors`) solo mientras algún cliente usa el correo web nuevo:
+el navegador habla JMAP con el motor desde el webmail del cliente (sección
+7.4). Con Stalwart 0.15 nada de esto aplica. Una instalación 0.16 anterior a
+esta versión ve `authBanExpiry` pendiente hasta que se vuelven a aplicar.
+Con 0.16 aplicarlos tarda 15 segundos o más (el
 motor recarga su configuración y repite sus comprobaciones), hasta minuto y
 medio: no pongas a esta ruta, ni a `POST /api/setup/engine` y
 `POST /api/setup/instance`, que también los aplican, un tiempo de espera más
@@ -1160,11 +1171,11 @@ aplicación.
 | Método y ruta | Descripción |
 |---|---|
 | `POST /api/portal/login` | `{ email, password }` → `{ ok, email }`. Cookie `mailway_buzon` (httpOnly, `SameSite=Lax`, `Path=/api/portal`, 12 horas). Marca el buzón como configurado. |
-| `GET /api/portal/me` | Datos del buzón, conexión, ocupación, webmail y `photoUrl` (relativa o `null`). |
+| `GET /api/portal/me` | Datos del buzón, conexión, ocupación, webmail y `photoUrl` (relativa o `null`). `newWebmail: true` si el buzón entra por el correo web nuevo (sección 7.4). |
 | `PATCH /api/portal/profile` | `{ displayName (≤ 80) }` → `{ displayName }`. |
 | `GET\|PUT\|DELETE /api/portal/photo` | Foto del buzón (sección 2.5). `PUT { photo }` → `{ photoUrl, photoUpdatedAt }`. |
 | `POST /api/portal/logout` | Cierra la sesión. |
-| `POST /api/portal/password` | `{ current, next (≥ 10) }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. |
+| `POST /api/portal/password` | `{ current, next (≥ 10) }` → `{ ok, reopenWebmail }`. Cierra las demás sesiones de «Mi buzón» y borra la contraseña de los enlaces; las contraseñas de aplicación siguen valiendo. `reopenWebmail: true` si el buzón usa el correo web nuevo: una pestaña abierta seguiría reintentando con la contraseña antigua (y acabaría bloqueando su IP en el motor), así que «Mi buzón» pide cerrarlo y volver a entrar. |
 | `GET /api/portal/mobileconfig` | Perfil de Apple sin contraseña. |
 | `GET\|POST /api/portal/app-passwords`, `DELETE /api/portal/app-passwords/:appId` | Contraseñas de aplicación del buzón (`POST` con `{ name }` → `{ appPassword, password, snippets }`, con las variables listas para copiar de la sección 2.6). Máximo 25 activas por buzón: `409 app_password_limit`, igual que en el panel. |
 
@@ -1186,6 +1197,10 @@ aplicación.
   principal: `400 app_password_not_allowed`.
 
 ### 6.3 Webmail
+
+Roundcube es el webmail de la instancia y el predeterminado de cada cliente;
+la administración puede cambiar los webmail propios de un cliente al correo
+web nuevo (beta), con sus diferencias (sección 7.4).
 
 Roundcube, en español, con cambio de contraseña (**Ajustes → Contraseña**),
 filtros, reenvío y aviso de ausencia (**Ajustes → Filtros**, por ManageSieve),
@@ -1333,8 +1348,10 @@ servicio y, si no hay ninguno, la URL general del webmail de la instancia.
 `GET /api/traefik/config` (cabecera `X-Mailway-Token`; `401` sin ella)
 devuelve la configuración dinámica de Traefik: un par de routers por nombre
 (`mailway-<id>` en `websecure` con el emisor `le`, y `mailway-<id>-http` que
-redirige a HTTPS), los servicios `mailway-webmail` y `mailway-panel` y el
-*middleware* `mailway-https`. Los routers de autoconfiguración se llaman
+redirige a HTTPS), los servicios `mailway-webmail` (Roundcube),
+`mailway-bulwark` (solo si algún cliente con el correo web nuevo tiene un
+webmail en servicio; sección 7.4) y `mailway-panel`, y el *middleware*
+`mailway-https`. Los routers de autoconfiguración se llaman
 `mailway-autoconfig-<id>`, `mailway-autodiscover-<id>` y `mailway-mtasts-<id>`
 (`…-instancia` para los de la instancia). El token es `MAILWAY_TRAEFIK_TOKEN`
 o, si no se define, uno generado y guardado. Cada consulta autenticada queda
@@ -1343,19 +1360,121 @@ anotada (`lastPollAt` en la sección 7.3).
 ### 7.3 Ajustes → Rutas de Traefik
 
 `GET /api/whitelabel/setup` (administración) → `{ token, tokenFromEnv,
-certResolver, webmailBackend, panelBackend, panelDomainsAvailable, panelUrl,
+certResolver, webmailBackend, bulwarkBackend, panelBackend, panelDomainsAvailable, panelUrl,
 underSkyway, providerEndpoint, overrideSnippet, autoconfig: { routingAvailable,
 routedHosts }, skywayBridge: { minVersion: "0.34.0", endpoint, note },
 lastPollAt, publishedDomains }`. `lastPollAt` es la hora (en milisegundos) de
 la última consulta autenticada de Traefik o del puente de Skyway, o `null` si
 aún no ha llegado ninguna: si lleva más de 90 segundos sin llegar, Traefik no
-está leyendo las rutas.
+está leyendo las rutas. `bulwarkBackend` es el destino de los webmail de los
+clientes con el correo web nuevo (`MAILWAY_BULWARK_BACKEND_URL`), o `null` si
+no está disponible.
 
 - Con **Skyway 0.34 o posterior** no hay que instalar nada (sección 3.3).
 - Con Skyway anterior o un Traefik propio, `overrideSnippet` es el
   `docker-compose.override.yml` exacto que hace que Traefik consulte el panel
   directamente. **No lo instales con Skyway 0.34**: Traefik solo admite un
   proveedor HTTP y el fichero sustituiría al puente.
+
+### 7.4 Correo web nuevo (beta)
+
+Además de Roundcube, Mailway puede servir a cada cliente el **correo web
+nuevo** (Bulwark): interfaz actual, calendario y contactos del servidor,
+aplicación instalable y la marca del cliente. Se elige **por cliente** y solo
+cambia sus **webmail propios** (sección 7.1): la dirección general del webmail
+sigue siendo Roundcube. Lo que se gana y se pierde frente a Roundcube está en
+`deploy/bulwark/README.md` («Frente a Roundcube») y en la propia ficha.
+
+**Requisitos.** Bulwark instalado junto al panel, con las tres variables del
+panel (sin las tres, no está disponible):
+
+| Variable | Qué es |
+|---|---|
+| `MAILWAY_BULWARK_URL` | Dirección interna de Bulwark para su API de administración (`http://mailway-bulwark:3000`), nunca la pasarela pública. |
+| `MAILWAY_BULWARK_ADMIN_PASSWORD` | Su `ADMIN_PASSWORD`. No aparece en respuestas, registros ni actividad. |
+| `MAILWAY_BULWARK_BACKEND_URL` | Destino de Traefik para los webmail de sus clientes: la pasarela delante de Bulwark (`http://mailway-bulwark-gw:8080`). |
+
+Y **Stalwart 0.16**: el navegador habla JMAP directamente con el motor. Con
+0.15 (o en modo demostración) no se puede elegir, y si el motor vuelve a una
+versión anterior los webmail de esos clientes pasan solos a Roundcube.
+
+| Método y ruta | Quién | Descripción |
+|---|---|---|
+| `GET /api/clients/:id/webmail` | acceso al cliente | `{ motor, enServicio, webmails: [{ hostname, status }], marca }`. `motor` es lo elegido (`roundcube` o `bulwark`); `enServicio`, lo que se sirve de verdad. La administración recibe además `bulwark: { configurado, disponible, motivo, api, motor016 }` (si se puede elegir y, si no, por qué) y `sincronizacion` (como en el resumen, abajo; `null` con Roundcube). |
+| `PUT /api/clients/:id/webmail` | administración (también su token de gestión) | `{ motor: 'roundcube' \| 'bulwark' }` → lo mismo que el anterior. |
+| `PATCH /api/clients/:id/webmail/marca` | acceso al cliente | `{ nombre?, nombreCorto?, empresa?, privacidadUrl?, avisoLegalUrl? }` → `{ marca }`. Solo cambian los campos que llegan; un texto vacío vuelve al valor por defecto. |
+| `GET\|PUT\|DELETE /api/clients/:id/webmail/marca/imagenes/:hueco` | acceso al cliente | `hueco`: `logoClaro`, `logoOscuro`, `favicon` o `icono`. `GET` devuelve la imagen; `PUT { imagen }` (data URL en base64) → `{ imagen: { tipo, bytes, ancho, alto, actualizada, url } }`; `DELETE` → `{ ok }`. |
+
+**Elegir.** Volver a Roundcube se puede siempre. El correo web nuevo exige que
+esté disponible (`409 bulwark_unavailable`, con el motivo en `error`) y
+Stalwart 0.16 (`409 bulwark_requires_016`); durante la actualización del motor,
+`503 engine_maintenance`. El **primer cliente** que lo elige abre el CORS del
+motor (aplica los ajustes recomendados, sección 2.9) **antes** de guardar la
+elección: tarda 15 segundos o más, así que no pongas a esta ruta un tiempo de
+espera corto. Si el motor no lo acepta, `502 bulwark_cors_failed` y el cliente
+sigue con Roundcube. Cuando el último vuelve a Roundcube, el panel lo cierra
+en segundo plano. Las rutas de Traefik siguen la elección en el siguiente
+sondeo (unos segundos); quien tenga el webmail abierto tendrá que volver a
+entrar.
+
+**Marca.** La edita quien gestiona los dominios propios del cliente (la
+administración y los usuarios del cliente, como la marca blanca), y se puede
+preparar antes de elegir el correo web nuevo. Campos: `nombre` (hasta 60
+caracteres; vacío: el nombre del cliente), `nombreCorto` (30, el de la
+aplicación instalada), `empresa` (80, firma la pantalla de acceso) y
+`privacidadUrl` y `avisoLegalUrl` (`https://`, sin usuario ni contraseña). El
+enlace a «Mi buzón» de la pantalla de acceso lo pone el panel: el de su panel
+de marca blanca si está en servicio y, si no, el de la instancia.
+
+**Imágenes.** PNG, JPEG o WebP, comprobados por su contenido (no por la
+extensión ni el tipo declarado), de hasta 512 KB y entre 16 y 4096 píxeles por
+lado. **SVG no**: en el origen del correo web sería código, no una imagen.
+Errores: `400 invalid_image`, `400 image_too_large`, `400 image_dimensions`,
+`404 brand_slot_not_found` (hueco desconocido) y `404 brand_image_not_found`
+(`GET` de un hueco vacío). El panel las sube a Bulwark con un nombre que sale
+de su contenido (`domain__mw-<hash>__<hueco>.<ext>`, servido por Bulwark en
+`/api/admin/branding/`): cada versión tiene su dirección, así que ni el
+navegador ni Bulwark se quedan con la anterior, y la que ya no se usa se
+retira.
+
+**Sincronización con Bulwark.** El panel deja en Bulwark la marca de cada
+webmail en servicio de esos clientes y la política de Mailway (sin
+complementos, temas de usuario, apps propias en la barra, archivos ni
+depuración; con calendario y contactos). Se lanza en segundo plano al elegir el correo web,
+al cambiar la marca o una imagen y cuando un webmail del cliente entra en
+servicio o sale; ninguna ruta la espera. Solo escribe si algo difiere de lo
+guardado (si la huella de lo deseado no ha cambiado no se conecta, salvo una
+revisión cada 6 horas que repone la marca si alguien la ha tocado) y usa una
+sola sesión de administración para todo el proceso, porque Bulwark limita los
+inicios de sesión. Si falla, el vigilante la reintenta con espera creciente
+(de 1 a 30 minutos, o lo que pida Bulwark) y, al tercer fallo seguido, abre el
+aviso `bulwark_marca`; mientras tanto esos webmail muestran la marca de la
+instancia. Un cliente cuya marca Bulwark descartaría se queda con la de la
+instancia sin afectar a los demás. La actividad (`bulwark.synced`) anota solo
+recuentos (webmail, imágenes subidas y retiradas), nunca nombres ni
+direcciones.
+
+**Rutas de Traefik.** Cada webmail propio de un cliente con el correo web
+nuevo va al servicio `mailway-bulwark` (`MAILWAY_BULWARK_BACKEND_URL`) mientras
+Bulwark esté disponible y el motor sea 0.16 (la última versión que el panel
+ha visto responder); si no, a `mailway-webmail` (Roundcube), como los de los
+demás clientes: un nombre nunca se queda sin destino.
+
+**Vigilancia.** En cada vuelta del vigilante (cada minuto), salvo durante el
+mantenimiento del motor, el panel comprueba `GET /api/health` de Bulwark: dos fallos seguidos abren el
+aviso crítico `bulwark_salud` (una instalación a medias, con alguna variable
+sin poner, lo abre como advertencia), que se cierra solo al responder.
+`GET /api/dashboard/admin` incluye `bulwark`: `null` si no está configurado y,
+si lo está, `{ disponible, motivo, enServicio, salud: { ok, detalle },
+clientes, sincronizacion: { pendiente, aplicadaEn, error, reintentarDesde,
+clavesFijadas } }`. `clavesFijadas` son ajustes fijados a mano en la
+configuración de Bulwark, que tapan los del despliegue.
+
+**Actividad.** `client.webmail_changed` (`{ webmail, previous, corsApplied? }`),
+`client.webmail_brand_updated` (`{ fields }`),
+`client.webmail_brand_image_updated` (`{ image, type, size }`),
+`client.webmail_brand_image_removed` (`{ image }`) y, si se abre o cierra el
+CORS, `engine.recommended_applied` con `permissiveCors`.
 
 ---
 

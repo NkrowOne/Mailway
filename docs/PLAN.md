@@ -52,6 +52,7 @@ multi-cliente**:
 | Panel (`server/` + `web/`) | Fastify + React; toda la lógica multi-cliente | Skyway desde GitHub (o `docker-compose.standalone.yml`) | Es una web normal: un puerto, TLS de Traefik, despliegue por cambio de rama |
 | Motor (Stalwart v0.15.5) | SMTP, IMAP, ManageSieve, antispam, DKIM | `deploy/docker-compose.mail.yml` | Necesita cinco puertos del host; Skyway publica uno por servicio |
 | Webmail (Roundcube 1.7) | Cliente web IMAP en español | Mismo compose | Imagen oficial con parches de seguridad activos |
+| Correo web nuevo (Bulwark 1.13, beta) | Webmail JMAP con calendario, contactos y la marca de cada cliente, elegido por cliente | Con su pasarela nginx (`deploy/bulwark/README.md`) | Solo funciona con Stalwart 0.16; el panel lo configura por su API de administración |
 
 El servidor se organiza en `server/src/modules/` (un módulo por área),
 `server/src/engine/` (drivers del motor) y `server/src/core/` (base de datos,
@@ -302,6 +303,51 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
 
 Detalle en [SEGURIDAD.md](SEGURIDAD.md).
 
+### 3.8 Correo web nuevo (Bulwark, beta)
+
+29. **Por cliente y solo en sus webmail propios.** Roundcube sigue siendo el
+    predeterminado y la dirección general del webmail. La administración
+    elige el correo web nuevo para un cliente (cambia lo que ven todos sus
+    usuarios y abre el CORS del motor); exige Bulwark instalado (las tres
+    variables `MAILWAY_BULWARK_*`) y Stalwart 0.16, porque el navegador habla
+    JMAP directamente con el motor. Las rutas de Traefik eligen el destino
+    nombre a nombre (`mailway-bulwark` o `mailway-webmail`) y vuelven solas a
+    Roundcube si Bulwark deja de estar disponible o el motor no es 0.16. Para
+    decidirlo sin esperar al motor en cada sondeo de Traefik, el panel guarda
+    la última versión que lo ha visto responder (`engine/apiconocida.ts`).
+30. **CORS del motor solo mientras hace falta, y bloqueos que caducan.** El
+    primer cliente que elige el correo web nuevo abre `Http.usePermissiveCors`
+    **antes** de guardarse la elección (nunca hay un cliente servido por
+    Bulwark con el CORS cerrado) y el último que vuelve a Roundcube lo cierra.
+    Con 0.16 los ajustes recomendados fijan además una hora de bloqueo por
+    fallos de acceso (`Security.authBanPeriod`; por defecto, para siempre):
+    con Bulwark los usuarios llegan al motor desde su IP real y una pestaña
+    abierta tras cambiar la contraseña sigue reintentando con la antigua, lo
+    que bloquearía para siempre una oficina entera tras NAT. «Mi buzón» pide
+    además cerrar el correo web tras el cambio.
+31. **Imágenes de marca subidas a Bulwark, con nombre por contenido.** El
+    panel las guarda (es la fuente de verdad) y las sube a Bulwark
+    (`POST /api/admin/branding`), en lugar de servirlas él: así se ven en el
+    mismo origen del correo web, con las cabeceras de Bulwark, sin depender
+    del panel en cada pantalla de acceso, y Bulwark puede generar con ellas el
+    icono de la aplicación, que solo genera a partir de ficheros propios. Como Bulwark
+    nombra el fichero por nombre de host y hueco, y el navegador (una hora) y
+    Bulwark (en memoria, el icono) guardan cada dirección, el panel sube cada
+    imagen con un «host» sacado de su sha256 (`mw-<32 hex>`): cada versión
+    tiene su dirección, la misma imagen en varios webmail se sube una vez y la
+    que deja de usarse se retira. Solo PNG, JPEG o WebP comprobados por su
+    contenido (y sus dimensiones leídas de la cabecera, sin decodificar),
+    nunca SVG: en el origen del correo web sería código.
+32. **Sincronización idempotente con una sola sesión.** Bulwark limita los
+    inicios de sesión de administración (también los buenos), así que el
+    panel usa un único cliente de su API para todo el proceso y reutiliza la
+    sesión. Guarda la huella de lo último aplicado: si no cambia, no se
+    conecta (salvo una revisión cada 6 horas que repone lo que alguien haya
+    tocado o un volumen perdido), y si cambia solo escribe lo que difiere. Va
+    en segundo plano, bajo el cerrojo `bulwark`, sin bloquear ninguna ruta;
+    los fallos se reintentan con espera creciente (o la que pida Bulwark) y
+    avisan al tercero seguido.
+
 ## 4. Modelo de datos
 
 SQLite en `/data/mailway.db`. Migraciones incrementales en
@@ -323,11 +369,14 @@ edita una ya publicada.
 | `011-invitaciones-de-clientes` | `client_invites`: enlaces de bienvenida de cada cliente (correo y nombre del contacto, hash y copia cifrada del token, caducidad, apertura, aceptación con el usuario creado, o el que ya existía en el cliente, y revocación). |
 | `013-webmail-automatico` | `webmail_descartados`: nombres de webmail de marca eliminados a mano, que el alta automática de `webmail.<dominio>` no vuelve a crear (darlo de alta a mano lo saca de la lista); `clients.webmail_automatico` (interruptor del cliente, activado por defecto) y `client_domains.automatico` (lo dio de alta el webmail automático: es lo que se retira al desactivarlo). |
 | `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
+| `014-credenciales-locales` | `credenciales_buzon`: copia cifrada del hash `$6$` de la contraseña principal de cada buzón (Stalwart 0.16 enmascara los secretos); columnas de `app_passwords` (`verifier`, `engine_api`, `invalidated_at`, `invalidation_notified_at`) y de la credencial SMTP de `api_keys` y `forms` (`smtp_engine_api`, `smtp_invalidated_at`) para el cambio de versión del motor. |
+| `015-correo-web-por-cliente` | `clients.webmail_motor` (`roundcube` por defecto o `bulwark`), `webmail_marca` (nombre, nombre corto, empresa y enlaces de la marca del correo web nuevo) y `webmail_marca_imagenes` (logotipos e iconos: tipo comprobado, bytes, sha256 y dimensiones; aparte para no leer los bytes al comparar). |
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
 clients            cliente → plan, suspensión, notas internas (solo la administración),
-                   external_ref (p. ej. skyway:project:<id>)
+                   external_ref (p. ej. skyway:project:<id>), webmail_motor
+                   (roundcube | bulwark)
 users              usuarios del panel: admin (todo) | client (su cliente); deshabilitables
 sessions           sesiones del panel (hash del token, caducidad, IP, agente)
 management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, revocación
@@ -355,6 +404,9 @@ send_idempotency   Idempotency-Key de /v1/send: hash del valor y del cuerpo, res
                    guardada 24 h por clave de API
 cloudflare_accounts  cuentas de Cloudflare (token cifrado; client_id NULL = instancia)
 client_domains     dominios de marca blanca (webmail | panel) y su estado
+webmail_marca      marca del correo web nuevo de cada cliente (textos y enlaces)
+webmail_marca_imagenes  sus logotipos e iconos (PNG, JPEG o WebP; sha256 y dimensiones)
+credenciales_buzon copia cifrada del hash $6$ de la contraseña principal de cada buzón
 alerts             incidencias del vigilante (una abierta por dedupe_key, índice parcial)
 audit_log          quién hizo qué, cuándo, desde qué IP y con qué token (el cliente no ve
                    la IP ni el correo de la administración)
@@ -462,6 +514,15 @@ controles táctiles de 44 px y un paso a la vez.
   resumen en la actividad. El enlace de bienvenida admite a un usuario que ya
   existe en el mismo cliente: elige una contraseña nueva en lugar de crear
   otro acceso (nunca para la administración ni para otro cliente).
+
+### Correo web nuevo (beta)
+
+- Elección por cliente entre Roundcube y Bulwark, marca por cliente (textos,
+  logotipos e iconos) aplicada en Bulwark por el panel con su política,
+  rutas de Traefik por nombre, CORS y caducidad del bloqueo en el motor,
+  vigilancia de su salud y de la sincronización, y aviso en «Mi buzón» tras
+  cambiar la contraseña. Falta llevar el servicio a los ficheros Compose y al
+  instalador (`deploy/bulwark/README.md`).
 
 ### Límites conocidos
 

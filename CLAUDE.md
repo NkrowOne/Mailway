@@ -4,7 +4,8 @@ Punto de entrada para navegar Mailway. Arquitectura, decisiones y modelo de
 datos en **[docs/PLAN.md](docs/PLAN.md)**; despliegue en
 **[docs/DESPLIEGUE-SKYWAY.md](docs/DESPLIEGUE-SKYWAY.md)**; API de envío en
 **[docs/API.md](docs/API.md)**; API de gestión e integraciones (tokens,
-Skyway, Cloudflare, autoconfiguración, portal, marca blanca) en
+Skyway, Cloudflare, autoconfiguración, portal, marca blanca, correo web
+nuevo) en
 **[docs/INTEGRACIONES.md](docs/INTEGRACIONES.md)**; modelo de seguridad en
 **[docs/SEGURIDAD.md](docs/SEGURIDAD.md)**. Sistema de diseño de la web en
 **[DESIGN.md](DESIGN.md)** y producto en **[PRODUCT.md](PRODUCT.md)**.
@@ -16,7 +17,8 @@ clientes con un plan; cada cliente gestiona sus dominios (DNS guiado o en
 Cloudflare, con verificación de propiedad), buzones, alias, contraseñas de
 aplicación y claves de API; los titulares configuran sus dispositivos con un
 enlace de configuración o desde «Mi buzón». Motor Stalwart v0.15.5 (fijado),
-webmail Roundcube, panel Node + SQLite. Se despliega junto a
+webmail Roundcube (y, por cliente y en beta, el correo web nuevo, Bulwark,
+con Stalwart 0.16), panel Node + SQLite. Se despliega junto a
 [Skyway](https://github.com/NkrowOne/Skyway) (≥ 0.34 lo gestiona por
 proyecto y publica sus rutas de Traefik) o de forma autónoma.
 
@@ -42,11 +44,19 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `alerts`, `watchdog`, `dashboard`, `suspensiones` (corrección única, al
     arrancar o desde el vigilante, de lo que dejó la suspensión anterior:
-    buzones con `roles: []` y alias sin sus destinos).
-  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`.
+    buzones con `roles: []` y alias sin sus destinos). Correo web nuevo:
+    `webmailmotor` (si Bulwark está instalado y qué clientes lo usan; sin
+    dependencias de otros módulos, lo importan Traefik y los ajustes del
+    motor), `bulwark` (cliente de su API de administración: marca por
+    dominio, imágenes y política) y `correoweb` (elección por cliente, su
+    marca y la sincronización con Bulwark, que nunca bloquea una ruta).
+  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`;
+    `apiconocida.ts` guarda la última versión del motor vista (las rutas de
+    Traefik la usan sin esperar al motor).
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
-    sha512-crypt.
+    sha512-crypt e imágenes (`imagenes.ts`: tipo y dimensiones por el
+    contenido).
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
@@ -141,6 +151,13 @@ prueba que lo reproduce.
   `modules/connection.ts` para que panel, portal, enlaces y rutas públicas
   digan lo mismo. Solo se publican en Traefik los nombres cuyo DNS ya apunta
   al servidor.
+- **Correo web nuevo (Bulwark)**: se habla con él solo con
+  `ClienteAdminBulwark` (la sesión compartida de `correoweb.ts`: Bulwark
+  limita los inicios de sesión, también los buenos) y bajo
+  `withLock('bulwark')`. Los cambios que afectan a su marca llaman a
+  `programarSincronizacionBulwark()`: la sincronización va en segundo plano
+  y ninguna ruta la espera. Imágenes de marca: PNG, JPEG o WebP comprobados
+  por su contenido, nunca SVG.
 - **Web**: seguir `DESIGN.md` (tarjetas blancas, un solo acento petróleo,
   sin adornos de instrumento). Estados de carga (`Cargando`), vacío (`Vacio`,
   con el icono de la vista) y error (`AvisoError`) en cada vista; tablas
