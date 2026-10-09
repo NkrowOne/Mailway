@@ -4195,7 +4195,7 @@ revertir_motor() {
       aviso "Lo creado en el panel después de migrar no está en la 0.15: hay que darlo de alta de nuevo."
     fi
     if herramienta_motor "$PANEL_MOTOR" 3600 tras-migrar && [ "$(hm_campo '.ok')" = true ]; then
-      ok "Credenciales internas renovadas en la 0.15: $(hm_campo '.credencialesInternas.renovadas // 0'); contraseñas de aplicación de la 0.16 invalidadas: $(hm_campo '.contrasenasInvalidadas // 0')."
+      ok "Credenciales internas renovadas en la 0.15: $(hm_campo '.credencialesInternas.renovadas // 0'); contraseñas de aplicación de la 0.16 invalidadas: $(hm_campo '.contrasenasInvalidadas // 0'); de la 0.15 que vuelven a valer: $(hm_campo '.contrasenasRecuperadas // 0')."
     else
       aviso "Las tareas del panel tras volver no han terminado. Repítelas (son idempotentes): docker exec -u node $PANEL_MOTOR node server/dist/tools/motor.js tras-migrar"
     fi
