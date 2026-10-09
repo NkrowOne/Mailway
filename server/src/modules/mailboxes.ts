@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
-import { clientLockKey, withLock } from '../core/locks';
+import { clientLockKey, mailboxStateLockKey, withLock } from '../core/locks';
 import { generateMailboxPassword, randomId } from '../core/crypto';
 import { HttpError, badRequest, conflict, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
@@ -725,15 +725,19 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       quotaBytes: quotaMb !== undefined && quotaMb !== mailbox.quotaMb ? quotaMb * 1024 * 1024 : undefined,
       suspended: body.status !== undefined && body.status !== mailbox.status ? body.status === 'suspended' : undefined,
     };
-    if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
-      await getEngine().updateMailbox(mailbox.email, patch);
-    }
-
-    db.prepare(
-      `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
-         quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
-       WHERE id = ?`,
-    ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
+    // Motor y panel cambian juntos, en fila con los demás cambios de estado
+    // del buzón (mailboxStateLockKey): la corrección de las suspensiones
+    // antiguas lee este estado y lo aplica en el motor.
+    await withLock(mailboxStateLockKey(id), async () => {
+      if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
+        await getEngine().updateMailbox(mailbox.email, patch);
+      }
+      db.prepare(
+        `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
+           quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
+         WHERE id = ?`,
+      ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
+    });
 
     const changes: Record<string, unknown> = {};
     if (patch.displayName !== undefined) changes.displayName = patch.displayName;
