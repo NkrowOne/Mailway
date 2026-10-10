@@ -472,6 +472,45 @@ Detalle en [SEGURIDAD.md](SEGURIDAD.md).
     los fallos se reintentan con espera creciente (o la que pida Bulwark) y
     avisan al tercero seguido.
 
+### 3.11 Cambio de dominio
+
+39. **El usuario del motor no es siempre la dirección.** Tras «Pasar», el
+    correo de cada buzón ya va a la dirección nueva, pero los dispositivos
+    siguen entrando con el usuario anterior hasta que su titular los
+    actualiza (o hasta la baja del dominio anterior, que lo hace por él).
+    `mailboxes.usuario_motor` guarda ese usuario solo cuando no coincide con
+    la dirección, y todo lo que habla con el motor por un buzón pasa por
+    `loginParaMotor()` (contraseñas, contraseñas de aplicación, suspensión,
+    nombre visible, credenciales internas, migración del motor) y, para los
+    destinos de los alias, por `nombreEnMotor()`. Un renombrado sin
+    respuesta deja `usuario_cambiando_a`: hasta que el conciliador sabe cuál
+    de los dos nombres existe, lo que necesita el motor responde 409
+    `mailbox_login_updating`, y la contraseña se sigue comprobando con la
+    copia local (decisión de la 1.4), que no depende del nombre.
+40. **Mismo contrato con los dos motores.** El cambio se expresa con
+    `getPrincipal`, `setAddresses`, `renamePrincipal`, `reloadDirectory` y
+    `removeDkim`. En 0.15 el «nombre» es el del principal y las direcciones,
+    su lista `emails`. En 0.16 el nombre es la dirección principal de la
+    cuenta o la lista y las demás son sus `aliases`: la principal no se puede
+    quitar ni mover con `setAddresses` (lo hace `renamePrincipal`, que cambia
+    nombre, dominio y alias en una sola escritura y conserva el id, el correo
+    y las credenciales), las listas tienen las direcciones de sus destinos y
+    se redirigen a la nueva cuando se quita una, y no hay caché que recargar.
+    La 0.16 admite el inicio de sesión por un alias con la misma parte local,
+    así que tras renombrar el usuario anterior sigue entrando hasta la baja.
+41. **No se cambia de versión el motor a mitad de un cambio de dominio.** La
+    migración oficial convierte cada cuenta por su nombre y sus direcciones:
+    con un cambio abierto o con buzones que siguen con el usuario anterior,
+    el panel no sabría con qué usuario queda cada uno. La herramienta del
+    motor lo dice en su estado (`bloqueo`), el instalador no empieza y
+    `capturar` se niega. A la inversa, mientras el motor está en
+    mantenimiento ningún cambio de dominio escribe en él.
+42. **Lo que la 1.4 crea alrededor de un dominio sigue al cambio.** El
+    webmail de marca del dominio anterior se crea en el nuevo con el mismo
+    nombre (automático si lo era) y pasa a principal cuando funciona; Bulwark
+    lo recoge al entrar en servicio, porque su marca es del cliente. La baja
+    retira antes la cuenta oculta `configuration@` del dominio anterior.
+
 ## 4. Modelo de datos
 
 SQLite en `/data/mailway.db`. Migraciones incrementales en
@@ -689,6 +728,33 @@ controles táctiles de 44 px y un paso a la vez.
   hace falta y bloqueos por fallos que caducan en una hora (decisiones 35 a
   38).
 
+### Hecho en la 1.5
+
+- **Cambio de dominio de un cliente** (`dominio.es` → `dominio2.es`), desde
+  el panel o desde Skyway: plan sin efectos, preparación con pre-recepción
+  (el correo llega por los dos dominios a los mismos buzones), «Pasar» con
+  sus compuertas, «Volver», «Cancelar» y la baja del dominio anterior, con
+  el MX de Cloudflare, el webmail de marca y los enlaces para que cada
+  persona actualice sus dispositivos (decisiones 39 a 42).
+- **Usuario del motor separado de la dirección**, con el conciliador de
+  renombrados interrumpidos y «Actualizar el usuario» en la ficha del buzón,
+  en «Mi buzón», en el enlace de configuración y para Skyway.
+- **Recepción en otro proveedor** mientras se traslada el MX, con copia de
+  lo que se reemplaza en Cloudflare para poder deshacerlo (con 0.16 el
+  panel avisa: sus reglas aún no se escriben en el motor).
+- **Cambio de dominio o de IP de la plataforma** con el instalador: lo
+  confirma, lleva el certificado del motor al nombre nuevo, el panel adopta
+  la identidad nueva y `--comprobar` revisa también el panel, Traefik, el
+  DNS público, el PTR y el puerto 25.
+- Los arreglos de la auditoría de la rama sobre la 1.4: una dirección del
+  dominio de otro cliente no cuenta como destino interno sin propiedad
+  comprobada, las altas respetan un cambio abierto, las contraseñas
+  `skyway:…` solo las crea Skyway y el token de gestión dice cuándo caduca.
+- Integración sobre la 1.4: el cambio de dominio con Stalwart 0.16, las
+  credenciales locales, la suspensión por permisos, el modo mantenimiento,
+  Bulwark y el webmail automático; las migraciones de la rama renumeradas
+  como 016 y 017, idempotentes.
+
 ### Límites conocidos
 
 - La cola del motor se muestra agregada (pendientes), sin detalle por mensaje.
@@ -717,6 +783,10 @@ controles táctiles de 44 px y un paso a la vez.
   se escriben en el motor (son expresiones de la 0.15): lo que se envía desde
   este servidor a un dominio cuyo MX apunta a otro proveedor se entrega en
   sus buzones de aquí, y el panel lo avisa mientras haya dominios afectados.
+- Con un cambio de dominio sin terminar, o con buzones que siguen con el
+  usuario del dominio anterior, no se puede migrar el motor de la 0.15 a la
+  0.16 (decisión 41): antes hay que dar de baja el dominio anterior (o
+  cancelar el cambio) y actualizar esos usuarios.
 
 ### Hoja de ruta, por orden de valor
 

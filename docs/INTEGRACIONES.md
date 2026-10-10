@@ -1968,6 +1968,25 @@ dominio2.es hasta pasar (`409 domain_migrating`): el conjunto que se muda es
 fijo desde la creación. Ningún dominio puede estar en dos cambios abiertos, y
 un cambio abierto no se borra con `DELETE /api/domains/:id`.
 
+**Con Stalwart 0.16** el comportamiento es el mismo, con dos diferencias que
+no cambian la API: la dirección principal de un buzón es el nombre de su
+cuenta, así que tras «Pasar» la principal en el motor (la que usa, por
+ejemplo, para las identidades de JMAP) sigue siendo la anterior hasta
+actualizar los dispositivos, aunque la nueva ya recibe y se puede usar como
+remitente; y los destinos de los alias son direcciones,
+de modo que al quitar una dirección (la baja) los alias que la tenían pasan a
+la nueva. Tras actualizar los dispositivos, la 0.16 sigue aceptando el
+usuario anterior hasta la baja, porque es un alias de la misma cuenta con la
+misma parte local. La recepción en otro proveedor todavía no se escribe en
+la 0.16 (el panel lo avisa).
+
+**Con el motor en mantenimiento** (su cambio de versión) no se crea ningún
+cambio ni se pasa, se vuelve, se cancela o se da de baja, y no se actualiza
+ningún usuario: `503 engine_maintenance`. `POST …/check` devuelve el estado
+sin avanzar. A la inversa, el motor no se puede migrar de versión con un
+cambio sin terminar o con buzones que siguen con el usuario anterior: el
+instalador lo explica y no empieza.
+
 ### 10.2 Estados
 
 ```
@@ -2123,6 +2142,7 @@ otro cliente recibe `409 domain_reserved`.
 | `409 mailbox_used_by_app` | Buzón usado por una aplicación de Skyway: al actualizarlo sin el token de la administración, al cancelar sin él si entra con su usuario de dominio2.es, y en la baja siempre que esté pendiente (también con token: Skyway lo actualiza antes) |
 | `400 app_password_name_reserved` | Contraseña de aplicación `skyway:…` creada desde el panel o «Mi buzón» |
 | `409 mailbox_login_updating` | Hay un cambio de usuario del buzón a medias; vuelve a intentarlo en unos minutos |
+| `503 engine_maintenance` | El motor está cambiando de versión: crear, pasar, volver, cancelar, dar de baja y actualizar un usuario esperan a que termine |
 | `400 confirm_mismatch` | `confirm` no coincide con el dominio |
 | `403 token_required` | `origen: "skyway"` sin el token de gestión de la administración |
 

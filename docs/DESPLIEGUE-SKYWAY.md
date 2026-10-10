@@ -1333,6 +1333,10 @@ atrás.
 - Un momento tranquilo: el correo se detiene unos minutos. Una copia de
   seguridad previa (sección 13) nunca está de más, aunque la migración no
   toque el volumen de la 0.15.
+- Ningún cambio de dominio de un cliente a medias: con uno sin terminar, o
+  con buzones que siguen con el usuario del dominio anterior, la migración no
+  empieza (el panel dice cuáles). Termina el cambio dando de baja el dominio
+  anterior (o cancélalo) y actualiza esos usuarios desde la ficha del buzón.
 
 ```bash
 sudo mailway migrar-motor        # explica lo que va a pasar y pide confirmación
@@ -1351,8 +1355,8 @@ deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
    contraseña (una sola petición: cada intento fallido cuenta para su
    bloqueo automático), la cola de salida (con más de 50 mensajes no
    empieza: suele ser un problema de entrega que conviene resolver antes;
-   `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, el
-   origen del certificado, el espacio, las imágenes, el script oficial de
+   `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, que
+   no haya un cambio de dominio a medias, el origen del certificado, el espacio, las imágenes, el script oficial de
    Stalwart (`migrate_v016.py`, fijado a su versión y comprobado con su
    sha256) y sus dependencias, y el certificado que sirve la 0.15.
 2. **Panel en mantenimiento** (120 minutos que se prolongan en cada paso
@@ -2009,7 +2013,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `--comprobar`: «El 587 está en los ajustes del motor, pero no escucha» | La 0.16 abre una escucha nueva solo al reiniciarse | `docker restart mailway-mail` (o `sudo mailway update -y --reaplicar`, que lo hace solo). |
 | `https://mail.<dominio>` responde 502 o 504 | La pasarela del motor (`mailway-mail-gw`) no está en marcha o no llega al motor | `docker logs mailway-mail-gw` y `sudo mailway update -y --reaplicar` (sección 4.4). IMAP y SMTP no dependen de ella. |
 | `https://mail.<dominio>/admin` (o `/account`, `/login`) responde 403 | Con Stalwart 0.16, Traefik solo publica en ese nombre lo que necesitan los programas de correo | Es lo esperado: el motor se administra desde el panel. Por la red interna sigue en `http://mailway-mail:8080`. |
-| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
+| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, un cambio de dominio sin terminar, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
 | `mailway migrar-motor` ha vuelto a la 0.15 | Un paso no ha superado su comprobación | El motivo está en la salida y en `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`. La 0.15 sigue con sus datos de siempre; repite cuando esté resuelto (sección 8.3). |
 | `sudo mailway bulwark on` responde que Bulwark necesita Stalwart 0.16 | El servidor sigue con la 0.15 | Migra el motor (`sudo mailway migrar-motor`, sección 8.3) y repite. No se ha cambiado nada. |
 | El panel no deja elegir Bulwark para un cliente | Al panel le falta alguna de sus tres variables, o Bulwark no está sano | `sudo mailway bulwark status` dice qué falta; `sudo mailway update -y --reaplicar` se las vuelve a dar (sección 11.1). |

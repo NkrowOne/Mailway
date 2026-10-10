@@ -62,7 +62,10 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     administración: marca por dominio, imágenes y política) y `correoweb`
     (elección por cliente, su marca y la sincronización con Bulwark, que
     nunca bloquea una ruta).
-  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`;
+  - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` (0.15, API
+    REST), `stalwart016` (0.16, JMAP) y `demo`; `detector.ts` averigua la
+    versión del motor y `protegido.ts` rechaza las escrituras durante su
+    mantenimiento;
     `apiconocida.ts` guarda la última versión del motor vista (las rutas de
     Traefik la usan sin esperar al motor) y `recepcion.ts`, las reglas de
     Stalwart 0.15 para los dominios con el correo en otro proveedor.
@@ -100,9 +103,12 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   migración (`motor/migracion.py`), Bulwark y su pasarela (`bulwark/`, ver su
   README), las pruebas de la pila con contenedores reales (`prueba-stack.py`,
   también con `--bulwark`; `prueba-pasarela.sh`, `prueba-motor016.sh`,
-  `prueba-panel-motor.js`), `.env.example`, configuración de
+  `prueba-panel-motor.js`; `prueba-cambio-dominio.py`, el cambio de dominio
+  con un Stalwart 0.15 real), `.env.example`, configuración de
   Roundcube (`roundcube/mailway.php`) y sus complementos
-  (`roundcube/mailway_*`: marca sobre Elastic, perfil y sesión), plantilla
+  (`roundcube/mailway_*`: marca sobre Elastic, perfil, sesión y
+  `mailway_cuentas`, que traslada la fila del usuario anterior tras un
+  cambio de dominio), plantilla
   del override de Traefik y punto de entrada de la imagen.
 - `docs/` — documentación consultable.
 
@@ -167,15 +173,19 @@ prueba que lo reproduce.
 - **Cerrojos** (`core/locks.ts`), siempre en este orden y nunca al revés
   (`withLock` no es reentrante): `altas:dominios` → `altas:<cliente>`
   (`clientLockKey`) → `cambio:<id>` (`cambioLockKey`) → `buzon:<id>`
-  (`buzonLockKey`) → `contrasenas-app:<id>`. Quien tiene uno solo pide los que
-  van después; lo que habla con el motor con el usuario de un buzón relee la
-  fila dentro de `buzon:<id>`.
+  (`buzonLockKey`) → `estado-buzon:<id>` (`mailboxStateLockKey`),
+  `credenciales:<id>` o `contrasenas-app:<id>` (estos tres no se anidan entre
+  sí). Quien tiene uno solo pide los que van después; lo que habla con el
+  motor con el usuario de un buzón relee la fila dentro de `buzon:<id>`.
 - **Motor**: las rutas nunca hablan con Stalwart directamente, siempre vía
   `getEngine()`, que averigua si el motor es 0.15 (API REST) o 0.16 (JMAP) y
   usa su driver (`engine/stalwart.ts` o `engine/stalwart016.ts`). Lo que
   identifica un buzón en el motor usa su usuario del motor
   (`loginParaMotor(id)`, o `loginDe(fila)` para mostrarlo), nunca su
   dirección, y los destinos internos de un alias van con `nombreEnMotor`.
+  Las rutas que escriben en el motor llaman antes a
+  `exigirSinMantenimiento()` (503 `engine_maintenance` mientras cambia de
+  versión).
   Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
   cuerpo `{ error }`; el driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
@@ -186,9 +196,10 @@ prueba que lo reproduce.
   `set` sobre `roles` de un buzón existente: en Stalwart 0.15 roles, listas y
   grupos son la misma relación y `set roles` lo saca de todos sus alias; el
   rol se añade con `addItem`.
-- **Contraseñas de buzón**: se verifican en local contra el hash `$6$`
-  (`engine.verifyCredentials`), nunca pidiendo al motor que autentique: los
-  fallos alimentarían su bloqueo automático de IPs. Cambiar la principal con
+- **Contraseñas de buzón**: se verifican en local contra la copia del hash
+  `$6$` (`comprobarContrasenaBuzon` en `modules/credenciales.ts`), nunca
+  pidiendo al motor que autentique: los fallos alimentarían su bloqueo
+  automático de IPs. Cambiar la principal con
   `setMailboxPassword` conserva las contraseñas de aplicación; tras
   cambiarla, `alCambiarContrasenaBuzon()` limpia enlaces y sesiones del
   portal.
@@ -211,8 +222,10 @@ prueba que lo reproduce.
   con el icono de la vista) y error (`AvisoError`) en cada vista; tablas
   regladas con flex, nunca `<table>`; enlaces con aspecto de botón mediante
   `estiloBoton`; sin desplazamiento horizontal en móvil.
-- **Migraciones**: se añaden al final de `core/db.ts` (`005-…`); nunca se
-  edita una publicada.
+- **Migraciones**: se añaden al final de `core/db.ts` (`018-…`); nunca se
+  edita una publicada. Las que deben tolerar un esquema que ya tenga parte de
+  lo que añaden (016 y 017, que la rama del cambio de dominio publicó con
+  otros ids) usan `aplicar` en vez de `sql`.
 - **Versión**: `config.version`, los tres `package.json`,
   `VERSION_INSTALADOR` de `deploy/instalar.sh` y la cabecera de
   `docs/PLAN.md` van sincronizados.

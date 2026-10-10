@@ -761,9 +761,11 @@ Detalle en la sección 8.1 de [DESPLIEGUE-SKYWAY.md](DESPLIEGUE-SKYWAY.md).
 
 El cambio de dominio de un cliente (dominio.es → dominio2.es,
 [INTEGRACIONES.md](INTEGRACIONES.md), sección 10) separa el **usuario del
-motor** de la dirección: Stalwart solo autentica por el nombre del principal,
-así que durante la transición un buzón ya tiene la dirección nueva y sigue
-entrando con su usuario anterior. Decisiones con efecto en la seguridad:
+motor** de la dirección: Stalwart 0.15 solo autentica por el nombre del
+principal y la 0.16 por la dirección de la cuenta (o un alias con la misma
+parte local), así que durante la transición un buzón ya tiene la dirección
+nueva y sigue entrando con su usuario anterior. Decisiones con efecto en la
+seguridad:
 
 - **La propiedad del dominio nuevo se prueba de nuevo**, por las vías de
   siempre (TXT `_mailway`, MX hacia aquí o escritura en una zona activa de
@@ -789,7 +791,10 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
   motor guardaba por dirección (creado cuando dominio.es aún no tenía la
   propiedad comprobada, p. ej. desde otro cliente) seguiría apuntando a
   `ana@dominio.es` y, tras la baja, entregaría en el MX de dominio.es, es
-  decir, a quien tenga ese dominio después.
+  decir, a quien tenga ese dominio después. En Stalwart 0.16 los destinos de
+  una lista son siempre direcciones: al quitar una (la baja), el driver pasa a
+  la dirección nueva todas las listas que la tenían, antes de que el dominio
+  salga del motor.
 - **«Actualizar mis dispositivos» desde el enlace de configuración no pide la
   contraseña.** La acción solo cambia el usuario del propio buzón a su
   dirección vigente, algo que la baja hará de todos modos: no da acceso ni
@@ -840,10 +845,23 @@ entrando con su usuario anterior. Decisiones con efecto en la seguridad:
   marca antes de tocar el motor (`usuario_cambiando_a`): si el panel cae a
   mitad, el buzón responde `409 mailbox_login_updating` hasta que el
   conciliador (al arrancar y en el vigilante) sabe con qué nombre quedó el
-  principal, para no llamar nunca al motor con un nombre equivocado. Las
-  acciones del cambio van en fila con los cerrojos
-  `altas:dominios → altas:<cliente> → cambio:<id> → buzon:<id> →
-  contrasenas-app:<id>`, siempre en ese orden.
+  principal, para no llamar nunca al motor con un nombre equivocado. La
+  contraseña se sigue comprobando con la copia local del hash (sección 3.4),
+  que no depende del nombre: sin copia, «no se puede comprobar ahora», nunca
+  una pregunta al motor con el nombre equivocado. Las acciones del cambio van
+  en fila con los cerrojos `altas:dominios → altas:<cliente> → cambio:<id> →
+  buzon:<id> → estado-buzon:<id> | credenciales:<id> | contrasenas-app:<id>`,
+  siempre en ese orden (la corrección de las suspensiones y el nombre visible
+  también toman `buzon:<id>`).
+- **Cambio de versión del motor.** Con el motor en mantenimiento ningún paso
+  del cambio escribe en él (`503 engine_maintenance`), y el motor no se migra
+  de la 0.15 a la 0.16 con un cambio sin terminar o con buzones que siguen
+  con el usuario anterior: la migración oficial convierte cada cuenta por su
+  nombre y el panel podría quedarse llamando a una cuenta con otro.
+- **La cuenta oculta `configuration@` se va con el dominio.** La baja (y la
+  cancelación que elimina el dominio nuevo) la retira del motor antes de
+  borrar el dominio: no queda una cuenta con contraseña en un dominio que ya
+  no es del cliente.
 - **Auditoría.** Cada paso queda en la Actividad del cliente
   (`domain.migration_created`, `…_switched`, `…_rolled_back`, `…_cancelled`,
   `…_retired`, `…_mx_changed`) y cada cambio de usuario, con quién lo pidió
