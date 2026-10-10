@@ -1,10 +1,13 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '../../lib/api';
 import {
   actualizarUsuarioBuzon,
   invalidarTrasActualizarUsuario,
   mensajeCambio,
+  textoAppsManuales,
   textoConfirmarActualizar,
 } from '../../lib/cambioDominio';
+import type { AppPasswordInfo } from '../../lib/gestion';
 import { Button } from '../../ui/Button';
 import { AvisoError, Dialogo } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
@@ -23,6 +26,11 @@ export interface BuzonPendiente {
   email: string;
   /** Usuario actual de los dispositivos (el de la dirección anterior). */
   login: string;
+  /**
+   * Contraseñas de aplicación creadas a mano, si quien abre el diálogo ya las
+   * sabe (la vista del cambio). Sin el campo (la ficha del buzón), se piden.
+   */
+  appsManuales?: string[];
 }
 
 /**
@@ -76,6 +84,17 @@ export function ConfirmarActualizarUsuario({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  // La misma consulta que la vista de contraseñas de aplicación de la ficha.
+  // Solo completa la confirmación: mientras carga, o si falla, se omite la línea.
+  const apps = useQuery({
+    queryKey: ['app-passwords', buzon.id],
+    queryFn: () => api.get<{ appPasswords: AppPasswordInfo[] }>(`/api/mailboxes/${buzon.id}/app-passwords`),
+    enabled: buzon.appsManuales === undefined,
+  });
+  // Mismo criterio que el servidor (appsManualesDe): activas y que no son de Skyway.
+  const appsManuales =
+    buzon.appsManuales ??
+    (apps.data?.appPasswords ?? []).filter((a) => !a.revokedAt && !a.name.startsWith('skyway:')).map((a) => a.name);
   const actualizar = useMutation({
     mutationFn: () => actualizarUsuarioBuzon(buzon.id),
     onSuccess: async () => {
@@ -90,6 +109,9 @@ export function ConfirmarActualizarUsuario({
       <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
         {textoConfirmarActualizar(buzon.email, buzon.login)}
       </p>
+      {appsManuales.length > 0 && (
+        <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">{textoAppsManuales(appsManuales, buzon.email)}</p>
+      )}
       {actualizar.isError && (
         <AvisoError>{mensajeCambio(actualizar.error, 'No se ha podido actualizar el usuario del buzón.')}</AvisoError>
       )}

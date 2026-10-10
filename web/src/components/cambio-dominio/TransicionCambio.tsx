@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   cambioDominio,
+  textoAppsManuales,
   textoUsadoPorApp,
   type CambioDominioVista,
   type PersonaCambio,
@@ -157,6 +158,12 @@ function FilaPersona({ persona, onActualizar }: { persona: PersonaCambio; onActu
         {persona.pendiente && (
           <p className="text-sm text-tinta-2">
             Entra con <span className="valor break-all">{persona.login}</span>
+          </p>
+        )}
+        {/* Nadie pone al día esas aplicaciones: se dice aquí, donde se decide actualizar. */}
+        {persona.pendiente && persona.appsManuales.length > 0 && (
+          <p className="text-sm text-tinta-2 [overflow-wrap:anywhere]">
+            {textoAppsManuales(persona.appsManuales, persona.email)}
           </p>
         )}
       </div>
