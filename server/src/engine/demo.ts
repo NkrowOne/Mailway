@@ -130,7 +130,7 @@ export class DemoEngine implements MailEngine {
   /** ¿Puede quien entra como `login` enviar con remitente `from`? Su nombre o una de sus direcciones (must-match-sender). */
   puedeEnviarComo(login: string, from: string): boolean {
     const p = this.buscar(login);
-    if (!p || p.type !== 'individual' || p.suspendido) return false;
+    if (!p || p.type !== 'individual') return false;
     const remitente = normal(from);
     return remitente === p.name || p.emails.includes(remitente);
   }
@@ -413,6 +413,7 @@ export class DemoEngine implements MailEngine {
 
   /** Lo que tiene en memoria; un buzón de antes de reiniciar no lo conoce (null). */
   async readMailboxCredentials(login: string): Promise<MailboxCredentials | null> {
+    this.fallo('readMailboxCredentials', login);
     const p = this.buscar(login);
     if (!p || p.type !== 'individual') return null;
     const appPasswords: MailboxCredentials['appPasswords'] = [];

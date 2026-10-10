@@ -133,8 +133,11 @@ test('el dominio base lo decide el nombre del instalador, no el del motor', asyn
 
 test('con el identificador del contenedor en el motor, el MX se cuenta contra el nombre de Ajustes', async (t) => {
   instalarDnsFalso(t, { a: {}, ptr: {} });
-  await getEngine().applyServerSettings({ 'server.hostname': '3f2a1b9c8d7e' });
-  t.after(() => getEngine().applyServerSettings({ 'server.hostname': ACTUAL }));
+  // El motor arranca con el identificador del contenedor como nombre.
+  await getEngine().applyRecommended({ hostname: '3f2a1b9c8d7e', trustedNetworks: [], maxAppPasswords: 1, permissiveCors: false });
+  t.after(async () => {
+    await ctx.app.inject({ method: 'POST', url: '/api/engine/recommended', headers: { cookie: ctx.adminCookie } });
+  });
   const res = await ctx.app.inject({
     method: 'GET',
     url: `/api/settings/mail-hostname/impact?nombre=mail.x.test`,

@@ -167,7 +167,7 @@ test('la fachada detecta una vez, recuerda la API y el ping la informa', async (
 test('motor migrado con el panel en marcha: la ruta desaparece, se detecta 0.16 y se repite la operación', async () => {
   const creados: string[] = [];
   const motor = fachada(creados);
-  motorFalso.principals.set('ana@acme.test', { type: 'individual', secrets: [], roles: ['user'] });
+  motorFalso.crearPrincipal({ name: 'ana@acme.test', type: 'individual', secrets: [], roles: ['user'] });
   assert.equal(await motor.detectApi(), 'rest015');
   assert.deepEqual([...(await motor.getMailboxUsage()).keys()], ['ana@acme.test']);
 

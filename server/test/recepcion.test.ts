@@ -1,13 +1,11 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { getEngine } from '../src/engine';
-import type { DemoEngine } from '../src/engine/demo';
 import { esReglaDeMailway, normalizarDominiosRemotos, reglasRecepcionRemota } from '../src/engine/recepcion';
 import { evaluarRecepcionExterna, getDomain, type DomainRecord } from '../src/modules/domains';
 import { dominiosConRecepcionExterna, sincronizarRecepcionExterna } from '../src/modules/recepcion';
 import { setInstanceSettings } from '../src/modules/settings';
 import { instalarDnsFalso } from './dns-falso';
-import { adminContext, createClient, createDomain, type TestContext } from './helpers';
+import { adminContext, createClient, createDomain, motorDemo, type TestContext } from './helpers';
 
 /*
  * Dominios con buzones aquí y el correo en otro proveedor (traslado en
@@ -75,7 +73,7 @@ test('las reglas del motor: solo nombres DNS válidos, en orden y con los valore
 test('al medir, un dominio con el MX en otro proveedor entra en la lista del motor y sale al hacer el cambio', async (t) => {
   const { clientId } = await createClient(ctx);
   const { domainId } = await createDomain(ctx, clientId, 'traslado-t2.es');
-  const motor = getEngine() as DemoEngine;
+  const motor = motorDemo();
 
   const zona = { mx: { 'traslado-t2.es': [{ priority: 1, exchange: 'aspmx.l.google.com' }] } };
   instalarDnsFalso(t, zona);
@@ -121,7 +119,7 @@ test('borrar un dominio con el correo en otro proveedor lo saca de la lista del 
   instalarDnsFalso(t, { mx: { 'baja-t2.es': [{ priority: 1, exchange: 'mx.otro.test' }] } });
   await ctx.app.inject({ method: 'POST', url: `/api/domains/${domainId}/verify`, headers: { cookie: ctx.adminCookie } });
   await sincronizarRecepcionExterna();
-  const motor = getEngine() as DemoEngine;
+  const motor = motorDemo();
   assert.ok(motor.remoteDomains.includes('baja-t2.es'));
   const res = await ctx.app.inject({ method: 'DELETE', url: `/api/domains/${domainId}`, headers: { cookie: ctx.adminCookie } });
   assert.equal(res.statusCode, 200, res.body);

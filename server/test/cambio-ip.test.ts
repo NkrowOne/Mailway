@@ -85,7 +85,7 @@ test('sin poder resolver el servidor de correo, una IP desconocida no es concluy
   // un resolutor que falla solo para ese nombre.
   instalarDnsFalso(t, { a: { 'webmail.cliente.test': [IP_NUEVA] } });
   const { Resolver } = await import('node:dns/promises');
-  const original = Resolver.prototype.resolve4;
+  const original = Resolver.prototype.resolve4 as (this: InstanceType<typeof Resolver>, nombre: string) => Promise<string[]>;
   t.mock.method(Resolver.prototype, 'resolve4', async function (this: InstanceType<typeof Resolver>, n: string) {
     if (n === SERVIDOR) throw Object.assign(new Error('timeout'), { code: 'ETIMEOUT' });
     return original.call(this, n);

@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
 import { db } from '../src/core/db';
+import { HttpError } from '../src/core/errors';
 import { verifySha512Crypt } from '../src/core/sha512crypt';
 import { getEngine } from '../src/engine';
 import { DemoEngine } from '../src/engine/demo';
+import type { MailEngine } from '../src/engine/types';
 import type { CambioDominioVista } from '../src/modules/domainmigrations';
 
 /**
@@ -164,7 +166,20 @@ export async function createMailbox(
  * comprueba con verificarContrasenaBuzon (modules/credenciales.ts).
  */
 export async function motorAcepta(email: string, password: string): Promise<boolean> {
-  const credenciales = await getEngine().readMailboxCredentials(email);
+  return aceptaEnMotor(getEngine(), email, password);
+}
+
+/**
+ * Lo mismo con un motor concreto (el driver contra un Stalwart falso o un
+ * motor de demostración propio de la prueba). `login`: el usuario del motor,
+ * que tras un cambio de dominio puede no ser la dirección del buzón.
+ */
+export async function aceptaEnMotor(engine: MailEngine, login: string, password: string): Promise<boolean> {
+  // Un usuario que el motor no tiene no entra (el driver lo dice con engine_not_found).
+  const credenciales = await engine.readMailboxCredentials(login).catch((err: unknown) => {
+    if (err instanceof HttpError && err.code === 'engine_not_found') return null;
+    throw err;
+  });
   if (!credenciales || credenciales.suspended) return false;
   if (credenciales.passwordHash && verifySha512Crypt(password, credenciales.passwordHash)) return true;
   return credenciales.appPasswords.some((app) => app.hash.startsWith('$6$') && verifySha512Crypt(password, app.hash));

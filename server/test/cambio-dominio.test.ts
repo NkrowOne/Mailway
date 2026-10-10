@@ -16,6 +16,7 @@ import { reviewDomainDns } from '../src/modules/watchdog';
 import { MAX_WHITELABEL_PER_CLIENT } from '../src/modules/whitelabel';
 import { instalarDnsFalso, type ZonaDns } from './dns-falso';
 import {
+  aceptaEnMotor,
   adminContext,
   createClient,
   createDomain,
@@ -426,7 +427,7 @@ test('pasar: compuertas, filas, usuario anterior, alias, destinos de otro client
   // Motor: el buzón sale con la nueva y recibe en las dos; entra con el usuario de siempre.
   const motor = motorDemo();
   assert.deepEqual((await motor.getPrincipal('ana@pasa-viejo.test'))?.emails, ['ana@pasa-nuevo.test', 'ana@pasa-viejo.test']);
-  assert.equal(await motor.verifyCredentials('ana@pasa-viejo.test', e.buzones.ana!.password), true);
+  assert.equal(await aceptaEnMotor(motor, 'ana@pasa-viejo.test', e.buzones.ana!.password), true);
   assert.equal(motor.puedeEnviarComo('ana@pasa-viejo.test', 'ana@pasa-nuevo.test'), true);
   assert.equal(motor.entregar('ana@pasa-viejo.test'), 'ana@pasa-viejo.test');
   // El alias se renombra (no tiene dispositivos) y conserva la dirección vieja.
@@ -543,7 +544,7 @@ test('actualizar, volver y pasar otra vez: nadie pierde su usuario y los alias v
   assert.equal(actualizar.statusCode, 200, actualizar.body);
   assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, null);
   assert.equal(fila(e.buzones.ana!.mailboxId).login_anterior, 'ana@vuelve-viejo.test');
-  assert.equal(await motor.verifyCredentials('ana@vuelve-nuevo.test', e.buzones.ana!.password), true);
+  assert.equal(await aceptaEnMotor(motor, 'ana@vuelve-nuevo.test', e.buzones.ana!.password), true);
 
   const volver = await accion(id, 'rollback');
   assert.equal(volver.statusCode, 200, volver.body);
@@ -555,7 +556,7 @@ test('actualizar, volver y pasar otra vez: nadie pierde su usuario y los alias v
   assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, 'ana@vuelve-nuevo.test');
   assert.equal(fila(e.buzones.ana!.mailboxId).domain_id, e.viejo.domainId);
   assert.equal(getMailbox(e.buzones.ana!.mailboxId).email, 'ana@vuelve-viejo.test');
-  assert.equal(await motor.verifyCredentials('ana@vuelve-nuevo.test', e.buzones.ana!.password), true);
+  assert.equal(await aceptaEnMotor(motor, 'ana@vuelve-nuevo.test', e.buzones.ana!.password), true);
   assert.deepEqual((await motor.getPrincipal('ana@vuelve-nuevo.test'))?.emails, ['ana@vuelve-viejo.test', 'ana@vuelve-nuevo.test']);
   assert.equal(fila(e.buzones.luis!.mailboxId).usuario_motor, null);
   assert.deepEqual((await motor.getPrincipal('luis@vuelve-viejo.test'))?.emails, ['luis@vuelve-viejo.test', 'luis@vuelve-nuevo.test']);
@@ -718,7 +719,7 @@ test('dar de baja: confirmación, apps, DNS y MX; después el dominio queda rese
   // Luis no había actualizado: se le ha cambiado el usuario.
   assert.equal(fila(e.buzones.luis!.mailboxId).usuario_motor, null);
   assert.equal(fila(e.buzones.luis!.mailboxId).login_anterior, 'luis@baja-viejo.test');
-  assert.equal(await motor.verifyCredentials('luis@baja-nuevo.test', e.buzones.luis!.password), true);
+  assert.equal(await aceptaEnMotor(motor, 'luis@baja-nuevo.test', e.buzones.luis!.password), true);
   const forzado = db
     .prepare("SELECT detail FROM audit_log WHERE action = 'mailbox.login_updated' AND detail LIKE ?")
     .get(`%${e.buzones.luis!.mailboxId}%`) as { detail: string };
@@ -1147,13 +1148,13 @@ test('cancelar tras volver: un buzón que una aplicación de Skyway usa con su u
     /^ana@appcancela-viejo\.test lo usa una aplicación para enviar \(tienda\) con su usuario de appcancela-nuevo\.test\. Al cancelar/,
   );
   assert.equal(((await get(`/api/domain-migrations/${id}`)).json() as CambioDominioVista).estado, 'listo');
-  assert.equal(await motor.verifyCredentials('ana@appcancela-nuevo.test', app.password), true, 'la tienda sigue enviando');
+  assert.equal(await aceptaEnMotor(motor, 'ana@appcancela-nuevo.test', app.password), true, 'la tienda sigue enviando');
 
   // Skyway cancela con su token y después pone al día las variables de la aplicación.
   const skyway = await accion(id, 'cancel', {}, bearer(adminToken));
   assert.equal(skyway.statusCode, 200, skyway.body);
   assert.equal((skyway.json() as CambioDominioVista).estado, 'cancelada');
-  assert.equal(await motor.verifyCredentials('ana@appcancela-viejo.test', app.password), true);
+  assert.equal(await aceptaEnMotor(motor, 'ana@appcancela-viejo.test', app.password), true);
 });
 
 test('crear: Skyway no adopta un cambio que se lleva desde el panel ni el de otro proyecto', async () => {

@@ -10,7 +10,7 @@ import { DemoEngine } from '../src/engine/demo';
 import type { CreatedAppPassword, EngineApi, MailEngine } from '../src/engine/types';
 import { listAlerts } from '../src/modules/alerts';
 import { listAudit } from '../src/modules/audit';
-import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
+import { MAX_ACTIVE_APP_PASSWORDS, createAppPassword } from '../src/modules/apppasswords';
 import { componerAvisoInvalidadas, trasMigrarMotor } from '../src/modules/cambiomotor';
 import { comprobarContrasenaBuzon, leerHashBuzon } from '../src/modules/credenciales';
 import { estadoMantenimiento } from '../src/modules/mantenimiento';
@@ -363,9 +363,9 @@ test('tras-migrar: renueva las credenciales internas, invalida las de dispositiv
   const e = await escenario('Tras migrar');
   // Antes de migrar (motor de demostración, que hace de 0.15).
   const movil = await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'Móvil de Ana' });
-  const skyway = await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'skyway:web' });
+  // Las «skyway:…» solo las crea Skyway (con su token), no la sesión del panel.
+  await createAppPassword(e.mailboxId, 'skyway:web', null);
   assert.equal(movil.statusCode, 200);
-  assert.equal(skyway.statusCode, 200);
   const clave = await como('POST', '/api/apikeys', { clientId: e.clientId, name: 'OTP', senderMailboxId: e.mailboxId });
   const form = await ctx.app.inject({
     method: 'POST',
@@ -478,8 +478,8 @@ test('tras-migrar avisa por correo a cada titular una sola vez, sin las de Skywa
   const e = await escenario('Aviso por correo');
   const otro = await createMailbox(ctx, e.domainId, 'solo-skyway');
   await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'Móvil <Ana>' });
-  await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'skyway:api' });
-  await como('POST', `/api/mailboxes/${otro.mailboxId}/app-passwords`, { name: 'skyway:web' });
+  await createAppPassword(e.mailboxId, 'skyway:api', null);
+  await createAppPassword(otro.mailboxId, 'skyway:web', null);
   db.prepare(
     'UPDATE app_passwords SET invalidated_at = ? WHERE revoked_at IS NULL AND invalidated_at IS NULL AND mailbox_id IN (?, ?)',
   ).run(Date.now(), e.mailboxId, otro.mailboxId);

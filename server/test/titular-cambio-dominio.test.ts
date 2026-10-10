@@ -1,4 +1,5 @@
 import { test, before } from 'node:test';
+import type { FastifyRequest } from 'fastify';
 import assert from 'node:assert/strict';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
@@ -13,6 +14,7 @@ import {
   createClient,
   createDomain,
   createMailbox,
+  motorAcepta,
   type TestContext,
 } from './helpers';
 
@@ -402,7 +404,7 @@ test('cambiar la contraseña desde «Mi buzón» va al usuario del motor', async
     payload: { current: carla.password, next: 'nueva-clave-de-carla' },
   });
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(await motor().verifyCredentials(carla.vieja, 'nueva-clave-de-carla'), true);
+  assert.equal(await motorAcepta(carla.vieja, 'nueva-clave-de-carla'), true);
   carla.password = 'nueva-clave-de-carla';
   // La sesión que hizo el cambio sigue.
   const me = await ctx.app.inject({ method: 'GET', url: '/api/portal/me', headers: { cookie } });
@@ -425,7 +427,7 @@ test('«Actualizar mis dispositivos» desde «Mi buzón»: renombra, conserva la
     semilla_perfil: dario.vieja,
   });
   // El principal se ha renombrado: misma contraseña, usuario nuevo.
-  assert.equal(await motor().verifyCredentials(dario.nueva, dario.password), true);
+  assert.equal(await motorAcepta(dario.nueva, dario.password), true);
   assert.equal(await motor().getPrincipal(dario.vieja), null);
 
   const registro = auditoria('mailbox.login_updated', dario.mailboxId);
@@ -497,7 +499,7 @@ test('«Actualizar y continuar» desde el enlace: sin contraseña, con el límit
   });
   assert.equal(res.statusCode, 200, res.body);
   assert.deepEqual(res.json(), { ok: true, login: elena.nueva });
-  assert.equal(await motor().verifyCredentials(elena.nueva, elena.password), true);
+  assert.equal(await motorAcepta(elena.nueva, elena.password), true);
   const registro = auditoria('mailbox.login_updated', elena.mailboxId);
   assert.equal(registro.length, 1);
   assert.equal(registro[0]!.client_id, clientId);
@@ -591,39 +593,46 @@ test('«Mi buzón» no deja crear contraseñas de aplicación con el prefijo res
   assert.equal(valida.statusCode, 200, valida.body);
 });
 
-test('«Mi buzón» con un cambio de usuario a medias: responde como con el motor caído y cuenta el intento', async () => {
+test('«Mi buzón» con un cambio de usuario a medias: la contraseña se comprueba en el panel y lo que toca el motor espera', async () => {
   const gema = buzones.gema!;
   const ip = nuevaIp();
   await conCambioAMedias(gema, async () => {
-    // Exista o no la contraseña, la respuesta no dice que la dirección exista.
-    for (const [tecleada, password] of [
-      [gema.nueva, 'contrasena-cualquiera'],
-      [gema.vieja, gema.password],
-    ] as const) {
-      const res = await entrar(tecleada, password, ip);
-      assert.equal(res.statusCode, 503, `${tecleada}: ${res.body}`);
-      assert.deepEqual(res.json(), {
-        error: 'No se ha podido comprobar la contraseña en este momento. Vuelve a intentarlo en unos minutos.',
-        code: 'engine_unreachable',
-      });
-    }
+    // La contraseña se comprueba con la copia local (no depende del nombre en
+    // el motor): una incorrecta es incorrecta y cuenta para el límite.
+    const mala = await entrar(gema.nueva, 'contrasena-cualquiera', ip);
+    assert.equal(mala.statusCode, 401, mala.body);
+    assert.equal(mala.json().code, 'bad_credentials');
     const fallos = db
       .prepare('SELECT COUNT(*) AS c FROM login_attempts WHERE ip = ?')
       .get(`buzon:${gema.mailboxId}`) as { c: number };
-    assert.equal(fallos.c, 2, 'cada intento cuenta para el límite del buzón');
+    assert.equal(fallos.c, 1, 'el intento cuenta para el límite del buzón');
+
+    const buena = await entrar(gema.vieja, gema.password, ip);
+    assert.equal(buena.statusCode, 200, buena.body);
+    // Cambiar la contraseña necesita el motor: hasta que se resuelva el
+    // usuario, 409 sin tocar nada (ni el motor ni la copia local).
+    const cambio = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/portal/password',
+      headers: { cookie: cookieFrom(buena) },
+      payload: { current: gema.password, next: 'otra-clave-de-gema-larga' },
+      remoteAddress: ip,
+    });
+    assert.equal(cambio.statusCode, 409, cambio.body);
+    assert.equal(cambio.json().code, 'mailbox_login_updating');
   });
   db.prepare('DELETE FROM login_attempts WHERE ip = ?').run(`buzon:${gema.mailboxId}`);
   const resuelto = await entrar(gema.vieja, gema.password);
   assert.equal(resuelto.statusCode, 200, resuelto.body);
+  assert.equal(await motorAcepta(gema.vieja, gema.password), true, 'la contraseña sigue siendo la misma');
 });
 
 test('crearEnlaceConfiguracion: enlace sin contraseña que abre el titular', async () => {
   const fede = buzones.fede!;
-  const enlace = crearEnlaceConfiguracion(fede.mailboxId, {
-    ttlHours: 168,
-    createdBy: null,
-    baseUrl: PANEL,
-  });
+  // Lo crea el panel por su cuenta (el cambio de dominio), sin usuario: la
+  // URL sale de panelUrl de Ajustes.
+  const sinUsuario = { headers: {}, protocol: 'https' } as unknown as FastifyRequest;
+  const enlace = crearEnlaceConfiguracion(sinUsuario, fede.mailboxId, 168);
   const match = new RegExp(`^${PANEL}/conectar/([A-Za-z0-9_-]{43})$`).exec(enlace.url);
   assert.ok(match, enlace.url);
   assert.ok(enlace.expiresAt - Date.now() > 167 * 3600_000);
@@ -642,12 +651,12 @@ test('crearEnlaceConfiguracion: enlace sin contraseña que abre el titular', asy
   assert.equal(abierto.json().hasPassword, false);
   assert.equal(abierto.json().login, fede.vieja);
 
-  assert.throws(() => crearEnlaceConfiguracion('mbx_no_existe', { ttlHours: 1, createdBy: null, baseUrl: PANEL }), {
+  assert.throws(() => crearEnlaceConfiguracion(sinUsuario, 'mbx_no_existe', 1), {
     code: 'not_found',
   });
   db.prepare("UPDATE mailboxes SET status = 'suspended' WHERE id = ?").run(fede.mailboxId);
   try {
-    assert.throws(() => crearEnlaceConfiguracion(fede.mailboxId, { ttlHours: 1, createdBy: null, baseUrl: PANEL }), {
+    assert.throws(() => crearEnlaceConfiguracion(sinUsuario, fede.mailboxId, 1), {
       code: 'mailbox_suspended',
     });
   } finally {
@@ -670,11 +679,11 @@ test('/api/webmail/password: «user» es el usuario de la sesión de Roundcube (
     const conLogin = await cambio(fede.vieja, fede.password, 'clave-webmail-de-fede');
     assert.equal(conLogin.statusCode, 200, conLogin.body);
     assert.equal(conLogin.body, 'ok');
-    assert.equal(await motor().verifyCredentials(fede.vieja, 'clave-webmail-de-fede'), true);
+    assert.equal(await motorAcepta(fede.vieja, 'clave-webmail-de-fede'), true);
     // Con la dirección nueva también (lleva al mismo buzón).
     const conNueva = await cambio(fede.nueva, 'clave-webmail-de-fede', 'otra-clave-de-fede');
     assert.equal(conNueva.statusCode, 200, conNueva.body);
-    assert.equal(await motor().verifyCredentials(fede.vieja, 'otra-clave-de-fede'), true);
+    assert.equal(await motorAcepta(fede.vieja, 'otra-clave-de-fede'), true);
     fede.password = 'otra-clave-de-fede';
     const registro = (
       db.prepare("SELECT detail FROM audit_log WHERE action = 'webmail.password_changed'").all() as { detail: string }[]

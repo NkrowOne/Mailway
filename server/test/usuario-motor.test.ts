@@ -2,6 +2,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../src/core/db';
 import { HttpError } from '../src/core/errors';
+import { sha512Crypt } from '../src/core/sha512crypt';
 import { getEngine } from '../src/engine';
 import type { MailEngine } from '../src/engine/types';
 import { alertaAbierta } from '../src/modules/alerts';
@@ -25,7 +26,7 @@ import {
   resetConciliacionForTests,
   resolverBuzon,
 } from '../src/modules/direcciones';
-import { adminContext, createClient, createDomain, createMailbox, type TestContext } from './helpers';
+import { adminContext, createClient, createDomain, createMailbox, motorAcepta, type TestContext } from './helpers';
 
 /*
  * Usuario del motor (mailboxes.usuario_motor) durante un cambio de dominio:
@@ -47,7 +48,7 @@ let otro: { clientId: string; userCookie: string };
 
 const motor = (): MailEngine => getEngine();
 
-async function cambiarPlan(cliente: string, planId: string): Promise<{ statusCode: number; body: string }> {
+async function cambiarPlan(cliente: string, planId: string): Promise<{ statusCode: number; body: string; json: () => { code?: string } }> {
   return ctx.app.inject({
     method: 'PATCH',
     url: `/api/clients/${cliente}`,
@@ -178,7 +179,7 @@ test('la contraseña, la suspensión del buzón y la del cliente van al usuario 
     payload: { password: 'otra-clave-muy-segura' },
   });
   assert.equal(clave.statusCode, 200, clave.body);
-  assert.equal(await motor().verifyCredentials(ana.login, 'otra-clave-muy-segura'), true);
+  assert.equal(await motorAcepta(ana.login, 'otra-clave-muy-segura'), true);
 
   const suspender = await ctx.app.inject({
     method: 'PATCH',
@@ -187,7 +188,7 @@ test('la contraseña, la suspensión del buzón y la del cliente van al usuario 
     payload: { status: 'suspended' },
   });
   assert.equal(suspender.statusCode, 200, suspender.body);
-  assert.equal(await motor().verifyCredentials(ana.login, 'otra-clave-muy-segura'), false);
+  assert.equal(await motorAcepta(ana.login, 'otra-clave-muy-segura'), false);
   const reactivar = await ctx.app.inject({
     method: 'PATCH',
     url: `/api/mailboxes/${ana.mailboxId}`,
@@ -195,7 +196,7 @@ test('la contraseña, la suspensión del buzón y la del cliente van al usuario 
     payload: { status: 'active' },
   });
   assert.equal(reactivar.statusCode, 200, reactivar.body);
-  assert.equal(await motor().verifyCredentials(ana.login, 'otra-clave-muy-segura'), true);
+  assert.equal(await motorAcepta(ana.login, 'otra-clave-muy-segura'), true);
 
   const espia = espiar('updateMailbox');
   try {
@@ -207,7 +208,7 @@ test('la contraseña, la suspensión del buzón y la del cliente van al usuario 
     });
     assert.equal(cliente.statusCode, 200, cliente.body);
     assert.deepEqual((cliente.json() as { suspension: { failed: unknown[] } }).suspension.failed, []);
-    assert.equal(await motor().verifyCredentials(ana.login, 'otra-clave-muy-segura'), false);
+    assert.equal(await motorAcepta(ana.login, 'otra-clave-muy-segura'), false);
     const reanudar = await ctx.app.inject({
       method: 'PATCH',
       url: `/api/clients/${clientId}`,
@@ -221,7 +222,7 @@ test('la contraseña, la suspensión del buzón y la del cliente van al usuario 
   const nombres = espia.llamadas.map((l) => l[0]);
   assert.ok(nombres.includes(ana.login), 'la suspensión del cliente usa el usuario del motor');
   assert.ok(!nombres.includes(ana.email));
-  assert.equal(await motor().verifyCredentials(ana.login, 'otra-clave-muy-segura'), true);
+  assert.equal(await motorAcepta(ana.login, 'otra-clave-muy-segura'), true);
 
   // Su usuario anterior sigue siendo suyo en el motor: nadie puede crear un
   // buzón con ese nombre.
@@ -250,7 +251,7 @@ test('contraseñas de aplicación, claves de API y formularios usan el usuario d
     appPassword: { id: string };
     snippets: { id: string; content: string }[];
   };
-  assert.equal(await motor().verifyCredentials(bea.login, creada.password), true);
+  assert.equal(await motorAcepta(bea.login, creada.password), true);
   const env = creada.snippets.find((b) => b.id === 'env')!.content.split('\n');
   assert.ok(env.includes(`SMTP_USER=${bea.login}`), 'SMTP_USER es el usuario del motor');
   assert.ok(env.includes(`SMTP_FROM=${bea.email}`), 'el remitente es la dirección vigente');
@@ -264,7 +265,7 @@ test('contraseñas de aplicación, claves de API y formularios usan el usuario d
     headers: { cookie: userCookie },
   });
   assert.equal(revocar.statusCode, 200, revocar.body);
-  assert.equal(await motor().verifyCredentials(bea.login, creada.password), false);
+  assert.equal(await motorAcepta(bea.login, creada.password), false);
 
   const altas = espiar('addAppPassword');
   const bajas = espiar('removeAppPassword');
@@ -559,8 +560,8 @@ test('actualizarUsuario renombra el principal, conserva las contraseñas y es id
   assert.equal(despues?.id, antes.id, 'mismo principal: el correo se conserva');
   assert.equal(await motor().getPrincipal(pedro.login), null);
   assert.deepEqual(fila(pedro.mailboxId), { usuario_motor: null, usuario_cambiando_a: null, login_anterior: pedro.login });
-  assert.equal(await motor().verifyCredentials(pedro.email, pedro.password), true);
-  assert.equal(await motor().verifyCredentials(pedro.email, deAplicacion), true);
+  assert.equal(await motorAcepta(pedro.email, pedro.password), true);
+  assert.equal(await motorAcepta(pedro.email, deAplicacion), true);
   assert.equal(loginParaMotor(pedro.mailboxId), pedro.email);
 
   assert.equal(await actualizarUsuario(pedro.mailboxId), null, 'repetirlo no hace nada');
@@ -607,7 +608,7 @@ test('un cambio de usuario a medias: 409 mientras tanto y el conciliador lo desh
   const uri = await buzonPendiente('uri');
   db.prepare('UPDATE mailboxes SET usuario_cambiando_a = ? WHERE id = ?').run(uri.email, uri.mailboxId);
   await motor().deleteMailbox(uri.login);
-  await motor().createMailbox({ email: uri.email, password: uri.password });
+  await motor().createMailbox({ email: uri.email, passwordHash: sha512Crypt(uri.password) });
   await motor().setAddresses(uri.email, { remove: [uri.email], add: [`otra-uri@${nuevo.domain}`] });
 
   const resultado = await conciliarUsuariosEnCambio();
@@ -626,7 +627,7 @@ test('un cambio de usuario a medias: 409 mientras tanto y el conciliador lo desh
   assert.match(aviso(uri.mailboxId).message, new RegExp(`el usuario ${uri.email} existe, pero no tiene la dirección ${uri.email}`));
 
   // Cuando vuelve a existir uno solo, la siguiente vuelta lo resuelve y cierra el aviso.
-  await motor().createMailbox({ email: tere.login, password: tere.password });
+  await motor().createMailbox({ email: tere.login, passwordHash: sha512Crypt(tere.password) });
   await motor().setAddresses(uri.email, { add: [uri.email] });
   assert.deepEqual(await conciliarUsuariosEnCambio(), { resueltos: 2, pendientes: 0 });
   assert.equal(fila(tere.mailboxId).usuario_cambiando_a, null);
@@ -828,7 +829,7 @@ test('POST /api/mailboxes/:id/login-update: acceso, aplicaciones de Skyway y tok
       detail: string;
       client_id: string;
     }[]
-  ).map((a) => ({ ...(JSON.parse(a.detail) as Record<string, unknown>), clientId: a.client_id }));
+  ).map((a) => ({ ...(JSON.parse(a.detail) as Record<string, unknown>), clientId: a.client_id }) as Record<string, unknown>);
   const deOlga = anotaciones.filter((a) => a.id === olga.mailboxId);
   assert.equal(deOlga.length, 1, 'la repetición no se anota');
   assert.equal(deOlga[0]!.por, 'integracion');

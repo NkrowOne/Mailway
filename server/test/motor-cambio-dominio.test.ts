@@ -4,9 +4,9 @@ import { HttpError } from '../src/core/errors';
 import { sha512Crypt } from '../src/core/sha512crypt';
 import { getEngine } from '../src/engine';
 import { DemoEngine } from '../src/engine/demo';
-import { StalwartEngine } from '../src/engine/stalwart';
+import { Stalwart015Engine } from '../src/engine/stalwart';
 import { fusionarDirecciones } from '../src/engine/types';
-import { adminContext, createClient, createDomain, createMailbox } from './helpers';
+import { aceptaEnMotor, adminContext, createClient, createDomain, createMailbox, motorDemo as demoDelPanel } from './helpers';
 import { fakeStalwart } from './stalwart-falso';
 
 /*
@@ -20,11 +20,11 @@ import { fakeStalwart } from './stalwart-falso';
 
 const SECRETO = 'secreto-motor';
 const motorFalso = fakeStalwart(SECRETO);
-let motor: StalwartEngine;
+let motor: Stalwart015Engine;
 
 before(async () => {
   const url = await motorFalso.listen();
-  motor = new StalwartEngine({
+  motor = new Stalwart015Engine({
     kind: 'stalwart',
     url,
     adminUser: 'admin',
@@ -180,9 +180,9 @@ describe('driver de Stalwart', () => {
     const renombrada = motorFalso.principal('ana@nuevo.test')!;
     assert.equal(renombrada.id, ana, 'el número interno (y con él el correo) se conserva');
     assert.ok(renombrada.secrets.includes(app), 'la contraseña de aplicación se conserva');
-    assert.equal(await motor.verifyCredentials('ana@nuevo.test', CLAVE), true);
-    assert.equal(await motor.verifyCredentials('ana@nuevo.test', CLAVE_APP), true);
-    assert.equal(await motor.verifyCredentials('ana@viejo.test', CLAVE), false);
+    assert.equal(await aceptaEnMotor(motor, 'ana@nuevo.test', CLAVE), true);
+    assert.equal(await aceptaEnMotor(motor, 'ana@nuevo.test', CLAVE_APP), true);
+    assert.equal(await aceptaEnMotor(motor, 'ana@viejo.test', CLAVE), false);
     // La lista sigue entregando a ana, ya con su nombre nuevo (miembros por número).
     assert.deepEqual((await motorFalso.principal('info@nuevo.test'))!.members, [ana]);
 
@@ -302,25 +302,25 @@ describe('driver de Stalwart', () => {
     // Usuario viejo que sigue en el motor con la dirección nueva (pendiente de actualizar).
     await motor.setAddresses('ana@viejo.test', { primary: 'ana@nuevo.test' });
     await assert.rejects(
-      motor.createMailbox({ email: 'ana@viejo.test', password: 'Otra-Clave-1' }),
+      motor.createMailbox({ email: 'ana@viejo.test', passwordHash: sha512Crypt('Otra-Clave-1') }),
       (err: HttpError) => {
         assert.equal(err.code, 'engine_exists');
         assert.equal(err.message, 'El servidor de correo ya tiene un usuario con ese nombre y otras direcciones: no se adopta.');
         return true;
       },
     );
-    assert.equal(await motor.verifyCredentials('ana@viejo.test', CLAVE), true, 'su contraseña no cambia');
+    assert.equal(await aceptaEnMotor(motor, 'ana@viejo.test', CLAVE), true, 'su contraseña no cambia');
 
     // Una lista con ese nombre tampoco se adopta.
     await assert.rejects(
-      motor.createMailbox({ email: 'info@viejo.test', password: 'Otra-Clave-1' }),
+      motor.createMailbox({ email: 'info@viejo.test', passwordHash: sha512Crypt('Otra-Clave-1') }),
       codigo('engine_exists'),
     );
     assert.equal(motorFalso.principal('info@viejo.test')?.type, 'list');
 
     // La dirección es de otro principal (con otro nombre): no hay nada que adoptar.
     await assert.rejects(
-      motor.createMailbox({ email: 'ana@nuevo.test', password: 'Otra-Clave-1' }),
+      motor.createMailbox({ email: 'ana@nuevo.test', passwordHash: sha512Crypt('Otra-Clave-1') }),
       codigo('engine_exists'),
     );
 
@@ -332,9 +332,9 @@ describe('driver de Stalwart', () => {
       emails: ['luis@viejo.test'],
       roles: ['user'],
     });
-    await motor.createMailbox({ email: 'luis@viejo.test', password: 'Nueva-Clave-1' });
-    assert.equal(await motor.verifyCredentials('luis@viejo.test', 'Nueva-Clave-1'), true);
-    assert.equal(await motor.verifyCredentials('luis@viejo.test', 'App-Vieja-1'), false);
+    await motor.createMailbox({ email: 'luis@viejo.test', passwordHash: sha512Crypt('Nueva-Clave-1') });
+    assert.equal(await aceptaEnMotor(motor, 'luis@viejo.test', 'Nueva-Clave-1'), true);
+    assert.equal(await aceptaEnMotor(motor, 'luis@viejo.test', 'App-Vieja-1'), false);
   });
 
   test('upsertAlias de una lista que ya existe no toca sus direcciones (conserva la pre-recepción)', async () => {
@@ -364,8 +364,8 @@ describe('motor de demostración', () => {
     demo = new DemoEngine();
     await demo.createDomain('viejo.test');
     await demo.createDomain('nuevo.test');
-    await demo.createMailbox({ email: 'ana@viejo.test', password: CLAVE });
-    await demo.addAppPassword('ana@viejo.test', CLAVE_APP, 'movil');
+    await demo.createMailbox({ email: 'ana@viejo.test', passwordHash: sha512Crypt(CLAVE) });
+    await demo.addAppPassword('ana@viejo.test', 'movil', CLAVE_APP);
     await demo.upsertAlias('info@viejo.test', ['ana@viejo.test']);
   }
 
@@ -416,7 +416,7 @@ describe('motor de demostración', () => {
 
     // Una dirección que ya tiene otro principal no se puede dar de alta como buzón.
     await demo.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] });
-    await assert.rejects(demo.createMailbox({ email: 'ana@nuevo.test', password: 'x' }), codigo('engine_exists'));
+    await assert.rejects(demo.createMailbox({ email: 'ana@nuevo.test', passwordHash: sha512Crypt('x') }), codigo('engine_exists'));
     // Nombre ocupado al renombrar.
     await assert.rejects(
       demo.renamePrincipal('info@viejo.test', 'ana@viejo.test', { expectEmail: 'info@viejo.test' }),
@@ -424,7 +424,7 @@ describe('motor de demostración', () => {
     );
   });
 
-  test('renombrar conserva id, contraseñas y listas; verifyCredentials por el nombre nuevo', async () => {
+  test('renombrar conserva id, contraseñas y listas; las credenciales, por el nombre nuevo', async () => {
     await sembrarDemo();
     const antes = await demo.getPrincipal('ana@viejo.test');
     await demo.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] });
@@ -445,9 +445,9 @@ describe('motor de demostración', () => {
     const despues = await demo.getPrincipal('ana@nuevo.test');
     assert.equal(despues?.id, antes?.id);
     assert.equal(await demo.getPrincipal('ana@viejo.test'), null);
-    assert.equal(await demo.verifyCredentials('ana@nuevo.test', CLAVE), true);
-    assert.equal(await demo.verifyCredentials('ana@nuevo.test', CLAVE_APP), true);
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), false);
+    assert.equal(await aceptaEnMotor(demo, 'ana@nuevo.test', CLAVE), true);
+    assert.equal(await aceptaEnMotor(demo, 'ana@nuevo.test', CLAVE_APP), true);
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), false);
     assert.equal(demo.puedeEnviarComo('ana@nuevo.test', 'ana@viejo.test'), true);
     assert.deepEqual([...(await demo.getMailboxUsage()).keys()], ['ana@nuevo.test']);
 
@@ -477,38 +477,38 @@ describe('motor de demostración', () => {
     await assert.rejects(demo.upsertAlias('info@nuevo.test', ['ana@viejo.test']), codigo('engine_not_found'));
 
     // Cambiar la contraseña tras renombrar conserva la de aplicación.
-    await demo.setMailboxPassword('ana@nuevo.test', 'Clave-Principal-2');
-    assert.equal(await demo.verifyCredentials('ana@nuevo.test', 'Clave-Principal-2'), true);
-    assert.equal(await demo.verifyCredentials('ana@nuevo.test', CLAVE), false);
-    assert.equal(await demo.verifyCredentials('ana@nuevo.test', CLAVE_APP), true);
+    await demo.setMailboxPassword('ana@nuevo.test', sha512Crypt('Clave-Principal-2'));
+    assert.equal(await aceptaEnMotor(demo, 'ana@nuevo.test', 'Clave-Principal-2'), true);
+    assert.equal(await aceptaEnMotor(demo, 'ana@nuevo.test', CLAVE), false);
+    assert.equal(await aceptaEnMotor(demo, 'ana@nuevo.test', CLAVE_APP), true);
   });
 
   test('createMailbox no adopta un principal con otras direcciones; la suspensión va por nombre', async () => {
     await sembrarDemo();
     await demo.setAddresses('ana@viejo.test', { primary: 'ana@nuevo.test' });
-    await assert.rejects(demo.createMailbox({ email: 'ana@viejo.test', password: 'Otra-1' }), (err: HttpError) => {
+    await assert.rejects(demo.createMailbox({ email: 'ana@viejo.test', passwordHash: sha512Crypt('Otra-1') }), (err: HttpError) => {
       assert.equal(err.code, 'engine_exists');
       assert.match(err.message, /no se adopta/);
       return true;
     });
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), true);
-    await assert.rejects(demo.createMailbox({ email: 'info@viejo.test', password: 'Otra-1' }), codigo('engine_exists'));
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), true);
+    await assert.rejects(demo.createMailbox({ email: 'info@viejo.test', passwordHash: sha512Crypt('Otra-1') }), codigo('engine_exists'));
 
     // El huérfano limpio sí se adopta (sin sus contraseñas de aplicación).
-    await demo.createMailbox({ email: 'luis@viejo.test', password: 'Vieja-1' });
-    await demo.addAppPassword('luis@viejo.test', 'App-1', 'x');
-    await demo.createMailbox({ email: 'luis@viejo.test', password: 'Nueva-1' });
-    assert.equal(await demo.verifyCredentials('luis@viejo.test', 'Nueva-1'), true);
-    assert.equal(await demo.verifyCredentials('luis@viejo.test', 'App-1'), false);
+    await demo.createMailbox({ email: 'luis@viejo.test', passwordHash: sha512Crypt('Vieja-1') });
+    await demo.addAppPassword('luis@viejo.test', 'x', 'App-1');
+    await demo.createMailbox({ email: 'luis@viejo.test', passwordHash: sha512Crypt('Nueva-1') });
+    assert.equal(await aceptaEnMotor(demo, 'luis@viejo.test', 'Nueva-1'), true);
+    assert.equal(await aceptaEnMotor(demo, 'luis@viejo.test', 'App-1'), false);
 
     await demo.updateMailbox('ana@viejo.test', { suspended: true });
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), false);
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), false);
     assert.equal(demo.puedeEnviarComo('ana@viejo.test', 'ana@nuevo.test'), true, 'el remitente no depende de la suspensión');
     await demo.updateMailbox('ana@viejo.test', { suspended: false });
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), true);
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), true);
 
     // Pasar una dirección en vez del usuario del motor falla como en el motor real.
-    await assert.rejects(demo.setMailboxPassword('ana@nuevo.test', 'x'), codigo('engine_not_found'));
+    await assert.rejects(demo.setMailboxPassword('ana@nuevo.test', sha512Crypt('x')), codigo('engine_not_found'));
     await assert.rejects(demo.addAppPassword('ana@nuevo.test', 'x', 'x'), codigo('engine_not_found'));
     await assert.rejects(demo.updateMailbox('ana@nuevo.test', { suspended: true }), codigo('engine_not_found'));
     await assert.rejects(demo.upsertAlias('info@viejo.test', ['ana@nuevo.test']), codigo('engine_not_found'));
@@ -518,16 +518,16 @@ describe('motor de demostración', () => {
 
   test('tras reiniciar el panel, los buzones que olvidó se recrean al tocarlos; el cambio de dominio no', async () => {
     await sembrarDemo();
-    await demo.createMailbox({ email: 'luis@viejo.test', password: CLAVE });
+    await demo.createMailbox({ email: 'luis@viejo.test', passwordHash: sha512Crypt(CLAVE) });
     // Un panel nuevo con la misma base: el motor de demostración empieza vacío.
     demo.simularReinicio();
     assert.equal(await demo.getPrincipal('ana@viejo.test'), null);
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), false, 'su contraseña se perdió con el reinicio');
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), false, 'su contraseña se perdió con el reinicio');
 
-    await demo.setMailboxPassword('ana@viejo.test', 'Clave-Tras-Reinicio-1');
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', 'Clave-Tras-Reinicio-1'), true);
-    await demo.addAppPassword('ana@viejo.test', CLAVE_APP, 'movil');
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE_APP), true);
+    await demo.setMailboxPassword('ana@viejo.test', sha512Crypt('Clave-Tras-Reinicio-1'));
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', 'Clave-Tras-Reinicio-1'), true);
+    await demo.addAppPassword('ana@viejo.test', 'movil', CLAVE_APP);
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE_APP), true);
     await demo.updateMailbox('luis@viejo.test', { displayName: 'Luis' });
     await demo.upsertAlias('info@viejo.test', ['ana@viejo.test', 'pepa@viejo.test']);
     assert.deepEqual((await demo.getPrincipal('pepa@viejo.test'))?.emails, ['pepa@viejo.test']);
@@ -564,7 +564,7 @@ describe('motor de demostración', () => {
 
   test('fallarProxima inyecta un engine_error en la llamada que coincide, una sola vez', async () => {
     await sembrarDemo();
-    await demo.createMailbox({ email: 'luis@viejo.test', password: CLAVE });
+    await demo.createMailbox({ email: 'luis@viejo.test', passwordHash: sha512Crypt(CLAVE) });
     demo.fallarProxima('setAddresses', 'luis@viejo.test');
 
     // Otro nombre no lo consume.
@@ -581,9 +581,11 @@ describe('motor de demostración', () => {
     await demo.reloadDirectory();
     assert.equal(demo.cambiosSinRecargar, false);
 
-    // verifyCredentials y ping no lanzan: «sin comprobar» y motor caído.
-    demo.fallarProxima('verifyCredentials');
-    assert.equal(await demo.verifyCredentials('ana@viejo.test', CLAVE), null);
+    // Leer las credenciales falla como en el driver (el panel lo da por «sin
+    // comprobar»); ping no lanza: motor caído.
+    demo.fallarProxima('readMailboxCredentials');
+    await assert.rejects(demo.readMailboxCredentials('ana@viejo.test'), codigo('engine_error'));
+    assert.equal(await aceptaEnMotor(demo, 'ana@viejo.test', CLAVE), true);
     demo.fallarProxima('ping');
     assert.equal((await demo.ping()).ok, false);
     assert.equal((await demo.ping()).ok, true);
@@ -599,7 +601,7 @@ describe('modo demostración tras reiniciar el panel (rutas reales)', () => {
     await createMailbox(ctx, domainId, 'luis');
 
     // El proceso nuevo comparte la base pero no la memoria del motor de demostración.
-    const motorDemo = getEngine() as DemoEngine;
+    const motorDemo = demoDelPanel();
     assert.equal(motorDemo.kind, 'demo');
     motorDemo.simularReinicio();
 
@@ -610,7 +612,7 @@ describe('modo demostración tras reiniciar el panel (rutas reales)', () => {
       payload: { password: 'Clave-Tras-Reinicio-1' },
     });
     assert.equal(clave.statusCode, 200, clave.body);
-    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, 'Clave-Tras-Reinicio-1'), true);
+    assert.equal(await aceptaEnMotor(motorDemo, `ana@${domain}`, 'Clave-Tras-Reinicio-1'), true);
 
     const alias = await ctx.app.inject({
       method: 'POST',
@@ -628,7 +630,7 @@ describe('modo demostración tras reiniciar el panel (rutas reales)', () => {
     });
     assert.equal(app.statusCode, 200, app.body);
     const creada = app.json() as { appPassword: { id: string }; password: string };
-    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, creada.password), true);
+    assert.equal(await aceptaEnMotor(motorDemo, `ana@${domain}`, creada.password), true);
 
     const revocar = await ctx.app.inject({
       method: 'DELETE',
@@ -636,6 +638,6 @@ describe('modo demostración tras reiniciar el panel (rutas reales)', () => {
       headers: { cookie: ctx.adminCookie },
     });
     assert.equal(revocar.statusCode, 200, revocar.body);
-    assert.equal(await motorDemo.verifyCredentials(`ana@${domain}`, creada.password), false);
+    assert.equal(await aceptaEnMotor(motorDemo, `ana@${domain}`, creada.password), false);
   });
 });

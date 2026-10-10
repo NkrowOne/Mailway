@@ -368,7 +368,13 @@ test('se reconoce la cuenta cuyo token usa el motor para renovar, aunque la conf
     `INSERT INTO cloudflare_accounts (id, client_id, label, token_enc, token_hint, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run('cf-otra', null, 'Otra cuenta', encryptSecret('otro-token-distinto'), 'into', now());
-  await getEngine().applyServerSettings({ 'acme.mailway.provider': 'cloudflare', 'acme.mailway.secret': CF_TOKEN });
+  await getEngine().configureAcme({
+    directory: 'https://acme-v02.api.letsencrypt.org/directory',
+    token: CF_TOKEN,
+    contact: 'postmaster@proveedor.test',
+    hostname: 'mail.proveedor.test',
+    zone: 'proveedor.test',
+  });
 
   const uso = async (id: string) => {
     const res = await ctx.app.inject({ method: 'GET', url: `/api/engine/acme/accounts/${id}`, headers: { cookie: ctx.adminCookie } });

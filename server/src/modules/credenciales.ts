@@ -187,6 +187,8 @@ interface FilaBuzon {
   email: string;
   /** Usuario del motor: la dirección salvo durante un cambio de dominio. */
   login: string;
+  /** Cambio de usuario a medias: no se sabe con qué nombre está en el motor. */
+  usuario_cambiando_a: string | null;
   status: 'active' | 'suspended';
   client_suspended: number;
 }
@@ -196,7 +198,7 @@ function datosBuzon(mailboxId: string): FilaBuzon | null {
     .prepare(
       `SELECT m.id, m.local_part || '@' || d.domain AS email,
          COALESCE(m.usuario_motor, m.local_part || '@' || d.domain) AS login,
-         m.status, c.suspended AS client_suspended
+         m.usuario_cambiando_a, m.status, c.suspended AS client_suspended
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id JOIN clients c ON c.id = d.client_id
        WHERE m.id = ?`,
     )
@@ -265,6 +267,11 @@ export async function comprobarContrasenaBuzon(
   const copia = descifrarCopia(fila);
   if (copia && verifySha512Crypt(password, copia.hash)) return 'principal';
   if (coincideConAplicacion(buzon.id, password, false)) return 'aplicacion';
+
+  // Con un cambio de usuario a medias no se pregunta al motor: con el nombre
+  // equivocado diría que no existe. Hasta que el conciliador lo resuelva vale
+  // la copia local.
+  if (buzon.usuario_cambiando_a) return copia ? 'incorrecta' : 'sin_respuesta';
 
   let delMotor: string | null = null;
   try {
