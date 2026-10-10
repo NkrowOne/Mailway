@@ -15,6 +15,9 @@
 #   sudo bash deploy/instalar.sh --probar-acceso # abrir un buzón desde el webmail
 #   sudo bash deploy/instalar.sh --emparejar     # repetir solo el emparejado con Skyway
 #   sudo bash deploy/instalar.sh --migrar-motor  # pasar de Stalwart 0.15 a 0.16 (con vuelta atrás)
+#   sudo bash deploy/instalar.sh --activar-bulwark     # correo web «beta» por cliente (Stalwart 0.16)
+#   sudo bash deploy/instalar.sh --desactivar-bulwark  # sin borrar sus datos
+#   sudo bash deploy/instalar.sh --estado-bulwark      # solo lectura
 #   bash deploy/instalar.sh --ayuda
 #
 # Ejecución desatendida: todas las preguntas se pueden responder con
@@ -36,6 +39,18 @@ IMAGEN_CURL="curlimages/curl:8.11.1"
 # compose la usa para que Compose lo recree cuando cambia mailway.php.
 MAILWAY_ROUNDCUBE_CONFIG_HASH=$(sha256sum "$DEPLOY_DIR/roundcube/mailway.php" 2>/dev/null | cut -c1-16 || true)
 export MAILWAY_ROUNDCUBE_CONFIG_HASH
+# Huella de una carpeta (nombres y contenido de sus ficheros) para las
+# etiquetas de los compose: las pasarelas (nginx) no releen su configuración
+# y Bulwark (Next.js) solo sirve los ficheros de su marca que había al
+# arrancar. Si cambia tras un «git pull», Compose recrea el contenedor.
+huella_carpeta() {
+  { (cd "$1" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum) 2>/dev/null || true; } |
+    sha256sum | cut -c1-16
+}
+MAILWAY_MAIL_GW_HASH=$(huella_carpeta "$DEPLOY_DIR/motor/pasarela")
+MAILWAY_BULWARK_GW_HASH=$(huella_carpeta "$DEPLOY_DIR/bulwark/nginx")
+MAILWAY_BULWARK_MARCA_HASH=$(huella_carpeta "$DEPLOY_DIR/bulwark/marca/mailway")
+export MAILWAY_MAIL_GW_HASH MAILWAY_BULWARK_GW_HASH MAILWAY_BULWARK_MARCA_HASH
 IMAGEN_JQ="ghcr.io/jqlang/jq:1.7.1"
 # Motor de correo (MAILWAY_MOTOR en deploy/.env): elige el fichero
 # motor/<motor>/compose.yml que completa el servicio mailway-mail.
@@ -48,6 +63,13 @@ FIN_SOPORTE_015="2026-12-01"
 FIN_SOPORTE_015_TEXTO="1 de diciembre de 2026"
 # Diagnóstico del webmail: deploy/roundcube/diagnostico, que los compose montan en /opt/mailway.
 COMPROBAR_PHP="/opt/mailway/comprobar.php"
+# Bulwark, el correo web «beta» por cliente (perfil «bulwark» de los compose,
+# deploy/bulwark/README.md): lo que recibe el panel mientras está activo
+# (MAILWAY_BULWARK_URL y MAILWAY_BULWARK_BACKEND_URL; contrato con el panel,
+# server/src/config.ts) y sus volúmenes.
+BULWARK_URL_PANEL="http://mailway-bulwark:3000"
+BULWARK_DESTINO_TRAEFIK="http://mailway-bulwark-gw:8080"
+BULWARK_VOLUMENES=(mailway-bulwark-ajustes mailway-bulwark-admin mailway-bulwark-estado)
 LE_DIRECTORIO="https://acme-v02.api.letsencrypt.org/directory"
 
 CON_SKYWAY=1
@@ -59,6 +81,9 @@ EMPAREJAR=0
 MIGRAR_MOTOR=0
 REVERTIR_MOTOR=0
 RETIRAR_MOTOR_ANTERIOR=0
+# --activar-bulwark, --desactivar-bulwark o --estado-bulwark: activar,
+# desactivar o estado.
+BULWARK_ORDEN=""
 # -y: sin confirmación en las órdenes del motor (las demás no preguntan nada
 # que no se pueda responder con variables de entorno).
 SIN_CONFIRMAR=0
@@ -179,6 +204,16 @@ Opciones:
   --retirar-motor-anterior
                     Borra el volumen de Stalwart 0.15 que la migración conserva como vuelta
                     atrás. Pide escribir su nombre. Sin vuelta atrás.
+  --activar-bulwark Activa Bulwark, el correo web «beta» que el panel ofrece por cliente
+                    (Roundcube sigue siendo el predeterminado). Solo con Stalwart 0.16: con la
+                    0.15 se niega sin cambiar nada. Genera una vez sus dos secretos, levanta
+                    Bulwark y su pasarela (perfil «bulwark») y da al panel sus variables; el
+                    resto, como --actualizar. Ninguna actualización lo activa sola.
+  --desactivar-bulwark
+                    Lo desactiva: retira sus contenedores y las variables del panel (sus
+                    clientes vuelven a Roundcube). Conserva sus volúmenes y sus secretos.
+  --estado-bulwark  Si está activo, sus contenedores, sus volúmenes y lo que recibe el panel.
+                    No cambia nada.
   -y, --si          Sin confirmación en --migrar-motor y --revertir-motor (en
                     --retirar-motor-anterior, además MAILWAY_RETIRAR_VOLUMEN=<volumen>).
   --ayuda           Muestra esta ayuda.
@@ -274,6 +309,9 @@ while [ $# -gt 0 ]; do
     --migrar-motor) MIGRAR_MOTOR=1 ;;
     --revertir-motor) REVERTIR_MOTOR=1 ;;
     --retirar-motor-anterior) RETIRAR_MOTOR_ANTERIOR=1 ;;
+    --activar-bulwark) BULWARK_ORDEN=activar ;;
+    --desactivar-bulwark) BULWARK_ORDEN=desactivar ;;
+    --estado-bulwark) BULWARK_ORDEN=estado ;;
     -y | --si | --yes) SIN_CONFIRMAR=1 ;;
     --ayuda | -h | --help)
       ayuda
@@ -284,8 +322,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO + EMPAREJAR + MIGRAR_MOTOR + REVERTIR_MOTOR + RETIRAR_MOTOR_ANTERIOR))" -gt 1 ]; then
-  fallo "Las opciones --actualizar, --comprobar, --probar-acceso, --emparejar, --migrar-motor, --revertir-motor y --retirar-motor-anterior no se combinan: usa una."
+ORDEN_BULWARK=0
+if [ -n "$BULWARK_ORDEN" ]; then ORDEN_BULWARK=1; fi
+if [ "$((ACTUALIZAR + COMPROBAR + PROBAR_ACCESO + EMPAREJAR + MIGRAR_MOTOR + REVERTIR_MOTOR + RETIRAR_MOTOR_ANTERIOR + ORDEN_BULWARK))" -gt 1 ]; then
+  fallo "Las opciones --actualizar, --comprobar, --probar-acceso, --emparejar, --migrar-motor, --revertir-motor, --retirar-motor-anterior y las de Bulwark no se combinan: usa una."
 fi
 if [ "$SIN_CONFIRMAR" = 1 ] && [ "$((MIGRAR_MOTOR + REVERTIR_MOTOR + RETIRAR_MOTOR_ANTERIOR))" = 0 ]; then
   fallo "-y solo sirve con --migrar-motor, --revertir-motor o --retirar-motor-anterior."
@@ -293,6 +333,9 @@ fi
 if [ "$EMPAREJAR" = 1 ] && [ "$CON_SKYWAY" = 0 ]; then
   fallo "El emparejado solo existe junto a Skyway: --emparejar no se combina con --sin-skyway."
 fi
+# Activar o desactivar Bulwark es una actualización con ese cambio en
+# deploy/.env: tampoco pregunta nada.
+if [ "$BULWARK_ORDEN" = activar ] || [ "$BULWARK_ORDEN" = desactivar ]; then ACTUALIZAR=1; fi
 # --emparejar usa lo que ya está en deploy/.env: no pregunta nada.
 if [ "$ACTUALIZAR" = 1 ] || [ "$EMPAREJAR" = 1 ]; then INTERACTIVO=0; fi
 if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ] && [ ! -f "$MAILWAY_COMPOSE_EXTRA" ]; then
@@ -713,11 +756,14 @@ resuelve_a() {
 # que elige motor/<motor>/compose.yml) se pasa siempre: es el que ha decidido
 # el instalador, nunca uno que llegue exportado. MAILWAY_COMPOSE_EXTRA añade
 # un fichero que se aplica encima (ajustes locales; la prueba de la pila de la
-# CI lo usa para la CA de laboratorio).
+# CI lo usa para la CA de laboratorio). Con Bulwark activo (y solo entonces),
+# el perfil «bulwark»: así cualquier «up» lo levanta y ninguno lo crea sin
+# que se haya pedido.
 compose() {
   local ficheros=(-f "$COMPOSE_MAIL")
   if [ "$CON_SKYWAY" = 0 ]; then ficheros=(-f "$COMPOSE_SOLO"); fi
   if [ -n "${MAILWAY_COMPOSE_EXTRA:-}" ]; then ficheros+=(-f "$MAILWAY_COMPOSE_EXTRA"); fi
+  if bulwark_activo; then ficheros+=(--profile bulwark); fi
   env -u LETSENCRYPT_EMAIL MAILWAY_MOTOR="${MOTOR:-$MOTOR_015}" docker compose --env-file "$ENV_FILE" "${ficheros[@]}" "$@"
 }
 
@@ -1342,6 +1388,7 @@ escribir_env() {
     if [ -n "$MAILWAY_MAIL_VOLUME" ]; then linea_env MAILWAY_MAIL_VOLUME "$MAILWAY_MAIL_VOLUME"; fi
     if [ -n "$MAILWAY_WEBMAIL_DB_VOLUME" ]; then linea_env MAILWAY_WEBMAIL_DB_VOLUME "$MAILWAY_WEBMAIL_DB_VOLUME"; fi
     if [ -n "$MAILWAY_PANEL_VOLUME" ]; then linea_env MAILWAY_PANEL_VOLUME "$MAILWAY_PANEL_VOLUME"; fi
+    escribir_env_bulwark
   } >"$tmp"
 
   # Las claves añadidas a mano se conservan.
@@ -1349,7 +1396,8 @@ escribir_env() {
   claves+=" MAILWAY_ADMIN_EMAIL MAILWAY_MOTOR MAILWAY_STALWART_ETC_VOLUME MAILWAY_STALWART_DATA_VOLUME MAILWAY_MOTOR_MIGRADO"
   claves+=" STALWART_ADMIN_PASSWORD ROUNDCUBE_DES_KEY MAILWAY_PANEL_URL MAILWAY_WEBMAIL_URL MAILWAY_PANEL_INTERNAL_URL"
   claves+=" MAILWAY_SECRET MAILWAY_SETUP_TOKEN MAILWAY_TRAEFIK_TOKEN MAILWAY_WEBMAIL_TOKEN MAILWAY_INTERNAL_SUBNET"
-  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME "
+  claves+=" MAILWAY_MAIL_INTERNAL_IP TRAEFIK_ACME_VOLUME MAILWAY_MAIL_VOLUME MAILWAY_WEBMAIL_DB_VOLUME MAILWAY_PANEL_VOLUME"
+  claves+=" MAILWAY_BULWARK BULWARK_SESSION_SECRET BULWARK_ADMIN_PASSWORD MAILWAY_BULWARK_URL MAILWAY_BULWARK_BACKEND_URL "
   if [ -f "$ENV_FILE" ]; then
     local extra=""
     while IFS= read -r linea || [ -n "$linea" ]; do
@@ -1373,6 +1421,30 @@ escribir_env() {
   ENV_TMP=""
   umask "$umask_previa"
   ok "Escrito $ENV_FILE (permisos 600)."
+}
+
+# Bloque de Bulwark de deploy/.env. Los secretos se escriben siempre que
+# existan (también desactivado: activarlo de nuevo recupera las sesiones, los
+# ajustes de los usuarios y la administración); si esta ejecución no los ha
+# leído, los de deploy/.env, para no perderlos nunca. Las dos direcciones del
+# panel, solo mientras está activo: el compose autónomo se las pasa al panel
+# (vacías, el panel no ofrece Bulwark).
+escribir_env_bulwark() {
+  local pedido=${MAILWAY_BULWARK-$(leer_env MAILWAY_BULWARK)} sesion admin
+  sesion=${BULWARK_SESSION_SECRET:-$(leer_env BULWARK_SESSION_SECRET)}
+  admin=${BULWARK_ADMIN_PASSWORD:-$(leer_env BULWARK_ADMIN_PASSWORD)}
+  [ -n "$pedido$sesion$admin" ] || return 0
+  printf '\n# Bulwark, el correo web «beta» por cliente (necesita Stalwart 0.16): sudo mailway bulwark on|off.\n'
+  printf '# Desactivarlo conserva estos secretos y sus volúmenes. Cambiar BULWARK_SESSION_SECRET cierra las\n'
+  printf '# sesiones y deja ilegibles los ajustes sincronizados; BULWARK_ADMIN_PASSWORD la comparte el panel.\n'
+  if [ -n "$pedido" ]; then linea_env MAILWAY_BULWARK "$pedido"; fi
+  if [ -n "$sesion" ]; then linea_env BULWARK_SESSION_SECRET "$sesion"; fi
+  if [ -n "$admin" ]; then linea_env BULWARK_ADMIN_PASSWORD "$admin"; fi
+  if [ "$pedido" = 1 ] && [ "${MOTOR:-}" = "$MOTOR_016" ]; then
+    printf '# Lo que recibe el panel mientras Bulwark está activo (las escribe el instalador).\n'
+    linea_env MAILWAY_BULWARK_URL "$BULWARK_URL_PANEL"
+    linea_env MAILWAY_BULWARK_BACKEND_URL "$BULWARK_DESTINO_TRAEFIK"
+  fi
 }
 
 # ------------------------------------------------------------------- DNS --
@@ -1591,6 +1663,189 @@ comprobar_ptr() {
   fi
 }
 
+# ---------------------------------------------------------------- Bulwark --
+#
+# Bulwark (deploy/bulwark/README.md) es el correo web «beta» que el panel
+# ofrece por cliente; Roundcube sigue siendo el predeterminado. Lo decide
+# MAILWAY_BULWARK en deploy/.env: 1 activo, 0 o nada desactivado. Solo se
+# cambia con --activar-bulwark y --desactivar-bulwark (sudo mailway bulwark
+# on|off): una actualización nunca lo activa sola. Necesita Stalwart 0.16: con
+# la 0.15, --activar-bulwark se niega y cualquier otra orden lo deja
+# desactivado. Desactivarlo retira sus contenedores y las variables del panel,
+# pero conserva sus volúmenes y sus secretos.
+
+# ¿Activo y posible? Se lee deploy/.env en cada llamada: las órdenes del motor
+# cambian MOTOR y deploy/.env sobre la marcha.
+bulwark_activo() { [ "${MOTOR:-}" = "$MOTOR_016" ] && [ "$(leer_env MAILWAY_BULWARK)" = 1 ]; }
+
+# Lo que pide deploy/.env, comprobado contra el motor, y sus dos secretos
+# (generados una sola vez; nunca se muestran). Con la 0.15, o sin secretos
+# válidos, queda desactivado y lo dice: escribir_env guarda el resultado.
+preparar_bulwark() {
+  MAILWAY_BULWARK=$(leer_env MAILWAY_BULWARK)
+  BULWARK_SESSION_SECRET=$(leer_env BULWARK_SESSION_SECRET)
+  BULWARK_ADMIN_PASSWORD=$(leer_env BULWARK_ADMIN_PASSWORD)
+  case "$MAILWAY_BULWARK" in
+    1) ;;
+    '' | 0) return 0 ;;
+    *)
+      aviso "MAILWAY_BULWARK no es válido en $ENV_FILE (1 lo activa y 0 lo desactiva): Bulwark queda desactivado."
+      MAILWAY_BULWARK=0
+      return 0
+      ;;
+  esac
+  titulo "Bulwark (correo web beta)"
+  if [ "$MOTOR" != "$MOTOR_016" ]; then
+    aviso "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: queda desactivado (MAILWAY_BULWARK=0). Tras migrar el motor (sudo mailway migrar-motor), actívalo con sudo mailway bulwark on."
+    MAILWAY_BULWARK=0
+    return 0
+  fi
+  if [ -z "$BULWARK_SESSION_SECRET" ]; then
+    # Cifra las sesiones y los ajustes sincronizados: uno nuevo deja
+    # ilegibles los que hubiera.
+    if volumen_con_datos mailway-bulwark-ajustes; then
+      aviso "$ENV_FILE no guarda BULWARK_SESSION_SECRET y Bulwark ya tiene ajustes de usuarios: con el secreto nuevo, esos ajustes no se podrán leer y las sesiones abiertas se cierran."
+    fi
+    BULWARK_SESSION_SECRET=$(aleatorio_hex 32)
+    ok "Secreto de sesión de Bulwark generado (se guarda en $ENV_FILE)."
+  elif [ "${#BULWARK_SESSION_SECRET}" -lt 32 ] || tiene_control "$BULWARK_SESSION_SECRET"; then
+    aviso "BULWARK_SESSION_SECRET de $ENV_FILE tiene menos de 32 caracteres: Bulwark queda desactivado. Pon uno largo (openssl rand -hex 32) y repite con sudo mailway bulwark on (cambiarlo cierra las sesiones y deja ilegibles los ajustes sincronizados)."
+    MAILWAY_BULWARK=0
+    return 0
+  fi
+  if [ -z "$BULWARK_ADMIN_PASSWORD" ]; then
+    # La del panel, si ya la tiene (Bulwark guarda su hash en el primer
+    # arranque y después ignora la variable).
+    BULWARK_ADMIN_PASSWORD=$(valor_panel MAILWAY_BULWARK_ADMIN_PASSWORD)
+    if [ -n "$BULWARK_ADMIN_PASSWORD" ]; then
+      ok "Se reutiliza la contraseña de administración de Bulwark que ya usa el panel."
+    else
+      BULWARK_ADMIN_PASSWORD=$(aleatorio_hex 24)
+      ok "Contraseña de administración de Bulwark generada (solo la conocen el panel y Bulwark)."
+      olvidar_admin_bulwark
+    fi
+  fi
+  ok "Bulwark activo: lo levanta el perfil «bulwark» y el panel recibe sus variables."
+}
+
+# ¿Existe el volumen y tiene algo dentro? (Se mira desde un contenedor
+# efímero sin red: el volumen es de root.)
+volumen_con_datos() {
+  docker volume inspect "$1" >/dev/null 2>&1 || return 1
+  [ -n "$(docker run --rm --network none -v "$1:/v:ro" "$(imagen_compose "$COMPOSE_MAIL" 'python:')" \
+    find /v -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
+}
+
+# Con una contraseña de administración nueva, el admin.json que guardó Bulwark
+# en su primer arranque (con el hash de la anterior) se retira: si no, Bulwark
+# seguiría con la anterior y el panel no entraría (bulwark_credenciales).
+olvidar_admin_bulwark() {
+  docker volume inspect mailway-bulwark-admin >/dev/null 2>&1 || return 0
+  if docker run --rm --network none -v mailway-bulwark-admin:/a "$(imagen_compose "$COMPOSE_MAIL" 'python:')" \
+    sh -c 'if [ -f /a/admin.json ]; then rm -f /a/admin.json && echo retirado; fi' 2>/dev/null | grep -q retirado; then
+    info "Retirado el admin.json anterior de Bulwark: al arrancar tomará la contraseña nueva."
+  fi
+  return 0
+}
+
+# Bulwark desactivado (o con Stalwart 0.15): fuera sus contenedores, si los
+# hay, sin tocar sus volúmenes.
+retirar_bulwark() {
+  local c hay=0
+  for c in mailway-bulwark mailway-bulwark-gw; do
+    if docker inspect --type container "$c" >/dev/null 2>&1; then hay=1; fi
+  done
+  [ "$hay" = 1 ] || return 0
+  if compose_q --profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw; then
+    ok "Bulwark desactivado: contenedores retirados; sus volúmenes (${BULWARK_VOLUMENES[*]}) y sus secretos se conservan."
+  else
+    aviso "No se pudieron retirar los contenedores de Bulwark. A mano: docker rm -f mailway-bulwark mailway-bulwark-gw"
+  fi
+}
+
+# Espera a que Bulwark y su pasarela estén sanos, si está activo.
+comprobar_bulwark_levantado() {
+  bulwark_activo || return 0
+  if esperar_sano mailway-bulwark 180 && esperar_sano mailway-bulwark-gw 60; then
+    ok "Bulwark en marcha (mailway-bulwark y su pasarela, mailway-bulwark-gw)."
+  else
+    aviso "Bulwark aún no está sano. Revisa: docker logs mailway-bulwark y docker logs mailway-bulwark-gw"
+  fi
+}
+
+# --activar-bulwark y --desactivar-bulwark: el cambio en deploy/.env y, a
+# continuación, la actualización de siempre (--actualizar), que levanta o
+# retira los contenedores y pone o quita las variables del panel. Con la 0.15,
+# activarlo se niega sin cambiar nada.
+cambiar_bulwark() {
+  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
+  tomar_cerrojo_motor
+  MOTOR=$(motor_configurado)
+  if [ "$1" = activar ]; then
+    if [ "$MOTOR" != "$MOTOR_016" ]; then
+      fallo "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: no se ha cambiado nada. Pasa antes a la 0.16 (con vuelta atrás si algo falla) con sudo mailway migrar-motor y después activa Bulwark con sudo mailway bulwark on."
+    fi
+    fijar_en_env MAILWAY_BULWARK 1
+    info "Activando Bulwark (MAILWAY_BULWARK=1 en $ENV_FILE); a continuación se aplica como --actualizar."
+  else
+    fijar_en_env MAILWAY_BULWARK 0
+    info "Desactivando Bulwark (MAILWAY_BULWARK=0 en $ENV_FILE): sus clientes vuelven a Roundcube; sus volúmenes y sus secretos se conservan."
+  fi
+  MOTOR=""
+}
+
+# --estado-bulwark: solo lectura.
+estado_bulwark() {
+  local pedido c estado panel v vols="" fallos=0
+  pedido=$(leer_env MAILWAY_BULWARK)
+  titulo "Bulwark (correo web beta)"
+  if bulwark_activo; then
+    ok "Activo (MAILWAY_BULWARK=1, $(nombre_motor "$MOTOR"))."
+  elif [ "$pedido" = 1 ]; then
+    aviso "MAILWAY_BULWARK=1, pero el motor es $(nombre_motor "$MOTOR"): Bulwark necesita la 0.16."
+    fallos=$((fallos + 1))
+  else
+    info "Desactivado. Para activarlo (con Stalwart 0.16): sudo mailway bulwark on"
+  fi
+  for c in mailway-bulwark mailway-bulwark-gw; do
+    estado=$(estado_contenedor "$c")
+    if bulwark_activo; then
+      if [ "$estado" = healthy ]; then ok "$c: en marcha y sano."; else
+        aviso "$c: $estado. Revisa: docker logs $c"
+        fallos=$((fallos + 1))
+      fi
+    elif [ "$estado" != ausente ]; then
+      aviso "$c: $estado, con Bulwark desactivado. Lo retira sudo mailway update -y --reaplicar."
+    fi
+  done
+  for v in "${BULWARK_VOLUMENES[@]}"; do
+    if docker volume inspect "$v" >/dev/null 2>&1; then vols+=" $v"; fi
+  done
+  if [ -n "$vols" ]; then info "Volúmenes:$vols"; else info "Sin volúmenes de Bulwark."; fi
+  if [ -n "$(leer_env BULWARK_SESSION_SECRET)" ] && [ -n "$(leer_env BULWARK_ADMIN_PASSWORD)" ]; then
+    info "Secretos: en $ENV_FILE (BULWARK_SESSION_SECRET y BULWARK_ADMIN_PASSWORD)."
+  elif bulwark_activo; then
+    aviso "Faltan sus secretos en $ENV_FILE: repite sudo mailway bulwark on."
+    fallos=$((fallos + 1))
+  fi
+  # Qué tiene el panel (solo si las variables están, nunca sus valores).
+  panel=$(contenedor_panel_conocido)
+  if en_marcha "$panel"; then
+    v=$(entorno_contenedor "$panel" | grep -cE '^MAILWAY_BULWARK_(URL|ADMIN_PASSWORD|BACKEND_URL)=.' || true)
+    if bulwark_activo && [ "$v" != 3 ]; then
+      aviso "El panel ($panel) no tiene las tres variables de Bulwark: no lo ofrece. Repite sudo mailway update -y --reaplicar (junto a Skyway, redespliega el panel)."
+      fallos=$((fallos + 1))
+    elif bulwark_activo; then
+      ok "El panel ($panel) tiene las variables de Bulwark."
+    elif [ "$v" != 0 ]; then
+      aviso "El panel ($panel) aún tiene variables de Bulwark: repite sudo mailway update -y --reaplicar."
+    fi
+  else
+    info "El panel ($panel) no está en marcha en este servidor: no se comprueban sus variables."
+  fi
+  return "$fallos"
+}
+
 # ------------------------------------------------------------ contenedores --
 
 levantar_servicios() {
@@ -1625,11 +1880,17 @@ levantar_servicios() {
   fi
   ok "Motor en marcha (mailway-mail, $(nombre_motor "$MOTOR"))."
   compose_q ${perfiles[@]+"${perfiles[@]}"} up -d --remove-orphans
+  if esperar_sano mailway-mail-gw 60; then
+    ok "Pasarela del motor en marcha (mailway-mail-gw): Traefik llega al motor por ella."
+  else
+    aviso "La pasarela del motor aún no está sana: sin ella, https://$MAIL_HOSTNAME no responde. Revisa: docker logs mailway-mail-gw"
+  fi
   if esperar_sano mailway-webmail 180; then
     ok "Webmail en marcha (mailway-webmail)."
   else
     aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
   fi
+  comprobar_bulwark_levantado
   if [ "$CON_SKYWAY" = 0 ]; then
     if esperar_sano mailway-panel 120; then ok "Panel en marcha (mailway-panel)."; else aviso "El panel aún no está sano. Revisa: docker logs mailway-panel"; fi
   fi
@@ -2630,6 +2891,16 @@ desplegar_en_skyway() {
     "MAILWAY_PANEL_URL=https://$PANEL_HOSTNAME" \
     "MAILWAY_ENGINE_TRUSTED_NETWORK=$INTERNAL_SUBNET")
   [ -n "$variables" ] || fallo "No se pudieron preparar las variables del panel."
+  # Bulwark: sus tres variables mientras está activo; desactivado, se quitan
+  # (el panel deja de ofrecerlo y sus clientes vuelven a Roundcube).
+  local bulwark=false
+  if bulwark_activo; then
+    bulwark=true
+    variables=$(printf '%s\n%s' "$variables" "$(env_json "MAILWAY_BULWARK_URL=$BULWARK_URL_PANEL" \
+      "MAILWAY_BULWARK_ADMIN_PASSWORD=${BULWARK_ADMIN_PASSWORD:-$(leer_env BULWARK_ADMIN_PASSWORD)}" \
+      "MAILWAY_BULWARK_BACKEND_URL=$BULWARK_DESTINO_TRAEFIK")" | jqr -s -c 'add' 2>/dev/null || true)
+    [ -n "$variables" ] || fallo "No se pudieron preparar las variables de Bulwark para el panel."
+  fi
 
   local despliegue_inicial
   if [ -z "$servicio" ]; then
@@ -2660,9 +2931,10 @@ desplegar_en_skyway() {
     # anterior a la 1.0 los guarda en /data y en su base de datos) no se
     # añaden. Con otra clave perdería sus secretos y sus tokens; con otro
     # token, quien consulta sus rutas de Traefik dejaría de tener acceso.
-    fusion=$(printf '%s\n%s' "$RESP_BODY" "$variables" | jqr -s -c --argjson retirar "$retirar" \
+    fusion=$(printf '%s\n%s' "$RESP_BODY" "$variables" | jqr -s -c --argjson retirar "$retirar" --argjson bulwark "$bulwark" \
       '(.[0].vars // {}) as $antes | {vars: (reduce ("MAILWAY_SECRET", "MAILWAY_TRAEFIK_TOKEN") as $k
-        ($antes + .[1] | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end;
+        ($antes + .[1] | if $retirar then del(.MAILWAY_SMTP_ALLOW_SELF_SIGNED) else . end
+          | if $bulwark then . else del(.MAILWAY_BULWARK_URL, .MAILWAY_BULWARK_ADMIN_PASSWORD, .MAILWAY_BULWARK_BACKEND_URL) end;
           if ($antes | has($k)) then .[$k] = $antes[$k] else del(.[$k]) end))}' \
       2>/dev/null || true)
     [ -n "$fusion" ] || fallo "Respuesta inesperada de Skyway al leer las variables del panel."
@@ -2686,6 +2958,11 @@ desplegar_en_skyway() {
     fi
     if [ "$retirar" = true ] && [ -n "$(campo_json '.vars.MAILWAY_SMTP_ALLOW_SELF_SIGNED // empty')" ]; then
       info "Se retira MAILWAY_SMTP_ALLOW_SELF_SIGNED: el motor ya tiene certificado y el panel lo verifica."
+    fi
+    if [ "$bulwark" = false ] && [ -n "$(campo_json '.vars | keys[] | select(startswith("MAILWAY_BULWARK_"))')" ]; then
+      info "Se retiran las variables de Bulwark del panel (desactivado): sus clientes vuelven a Roundcube."
+    elif [ "$bulwark" = true ]; then
+      info "El panel recibe las variables de Bulwark (MAILWAY_BULWARK_URL, MAILWAY_BULWARK_ADMIN_PASSWORD y MAILWAY_BULWARK_BACKEND_URL)."
     fi
     sky_api PUT "/api/services/$servicio_id/env" "$fusion"
     [ "$RESP_CODE" = "200" ] || fallo "No se pudieron actualizar las variables del panel: $(sky_error)."
@@ -3379,6 +3656,16 @@ resumen() {
   info "Puerto 25 de salida: $RESUMEN_P25"
   info "Certificado IMAP/SMTP: $RESUMEN_CERT"
   if [ "$MOTOR" = "$MOTOR_016" ] && [ -n "$RESUMEN_AJUSTES" ]; then info "Ajustes de Mailway en el motor: $RESUMEN_AJUSTES"; fi
+  if bulwark_activo; then
+    info "Bulwark (beta):      activo; cada cliente lo elige en el panel (Roundcube sigue siendo el predeterminado)"
+    if [ "$CON_SKYWAY" = 1 ] && [ -z "$PANEL_CONTENEDOR" ]; then
+      # Sin el despliegue del panel, nadie le ha dado sus variables.
+      info "                     el panel necesita sus tres variables (sin ellas no lo ofrece): MAILWAY_BULWARK_URL y"
+      info "                     MAILWAY_BULWARK_BACKEND_URL de deploy/.env, y MAILWAY_BULWARK_ADMIN_PASSWORD = BULWARK_ADMIN_PASSWORD"
+    fi
+  elif [ "$MOTOR" = "$MOTOR_016" ]; then
+    info "Bulwark (beta):      desactivado (sudo mailway bulwark on para ofrecerlo a los clientes)"
+  fi
   printf '\n'
   if [ "$MOTOR" = "$MOTOR_015" ]; then
     info "Motor de correo: Stalwart 0.15, que deja de recibir parches de seguridad el $FIN_SOPORTE_015_TEXTO."
@@ -3393,6 +3680,12 @@ resumen() {
   info "Copia de seguridad del correo (detiene el motor unos segundos: copiar su base de datos en marcha"
   info "puede dejarla incoherente):"
   info "  $copia"
+  if bulwark_activo || docker volume inspect mailway-bulwark-admin >/dev/null 2>&1; then
+    # Ajustes de los usuarios (cifrados con BULWARK_SESSION_SECRET, que está
+    # en deploy/.env: guárdalo con la copia), administración y marca.
+    info "Copia de Bulwark (sus tres volúmenes; detiene Bulwark unos segundos):"
+    info "  docker stop mailway-bulwark; docker run --rm -v mailway-bulwark-ajustes:/origen/ajustes:ro -v mailway-bulwark-admin:/origen/admin:ro -v mailway-bulwark-estado:/origen/estado:ro -v /root/copias:/destino alpine tar czf /destino/mailway-bulwark-\$(date +%F).tar.gz -C /origen . ; docker start mailway-bulwark"
+  fi
   printf '\n'
   info "Actualizar Mailway (git pull y reaplicar):        mailway update -y"
   info "Parches probados cada noche, con vuelta atrás:     sudo mailway auto-update on"
@@ -3861,9 +4154,13 @@ parar_015() {
   MIG_HORA_PARADA=$(date '+%H:%M')
   if en_marcha mailway-webmail; then docker stop -t 30 mailway-webmail >/dev/null; fi
   if en_marcha mailway-certs-dumper; then docker stop -t 30 mailway-certs-dumper >/dev/null; fi
+  # La pasarela del motor busca «mailway-mail» por su nombre, y los motores
+  # temporales lo llevan (en la red de Traefik, para el panel): parada, ningún
+  # visitante llega a ellos. La recuperan el motor definitivo o la vuelta atrás.
+  if en_marcha mailway-mail-gw; then docker stop -t 10 mailway-mail-gw >/dev/null; fi
   # Con tiempo: RocksDB debe quedar cerrada limpia antes de copiarla.
   docker stop -t 120 mailway-mail >/dev/null
-  ok "Webmail, extractor y motor 0.15 parados ($MIG_HORA_PARADA)."
+  ok "Webmail, extractor, pasarela y motor 0.15 parados ($MIG_HORA_PARADA)."
 }
 
 # Copia de los datos de la 0.15 a los volúmenes nuevos de la 0.16 (la 0.15 se
@@ -4023,6 +4320,9 @@ definitivo_016() {
   compose_q up -d --remove-orphans || fallo "Compose no ha podido arrancar el webmail."
   compose_q --profile tls up -d certs-dumper || fallo "No se pudo arrancar el extractor del certificado."
   esperar_sano mailway-webmail 180 || fallo "El webmail no vuelve a estar sano. Revisa: docker logs mailway-webmail"
+  # La pasarela arranca con el «up» de arriba: hasta que su comprobación de
+  # salud pasa, la comprobación final la daría por caída y volvería atrás.
+  esperar_sano mailway-mail-gw 60 || fallo "La pasarela del motor no arranca. Revisa: docker logs mailway-mail-gw"
   titulo "Comprobación final (la de sudo mailway comprobar)"
   if [ "$MIG_CERT_015" = 0 ]; then TOLERAR_CERTIFICADO=1; fi
   comprobar_instalacion || fallo "La comprobación final no pasa (detalle arriba)."
@@ -4070,6 +4370,7 @@ volver_a_015() {
     docker rm -f mailway-certs-dumper >/dev/null 2>&1
   fi
   if esperar_sano mailway-webmail 180; then ok "Webmail en marcha."; else aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"; fi
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
   desactivar_mantenimiento || fallos=$((fallos + 1))
   limpiar_trabajo_migracion
   printf '\n'
@@ -4176,6 +4477,14 @@ revertir_motor() {
   fijar_en_env MAILWAY_MOTOR_MIGRADO ""
   MAILWAY_MOTOR_MIGRADO=""
   ok "Stalwart 0.15 en marcha sobre su volumen ($vol)."
+  # Bulwark necesita la 0.16: queda desactivado, con sus volúmenes y secretos.
+  # El panel lo deja de ofrecer solo (el motor ya no es la 0.16); en la
+  # instalación autónoma, el «up» de abajo lo recrea sin sus variables.
+  if [ "$(leer_env MAILWAY_BULWARK)" = 1 ] || docker inspect --type container mailway-bulwark >/dev/null 2>&1; then
+    fijar_en_env MAILWAY_BULWARK 0 MAILWAY_BULWARK_URL "" MAILWAY_BULWARK_BACKEND_URL ""
+    retirar_bulwark
+    aviso "Bulwark necesita Stalwart 0.16: queda desactivado (sus volúmenes y sus secretos se conservan). Tras migrar de nuevo, sudo mailway bulwark on."
+  fi
   compose_q up -d --remove-orphans || aviso "Compose no ha podido arrancar el webmail."
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
     :
@@ -4186,6 +4495,7 @@ revertir_motor() {
     arrancar_extractor || aviso "No se pudo arrancar el extractor del certificado."
   fi
   esperar_sano mailway-webmail 180 || aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
+  esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
   if [ "$panel_listo" = 1 ]; then
     titulo "Panel"
     if herramienta_motor "$PANEL_MOTOR" 900 provisionar && [ "$(hm_campo '.ok')" = true ]; then
@@ -4292,10 +4602,11 @@ ejecutar_comprobacion() {
 # Ajustes del motor 0.16 que necesita Mailway, con UNA sola petición JMAP
 # autenticada (cada contraseña incorrecta cuenta para el bloqueo automático):
 # nombre del servidor, X-Forwarded-For, exención de la red interna, la escucha
-# del 587 con STARTTLS y el certificado. Devuelve el número de incidencias.
+# del 587 con STARTTLS y el certificado; con Bulwark, además, el HTTPS
+# interno (443) y la caducidad del bloqueo. Devuelve el número de incidencias.
 comprobar_motor_016() {
   local incidencias=0 nombre certificado
-  jmap_motor "$(jmap_cuerpo '[["x:SystemSettings/get",{"ids":["singleton"],"properties":["defaultHostname","defaultCertificateId"]},"s"],["x:Http/get",{"ids":["singleton"],"properties":["useXForwarded"]},"h"],["x:AllowedIp/query",{},"aq"],["x:AllowedIp/get",{"#ids":{"resultOf":"aq","name":"x:AllowedIp/query","path":"/ids"},"properties":["address"]},"a"],["x:NetworkListener/query",{},"lq"],["x:NetworkListener/get",{"#ids":{"resultOf":"lq","name":"x:NetworkListener/query","path":"/ids"},"properties":["protocol","bind","tlsImplicit"]},"l"],["x:Certificate/query",{},"cq"],["x:Certificate/get",{"#ids":{"resultOf":"cq","name":"x:Certificate/query","path":"/ids"},"properties":["subjectAlternativeNames","notValidAfter"]},"c"]]')"
+  jmap_motor "$(jmap_cuerpo '[["x:SystemSettings/get",{"ids":["singleton"],"properties":["defaultHostname","defaultCertificateId"]},"s"],["x:Http/get",{"ids":["singleton"],"properties":["useXForwarded"]},"h"],["x:AllowedIp/query",{},"aq"],["x:AllowedIp/get",{"#ids":{"resultOf":"aq","name":"x:AllowedIp/query","path":"/ids"},"properties":["address"]},"a"],["x:NetworkListener/query",{},"lq"],["x:NetworkListener/get",{"#ids":{"resultOf":"lq","name":"x:NetworkListener/query","path":"/ids"},"properties":["protocol","bind","tlsImplicit"]},"l"],["x:Certificate/query",{},"cq"],["x:Certificate/get",{"#ids":{"resultOf":"cq","name":"x:Certificate/query","path":"/ids"},"properties":["subjectAlternativeNames","notValidAfter"]},"c"],["x:Security/get",{"ids":["singleton"],"properties":["authBanPeriod"]},"g"]]')"
   case "$RESP_CODE" in
     200) ;;
     401 | 403)
@@ -4353,6 +4664,24 @@ comprobar_motor_016() {
       incidencias=$((incidencias + 1))
     fi
   fi
+  if bulwark_activo; then
+    # Bulwark comprueba las contraseñas en https://MAIL_HOSTNAME por la red
+    # interna: el 443 del motor (con su certificado; lo mira comprobar_instalacion).
+    if [ -n "$(campo_json '(.methodResponses[5][1].list // [])[] | select(.protocol == "http" and .tlsImplicit == true and ((.bind // {}) | keys | any(endswith(":443")))) | .protocol')" ]; then
+      ok "El motor sirve HTTPS en su 443 interno, el que usa Bulwark para comprobar contraseñas."
+    else
+      aviso "El motor no escucha HTTPS en su 443 interno: Bulwark no puede comprobar las contraseñas por la red exenta (sus comprobaciones dan «inconclusive»)."
+      incidencias=$((incidencias + 1))
+    fi
+    # La caducidad del bloqueo la aplica el panel (ajustes recomendados); sin
+    # ella, una pestaña de Bulwark abierta tras cambiar la contraseña bloquea
+    # para siempre la IP del usuario. Se avisa sin contarlo como incidencia.
+    if [ "$(campo_json '.methodResponses[8][1].list[0].authBanPeriod // "nulo"')" = nulo ]; then
+      aviso "El bloqueo por fallos de acceso del motor es para siempre: con Bulwark conviene que caduque. Lo aplica el panel con sus ajustes recomendados (sudo mailway update -y --reaplicar, o Ajustes → Servidor de correo)."
+    else
+      ok "El bloqueo por fallos de acceso del motor caduca."
+    fi
+  fi
   return "$incidencias"
 }
 
@@ -4360,8 +4689,9 @@ comprobar_motor_016() {
 # autenticada a la API del motor: cada contraseña incorrecta cuenta para su
 # bloqueo automático.
 comprobar_instalacion() {
-  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-webmail)
+  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail)
   if [ "$CON_SKYWAY" = 0 ]; then contenedores+=(mailway-panel); fi
+  if bulwark_activo; then contenedores+=(mailway-bulwark mailway-bulwark-gw); fi
 
   titulo "Contenedores"
   for c in "${contenedores[@]}"; do
@@ -4465,6 +4795,8 @@ comprobar_instalacion() {
     fi
   fi
 
+  comprobar_bulwark_diagnostico || fallos=$((fallos + $?))
+
   titulo "Resultado"
   if [ "$fallos" = 0 ]; then
     ok "Todo correcto. Quedan fuera el DNS público, el PTR, los puertos vistos desde Internet y la entrega a otros servidores (sección 12.1 de docs/DESPLIEGUE-SKYWAY.md)."
@@ -4472,6 +4804,51 @@ comprobar_instalacion() {
   fi
   aviso "$fallos comprobaciones con incidencias (detalle arriba)."
   return 1
+}
+
+# Parte de --comprobar sobre Bulwark (solo si está activo; sin credenciales):
+# la salud a través de su pasarela, el certificado de MAIL_HOSTNAME que ve en
+# el 443 interno del motor y sus secretos. Devuelve el número de incidencias.
+comprobar_bulwark_diagnostico() {
+  local incidencias=0 salida sesion
+  if ! bulwark_activo; then
+    if docker inspect --type container mailway-bulwark >/dev/null 2>&1; then
+      titulo "Bulwark (correo web beta)"
+      aviso "Bulwark está desactivado, pero su contenedor sigue: lo retira sudo mailway update -y --reaplicar."
+    fi
+    return 0
+  fi
+  titulo "Bulwark (correo web beta)"
+  sesion=$(leer_env BULWARK_SESSION_SECRET)
+  if [ "${#sesion}" -lt 32 ] || [ -z "$(leer_env BULWARK_ADMIN_PASSWORD)" ]; then
+    aviso "Faltan los secretos de Bulwark en $ENV_FILE (o BULWARK_SESSION_SECRET tiene menos de 32 caracteres): repite sudo mailway bulwark on."
+    incidencias=$((incidencias + 1))
+  fi
+  if [ "$(estado_contenedor mailway-bulwark-gw)" = healthy ] && [ "$(estado_contenedor mailway-bulwark)" = healthy ]; then
+    if salida=$(docker exec mailway-bulwark-gw wget -qO- -T 10 http://127.0.0.1:8080/api/health 2>&1) &&
+      [[ $salida == *'"healthy"'* ]]; then
+      ok "Bulwark responde a través de su pasarela."
+    else
+      aviso "Bulwark no responde a través de su pasarela (${salida:0:200}). Revisa: docker logs mailway-bulwark-gw"
+      incidencias=$((incidencias + 1))
+    fi
+    # El certificado del 443 interno del motor, verificado como lo hace Bulwark
+    # (con sus CA y por el nombre público, que apunta a la IP interna).
+    if salida=$(docker exec -e MW_NOMBRE="$MAIL_HOSTNAME" mailway-bulwark node -e '
+const tls = require("tls"); const n = process.env.MW_NOMBRE;
+const s = tls.connect({ host: n, port: 443, servername: n, timeout: 8000 }, () => {
+  if (s.authorized) { console.log("OK"); } else { console.log("FALLO: " + s.authorizationError); process.exitCode = 1; }
+  s.end();
+});
+s.on("timeout", () => { console.log("FALLO: sin respuesta"); process.exit(1); });
+s.on("error", (e) => { console.log("FALLO: " + e.message); process.exit(1); });' 2>&1) && [ "$salida" = OK ]; then
+      ok "Bulwark verifica el certificado de $MAIL_HOSTNAME en el 443 interno del motor."
+    else
+      aviso "Bulwark no puede verificar el certificado de $MAIL_HOSTNAME en el 443 interno del motor (${salida:0:200}): sus comprobaciones de contraseña dan «inconclusive». Lo pone el extractor (perfil tls)."
+      incidencias=$((incidencias + 1))
+    fi
+  fi
+  return "$incidencias"
 }
 
 # --probar-acceso: un inicio de sesión real desde el webmail, con la
@@ -4531,6 +4908,12 @@ main() {
     if emparejar_solo; then exit 0; fi
     exit 1
   fi
+  if [ "$BULWARK_ORDEN" = estado ]; then
+    preparar_diagnostico
+    if estado_bulwark; then exit 0; fi
+    exit 1
+  fi
+  if [ -n "$BULWARK_ORDEN" ]; then cambiar_bulwark "$BULWARK_ORDEN"; fi
   if [ "$COMPROBAR" = 1 ] || [ "$PROBAR_ACCESO" = 1 ]; then
     preparar_diagnostico
     if [ "$CON_SKYWAY" = 1 ]; then info "Modo: junto a Skyway."; else info "Modo: instalación autónoma (sin Skyway)."; fi
@@ -4559,6 +4942,7 @@ main() {
   migrar_instalacion_anterior
   elegir_motor
   preparar_secretos
+  preparar_bulwark
 
   USAR_PROXY_PROPIO=0
   if [ "$CON_SKYWAY" = 0 ]; then
@@ -4615,6 +4999,10 @@ main() {
     conectar_cloudflare_en_skyway
     revocar_token_temporal_skyway
   fi
+  # Bulwark desactivado: fuera sus contenedores, si quedan, cuando el panel
+  # ya no lo ofrece (autónoma: recreado sin sus variables al levantar los
+  # servicios; junto a Skyway, redesplegado arriba).
+  if ! bulwark_activo; then retirar_bulwark; fi
 
   # Orden «mailway» (update, comprobar…) en el PATH para las próximas veces.
   bash "$DEPLOY_DIR/mailway.sh" instalar-comando || true

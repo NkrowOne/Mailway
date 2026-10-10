@@ -85,14 +85,20 @@ export interface MailEngine {
    * Aplica lo que Mailway necesita del motor detrás de Traefik y junto a un
    * webmail: nombre del servidor, IP real por X-Forwarded-For, redes exentas
    * del baneo automático y, en 0.16, el límite de contraseñas de aplicación,
-   * el puerto 587 con STARTTLS y el bloqueo del autoservicio del motor.
-   * Recarga la configuración. Lo que no puede aplicarse sin reiniciar el
-   * contenedor (un puerto nuevo) se devuelve en `restartRequired`.
+   * el puerto 587 con STARTTLS, el bloqueo del autoservicio del motor, la
+   * caducidad del bloqueo por fallos de acceso y el CORS que necesita el
+   * correo web nuevo (solo mientras algún cliente lo usa). Recarga la
+   * configuración. Lo que no puede aplicarse sin reiniciar el contenedor (un
+   * puerto nuevo) se devuelve en `restartRequired`.
    */
   applyRecommended(input: RecommendedInput): Promise<EngineReloadResult>;
 
-  /** Estado de lo que gestiona Mailway en el motor (Ajustes y puesta en marcha). */
-  getSettingsStatus(input: { trustedNetworks: string[] }): Promise<EngineSettingsStatus>;
+  /**
+   * Estado de lo que gestiona Mailway en el motor (Ajustes y puesta en
+   * marcha). `permissiveCors` es lo que debería tener el motor (sin él, lo
+   * último que se le pidió con applyRecommended).
+   */
+  getSettingsStatus(input: SettingsStatusInput): Promise<EngineSettingsStatus>;
 
   /**
    * Emisión del certificado con el ACME del propio motor (reto DNS-01 en
@@ -190,6 +196,19 @@ export interface RecommendedInput {
   trustedNetworks: string[];
   /** Máximo de contraseñas de aplicación por buzón que debe admitir el motor. */
   maxAppPasswords: number;
+  /**
+   * CORS permisivo en la web del motor: true si algún cliente usa el correo
+   * web nuevo (Bulwark), que habla JMAP con el motor desde el navegador y
+   * desde otro origen. Si no, se quita: no se deja abierto sin necesidad.
+   * Solo lo aplica Stalwart 0.16 (con 0.15 no hay correo web nuevo).
+   */
+  permissiveCors: boolean;
+}
+
+export interface SettingsStatusInput {
+  trustedNetworks: string[];
+  /** El CORS que debería tener el motor (ver RecommendedInput). */
+  permissiveCors?: boolean;
 }
 
 export interface EngineSettingsStatus {
@@ -207,7 +226,8 @@ export interface EngineSettingsStatus {
   /**
    * Comprobaciones propias de cada versión que forman parte de «ajustes
    * recomendados aplicados» (en 0.16: puerto 587, límite de contraseñas de
-   * aplicación, autoservicio bloqueado…). Clave estable → aplicado o no.
+   * aplicación, autoservicio bloqueado, caducidad del bloqueo, CORS…). Clave
+   * estable → aplicado o no; una clave ausente no aplica en ese momento.
    */
   extra: Record<string, boolean>;
   /** Cambios guardados que solo se aplican al reiniciar el contenedor. */

@@ -18,7 +18,11 @@
 #     automática según dónde falle: deploy/.env como estaba, la 0.15 sobre su
 #     volumen y el panel fuera de mantenimiento; nunca se borra un volumen y
 #     la contraseña del motor nunca va en los argumentos de un proceso;
-#   - --revertir-motor y --retirar-motor-anterior, también cuando se niegan.
+#   - --revertir-motor y --retirar-motor-anterior, también cuando se niegan;
+#   - Bulwark: --activar-bulwark se niega con la 0.15; con la 0.16, sus dos
+#     secretos se generan una vez y nunca se muestran, Compose recibe el
+#     perfil «bulwark» solo si está activo, desactivarlo conserva secretos y
+#     volúmenes, y volver a la 0.15 lo desactiva.
 # La migración de verdad, con contenedores reales, la prueba
 # «deploy/prueba-stack.py --migracion» (CI: .github/workflows/stack.yml).
 #
@@ -102,6 +106,12 @@ case "$linea" in
     cat "$E/imagen"
     ;;
   "inspect --type container mailway-panel" | "inspect --type container mailway-proxy") exit 1 ;;
+  "inspect --type container mailway-bulwark" | "inspect --type container mailway-bulwark-gw") marcha "${linea##* }" ;;
+  # Bulwark: ¿hay ajustes de usuarios en su volumen? ¿Y un admin.json? (que se retira)
+  "run --rm --network none -v mailway-bulwark-ajustes:/v:ro "*) [ ! -f "$E/bulwark-ajustes" ] || echo /v/ajuste ;;
+  "run --rm --network none -v mailway-bulwark-admin:/a "*)
+    if [ -f "$E/bulwark-admin-json" ]; then rm -f "$E/bulwark-admin-json" && echo retirado; fi
+    ;;
   "inspect --type container -f {{.State.Running}} "*)
     if marcha "${linea##* }"; then echo true; else echo false; fi
     ;;
@@ -198,8 +208,13 @@ case "$linea" in
         if [ "$motor" = stalwart-0.16 ]; then echo stalwartlabs/stalwart:v0.16.25 >"$E/imagen"; else echo stalwartlabs/stalwart:v0.15.5 >"$E/imagen"; fi
         poner mailway-mail
         ;;
-      *" up -d --remove-orphans") poner mailway-webmail ;;
+      *" up -d --remove-orphans")
+        poner mailway-webmail
+        poner mailway-mail-gw
+        case "$linea" in *"--profile bulwark"*) poner mailway-bulwark && poner mailway-bulwark-gw ;; esac
+        ;;
       *"--profile tls up -d"*certs-dumper) poner mailway-certs-dumper ;;
+      *"--profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw") quitar mailway-bulwark && quitar mailway-bulwark-gw ;;
       *) exit 0 ;;
     esac
     ;;
@@ -920,6 +935,125 @@ escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.15'"
 ejecutar retirar_motor_anterior
 comprobar "se niega" igual "$CODIGO" 1
 comprobar "no borra nada" sin_borrar_volumenes
+
+# --------------------------------------------------------------- Bulwark --
+
+# Prepara Bulwark como el instalador con el motor $1 y deja en $TMP/bloque el
+# bloque de Bulwark de deploy/.env (lo que escribiría escribir_env).
+bloque_bulwark() {
+  MOTOR=$1
+  preparar_bulwark
+  escribir_env_bulwark >"$TMP/bloque"
+}
+linea_bloque() { sed -n "s/^$1='\(.*\)'\$/\1/p" "$TMP/bloque"; }
+# El bloque pasa a deploy/.env (como lo haría escribir_env).
+guardar_bloque() {
+  grep -v -E '^(MAILWAY_BULWARK|BULWARK_)' "$ENV_FILE" >"$ENV_FILE.n"
+  cat "$TMP/bloque" >>"$ENV_FILE.n"
+  mv "$ENV_FILE.n" "$ENV_FILE"
+}
+
+echo "# Bulwark: activarlo con la 0.15 se niega sin cambiar nada"
+reiniciar_estado "stalwartlabs/stalwart:v0.15.5" mailway-mail-data
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.15'"
+cp "$ENV_FILE" "$TMP/env-antes"
+ejecutar cambiar_bulwark activar
+comprobar "se niega" igual "$CODIGO" 1
+comprobar "y lo explica" contiene "$SALIDA" "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: no se ha cambiado nada"
+comprobar "remite a la migración" contiene "$SALIDA" "sudo mailway migrar-motor"
+comprobar "deploy/.env como estaba" cmp -s "$ENV_FILE" "$TMP/env-antes"
+comprobar "sin tocar Docker" no_contiene "$REGISTRO" "docker compose"
+
+echo "# Bulwark: activarlo con la 0.16 lo pide en deploy/.env (y sigue como --actualizar)"
+reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'"
+ejecutar cambiar_bulwark activar
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "MAILWAY_BULWARK=1 en deploy/.env" igual "$(valor_env MAILWAY_BULWARK)" 1
+
+echo "# Bulwark activo: dos secretos generados una vez, nunca a la vista, y lo que recibe el panel"
+ejecutar bloque_bulwark stalwart-0.16
+SESION=$(linea_bloque BULWARK_SESSION_SECRET)
+ADMIN=$(linea_bloque BULWARK_ADMIN_PASSWORD)
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "secreto de sesión de 64 caracteres" coincide "$SESION" '^[0-9a-f]{64}$'
+comprobar "contraseña de administración de 48" coincide "$ADMIN" '^[0-9a-f]{48}$'
+comprobar "ninguno de los dos se muestra" no_contiene "$SALIDA" "$SESION"
+comprobar "ni la contraseña" no_contiene "$SALIDA" "$ADMIN"
+comprobar "el panel recibe la API de administración" igual "$(linea_bloque MAILWAY_BULWARK_URL)" "http://mailway-bulwark:3000"
+comprobar "y el destino de Traefik" igual "$(linea_bloque MAILWAY_BULWARK_BACKEND_URL)" "http://mailway-bulwark-gw:8080"
+guardar_bloque
+ejecutar bloque_bulwark stalwart-0.16
+comprobar "una segunda vez: el mismo secreto de sesión" igual "$(linea_bloque BULWARK_SESSION_SECRET)" "$SESION"
+comprobar "y la misma contraseña" igual "$(linea_bloque BULWARK_ADMIN_PASSWORD)" "$ADMIN"
+comprobar "sin generar nada" no_contiene "$SALIDA" "generad"
+: >"$REGISTRO"
+(MOTOR=stalwart-0.16 && compose config -q) >/dev/null 2>&1
+comprobar "Compose recibe el perfil «bulwark»" contiene "$REGISTRO" "--profile bulwark config -q"
+: >"$REGISTRO"
+(MOTOR=stalwart-0.15 && compose config -q) >/dev/null 2>&1
+comprobar "con la 0.15, no" no_contiene "$REGISTRO" "--profile bulwark"
+
+echo "# Bulwark con un admin.json de antes y sin su contraseña en deploy/.env: se retira para que tome la nueva"
+reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data mailway-bulwark-admin mailway-bulwark-ajustes
+touch "$E/bulwark-admin-json" "$E/bulwark-ajustes"
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_BULWARK='1'"
+ejecutar bloque_bulwark stalwart-0.16
+comprobar "retira el admin.json" no_existe "$E/bulwark-admin-json"
+comprobar "y lo dice" contiene "$SALIDA" "Retirado el admin.json anterior de Bulwark"
+comprobar "avisa de que los ajustes sincronizados no se podrán leer" contiene "$SALIDA" "esos ajustes no se podrán leer"
+comprobar "sin borrar ningún volumen" sin_borrar_volumenes
+
+echo "# Bulwark pedido con la 0.15, o con un secreto corto: queda desactivado y lo dice"
+reiniciar_estado "stalwartlabs/stalwart:v0.15.5" mailway-mail-data
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.15'" "MAILWAY_BULWARK='1'"
+ejecutar bloque_bulwark stalwart-0.15
+comprobar "lo explica" contiene "$SALIDA" "Bulwark necesita Stalwart 0.16 y este servidor usa la 0.15: queda desactivado"
+comprobar "deploy/.env lo guardará desactivado" igual "$(linea_bloque MAILWAY_BULWARK)" 0
+comprobar "sin las variables del panel" no_contiene "$TMP/bloque" "MAILWAY_BULWARK_URL"
+reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_BULWARK='1'" "BULWARK_SESSION_SECRET='corto'"
+ejecutar bloque_bulwark stalwart-0.16
+comprobar "secreto corto: lo explica" contiene "$SALIDA" "tiene menos de 32 caracteres"
+comprobar "queda desactivado" igual "$(linea_bloque MAILWAY_BULWARK)" 0
+comprobar "sin cambiar el secreto" igual "$(linea_bloque BULWARK_SESSION_SECRET)" corto
+
+echo "# Bulwark desactivado: fuera sus contenedores, con sus volúmenes y sus secretos"
+reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data mailway-bulwark-ajustes mailway-bulwark-admin mailway-bulwark-estado
+marcha mailway-mail mailway-bulwark mailway-bulwark-gw
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_BULWARK='1'" "BULWARK_SESSION_SECRET='$(printf 's%.0s' {1..40})'" \
+  "BULWARK_ADMIN_PASSWORD='admin-de-bulwark'" "MAILWAY_BULWARK_URL='http://mailway-bulwark:3000'"
+ejecutar cambiar_bulwark desactivar
+comprobar "MAILWAY_BULWARK=0" igual "$(valor_env MAILWAY_BULWARK)" 0
+ejecutar bloque_bulwark stalwart-0.16
+comprobar "conserva el secreto de sesión" igual "$(linea_bloque BULWARK_SESSION_SECRET)" "$(printf 's%.0s' {1..40})"
+comprobar "y la contraseña" igual "$(linea_bloque BULWARK_ADMIN_PASSWORD)" admin-de-bulwark
+comprobar "el panel ya no recibe sus variables" no_contiene "$TMP/bloque" "MAILWAY_BULWARK_URL"
+(MOTOR=stalwart-0.16 && set -e && retirar_bulwark) >"$SALIDA" 2>&1
+comprobar "retira sus contenedores" contiene "$REGISTRO" "--profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw"
+comprobar "sin -v" no_contiene "$REGISTRO" "rm -s -f -v"
+comprobar "y sin borrar ningún volumen" sin_borrar_volumenes
+comprobar "lo dice" contiene "$SALIDA" "sus volúmenes (mailway-bulwark-ajustes mailway-bulwark-admin mailway-bulwark-estado) y sus secretos se conservan"
+: >"$REGISTRO"
+(MOTOR=stalwart-0.16 && set -e && retirar_bulwark) >"$SALIDA" 2>&1
+comprobar "una segunda vez no hace nada" no_contiene "$REGISTRO" "docker compose"
+
+echo "# --revertir-motor con Bulwark activo: queda desactivado, con sus secretos"
+preparar_revertir
+marcha mailway-bulwark mailway-bulwark-gw
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_STALWART_ETC_VOLUME='mailway-stalwart-etc-20261001-101010'" \
+  "MAILWAY_STALWART_DATA_VOLUME='mailway-stalwart-data-20261001-101010'" "MAILWAY_MOTOR_MIGRADO='2026-10-01T10:10:10Z'" \
+  "MAILWAY_BULWARK='1'" "BULWARK_SESSION_SECRET='$(printf 's%.0s' {1..40})'" "BULWARK_ADMIN_PASSWORD='admin-de-bulwark'" \
+  "MAILWAY_BULWARK_URL='http://mailway-bulwark:3000'" "MAILWAY_BULWARK_BACKEND_URL='http://mailway-bulwark-gw:8080'"
+ejecutar revertir_motor
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "MAILWAY_BULWARK=0" igual "$(valor_env MAILWAY_BULWARK)" 0
+comprobar "sin las variables del panel" igual "$(valor_env MAILWAY_BULWARK_URL)$(valor_env MAILWAY_BULWARK_BACKEND_URL)" ""
+comprobar "con sus secretos" igual "$(valor_env BULWARK_ADMIN_PASSWORD)" admin-de-bulwark
+comprobar "retira sus contenedores antes de levantar el resto" en_orden "$REGISTRO" \
+  "--profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw" "docker compose[stalwart-0.15] --env-file"
+comprobar "lo explica" contiene "$SALIDA" "Bulwark necesita Stalwart 0.16: queda desactivado"
+comprobar "sin borrar ningún volumen" sin_borrar_volumenes
 
 echo "# Ningún doble ha recibido una llamada que no esperaba"
 comprobar "ninguna llamada sin simular" igual "$(cat "$IMPREVISTOS")" ""

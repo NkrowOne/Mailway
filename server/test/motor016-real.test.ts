@@ -146,6 +146,7 @@ async function fotoDeAjustes(): Promise<string> {
     ['SystemSettings', ['singleton']],
     ['Http', ['singleton']],
     ['Authentication', ['singleton']],
+    ['Security', ['singleton']],
     ['AllowedIp', null],
     ['NetworkListener', null],
     ['Tracer', null],
@@ -318,6 +319,27 @@ async function smtpEhlo(c: Conversacion): Promise<string> {
   return c.esperar(/^250 [^\r\n]*\r\n/m);
 }
 
+/**
+ * Abre una sesión SMTP y espera el saludo. La 0.16 trae por defecto un límite
+ * de 5 conexiones por segundo y por IP (MtaInboundThrottle) y aquí todas las
+ * pruebas llegan desde la misma IP: la conexión de más se cierra sin saludo.
+ * Como haría un programa de correo, se reintenta pasado ese segundo.
+ */
+async function abrirSmtp(puerto: number, cifrado: boolean): Promise<Conversacion> {
+  for (let intento = 1; ; intento++) {
+    let c: Conversacion | null = null;
+    try {
+      c = new Conversacion(cifrado ? await conectarTls(puerto) : await conectarPlano(puerto));
+      await c.esperar(/^220 [^\r\n]*\r\n/m);
+      return c;
+    } catch (err) {
+      c?.cerrar();
+      if (intento >= 3 || /sin respuesta en/.test((err as Error).message)) throw err;
+      await new Promise((r) => setTimeout(r, 1_100));
+    }
+  }
+}
+
 async function smtpAuth(c: Conversacion, usuario: string, clave: string): Promise<'ok' | 'rechazado'> {
   c.enviar(`AUTH PLAIN ${Buffer.from(`\0${usuario}\0${clave}`).toString('base64')}`);
   const r = await c.esperar(/^\d{3} [^\r\n]*\r\n/m).catch(() => '535 cerrada');
@@ -326,12 +348,8 @@ async function smtpAuth(c: Conversacion, usuario: string, clave: string): Promis
 
 /** AUTH PLAIN por SMTP: 465 con TLS implícito o 587 con STARTTLS. */
 async function smtpLogin(modo: 465 | 587, usuario: string, clave: string): Promise<'ok' | 'rechazado'> {
-  const c =
-    modo === 465
-      ? new Conversacion(await conectarTls(PUERTO_SMTPS))
-      : new Conversacion(await conectarPlano(PUERTO_SUBMISSION));
+  const c = modo === 465 ? await abrirSmtp(PUERTO_SMTPS, true) : await abrirSmtp(PUERTO_SUBMISSION, false);
   try {
-    await c.esperar(/^220 [^\r\n]*\r\n/m);
     const ehlo = await smtpEhlo(c);
     if (modo === 587) {
       assert.match(ehlo, /STARTTLS/, 'el 587 debe anunciar STARTTLS');
@@ -354,11 +372,8 @@ async function smtpEnviar(opciones: {
   auth?: { usuario: string; clave: string };
   retener?: boolean;
 }): Promise<void> {
-  const c = opciones.auth
-    ? new Conversacion(await conectarTls(PUERTO_SMTPS))
-    : new Conversacion(await conectarPlano(PUERTO_SMTP));
+  const c = opciones.auth ? await abrirSmtp(PUERTO_SMTPS, true) : await abrirSmtp(PUERTO_SMTP, false);
   try {
-    await c.esperar(/^220 [^\r\n]*\r\n/m);
     await smtpEhlo(c);
     if (opciones.auth) assert.equal(await smtpAuth(c, opciones.auth.usuario, opciones.auth.clave), 'ok');
     // HOLDFOR (RFC 4865, FUTURERELEASE) deja el mensaje en la cola una hora:
@@ -469,6 +484,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
       ['x:SystemSettings/get', { ids: ['singleton'] }, 's'],
       ['x:Http/get', { ids: ['singleton'] }, 'h'],
       ['x:Authentication/get', { ids: ['singleton'] }, 'a'],
+      ['x:Security/get', { ids: ['singleton'] }, 'g'],
       ['x:NetworkListener/get', { ids: null }, 'l'],
       ['x:Tracer/get', { ids: null }, 't'],
       ['x:Role/get', { ids: null }, 'r'],
@@ -484,6 +500,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
       hostname: NOMBRE_SERVIDOR,
       trustedNetworks: REDES,
       maxAppPasswords: 100,
+      permissiveCors: false,
     });
     assert.deepEqual(primera.errors, []);
     const habia587 = respuestaDe(inicial.body, 'l').list.some((e: any) => Object.keys(e.bind).some((b) => b.endsWith(':587')));
@@ -493,7 +510,7 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
 
     // Idempotente: la segunda vez no cambia nada.
     const antes = await fotoDeAjustes();
-    const segunda = await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100 });
+    const segunda = await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
     assert.deepEqual(segunda.errors, []);
     assert.equal(await fotoDeAjustes(), antes);
 
@@ -504,14 +521,42 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
     assert.deepEqual(estado.trustedNetworks, REDES);
     assert.equal(estado.acme, null);
     assert.equal(estado.certificateFiles, false);
+    // Sin clientes con el correo web nuevo, el CORS cerrado no es una comprobación.
     assert.deepEqual(estado.extra, {
       submission587: true,
       maxAppPasswords: true,
       selfServiceBlocked: true,
       defaultDomain: true,
       logToStdout: true,
+      authBanExpiry: true,
     });
     if (!habia587) assert.equal(estado.restartRequired.length, 1);
+    // El bloqueo por fallos de acceso caduca a la hora (por defecto, nunca).
+    const [seguridad] = await leer<{ authBanPeriod?: number | null }>('Security', ['singleton'], ['authBanPeriod']);
+    assert.equal(seguridad?.authBanPeriod, 3_600_000);
+
+    // CORS para el correo web nuevo: se abre cuando hace falta y se cierra después.
+    await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: true });
+    const [abierto] = await leer<{ usePermissiveCors?: boolean }>('Http', ['singleton'], ['usePermissiveCors']);
+    assert.equal(abierto?.usePermissiveCors, true);
+    const conCors = await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: true });
+    assert.equal(conCors.extra.permissiveCors, true);
+    // Lo que pregunta el navegador antes de hablar JMAP desde webmail.<dominio>.
+    const preflight = await fetch(`${URL_MOTOR}/jmap/`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://webmail.cliente.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization, content-type',
+      },
+    });
+    assert.equal(preflight.headers.get('access-control-allow-origin'), '*', 'el motor responde al preflight con CORS');
+    // Sin nadie que lo necesite, está abierto de más.
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: false })).extra.permissiveCors, false);
+    await motor.applyRecommended({ hostname: NOMBRE_SERVIDOR, trustedNetworks: REDES, maxAppPasswords: 100, permissiveCors: false });
+    const [cerrado] = await leer<{ usePermissiveCors?: boolean }>('Http', ['singleton'], ['usePermissiveCors']);
+    assert.equal(cerrado?.usePermissiveCors, false);
+    assert.equal((await motor.getSettingsStatus({ trustedNetworks: REDES, permissiveCors: false })).extra.permissiveCors, undefined);
 
     // El dominio por defecto es el reservado del servidor y la raíz ya no
     // lleva al autoservicio del motor.

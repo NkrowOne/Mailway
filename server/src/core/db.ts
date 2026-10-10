@@ -583,6 +583,47 @@ const migrations: { id: string; sql: string }[] = [
       ALTER TABLE forms ADD COLUMN smtp_invalidated_at INTEGER;
     `,
   },
+  {
+    id: '015-correo-web-por-cliente',
+    sql: `
+      -- Correo web de cada cliente en sus webmail propios: Roundcube (el de
+      -- siempre) o Bulwark (beta, solo con Stalwart 0.16). Lo elige la
+      -- administración; la dirección general del webmail sigue en Roundcube.
+      ALTER TABLE clients ADD COLUMN webmail_motor TEXT NOT NULL DEFAULT 'roundcube'
+        CHECK (webmail_motor IN ('roundcube', 'bulwark'));
+
+      -- Marca del correo web nuevo de cada cliente (la que Bulwark muestra en
+      -- sus webmail). Un campo vacío = lo que se deduce del cliente (su
+      -- nombre) o nada.
+      CREATE TABLE webmail_marca (
+        client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+        nombre TEXT NOT NULL DEFAULT '',
+        nombre_corto TEXT NOT NULL DEFAULT '',
+        empresa TEXT NOT NULL DEFAULT '',
+        privacidad_url TEXT NOT NULL DEFAULT '',
+        aviso_legal_url TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
+
+      -- Imágenes de esa marca: PNG, JPEG o WebP comprobados por su contenido
+      -- (nunca SVG, que sería código en el origen del correo). El panel las
+      -- sube a Bulwark con su API de administración, con un nombre que
+      -- depende del contenido (sha256): ni el navegador ni Bulwark se quedan
+      -- con una versión anterior. Aparte de webmail_marca para no leer los
+      -- bytes al calcular qué hay que sincronizar.
+      CREATE TABLE webmail_marca_imagenes (
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        hueco TEXT NOT NULL CHECK (hueco IN ('logoClaro', 'logoOscuro', 'favicon', 'icono')),
+        mime TEXT NOT NULL CHECK (mime IN ('image/png', 'image/jpeg', 'image/webp')),
+        data BLOB NOT NULL,
+        sha256 TEXT NOT NULL,
+        ancho INTEGER NOT NULL,
+        alto INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (client_id, hueco)
+      );
+    `,
+  },
 ];
 
 function runMigrations(): void {

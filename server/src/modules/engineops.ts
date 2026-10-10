@@ -21,6 +21,8 @@ import { requireAdmin } from './auth';
 import { rechazarSoloCliente } from './cloudflare';
 import { estadoMantenimiento, exigirSinMantenimiento } from './mantenimiento';
 import { getEngineSettings, getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
+import { corsPermisivoNecesario } from './webmailmotor';
+import { CADUCIDAD_BLOQUEO_MS } from '../engine/stalwart016';
 
 /**
  * Operaciones sobre el servidor de correo: ajustes recomendados del motor
@@ -87,12 +89,18 @@ export function trustedEngineNetworks(): string[] {
  */
 export const MAX_CONTRASENAS_APLICACION_MOTOR = 100;
 
-/** Lo que Mailway pide al motor para funcionar bien detrás de Traefik. */
-export function recommendedInput(mailHostname: string): RecommendedInput {
+/**
+ * Lo que Mailway pide al motor para funcionar bien detrás de Traefik. El
+ * CORS depende de si algún cliente usa el correo web nuevo
+ * (corsPermisivoNecesario); `permissiveCors` lo fija a mano para quien lo
+ * aplica justo antes de guardar esa elección (correoweb.ts).
+ */
+export function recommendedInput(mailHostname: string, opciones: { permissiveCors?: boolean } = {}): RecommendedInput {
   return {
     hostname: mailHostname,
     trustedNetworks: trustedEngineNetworks(),
     maxAppPasswords: MAX_CONTRASENAS_APLICACION_MOTOR,
+    permissiveCors: opciones.permissiveCors ?? corsPermisivoNecesario(),
   };
 }
 
@@ -106,8 +114,15 @@ function descripcionAplicados(input: RecommendedInput, api: EngineApi | null): s
     'IP real de los visitantes por X-Forwarded-For',
     ...input.trustedNetworks.map((n) => `Red exenta del bloqueo automático: ${n}`),
   ];
-  // 0.15 no limita las contraseñas de aplicación: no hay nada que fijar.
-  if (api === 'jmap016') aplicados.push(`Máximo de contraseñas de aplicación por buzón: ${input.maxAppPasswords}`);
+  // 0.15 no limita las contraseñas de aplicación ni tiene correo web nuevo:
+  // no hay nada de eso que fijar.
+  if (api === 'jmap016') {
+    aplicados.push(`Máximo de contraseñas de aplicación por buzón: ${input.maxAppPasswords}`);
+    aplicados.push(
+      `Bloqueo automático por fallos de acceso con caducidad: ${Math.round(CADUCIDAD_BLOQUEO_MS / 60_000)} minutos como máximo`,
+    );
+    if (input.permissiveCors) aplicados.push('CORS permisivo en la web del motor (lo necesita el correo web nuevo)');
+  }
   return aplicados;
 }
 
@@ -120,7 +135,8 @@ function descripcionAplicados(input: RecommendedInput, api: EngineApi | null): s
 export async function applyRecommendedEngineSettings(
   mailHostname: string,
   engine: MailEngine = getEngine(),
-): Promise<EngineReloadResult & { applied: string[]; restartRequired: string[] }> {
+  opciones: { permissiveCors?: boolean } = {},
+): Promise<EngineReloadResult & { applied: string[]; restartRequired: string[]; input: RecommendedInput }> {
   const host = normalizeHostname(mailHostname);
   if (!host) {
     throw badRequest(
@@ -128,10 +144,15 @@ export async function applyRecommendedEngineSettings(
       'mail_hostname_missing',
     );
   }
-  const input = recommendedInput(host);
+  const input = recommendedInput(host, opciones);
   const result = await engine.applyRecommended(input);
   const api = await engine.detectApi().catch(() => null);
-  return { ...result, restartRequired: result.restartRequired ?? [], applied: descripcionAplicados(input, api) };
+  return {
+    ...result,
+    restartRequired: result.restartRequired ?? [],
+    applied: descripcionAplicados(input, api),
+    input,
+  };
 }
 
 /**
@@ -145,6 +166,8 @@ const ETIQUETAS_COMPROBACIONES: Record<string, string> = {
   selfServiceBlocked: 'Autoservicio del motor bloqueado',
   defaultDomain: 'Dominio por defecto de la instancia',
   logToStdout: 'Registro del motor en la salida estándar',
+  authBanExpiry: 'Caducidad del bloqueo por fallos de acceso',
+  permissiveCors: 'CORS del motor para el correo web nuevo',
 };
 
 export function etiquetaComprobacion(clave: string): string {
@@ -595,7 +618,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
     } else {
       const engine = getEngine();
       const [leido, enEjecucion] = await Promise.allSettled([
-        engine.getSettingsStatus({ trustedNetworks: networks }),
+        engine.getSettingsStatus({ trustedNetworks: networks, permissiveCors: corsPermisivoNecesario() }),
         engine.getRunningHostname(),
       ]);
       if (leido.status === 'fulfilled') status = leido.value;
@@ -687,6 +710,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       hostname: host,
       trustedNetworks: trustedEngineNetworks(),
       maxAppPasswords: MAX_CONTRASENAS_APLICACION_MOTOR,
+      permissiveCors: result.input.permissiveCors,
       errors: result.errors.length,
       restartRequired: result.restartRequired.length,
     });

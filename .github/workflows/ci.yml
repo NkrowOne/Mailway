@@ -22,7 +22,9 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Sintaxis de los scripts de despliegue
-        run: for f in deploy/*.sh; do [ -f "$f" ] && bash -n "$f"; done; true
+        run: |
+          shopt -s globstar nullglob
+          for f in deploy/**/*.sh; do bash -n "$f"; done
 
   # La imagen del panel tal como la construye Skyway (o el compose autónomo).
   # Las pruebas de arriba usan el Node del runner: sin esto, un parche de la

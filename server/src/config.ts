@@ -42,19 +42,36 @@ function detectPanelBackend(): string {
   return '';
 }
 
+/** Valor de `trustProxy` que recibe Fastify. */
+export type TrustProxy = boolean | string | ((address: string, hop: number) => boolean);
+
 /**
  * Cuántos proxies hay delante del panel. Con `true`, Fastify se creería la
  * primera IP de X-Forwarded-For, que la pone el propio cliente: cualquiera
  * podría cambiar de IP en cada intento y saltarse los límites de intentos.
  * Por defecto se confía en un salto (Traefik, el despliegue normal).
  */
-function parseTrustProxy(): boolean | number | string {
-  const raw = process.env.MAILWAY_TRUST_PROXY?.trim();
-  if (!raw) return 1;
+export function parseTrustProxy(raw = process.env.MAILWAY_TRUST_PROXY?.trim()): TrustProxy {
+  if (!raw) return confiarEnSaltos(1);
   if (raw === 'true') return true;
   if (raw === 'false') return false;
-  if (/^\d+$/.test(raw)) return Number(raw);
+  if (/^\d+$/.test(raw)) return confiarEnSaltos(Number(raw));
   return raw; // lista de IPs o CIDR separadas por comas
+}
+
+/**
+ * Un número de saltos se entrega a Fastify como función. Desde la 5.12.5,
+ * Fastify no admite un número (no puede saber si el par inmediato es un
+ * proxy) y deja de creer X-Forwarded-*: todas las peticiones parecerían
+ * venir de Traefik, con un único cupo de intentos por IP para todo el mundo,
+ * la IP de Traefik en la actividad y los enlaces en http. La función conserva
+ * el modelo de siempre: se confía en los `saltos` más cercanos al panel, al
+ * que solo se llega por Traefik o por las redes internas de Docker (ver
+ * docs/SEGURIDAD.md). Con 0 no se confía en ningún proxy, como antes.
+ */
+function confiarEnSaltos(saltos: number): TrustProxy {
+  if (saltos === 0) return false;
+  return (_address, hop) => hop < saltos;
 }
 
 export const config = {
@@ -119,6 +136,26 @@ export const config = {
     panelBackend: detectPanelBackend(),
     /** Nombre del certresolver de Traefik. En Skyway es "le". */
     certResolver: process.env.MAILWAY_TRAEFIK_CERTRESOLVER || 'le',
+  },
+
+  /**
+   * Bulwark, el correo web «beta» que se elige por cliente (Roundcube sigue
+   * siendo el predeterminado; deploy/bulwark/README.md). Solo está disponible
+   * con los tres valores, que son un contrato con el despliegue (compose e
+   * instalador):
+   * - `url`: su API de administración por la red interna, nunca la pasarela
+   *   (http://mailway-bulwark:3000). Con ella el panel aplica la marca de
+   *   cada cliente y la política.
+   * - `adminPassword`: su ADMIN_PASSWORD. Nunca sale en errores ni registros.
+   * - `backendUrl`: el destino de Traefik para los nombres de los clientes que
+   *   lo usan, su pasarela (http://mailway-bulwark-gw:8080).
+   * Se leen al usarlos (nadie los copia) para que las pruebas puedan cambiarlos.
+   */
+  bulwark: {
+    url: process.env.MAILWAY_BULWARK_URL?.trim() || '',
+    // Sin recortar: Bulwark la compara con su ADMIN_PASSWORD tal cual.
+    adminPassword: process.env.MAILWAY_BULWARK_ADMIN_PASSWORD || '',
+    backendUrl: process.env.MAILWAY_BULWARK_BACKEND_URL?.trim() || '',
   },
 
   /**

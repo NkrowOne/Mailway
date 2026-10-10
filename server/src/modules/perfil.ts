@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
 import { badRequest, notFound } from '../core/errors';
+import { tipoDeImagen } from '../core/imagenes';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { requireMailboxAccess } from './mailboxes';
@@ -45,22 +46,10 @@ function fotoNoValida() {
 }
 
 /**
- * Tipo real de la imagen según sus primeros bytes. No se confía en el tipo
- * declarado: una «imagen» que fuera HTML o SVG se serviría desde el dominio
- * del panel. Solo formatos de mapa de bits, sin scripts posibles.
+ * Decodifica y valida el data URL; lanza el error adecuado para la interfaz.
+ * El tipo sale de los bytes (core/imagenes.ts), no del declarado: una
+ * «imagen» que fuera HTML o SVG se serviría desde el dominio del panel.
  */
-function tipoPorFirma(data: Buffer): string | null {
-  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
-  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return 'image/png';
-  }
-  if (data.length >= 12 && data.toString('latin1', 0, 4) === 'RIFF' && data.toString('latin1', 8, 12) === 'WEBP') {
-    return 'image/webp';
-  }
-  return null;
-}
-
-/** Decodifica y valida el data URL; lanza el error adecuado para la interfaz. */
 export function decodificarFoto(dataUrl: string): { mime: string; data: Buffer } {
   const match = /^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
   if (!match) throw fotoNoValida();
@@ -68,7 +57,7 @@ export function decodificarFoto(dataUrl: string): { mime: string; data: Buffer }
   if (data.length > MAX_FOTO_BYTES) {
     throw badRequest('La foto ocupa demasiado: el máximo es de 512 KB.', 'photo_too_large');
   }
-  const mime = tipoPorFirma(data);
+  const mime = tipoDeImagen(data);
   if (!mime) throw fotoNoValida();
   return { mime, data };
 }
