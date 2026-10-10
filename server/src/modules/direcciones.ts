@@ -301,6 +301,28 @@ export function appsSkywayDe(mailboxId: string): string[] {
 }
 
 /**
+ * Nombres de las contraseñas de aplicación activas creadas a mano (las que no
+ * son «skyway:…»): las del titular, las del panel y las de programas de fuera
+ * (n8n, un bot en otro servidor…). Nadie las pone al día por su cuenta: tras
+ * actualizar el usuario o dar de baja el dominio anterior, quien las usa tiene
+ * que entrar con la dirección nueva. Solo informa; no bloquea nada. Las que
+ * dejaron de funcionar con la actualización del motor (invalidated_at) no
+ * cuentan: hay que crearlas de nuevo de todos modos, y decir que «tienen que
+ * entrar con la dirección nueva» daría a entender que siguen valiendo. El
+ * rowid desempata las creadas en el mismo milisegundo (orden de creación).
+ */
+export function appsManualesDe(mailboxId: string): string[] {
+  const filas = db
+    .prepare(
+      `SELECT name FROM app_passwords
+       WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NULL AND substr(name, 1, ?) <> ?
+       ORDER BY created_at, rowid`,
+    )
+    .all(mailboxId, PREFIJO_SKYWAY.length, PREFIJO_SKYWAY) as { name: string }[];
+  return filas.map((f) => f.name);
+}
+
+/**
  * 409 mailbox_used_by_app. Una aplicación de Skyway envía con el usuario del
  * motor (SMTP_USER): cambiarlo sin que Skyway actualice sus variables y la
  * vuelva a desplegar la dejaría sin poder enviar.
