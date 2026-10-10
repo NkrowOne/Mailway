@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.4.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.5.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -162,6 +162,29 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     (`ownershipVerifiedAt`, `ownershipRecord`) y en la tabla de registros con
     la categoría `verificacion`; sin propiedad, crear buzones o alias responde
     `409 domain_ownership_pending`.
+
+    **El dominio existe en el motor desde su alta.** Con Stalwart 0.16 sus
+    claves DKIM y los registros que hay que publicar (con los que también se
+    comprueba la propiedad) solo existen con el dominio creado, así que el
+    alta lo crea con su DKIM, como en la 1.4; cada buzón o alias lo vuelve a
+    asegurar (`asegurarDominioEnMotor`, idempotente). La rama del cambio de
+    dominio lo retrasaba hasta el primer buzón o alias (con una tarea única que
+    retiraba del motor los dominios sin propiedad), porque para Stalwart un
+    dominio que existe es local para todo el servidor; eso solo funcionaba con
+    la 0.15 y no se ha integrado (límites conocidos).
+
+    **Recepción en otro proveedor.** Con la propiedad probada por el TXT y el
+    MX todavía en otro sitio (un traslado en preparación, o solo el envío en
+    Mailway), el dominio ya existe en el motor y volvería a ser local. Cada
+    medición anota si el MX público apunta a otro servidor
+    (`domains.recepcion_externa`) y Mailway escribe en el motor
+    (`session.rcpt.directory`, `queue.strategy.route` y
+    `queue.strategy.schedule`) una regla para esa lista: lo que se envía desde
+    aquí sale por el MX público, como el resto de Internet, y lo que llega de
+    Internet se entrega en local (así no hay bucles tras el cambio de MX). Se
+    verificó contra una 0.15.5 real. Si el administrador del motor ha
+    personalizado esas claves, no se tocan y se avisa
+    (`modules/recepcion.ts`, `engine/recepcion.ts`).
 12. **Marca blanca solo sobre dominios de correo del mismo cliente con la
     propiedad comprobada.** Traefik enruta cualquier nombre que se le
     publique: sin esta regla un cliente podría reclamar el nombre de otra
@@ -180,8 +203,20 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     los públicos; su respuesta 127.255.255.x se trata como «no concluyente»).
 14. **Cloudflare en un clic, sin romper nada.** Plan previo (crear, actualizar,
     conservar, conflicto), un solo lote transaccional y, si el lote falla,
-    aplicación uno a uno. Todo sin proxy; SPF fusionado; DMARC existente
-    respetado; MX ajenos solo con confirmación.
+    aplicación uno a uno. Todo sin proxy; SPF fusionado (sin pasar de 10
+    consultas DNS); DMARC existente respetado; MX ajenos solo con
+    confirmación, que se elige conflicto a conflicto («Hacer el cambio de
+    proveedor» marca solo el MX y lo que va con él) y que se puede deshacer:
+    antes de borrar nada se guarda una copia (`cloudflare_copias`, 30 días por
+    reemplazo). Mientras el correo llegue a otro proveedor, el SPF y el DMARC
+    de un dominio que no los tenía no se crean hasta el cambio, y solo junto
+    con el MX: romperían el envío que hoy funciona.
+
+    **Lo que se propone no es siempre lo del motor.** SPF `v=spf1
+    a:<servidor> ~all` (autoriza a este servidor antes y después del cambio de
+    MX, con una sola consulta), DMARC `p=none` con informes solo si existe
+    `dmarc@` o `postmaster@`, y nunca el CNAME `mail.<dominio>`, que Mailway no
+    usa y que adelantaría la llegada de los dispositivos sin reconfigurar.
 15. **Cuentas de Cloudflare de la instancia solo para la administración.** Un
     cliente usa sus propias cuentas y nunca una de la instancia, ni siquiera
     la que quedó asociada a su dominio porque la administración aplicó su DNS
@@ -437,6 +472,45 @@ Detalle en [SEGURIDAD.md](SEGURIDAD.md).
     los fallos se reintentan con espera creciente (o la que pida Bulwark) y
     avisan al tercero seguido.
 
+### 3.11 Cambio de dominio
+
+39. **El usuario del motor no es siempre la dirección.** Tras «Pasar», el
+    correo de cada buzón ya va a la dirección nueva, pero los dispositivos
+    siguen entrando con el usuario anterior hasta que su titular los
+    actualiza (o hasta la baja del dominio anterior, que lo hace por él).
+    `mailboxes.usuario_motor` guarda ese usuario solo cuando no coincide con
+    la dirección, y todo lo que habla con el motor por un buzón pasa por
+    `loginParaMotor()` (contraseñas, contraseñas de aplicación, suspensión,
+    nombre visible, credenciales internas, migración del motor) y, para los
+    destinos de los alias, por `nombreEnMotor()`. Un renombrado sin
+    respuesta deja `usuario_cambiando_a`: hasta que el conciliador sabe cuál
+    de los dos nombres existe, lo que necesita el motor responde 409
+    `mailbox_login_updating`, y la contraseña se sigue comprobando con la
+    copia local (decisión de la 1.4), que no depende del nombre.
+40. **Mismo contrato con los dos motores.** El cambio se expresa con
+    `getPrincipal`, `setAddresses`, `renamePrincipal`, `reloadDirectory` y
+    `removeDkim`. En 0.15 el «nombre» es el del principal y las direcciones,
+    su lista `emails`. En 0.16 el nombre es la dirección principal de la
+    cuenta o la lista y las demás son sus `aliases`: la principal no se puede
+    quitar ni mover con `setAddresses` (lo hace `renamePrincipal`, que cambia
+    nombre, dominio y alias en una sola escritura y conserva el id, el correo
+    y las credenciales), las listas tienen las direcciones de sus destinos y
+    se redirigen a la nueva cuando se quita una, y no hay caché que recargar.
+    La 0.16 admite el inicio de sesión por un alias con la misma parte local,
+    así que tras renombrar el usuario anterior sigue entrando hasta la baja.
+41. **No se cambia de versión el motor a mitad de un cambio de dominio.** La
+    migración oficial convierte cada cuenta por su nombre y sus direcciones:
+    con un cambio abierto o con buzones que siguen con el usuario anterior,
+    el panel no sabría con qué usuario queda cada uno. La herramienta del
+    motor lo dice en su estado (`bloqueo`), el instalador no empieza y
+    `capturar` se niega. A la inversa, mientras el motor está en
+    mantenimiento ningún cambio de dominio escribe en él.
+42. **Lo que la 1.4 crea alrededor de un dominio sigue al cambio.** El
+    webmail de marca del dominio anterior se crea en el nuevo con el mismo
+    nombre (automático si lo era) y pasa a principal cuando funciona; Bulwark
+    lo recoge al entrar en servicio, porque su marca es del cliente. La baja
+    retira antes la cuenta oculta `configuration@` del dominio anterior.
+
 ## 4. Modelo de datos
 
 SQLite en `/data/mailway.db`. Migraciones incrementales en
@@ -460,6 +534,18 @@ edita una ya publicada.
 | `012-entrega-de-la-configuracion` | `mailboxes.configured_at` (primer momento en que el titular demostró tener acceso, o marcado a mano; se vacía cuando el panel le cambia la contraseña o reinicia la configuración), `remitentes_configuracion` (cuenta oculta `configuration@` de cada dominio, con la contraseña cifrada) y `envios_configuracion` (correos de configuración enviados o fallidos: destinatario, enlace, quién y cuándo; sirven para el último envío y los límites por hora). |
 | `014-credenciales-locales` | `credenciales_buzon`: copia cifrada del hash `$6$` de la contraseña principal de cada buzón (Stalwart 0.16 enmascara los secretos); columnas de `app_passwords` (`verifier`, `engine_api`, `invalidated_at`, `invalidation_notified_at`) y de la credencial SMTP de `api_keys` y `forms` (`smtp_engine_api`, `smtp_invalidated_at`) para el cambio de versión del motor. |
 | `015-correo-web-por-cliente` | `clients.webmail_motor` (`roundcube` por defecto o `bulwark`), `webmail_marca` (nombre, nombre corto, empresa y enlaces de la marca del correo web nuevo) y `webmail_marca_imagenes` (logotipos e iconos: tipo comprobado, bytes, sha256 y dimensiones; aparte para no leer los bytes al comparar). |
+| `016-recepcion-externa-y-copias-dns` | `domains.recepcion_externa` (el MX público apunta a otro servidor: lo enviado desde aquí sale por ese MX) y `cloudflare_copias`: lo que borraron los reemplazos en Cloudflare (una fila por dominio que acumula los reemplazos; cada entrada lleva su fecha y se puede deshacer durante 30 días). Tolera un esquema que ya lo tenga (ver más abajo). |
+| `017-cambio-de-dominio` | `domain_migrations` (cambio de dominio de un cliente: origen, destino, estado, paso, error, origen panel o Skyway, lo que creó el cambio y fechas; un dominio en un solo cambio abierto, como origen o como destino) y `domain_migration_items` (buzones y alias que se mudan); en `mailboxes`, `usuario_motor` (usuario del motor cuando no es la dirección: pendiente de actualizar dispositivos; único), `usuario_cambiando_a` (cambio de usuario en curso), `login_anterior` (el webmail traslada su fila) y `semilla_perfil` (dirección con la que nació el perfil de Apple). Tolera un esquema que ya lo tenga. |
+
+Las migraciones 016 y 017 son las de la rama del cambio de dominio, que las
+publicó antes de la 1.4 como `009-recepcion-externa-y-copias-dns` y
+`011-cambio-de-dominio`; al integrarla en la 1.5 se renumeraron al final
+(nunca se edita una publicada, y 009 a 015 ya eran otras). Un servidor que
+llegó a ejecutar esa rama tiene ya sus tablas y columnas y conserva esos ids
+en `_migrations`: por eso 016 y 017 son código (`aplicar`), no SQL fijo, y
+crean solo lo que falta (`CREATE TABLE IF NOT EXISTS`, una columna solo si
+`PRAGMA table_info` no la tiene). Los ids antiguos se quedan como están y no
+se vuelven a ejecutar.
 
 ```
 plans              límites por plan (dominios, buzones, alias, cuota, API/día, API/minuto)
@@ -470,9 +556,15 @@ users              usuarios del panel: admin (todo) | client (su cliente); desha
 sessions           sesiones del panel (hash del token, caducidad, IP, agente)
 management_tokens  tokens de gestión: prefijo, hash, caducidad, último uso, revocación
 domains            dominio → cliente, selector DKIM, último informe DNS (JSON), estado,
-                   cuenta y zona de Cloudflare, dns_applied_at, owner_verified_at
+                   cuenta y zona de Cloudflare, dns_applied_at, owner_verified_at,
+                   recepcion_externa
+cloudflare_copias  copia de lo reemplazado en Cloudflare (para deshacerlo, 30 días por reemplazo)
 mailboxes          buzón → dominio (local_part único por dominio), cuota, estado, ocupación,
-                   configured_at (el titular ya lo tiene configurado)
+                   configured_at (el titular ya lo tiene configurado), usuario_motor
+                   (usuario del motor si no es la dirección), usuario_cambiando_a,
+                   login_anterior, semilla_perfil
+domain_migrations  cambios de dominio de un cliente (origen, destino, estado y paso)
+domain_migration_items  buzones y alias de cada cambio
 aliases            alias → destinos (JSON: buzones del cliente o externos)
 app_passwords      contraseñas de aplicación: secreto tal como está en el motor, revocación
 setup_links        enlaces de configuración: hash del token, contraseña cifrada opcional
@@ -508,11 +600,13 @@ Reglas de integridad que protegen al usuario:
 
 - No se borra un plan en uso ni el último plan, un cliente con dominios, un
   buzón remitente de una clave activa ni un buzón que recibe formularios.
-- Borrar un dominio con buzones exige escribir su nombre; se limpia primero el
-  motor y después el panel, buzón a buzón, de modo que un fallo a mitad deja
-  el panel coherente y repetir completa el borrado. La respuesta cuenta las
-  claves de API que dejan de funcionar con sus buzones y las direcciones de
-  los alias de otros dominios que se actualizan o se eliminan.
+- Borrar un dominio con buzones o con dominios de marca blanca exige escribir
+  su nombre; se limpia primero el motor y después el panel, buzón a buzón, de
+  modo que un fallo a mitad deja el panel coherente y repetir completa el
+  borrado. La respuesta cuenta las claves de API que dejan de funcionar con
+  sus buzones, las direcciones de los alias de otros dominios que se
+  actualizan o se eliminan y los nombres de marca blanca que se eliminan con
+  él.
 - Borrar un buzón lo retira antes de los alias que reenvían a él.
 - Contraseñas, tokens y claves se muestran **una sola vez**.
 
@@ -553,7 +647,8 @@ controles táctiles de 44 px y un paso a la vez.
 - **Formularios de contacto** para webs estáticas: clave pública, orígenes
   permitidos, campo trampa, límites, Turnstile opcional y `widget.js`.
 - Vigilante (motor, cola, webmail, DNS, marca blanca, autoconfiguración,
-  listas negras, certificado) con avisos por Discord, Telegram o webhook.
+  listas negras, certificado, puerto 25 de salida, IP pública y caducidad de
+  los tokens de gestión) con avisos por Discord, Telegram o webhook.
 - Instalador idempotente con modo desatendido y migración desde 0.x.
 
 ### Hecho en la 1.1
@@ -633,6 +728,33 @@ controles táctiles de 44 px y un paso a la vez.
   hace falta y bloqueos por fallos que caducan en una hora (decisiones 35 a
   38).
 
+### Hecho en la 1.5
+
+- **Cambio de dominio de un cliente** (`dominio.es` → `dominio2.es`), desde
+  el panel o desde Skyway: plan sin efectos, preparación con pre-recepción
+  (el correo llega por los dos dominios a los mismos buzones), «Pasar» con
+  sus compuertas, «Volver», «Cancelar» y la baja del dominio anterior, con
+  el MX de Cloudflare, el webmail de marca y los enlaces para que cada
+  persona actualice sus dispositivos (decisiones 39 a 42).
+- **Usuario del motor separado de la dirección**, con el conciliador de
+  renombrados interrumpidos y «Actualizar el usuario» en la ficha del buzón,
+  en «Mi buzón», en el enlace de configuración y para Skyway.
+- **Recepción en otro proveedor** mientras se traslada el MX, con copia de
+  lo que se reemplaza en Cloudflare para poder deshacerlo (con 0.16 el
+  panel avisa: sus reglas aún no se escriben en el motor).
+- **Cambio de dominio o de IP de la plataforma** con el instalador: lo
+  confirma, lleva el certificado del motor al nombre nuevo, el panel adopta
+  la identidad nueva y `--comprobar` revisa también el panel, Traefik, el
+  DNS público, el PTR y el puerto 25.
+- Los arreglos de la auditoría de la rama sobre la 1.4: una dirección del
+  dominio de otro cliente no cuenta como destino interno sin propiedad
+  comprobada, las altas respetan un cambio abierto, las contraseñas
+  `skyway:…` solo las crea Skyway y el token de gestión dice cuándo caduca.
+- Integración sobre la 1.4: el cambio de dominio con Stalwart 0.16, las
+  credenciales locales, la suspensión por permisos, el modo mantenimiento,
+  Bulwark y el webmail automático; las migraciones de la rama renumeradas
+  como 016 y 017, idempotentes.
+
 ### Límites conocidos
 
 - La cola del motor se muestra agregada (pendientes), sin detalle por mensaje.
@@ -641,13 +763,37 @@ controles táctiles de 44 px y un paso a la vez.
   `X-Forwarded-For`: cualquier contenedor conectado a `skyway-edge` podría
   falsearla al hablar con `mailway-mail:8080`. Es necesario para no banear la
   IP de Traefik; se resolverá con una red dedicada Traefik–Stalwart.
-- MTA-STS se publica en modo `testing`.
 - Stalwart 0.15 deja de recibir parches de seguridad el 1 de diciembre de
   2026: las instalaciones que no se migren a la 0.16 se quedan sin ellos.
 - Al migrar a la 0.16 se pierden las contraseñas de aplicación de la 0.15
   (la 0.16 no las conserva): el panel avisa y se crean de nuevo. El correo
   que llega a la 0.16 después de migrar no está en la 0.15 si se vuelve
   atrás.
+- MTA-STS se publica en modo `testing`. De la política MTA-STS de otro
+  proveedor solo se lee el TXT `_mta-sts`: el fichero de la política no se
+  descarga (estaría en un nombre que controla el cliente y podría apuntar a la
+  red interna).
+- La recepción en otro proveedor sigue a la medición del MX (cada hora en un
+  dominio activo, cada 10 minutos en uno reciente; al momento con «Comprobar
+  el DNS ahora»). Justo después de mover el MX aquí, lo que se envía desde este
+  servidor al dominio sale por MX y vuelve: se entrega en local si el servidor
+  llega a su propia IP pública; si no, espera en la cola hasta la siguiente
+  medición, que lo entrega en local.
+- Con Stalwart 0.16 las reglas de la recepción en otro proveedor todavía no
+  se escriben en el motor (son expresiones de la 0.15): lo que se envía desde
+  este servidor a un dominio cuyo MX apunta a otro proveedor se entrega en
+  sus buzones de aquí, y el panel lo avisa mientras haya dominios afectados.
+- Un dominio dado de alta existe en el motor aunque su propiedad no esté
+  comprobada (decisión de la 1.4, necesaria con Stalwart 0.16): hasta que
+  se mide su MX, lo que este servidor envíe a ese dominio se entrega aquí (o
+  se rechaza si la dirección no existe), y con Stalwart 0.16 también después,
+  porque la recepción en otro proveedor aún no se escribe en el motor.
+  Retrasar su creación hasta comprobar la propiedad exige que el panel
+  calcule los registros sin el motor.
+- Con un cambio de dominio sin terminar, o con buzones que siguen con el
+  usuario del dominio anterior, no se puede migrar el motor de la 0.15 a la
+  0.16 (decisión 41): antes hay que dar de baja el dominio anterior (o
+  cancelar el cambio) y actualizar esos usuarios.
 
 ### Hoja de ruta, por orden de valor
 

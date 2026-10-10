@@ -8,12 +8,14 @@ import type {
   EngineDirectory,
   EngineDnsRecord,
   EngineHealth,
+  EnginePrincipal,
   EngineReloadResult,
   EngineSettingsStatus,
   MailboxCredentials,
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  RemoteDomainsResult,
   SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
@@ -70,8 +72,14 @@ export class MotorProtegido implements MailEngine {
   getRunningHostname(): Promise<string | null> {
     return this.motor.getRunningHostname();
   }
+  getAcmeToken(): Promise<string | null> {
+    return this.motor.getAcmeToken();
+  }
   getQueueSummary(): Promise<QueueSummary> {
     return this.motor.getQueueSummary();
+  }
+  getPrincipal(name: string): Promise<EnginePrincipal | null> {
+    return this.motor.getPrincipal(name);
   }
 
   /* ---------------------------- Modificaciones ---------------------------- */
@@ -131,5 +139,26 @@ export class MotorProtegido implements MailEngine {
   async removeAppPassword(email: string, ref: string): Promise<void> {
     exigirSinMantenimiento();
     return this.motor.removeAppPassword(email, ref);
+  }
+  // Escribe en el motor las reglas de la recepción en otro proveedor.
+  async syncRemoteDomains(domains: string[], opts?: { reload?: boolean }): Promise<RemoteDomainsResult> {
+    exigirSinMantenimiento();
+    return this.motor.syncRemoteDomains(domains, opts);
+  }
+  async setAddresses(name: string, ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]> {
+    exigirSinMantenimiento();
+    return this.motor.setAddresses(name, ops);
+  }
+  async renamePrincipal(from: string, to: string, opts: { expectEmail: string; emails?: string[] }): Promise<void> {
+    exigirSinMantenimiento();
+    return this.motor.renamePrincipal(from, to, opts);
+  }
+  async reloadDirectory(): Promise<void> {
+    exigirSinMantenimiento();
+    return this.motor.reloadDirectory();
+  }
+  async removeDkim(domain: string): Promise<string[]> {
+    exigirSinMantenimiento();
+    return this.motor.removeDkim(domain);
   }
 }

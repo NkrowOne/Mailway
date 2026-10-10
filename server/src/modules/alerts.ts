@@ -140,6 +140,13 @@ export function resolveAlert(dedupeKey: string, opts: { notify?: boolean; what?:
   }
 }
 
+/** ¿Hay una alerta abierta con esta clave? */
+export function alertaAbierta(dedupeKey: string): boolean {
+  return Boolean(
+    db.prepare('SELECT 1 FROM alerts WHERE dedupe_key = ? AND resolved_at IS NULL LIMIT 1').get(dedupeKey),
+  );
+}
+
 /**
  * Cierra las alertas abiertas de un tipo, salvo la de la clave `except`. Sirve
  * para los avisos cuya clave lleva los datos del problema (por ejemplo, los dos

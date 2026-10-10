@@ -7,7 +7,7 @@ import { config } from '../config';
 import { db, now } from '../core/db';
 import { randomId } from '../core/crypto';
 import { clientLockKey, withLock } from '../core/locks';
-import { dnsOffline, lookupA, lookupCname } from '../core/dns';
+import { avisoCaa, caaPermiteLetsEncrypt, dnsOffline, lookupA, lookupCname } from '../core/dns';
 import { badRequest, conflict, notFound } from '../core/errors';
 import { resolveAlert } from './alerts';
 import { audit, auditSystem } from './audit';
@@ -229,6 +229,17 @@ export function assertHostnameAllowed(clientId: string, hostname: string): void 
       'hostname_not_owned',
     );
   }
+  // «webmail.cliente.es» escrito como subdominio de cliente.es da
+  // webmail.cliente.es.cliente.es: es un subdominio válido, pero nadie va a
+  // crear su DNS y gastaría una de las plazas del cliente.
+  const prefijo = hostname.slice(0, -(parent.domain.length + 1));
+  const repetido = domains.find((d) => prefijo === d.domain || prefijo.endsWith(`.${d.domain}`));
+  if (repetido) {
+    throw badRequest(
+      `El nombre ${hostname} repite el dominio ${domainToUnicode(repetido.domain) || repetido.domain}. Si el webmail debe estar en ${prefijo}, indica ese nombre.`,
+      'hostname_repeats_domain',
+    );
+  }
   // Lo que cuenta es la PROPIEDAD comprobada (MX a este servidor o TXT de
   // verificación), no que el dominio esté activo: es lo que demuestra que el
   // cliente controla el DNS del que cuelga el nombre.
@@ -425,23 +436,48 @@ async function respondeComodin(hostname: string, ips: string[]): Promise<boolean
   return ips.length === vistas.size && ips.every((ip) => vistas.has(ip));
 }
 
+function sinPuntoFinal(nombre: string): string {
+  return nombre.trim().toLowerCase().replace(/\.$/, '');
+}
+
+// Con un CAA que no autoriza a Let's Encrypt, Traefik no consigue el
+// certificado y serviría el suyo por defecto: no se publica hasta corregirlo.
+async function conCaa(hostname: string, detalleOk: string): Promise<DnsCheckResult> {
+  const caa = await caaPermiteLetsEncrypt(hostname);
+  if (caa && !caa.permite) return { status: 'failed', detail: avisoCaa(hostname, caa) };
+  return { status: 'ok', detail: detalleOk };
+}
+
 /**
- * El dominio debe resolver a la IP de este servidor. `resolve4` sigue la
- * cadena de CNAME, así que esto cubre las dos formas de apuntarlo. Con el
+ * ¿Apunta el dominio a este servidor? Vale un CNAME al servidor de correo (lo
+ * que recomiendan las instrucciones) o un A con una IP del servidor: la IP de
+ * Ajustes o cualquiera de las que tiene ahora el nombre del servidor de
+ * correo. Así, tras un cambio de IP, un CNAME (o un A ya movido a la IP
+ * nueva) sigue siendo correcto aunque Ajustes aún tenga la IP anterior: si
+ * dependiera solo de la IP guardada, el vigilante sacaría de Traefik el
+ * webmail de marca blanca de todos los clientes en plena mudanza. Con el
  * proxy de Cloudflare resuelve a IP de Cloudflare: entonces se pregunta a
- * Cloudflare adónde apunta el registro (registroProxyApuntaAqui).
+ * Cloudflare adónde apunta el registro (registroProxyApuntaAqui), si se
+ * conoce el dominio propio (`domain`).
+ *
+ * `resolve4` sigue la cadena de CNAME, así que lookupA da las IP finales.
  */
-async function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
-  const hostname = domain.hostname;
+export async function comprobarDnsMarcaBlanca(hostname: string, domain?: ClientDomain): Promise<DnsCheckResult> {
   const instance = getInstanceSettings();
-  if (!instance.publicIp) {
+  const servidor = sinPuntoFinal(instance.mailHostname);
+  const ipGuardada = instance.publicIp.trim();
+  if (!servidor && !ipGuardada) {
     return {
       status: 'unknown',
       detail:
-        'Falta la IP pública del servidor en Ajustes: sin ella no es posible comprobar si el dominio apunta aquí.',
+        'Faltan el nombre del servidor de correo y la IP pública en Ajustes: sin ellos no es posible comprobar si el dominio apunta aquí.',
     };
   }
-  const ips = await lookupA(hostname);
+  const [ips, cname, ipsServidor] = await Promise.all([
+    lookupA(hostname),
+    lookupCname(hostname),
+    servidor ? lookupA(servidor) : Promise.resolve([] as string[]),
+  ]);
   if (ips === null) {
     return {
       status: 'unknown',
@@ -449,7 +485,6 @@ async function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
     };
   }
   if (ips.length === 0) {
-    const cname = await lookupCname(hostname);
     if (cname && cname.length > 0) {
       return {
         status: 'failed',
@@ -461,33 +496,59 @@ async function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
       detail: 'El dominio todavía no existe en el DNS. Crea el registro y espera unos minutos.',
     };
   }
-  return evaluarIps(domain, ips, instance, {
-    proxyApuntaAqui: async (d) => {
-      // Importación diferida: cloudflare.ts ya importa este módulo.
-      const { registroProxyApuntaAqui } = await import('./cloudflare');
-      return registroProxyApuntaAqui(d);
+  if (servidor && cname?.some((c) => sinPuntoFinal(c) === servidor)) {
+    return conCaa(hostname, `El dominio apunta correctamente a ${servidor}.`);
+  }
+  // Sin el dominio propio (una comprobación suelta) no hay cuenta de
+  // Cloudflare que consultar: con el proxy activo no se sabe adónde apunta.
+  const destino = domain ?? ({ hostname } as ClientDomain);
+  const veredicto = await evaluarIps(
+    destino,
+    ips,
+    { publicIp: ipGuardada, mailHostname: instance.mailHostname, ipsServidor },
+    {
+      proxyApuntaAqui: async (d) => {
+        if (!domain) return null;
+        // Importación diferida: cloudflare.ts ya importa este módulo.
+        const { registroProxyApuntaAqui } = await import('./cloudflare');
+        return registroProxyApuntaAqui(d);
+      },
+      respondeComodin,
     },
-    respondeComodin,
-  });
+  );
+  // Con un CAA que no autoriza a Let's Encrypt, Traefik no consigue el
+  // certificado: no se da por bueno. Detrás del proxy de Cloudflare el
+  // visitante ve el certificado de Cloudflare y no se mira.
+  if (veredicto.status === 'ok' && !veredicto.viaCloudflare) return conCaa(hostname, veredicto.detail);
+  return veredicto;
+}
+
+/** Comprobación del DNS de un dominio propio, con su cuenta de Cloudflare si hace falta. */
+function checkDns(domain: ClientDomain): Promise<DnsCheckResult> {
+  return comprobarDnsMarcaBlanca(domain.hostname, domain);
 }
 
 /**
  * Veredicto del DNS a partir de las IP a las que resuelve el nombre. Aparte
  * de checkDns para probarlo sin red: las consultas a Cloudflare y al
- * comodín llegan como funciones.
+ * comodín llegan como funciones. Valen la IP de Ajustes y las que tiene
+ * ahora el nombre del servidor de correo (`ipsServidor`; null si no se
+ * pudieron consultar: entonces, sin coincidencia, no es concluyente).
  */
 export async function evaluarIps(
   domain: ClientDomain,
   ips: string[],
-  instance: { publicIp: string; mailHostname: string },
+  instance: { publicIp: string; mailHostname: string; ipsServidor?: string[] | null },
   deps: {
     proxyApuntaAqui: (domain: ClientDomain) => Promise<boolean | null>;
     respondeComodin: (hostname: string, ips: string[]) => Promise<boolean>;
   },
 ): Promise<DnsCheckResult> {
   const hostname = domain.hostname;
-  if (ips.includes(instance.publicIp)) {
-    return { status: 'ok', detail: `El dominio apunta correctamente a ${instance.publicIp}.` };
+  const validas = [...new Set([instance.publicIp, ...(instance.ipsServidor ?? [])].map((ip) => ip.trim()).filter(Boolean))];
+  const coincide = ips.find((ip) => validas.includes(ip));
+  if (coincide) {
+    return { status: 'ok', detail: `El dominio apunta correctamente a ${coincide}.` };
   }
   let cuentaCloudflare = false;
   if (ips.length > 0 && ips.every(esIpDeCloudflare)) {
@@ -500,6 +561,13 @@ export async function evaluarIps(
       };
     }
     cuentaCloudflare = apunta === false;
+  } else if (instance.ipsServidor === null) {
+    // Sin las IP del servidor de correo no se sabe si la del dominio es suya
+    // (puede ser la nueva tras un cambio de IP): no concluyente, no un fallo.
+    return {
+      status: 'unknown',
+      detail: `No se ha podido consultar el DNS de ${sinPuntoFinal(instance.mailHostname)} para comparar las IP. Vuelve a intentarlo en un minuto.`,
+    };
   }
   return {
     status: 'failed',
@@ -826,11 +894,81 @@ export function applyClientDomainCheck(
 }
 
 /**
+ * Dominio de correo del cliente del que cuelga un nombre: el más específico
+ * (con un dominio y un subdominio suyos, el subdominio). null si ninguno.
+ */
+function dominioDelQueCuelga(clientId: string, hostname: string): { id: string; domain: string; owner_verified_at: number | null } | null {
+  const propios = db
+    .prepare('SELECT id, domain, owner_verified_at FROM domains WHERE client_id = ?')
+    .all(clientId) as { id: string; domain: string; owner_verified_at: number | null }[];
+  return propios.filter((d) => hostname.endsWith(`.${d.domain}`)).sort((a, b) => b.domain.length - a.domain.length)[0] ?? null;
+}
+
+/**
+ * Dominios propios (webmail y panel) que cuelgan de un dominio de correo del
+ * cliente: al eliminarlo, se eliminan con él. Uno que cuelga de un dominio
+ * suyo más específico (webmail.sub.empresa.com con sub.empresa.com) no.
+ */
+export function dominiosPropiosDe(domainId: string): ClientDomain[] {
+  const dominio = db.prepare('SELECT client_id FROM domains WHERE id = ?').get(domainId) as { client_id: string } | undefined;
+  if (!dominio) return [];
+  return listClientDomains(dominio.client_id).filter((d) => dominioDelQueCuelga(d.clientId, d.hostname)?.id === domainId);
+}
+
+/**
+ * Retira un dominio propio: deja de publicarse en Traefik en su siguiente
+ * sondeo. Con `descartar` (lo eliminó una persona), el webmail automático no
+ * vuelve a crear ese nombre; al retirarlo el panel (el borrado de su dominio
+ * o un cambio de dominio) no se descarta: si el dominio vuelve, su webmail
+ * también.
+ */
+export function eliminarDominioPropio(id: string, opts: { descartar?: boolean } = {}): void {
+  const actual = db.prepare('SELECT * FROM client_domains WHERE id = ?').get(id) as DomainRow | undefined;
+  if (!actual) return;
+  db.transaction(() => {
+    db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
+    if (opts.descartar && actual.kind === 'webmail') {
+      db.prepare(
+        `INSERT INTO webmail_descartados (hostname, client_id, created_at) VALUES (?, ?, ?)
+         ON CONFLICT(hostname) DO UPDATE SET client_id = excluded.client_id, created_at = excluded.created_at`,
+      ).run(actual.hostname, actual.client_id, now());
+    }
+  })();
+  fallosSeguidos.delete(id);
+  // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
+  resolveAlert(`whitelabel:${id}`);
+  // El correo web nuevo (Bulwark) deja de servir ese nombre.
+  if (actual.kind === 'webmail' && actual.status === 'active') avisarCorreoWeb(actual.client_id);
+}
+
+/**
  * Avanza el dominio por sus estados: DNS correcto → Traefik lo publica →
  * certificado emitido → activo. Devuelve el dominio ya actualizado.
  */
 export async function refreshClientDomain(id: string): Promise<ClientDomain> {
   const domain = getClientDomain(id);
+  // Red de seguridad: un nombre que ya no cuelga de un dominio de correo del
+  // cliente con la propiedad comprobada (borrado antes de esta versión, o
+  // que pasó a otro cliente) no se vuelve a publicar ni a ofrecer como su
+  // webmail: con su marca se serviría un nombre que ya no es suyo.
+  const padre = dominioDelQueCuelga(domain.clientId, domain.hostname);
+  if (!padre || padre.owner_verified_at === null) {
+    fallosSeguidos.delete(id);
+    const row = db
+      .prepare(
+        `UPDATE client_domains SET status = 'pending_dns', detail = ?, last_checked_at = ? WHERE id = ? RETURNING *`,
+      )
+      .get(
+        padre
+          ? 'Todavía no se ha comprobado la propiedad del dominio de correo del que cuelga este nombre: no se publica hasta comprobarla.'
+          : 'Este nombre ya no cuelga de ningún dominio de correo de este cliente, así que no se publica. Elimínalo o vuelve a dar de alta su dominio de correo.',
+        now(),
+        id,
+      ) as DomainRow;
+    // Si estaba en servicio, el correo web nuevo deja de usarlo.
+    if (domain.status === 'active') avisarCorreoWeb(domain.clientId);
+    return toDomain(row);
+  }
   const dns = await checkDns(domain);
   // Solo se prueba HTTPS cuando el DNS ya apunta aquí: antes no puede haber certificado.
   let resultadoHttps: { ok: boolean; detail: string } | null = null;
@@ -1101,6 +1239,47 @@ export function buildTraefikConfig(): Record<string, unknown> {
   };
 }
 
+/**
+ * Da de alta un dominio propio (webmail o panel) de un cliente con todas las
+ * comprobaciones del alta: nombre válido y permitido, libre y dentro del
+ * máximo por cliente. No lo comprueba ni lo audita: eso lo hace quien llama.
+ * La usan la ruta de alta y el cambio de dominio, que crea el webmail con la
+ * marca del cliente en el dominio nuevo (webmail.dominio2.es).
+ */
+export function crearDominioPropio(clientId: string, hostnameEntrada: string, kind: DomainKind): ClientDomain {
+  if (!kindAvailable(kind)) {
+    throw badRequest(
+      kind === 'panel'
+        ? 'Los dominios de panel no están habilitados: falta configurar MAILWAY_PANEL_BACKEND_URL en el servidor.'
+        : 'Los dominios de webmail no están habilitados en este servidor.',
+      'kind_unavailable',
+    );
+  }
+  const hostname = normalizeHostname(hostnameEntrada);
+  assertHostnameAllowed(clientId, hostname);
+  const existing = db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname);
+  if (existing) throw conflict('Ese dominio ya está dado de alta.');
+  const count = (
+    db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
+      c: number;
+    }
+  ).c;
+  if (count >= MAX_WHITELABEL_PER_CLIENT) {
+    throw badRequest(
+      `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimina uno que no se utilice para añadir otro.`,
+      'whitelabel_limit',
+    );
+  }
+  const id = randomId('wld');
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, clientId, hostname, kind, now());
+  // Darlo de alta es pedirlo: deja de estar descartado.
+  db.prepare('DELETE FROM webmail_descartados WHERE hostname = ?').run(hostname);
+  return getClientDomain(id);
+}
+
 /* --------------------------------- Rutas ---------------------------------- */
 
 function requireDomainAccess(req: FastifyRequest, id: string): ClientDomain {
@@ -1236,52 +1415,31 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
         'kind_unavailable',
       );
     }
-
     const hostname = normalizeHostname(body.hostname);
-    assertHostnameAllowed(clientId, hostname);
     const existing = db.prepare('SELECT * FROM client_domains WHERE hostname = ?').get(hostname) as
       | DomainRow
       | undefined;
-    if (existing) {
+    if (existing && existing.client_id === clientId && existing.kind === body.kind) {
       // El mismo nombre del mismo cliente y del mismo tipo (lo creó el alta
       // automática, o Skyway lo pide otra vez): se devuelve el que hay, en
       // lugar de un error que haría fallar a quien integra.
-      if (existing.client_id === clientId && existing.kind === body.kind) {
-        // Pedido expresamente: desactivar el automático ya no lo retira.
-        if (existing.automatico === 1) {
-          db.prepare('UPDATE client_domains SET automatico = 0 WHERE id = ?').run(existing.id);
-        }
-        return { domain: getClientDomain(existing.id), instructions: dnsInstructions(hostname) };
+      assertHostnameAllowed(clientId, hostname);
+      // Pedido expresamente: desactivar el automático ya no lo retira.
+      if (existing.automatico === 1) {
+        db.prepare('UPDATE client_domains SET automatico = 0 WHERE id = ?').run(existing.id);
       }
-      throw conflict('Ese dominio ya está dado de alta.');
+      return { domain: getClientDomain(existing.id), instructions: dnsInstructions(hostname) };
     }
-    const count = (
-      db.prepare('SELECT COUNT(*) AS c FROM client_domains WHERE client_id = ?').get(clientId) as {
-        c: number;
-      }
-    ).c;
-    if (count >= MAX_WHITELABEL_PER_CLIENT) {
-      throw badRequest(
-        `Se ha alcanzado el máximo de ${MAX_WHITELABEL_PER_CLIENT} dominios propios por cliente. Elimina uno que no se utilice para añadir otro.`,
-        'whitelabel_limit',
-      );
-    }
-
-    const id = randomId('wld');
-    db.prepare(
-      `INSERT INTO client_domains (id, client_id, hostname, kind, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, clientId, hostname, body.kind, now());
-    // Darlo de alta a mano es pedirlo: deja de estar descartado.
-    db.prepare('DELETE FROM webmail_descartados WHERE hostname = ?').run(hostname);
-    audit(req, 'whitelabel.domain_created', { id, hostname, kind: body.kind }, clientId);
+    const creado = crearDominioPropio(clientId, hostname, body.kind);
+    const id = creado.id;
+    audit(req, 'whitelabel.domain_created', { id, hostname: creado.hostname, kind: body.kind }, clientId);
 
     // El webmail se apunta solo en Cloudflare cuando se puede. Después, la
     // primera comprobación inmediata: si el DNS ya estaba puesto, el usuario
     // ve el progreso sin tener que pulsar nada.
     const automatico = body.kind === 'webmail' ? await dnsAutomatico(req, user, id) : null;
     const domain = automatico ?? (await refreshClientDomain(id).catch(() => getClientDomain(id)));
-    return { domain, instructions: dnsInstructions(hostname) };
+    return { domain, instructions: dnsInstructions(creado.hostname) };
   });
 
   app.get('/api/whitelabel/domains/:id', async (req) => {
@@ -1372,21 +1530,9 @@ export function registerWhitelabelRoutes(app: FastifyInstance): void {
   app.delete('/api/whitelabel/domains/:id', async (req) => {
     const { id } = req.params as { id: string };
     const domain = requireDomainAccess(req, id);
-    db.transaction(() => {
-      db.prepare('DELETE FROM client_domains WHERE id = ?').run(id);
-      // Eliminado a mano: el alta automática no lo vuelve a crear.
-      if (domain.kind === 'webmail') {
-        db.prepare(
-          `INSERT INTO webmail_descartados (hostname, client_id, created_at) VALUES (?, ?, ?)
-           ON CONFLICT(hostname) DO UPDATE SET client_id = excluded.client_id, created_at = excluded.created_at`,
-        ).run(domain.hostname, domain.clientId, now());
-      }
-    })();
-    fallosSeguidos.delete(id);
-    // El vigilante ya no volverá a mirarlo: su alerta quedaría abierta para siempre.
-    resolveAlert(`whitelabel:${id}`);
+    // Eliminado a mano: el alta automática no lo vuelve a crear.
+    eliminarDominioPropio(id, { descartar: true });
     audit(req, 'whitelabel.domain_deleted', { id, hostname: domain.hostname }, domain.clientId);
-    if (domain.kind === 'webmail' && domain.status === 'active') avisarCorreoWeb(domain.clientId);
     // Traefik dejará de enrutarlo en su siguiente sondeo (unos segundos).
     return { ok: true };
   });

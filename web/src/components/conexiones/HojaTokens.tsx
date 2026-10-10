@@ -16,6 +16,11 @@ import { AvisoError, Dialogo, Hoja, MarcaFondo, Cargando, Muestra, Vacio, type V
 import { useToast } from '../../ui/toast';
 import { useDireccionPanel } from '../gestion/consultas';
 
+/** El nombre dice que el token es para Skyway («Skyway», «Skyway producción»…). */
+function esParaSkyway(nombre: string): boolean {
+  return /skyway/i.test(nombre);
+}
+
 /** Fuera de rango primero: un token caducado rompe una integración y se lee antes. */
 const PESO: Record<Veredicto, number> = { fuera: 0, vigilar: 1, 'sin-dato': 2, normal: 3 };
 
@@ -32,6 +37,8 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
   const [crearAbierto, setCrearAbierto] = useState(false);
   const [nombre, setNombre] = useState('');
   const [caducidad, setCaducidad] = useState('365');
+  // Elegida a mano: el nombre ya no la cambia.
+  const [caducidadElegida, setCaducidadElegida] = useState(false);
   const [errorAlta, setErrorAlta] = useState('');
   const [creado, setCreado] = useState<TokenCreado | null>(null);
   const [aRevocar, setARevocar] = useState<TokenGestion | null>(null);
@@ -77,6 +84,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
     setErrorAlta('');
     setNombre('');
     setCaducidad('365');
+    setCaducidadElegida(false);
     crear.reset();
     setCrearAbierto(true);
   }
@@ -223,6 +231,9 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => {
               setErrorAlta('');
               setNombre(e.target.value);
+              // Un token para Skyway caducado corta la integración de todos los
+              // proyectos; el instalador lo crea sin caducidad y aquí se propone igual.
+              if (!caducidadElegida) setCaducidad(esParaSkyway(e.target.value) ? 'nunca' : '365');
             }}
             placeholder="Skyway producción"
             help="Sirve para reconocerlo después. Se recomienda un token por integración o entorno."
@@ -230,8 +241,15 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
           <Select
             label="Caducidad"
             value={caducidad}
-            onChange={(e) => setCaducidad(e.target.value)}
-            help="Al caducar, la integración deja de tener acceso hasta que se configure un token nuevo."
+            onChange={(e) => {
+              setCaducidadElegida(true);
+              setCaducidad(e.target.value);
+            }}
+            help={
+              caducidad === 'nunca' && esParaSkyway(nombre)
+                ? 'Sin caducidad, como el que crea el instalador: la conexión con Skyway no se corta un día sin aviso. Revócalo aquí si deja de usarse.'
+                : 'Al caducar, la integración deja de tener acceso hasta que se configure un token nuevo. Si se usa, Mailway avisa 14 días antes.'
+            }
           >
             {CADUCIDADES.map((c) => (
               <option key={c.valor} value={c.valor}>

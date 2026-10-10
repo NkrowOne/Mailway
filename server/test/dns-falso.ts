@@ -19,6 +19,7 @@ export interface ZonaDns {
   cname?: Record<string, string[]>;
   /** Inversos por IP (PTR). */
   ptr?: Record<string, string[]>;
+  caa?: Record<string, { critical: number; issue?: string; issuewild?: string; iodef?: string }[]>;
 }
 
 function sinDatos(nombre: string): never {
@@ -44,4 +45,5 @@ export function instalarDnsFalso(t: TestContext, zona: ZonaDns): void {
   t.mock.method(Resolver.prototype, 'resolveSrv', async (n: string) => de(zona.srv, n));
   t.mock.method(Resolver.prototype, 'resolveCname', async (n: string) => de(zona.cname, n));
   t.mock.method(Resolver.prototype, 'reverse', async (ip: string) => de(zona.ptr, ip));
+  t.mock.method(Resolver.prototype, 'resolveCaa', async (n: string) => de(zona.caa, n));
 }

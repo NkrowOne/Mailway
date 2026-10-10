@@ -276,6 +276,8 @@ async function ejecutar(argv, io) {
         buzones: { total: estado.buzones.length, conHash, sinHash: estado.buzones.length - conHash },
         contrasenasAplicacion: { porApi: {}, invalidadas: 0 },
         credencialesInternas: { porApi: {}, invalidadas: 0 },
+        // Como el panel: un cambio de dominio sin terminar impide migrar.
+        bloqueo: estado.bloqueo || null,
       };
       try {
         resultado.api = await detectarApi();

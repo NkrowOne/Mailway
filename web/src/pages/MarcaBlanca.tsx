@@ -15,6 +15,7 @@ import { formatDate } from '../lib/format';
 import { nombreVisible, type DominioCorreo } from '../lib/cloudflare';
 import {
   cuentaCloudflarePara,
+  interpretarSubdominio,
   MAX_DOMINIOS_PROPIOS,
   type CuentaCloudflare,
   type ResultadoCloudflareMarcaBlanca,
@@ -342,9 +343,19 @@ function DialogoAlta({
   });
   const verificados = (dominiosCorreo.data?.domains ?? []).filter(verificado);
   const pendientes = (dominiosCorreo.data?.domains ?? []).filter((d) => !verificado(d));
-  const dominioPadre = padre || verificados[0]?.domain || '';
-  const prefijo = subdominio.trim().toLowerCase().replace(/\.+$/, '');
-  const hostname = prefijo && dominioPadre ? `${prefijo}.${dominioPadre}` : '';
+  // Si se escribe el nombre completo, el dominio del final manda sobre la lista.
+  const interpretado = interpretarSubdominio(subdominio, verificados, pendientes);
+  const dominioPadre = interpretado.padre || padre || verificados[0]?.domain || '';
+  const hostname =
+    interpretado.prefijo && !interpretado.error && dominioPadre ? `${interpretado.prefijo}.${dominioPadre}` : '';
+
+  /** Al salir del campo, el nombre completo se reparte entre el campo y la lista. */
+  function separarNombreCompleto() {
+    if (interpretado.padre && !interpretado.error) {
+      setSubdominio(interpretado.prefijo);
+      setPadre(interpretado.padre);
+    }
+  }
 
   const crear = useMutation({
     mutationFn: () =>
@@ -425,9 +436,14 @@ function DialogoAlta({
                 mono
                 required
                 value={subdominio}
-                onChange={(e) => setSubdominio(e.target.value)}
+                onChange={(e) => {
+                  setError('');
+                  setSubdominio(e.target.value);
+                }}
+                onBlur={separarNombreCompleto}
                 placeholder="webmail"
                 autoFocus
+                error={interpretado.error ?? undefined}
               />
               <Select label="Dominio de correo" value={dominioPadre} onChange={(e) => setPadre(e.target.value)}>
                 {verificados.map((d) => (

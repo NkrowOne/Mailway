@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { generateMailboxPassword, hashPassword, randomId } from '../core/crypto';
 import { badRequest, conflict, notFound } from '../core/errors';
-import { mailboxStateLockKey, withLock } from '../core/locks';
+import { buzonLockKey, mailboxStateLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
 import { exigirSinMantenimiento } from './mantenimiento';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
+import { dominiosExentos, loginParaMotor } from './direcciones';
 
 /* --------------------------------- Planes -------------------------------- */
 
@@ -247,9 +248,12 @@ function contar(n: number, singular: string, pluralForm: string): string {
 export function planExcess(clientId: string, plan: Plan): string[] {
   const usage = getClientUsage(clientId);
   const excess: string[] = [];
-  if (usage.domains > plan.maxDomains) {
+  // El dominio que se deja en un cambio de dominio no cuenta: solo sigue para
+  // recibir mientras dura el cambio.
+  const domains = dominiosQueCuentan(clientId, usage.domains);
+  if (domains > plan.maxDomains) {
     excess.push(
-      `el cliente tiene ${contar(usage.domains, 'dominio', 'dominios')} y el plan permite ${plan.maxDomains}`,
+      `el cliente tiene ${contar(domains, 'dominio', 'dominios')} y el plan permite ${plan.maxDomains}`,
     );
   }
   if (usage.mailboxes > plan.maxMailboxes) {
@@ -276,6 +280,14 @@ export function planExcess(clientId: string, plan: Plan): string[] {
     );
   }
   return excess;
+}
+
+/**
+ * Dominios del cliente que cuentan para el plan: todos menos el origen de cada
+ * cambio de dominio abierto. getClientUsage sigue dando el total real.
+ */
+function dominiosQueCuentan(clientId: string, total: number): number {
+  return Math.max(0, total - dominiosExentos(clientId).length);
 }
 
 /**
@@ -318,10 +330,17 @@ export async function applyClientSuspension(
 ): Promise<SuspensionResult> {
   const rows = db
     .prepare(
-      `SELECT m.id, m.local_part, m.status, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+      `SELECT m.id, m.usuario_motor, m.local_part, m.status, d.domain
+       FROM mailboxes m JOIN domains d ON d.id = m.domain_id
        WHERE d.client_id = ?`,
     )
-    .all(clientId) as { id: string; local_part: string; status: 'active' | 'suspended'; domain: string }[];
+    .all(clientId) as {
+      id: string;
+      usuario_motor: string | null;
+      local_part: string;
+      status: 'active' | 'suspended';
+      domain: string;
+    }[];
   const result: SuspensionResult = { updated: 0, skipped: 0, failed: [] };
   const targets = rows.filter((row) => row.status === 'active');
   result.skipped = rows.length - targets.length;
@@ -331,8 +350,13 @@ export async function applyClientSuspension(
   await runLimited(targets, 5, async (row) => {
     const email = `${row.local_part}@${row.domain}`;
     try {
-      // En fila con los demás cambios de estado del buzón (mailboxStateLockKey).
-      await withLock(mailboxStateLockKey(row.id), () => engine.updateMailbox(email, { suspended }));
+      // En fila con los demás cambios del buzón: primero su usuario del motor
+      // (buzonLockKey, que durante un cambio de dominio no es la dirección) y
+      // después su estado (mailboxStateLockKey), el mismo orden que la ruta
+      // del buzón.
+      await withLock(buzonLockKey(row.id), () =>
+        withLock(mailboxStateLockKey(row.id), () => engine.updateMailbox(loginParaMotor(row.id), { suspended })),
+      );
       result.updated += 1;
     } catch (err) {
       result.failed.push({ email, error: (err as Error).message });
@@ -769,7 +793,8 @@ export function assertWithinLimit(
   const plan = getPlan(client.planId);
   const usage = getClientUsage(clientId);
   const limits: Record<typeof resource, { used: number; max: number; label: string }> = {
-    domains: { used: usage.domains, max: plan.maxDomains, label: 'dominios' },
+    // El origen de un cambio de dominio abierto no cuenta: así cabe el dominio nuevo.
+    domains: { used: dominiosQueCuentan(clientId, usage.domains), max: plan.maxDomains, label: 'dominios' },
     mailboxes: { used: usage.mailboxes, max: plan.maxMailboxes, label: 'buzones' },
     aliases: { used: usage.aliases, max: plan.maxAliases, label: 'alias' },
   };

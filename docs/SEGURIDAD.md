@@ -92,6 +92,14 @@ cliente puede usar la API directamente, no solo la interfaz.
   pasan por argumentos, registros ni auditoría, que anota cada paso como
   «Sistema» y sin secretos. El instalador pasa el token a Skyway por la
   entrada estándar y muestra la contraseña una sola vez.
+- **Identidad del servidor desde el instalador**
+  (`server/src/tools/identidad.ts`): también solo desde la terminal, tras un
+  cambio de dominio o de IP que quien instala ha confirmado. Hace que Ajustes
+  adopte los valores del entorno del panel (nombre del servidor, URL del
+  webmail y del panel, IP) aunque se hubieran cambiado a mano; nada más.
+  Sin confirmación, el panel solo adopta lo que nadie ha cambiado en Ajustes
+  y avisa de lo demás (`modules/entorno.ts`). Su salida (nombres, URL e IP)
+  no lleva secretos.
 
 ### 3.3 Claves de API
 
@@ -153,15 +161,47 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   enumerar identificadores.
 - **Propiedad de los dominios**: nadie crea buzones ni alias en un dominio sin
   probar que es suyo (MX hacia el servidor o TXT `_mailway.<dominio>` =
-  `mailway-verificacion=<token>`; si no, `409 domain_ownership_pending`). Sin
-  esta regla, un cliente podría dar de alta un dominio ajeno y el motor le
-  entregaría en local el correo que otros clientes envían a ese dominio. Se
+  `mailway-verificacion=<token>`; si no, `409 domain_ownership_pending`). Se
   aplica también a la administración y a los tokens. Una zona de Cloudflare solo
   prueba la propiedad si está activa: cualquiera puede añadir un dominio ajeno
-  a su cuenta de Cloudflare, pero no activarlo.
+  a su cuenta de Cloudflare, pero no activarlo. La única excepción es el modo
+  demostración: solo con `MAILWAY_DEMO=1` (no con el motor «demo» elegido en
+  el asistente, que puede pasar a Stalwart sin reiniciar), quien tiene acceso
+  al cliente puede simular la propiedad; queda anotada y, al arrancar sin
+  `MAILWAY_DEMO`, vuelve a quedar pendiente, así que un motor real nunca
+  hereda un dominio ajeno dado por comprobado.
+- **Un dominio dado de alta existe en el motor**, también sin la propiedad
+  comprobada: con Stalwart 0.16 sus claves DKIM y los registros que hay que
+  publicar solo existen así. Para Stalwart, un dominio que existe es local
+  para todo el servidor (rechaza con «550 Mailbox does not exist» cualquier
+  dirección que no tenga y entrega en local las demás), así que dar de alta
+  gmail.com (o el dominio de otro cliente) afectaría al correo que los demás
+  clientes del servidor le envían. Lo limitan la propiedad, que se exige para
+  cualquier buzón o alias, y, con la 0.15, la recepción en otro proveedor
+  (siguiente punto), que devuelve ese correo a su MX en cuanto se mide. Está
+  en los límites conocidos de `docs/PLAN.md`; la rama del cambio de dominio
+  lo retrasaba hasta el primer buzón, pero solo funcionaba con la 0.15.
+- **Dominios con el correo en otro proveedor**: aunque el dominio tenga buzones
+  aquí, mientras su MX público apunte a otro servidor, lo que se envía desde
+  este servidor a sus direcciones sale por ese MX y no se entrega en local
+  (véase «Recepción en otro proveedor» en `INTEGRACIONES.md`). Así, preparar
+  un traslado o tener solo el envío en Mailway no desvía el correo que se
+  envía desde aquí. Límite conocido: el correo de Internet que llega a un
+  alias de otro dominio de este servidor y reenvía a un buzón de ese dominio
+  se entrega en el buzón de aquí (Stalwart no distingue en la cola un
+  destinatario que viene de un alias); el formulario de alias lo avisa.
+- **Marca blanca y cambios de IP**: la comprobación del DNS de un dominio
+  propio acepta un CNAME al servidor de correo o un A a una IP del servidor
+  (la de Ajustes o las del nombre del servidor de correo). Ampliarla no abre
+  nada: quién puede dar de alta un nombre lo decide la regla de propiedad.
 - **Destinos de alias**: solo buzones del mismo cliente o direcciones
   externas; una dirección de un dominio de la instancia que no existe se
-  rechaza en lugar de salir a Internet.
+  rechaza en lugar de salir a Internet. Solo cuenta como dominio de la
+  instancia uno con la propiedad comprobada: si alguien da de alta gmail.com
+  (o el dominio de otro) sin probarla, sus direcciones siguen siendo destinos
+  externos para todos los clientes, y borrarlo después no quita esos
+  reenvíos de ningún alias (solo se retiran los destinos que eran buzones
+  del dominio borrado).
 - **Remitente de las claves**: siempre un buzón del mismo cliente; el `From`
   no se puede cambiar.
 - **Correo de configuración** (`POST /api/mailboxes/:id/setup-email`): solo
@@ -718,7 +758,117 @@ Los parches de seguridad llegan solos, pero solo después de probarse:
 
 Detalle en la sección 8.1 de [DESPLIEGUE-SKYWAY.md](DESPLIEGUE-SKYWAY.md).
 
-## 12. Recomendaciones operativas
+## 12. Cambio de dominio
+
+El cambio de dominio de un cliente (dominio.es → dominio2.es,
+[INTEGRACIONES.md](INTEGRACIONES.md), sección 10) separa el **usuario del
+motor** de la dirección: Stalwart 0.15 solo autentica por el nombre del
+principal y la 0.16 por la dirección de la cuenta (o un alias con la misma
+parte local), así que durante la transición un buzón ya tiene la dirección
+nueva y sigue entrando con su usuario anterior. Decisiones con efecto en la
+seguridad:
+
+- **La propiedad del dominio nuevo se prueba de nuevo**, por las vías de
+  siempre (TXT `_mailway`, MX hacia aquí o escritura en una zona activa de
+  Cloudflare). No se hereda del dominio viejo, ni siquiera para la
+  administración: dominio2.es pasa por la misma alta que cualquier dominio, así
+  que el cambio no amplía lo que hoy se puede dar de alta.
+- **Reserva del dominio dado de baja.** Tras la baja, el TXT de verificación y
+  quizá el MX de dominio.es siguen en su DNS y bastarían para que otro cliente
+  «probara» la propiedad y recibiera el correo que aún llegue. Un dominio dado
+  de baja en un cambio de dominio queda reservado a su cliente: otro cliente, o
+  Skyway con `soloCliente=1`, recibe `409 domain_reserved`; solo la
+  administración (sin `soloCliente`) puede darlo de alta para otro.
+- **La baja exige que el MX viejo ya no apunte aquí** (medido en ese momento;
+  sin DNS, `503`): el correo ajeno que siguiera llegando se rechazaría, y los
+  rechazos alimentan el bloqueo automático de IPs del motor. Por la misma razón
+  no se cancela un cambio cuyo dominio nuevo ya recibe aquí, tanto si lo creó
+  el cambio como si ya existía. Tras pasar, el vigilante tampoco avisa de que
+  el DNS del dominio anterior «ha dejado de ser correcto»: seguir ese aviso
+  devolvería el MX a este servidor y bloquearía la baja.
+- **Ningún reenvío sale a Internet por la dirección vieja.** Al pasar, los
+  alias de toda la instancia que reenvían a un buzón que se muda se vuelven a
+  escribir en el motor con el buzón como miembro (por id). Un reenvío que el
+  motor guardaba por dirección (creado cuando dominio.es aún no tenía la
+  propiedad comprobada, p. ej. desde otro cliente) seguiría apuntando a
+  `ana@dominio.es` y, tras la baja, entregaría en el MX de dominio.es, es
+  decir, a quien tenga ese dominio después. En Stalwart 0.16 los destinos de
+  una lista son siempre direcciones: al quitar una (la baja), el driver pasa a
+  la dirección nueva todas las listas que la tenían, antes de que el dominio
+  salga del motor.
+- **«Actualizar mis dispositivos» desde el enlace de configuración no pide la
+  contraseña.** La acción solo cambia el usuario del propio buzón a su
+  dirección vigente, algo que la baja hará de todos modos: no da acceso ni
+  revela nada. Quien tiene el enlace (un secreto de 256 bits que crea la
+  administración del cliente) ya puede ver los datos de conexión y, a veces, la
+  contraseña. Lo peor que puede pasar es que unos dispositivos dejen de conectar
+  antes de tiempo. La ruta tiene el límite de las rutas públicas.
+- **Aplicaciones que envían por SMTP.** Un buzón con contraseñas de aplicación
+  `skyway:*` activas solo cambia de usuario con el token de gestión de la
+  administración: Skyway lo actualiza, cambia sus variables y vuelve a
+  desplegar la aplicación. Ni el titular, ni la sesión del panel, ni un token
+  que se crea un usuario del cliente pueden dejarla sin enviar
+  (`409 mailbox_used_by_app`), tampoco cancelando un cambio que devolvería el
+  buzón a su usuario anterior, y la baja no sigue con alguno pendiente. El
+  prefijo `skyway:` está reservado a las integraciones: el panel y «Mi buzón»
+  no crean contraseñas con ese nombre (`400 app_password_name_reserved`), que
+  bloquearían la actualización del buzón y la baja de todo el dominio.
+- **Cambios de Skyway.** Un cambio creado por Skyway (`origen: "skyway"`) solo
+  se crea, se pasa, se vuelve, se cancela o se da de baja con el token de
+  gestión de la administración, que es el que usa Skyway. Con la sesión del
+  panel, o con un token que se crea un usuario del cliente (`POST /api/tokens`
+  solo pide su sesión), crearlo da `403 token_required` y las acciones,
+  `409 migration_managed_externally`. Así nadie
+  desacompasa por error el correo de la web y los despliegues que lleva
+  Skyway. Por lo mismo, Skyway no adopta un cambio que se lleva desde el panel
+  ni el de otro proyecto: pedir el mismo cambio da `409 migration_exists`.
+- **El complemento del webmail traslada la fila de Roundcube antes de
+  comprobar la contraseña.** Al entrar, `mailway_cuentas` pregunta al panel
+  (con el token del webmail, nunca con la contraseña) cuál es el usuario
+  vigente de lo que se ha tecleado y, si es otro, pasa a él la fila de
+  `users` del usuario anterior. Lo hace en `authenticate`, antes de que IMAP
+  compruebe la contraseña, porque es el único gancho con el usuario tecleado.
+  No es un riesgo: el traslado solo ocurre cuando el panel dice que el usuario
+  vigente de ese buzón es otro, lleva al mismo estado que la siguiente entrada
+  legítima y nunca borra datos (la fila que estorba se aparta con
+  `#apartado-<id>`, no se elimina). Un anónimo solo puede adelantarlo.
+  `POST /api/webmail/cuenta` exige el token del webmail (`404` si no está
+  configurado, `401` si no coincide) y no cuenta fallos de contraseña porque no
+  las comprueba.
+- **La autoconfiguración revela el usuario de una dirección en cambio.** Con
+  `?emailaddress=`, Thunderbird y Autodiscover reciben como usuario el login
+  vigente cuando no coincide con la dirección pedida (si no, el programa se
+  configuraría con un usuario que no existe). Para una dirección normal la
+  respuesta no cambia (`%EMAILADDRESS%`), así que no se revela si existe; para
+  una en cambio solo se revela su usuario anterior, que ya se deduce por SMTP.
+- **Usuarios del motor y cerrojos.** Toda llamada al motor que identifica un
+  buzón usa su usuario del motor (`loginParaMotor`). Un cambio de usuario se
+  marca antes de tocar el motor (`usuario_cambiando_a`): si el panel cae a
+  mitad, el buzón responde `409 mailbox_login_updating` hasta que el
+  conciliador (al arrancar y en el vigilante) sabe con qué nombre quedó el
+  principal, para no llamar nunca al motor con un nombre equivocado. La
+  contraseña se sigue comprobando con la copia local del hash (sección 3.4),
+  que no depende del nombre: sin copia, «no se puede comprobar ahora», nunca
+  una pregunta al motor con el nombre equivocado. Las acciones del cambio van
+  en fila con los cerrojos `altas:dominios → altas:<cliente> → cambio:<id> →
+  buzon:<id> → estado-buzon:<id> | credenciales:<id> | contrasenas-app:<id>`,
+  siempre en ese orden (la corrección de las suspensiones y el nombre visible
+  también toman `buzon:<id>`).
+- **Cambio de versión del motor.** Con el motor en mantenimiento ningún paso
+  del cambio escribe en él (`503 engine_maintenance`), y el motor no se migra
+  de la 0.15 a la 0.16 con un cambio sin terminar o con buzones que siguen
+  con el usuario anterior: la migración oficial convierte cada cuenta por su
+  nombre y el panel podría quedarse llamando a una cuenta con otro.
+- **La cuenta oculta `configuration@` se va con el dominio.** La baja (y la
+  cancelación que elimina el dominio nuevo) la retira del motor antes de
+  borrar el dominio: no queda una cuenta con contraseña en un dominio que ya
+  no es del cliente.
+- **Auditoría.** Cada paso queda en la Actividad del cliente
+  (`domain.migration_created`, `…_switched`, `…_rolled_back`, `…_cancelled`,
+  `…_retired`, `…_mx_changed`) y cada cambio de usuario, con quién lo pidió
+  (`mailbox.login_updated` con `por: panel|integracion|titular|enlace|baja|cancelacion|conciliador`).
+
+## 13. Recomendaciones operativas
 
 - Mantén cerrados en el cortafuegos todos los puertos salvo 22, 25, 80, 443,
   465, 587, 993 y 4190.

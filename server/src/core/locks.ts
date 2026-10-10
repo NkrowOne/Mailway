@@ -27,6 +27,17 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
   }
 }
 
+/*
+ * Orden fijo de los cerrojos (nunca al revés: withLock no es reentrante, y
+ * dos tareas que los tomaran en orden distinto se esperarían para siempre):
+ *
+ *   altas:dominios → altas:<clientId> → cambio:<id> → buzon:<mailboxId>
+ *     → estado-buzon:<mailboxId> | credenciales:<mailboxId> | contrasenas-app:<mailboxId>
+ *
+ * Quien ya tiene uno de ellos solo puede pedir los que van después. Los tres
+ * últimos no se anidan entre sí.
+ */
+
 /** Clave común para las altas de un cliente (dominios, buzones, alias). */
 export function clientLockKey(clientId: string): string {
   return `altas:${clientId}`;
@@ -41,4 +52,18 @@ export function clientLockKey(clientId: string): string {
  */
 export function mailboxStateLockKey(mailboxId: string): string {
   return `estado-buzon:${mailboxId}`;
+}
+
+/** Un cambio de dominio: pasar, volver, cancelar, dar de baja y preparar van en fila. */
+export function cambioLockKey(migrationId: string): string {
+  return `cambio:${migrationId}`;
+}
+
+/**
+ * Un buzón: lo que habla con el motor usando su usuario (cambiarlo, la
+ * contraseña, la suspensión, el borrado) va en fila, y cada uno relee la fila
+ * dentro del cerrojo para no usar un usuario que acaba de cambiar.
+ */
+export function buzonLockKey(mailboxId: string): string {
+  return `buzon:${mailboxId}`;
 }

@@ -2,25 +2,35 @@ import { HttpError, upstream } from '../core/errors';
 import { normalizeHostname } from '../core/hostnames';
 import { sha512Crypt } from '../core/sha512crypt';
 import { RutaDeGestionAusente } from './errores';
-import type {
-  AcmeInput,
-  CreatedAppPassword,
-  CreateMailboxInput,
-  EngineAcmeStatus,
-  EngineApi,
-  EngineDirectory,
-  EngineDnsRecord,
-  EngineHealth,
-  EngineReloadResult,
-  EngineSettings,
-  EngineSettingsStatus,
-  MailboxCredentials,
-  MailEngine,
-  QueueSummary,
-  RecommendedInput,
-  SettingsStatusInput,
-  UpdateMailboxPatch,
+import {
+  fusionarDirecciones,
+  type AcmeInput,
+  type CreatedAppPassword,
+  type CreateMailboxInput,
+  type EngineAcmeStatus,
+  type EngineApi,
+  type EngineDirectory,
+  type EngineDnsRecord,
+  type EngineHealth,
+  type EnginePrincipal,
+  type EngineReloadResult,
+  type EngineSettings,
+  type EngineSettingsStatus,
+  type MailboxCredentials,
+  type MailEngine,
+  type QueueSummary,
+  type RecommendedInput,
+  type RemoteDomainsResult,
+  type SettingsStatusInput,
+  type UpdateMailboxPatch,
 } from './types';
+import {
+  CLAVES_RECEPCION,
+  esReglaDeMailway,
+  reglasIguales,
+  reglasRecepcionRemota,
+  soloClavesDeRecepcion,
+} from './recepcion';
 
 /** Dominio por el que se piden los registros para saber el nombre en ejecución. */
 const DOMINIO_SONDA = 'mailway.invalid';
@@ -52,11 +62,18 @@ const CERT_FILE_KEYS = ['certificate.mailway.cert', 'certificate.default.cert'];
 const PERMISOS_SUSPENSION = ['authenticate', 'authenticate-oauth'];
 
 /** Lo que el panel lee de un principal (GET /api/principal/<nombre>). */
+/**
+ * Principal tal como lo devuelve GET /api/principal/{nombre}. Stalwart omite
+ * los campos vacíos y da un campo de lista con un solo valor como cadena.
+ */
 interface PrincipalLeido {
+  id?: unknown;
   type?: string;
+  name?: unknown;
   secrets?: string[] | string;
   roles?: string[];
   disabledPermissions?: string[];
+  emails?: unknown;
 }
 
 /**
@@ -280,6 +297,22 @@ export class Stalwart015Engine implements MailEngine {
       // también lo saca de las listas del motor en las que siguiera (ver
       // updateMailbox): ningún alias del panel apunta a un buzón que el panel
       // aún no tenía.
+      // Pero solo si es un buzón limpio: tras un cambio de dominio, el usuario
+      // viejo de un buzón que aún no ha actualizado sus dispositivos sigue en
+      // el motor con las direcciones nuevas; adoptarlo al dar de alta otra vez
+      // esa dirección entregaría a otra persona el buzón con todo su correo.
+      const existente = await this.getPrincipal(input.email);
+      // Sin principal con ese nombre, lo que existe es la DIRECCIÓN (de otro
+      // principal): no hay nada que adoptar.
+      if (!existente) throw err;
+      const email = input.email.toLowerCase();
+      if (existente.type !== 'individual' || existente.emails.some((e) => e !== email)) {
+        throw new HttpError(
+          502,
+          'El servidor de correo ya tiene un usuario con ese nombre y otras direcciones: no se adopta.',
+          'engine_exists',
+        );
+      }
       await this.updatePrincipal(input.email, [
         { action: 'set', field: 'description', value: input.displayName || '' },
         { action: 'set', field: 'quota', value: input.quotaBytes ?? 0 },
@@ -542,6 +575,13 @@ export class Stalwart015Engine implements MailEngine {
     return { ...result, restartRequired: [] };
   }
 
+  async getAcmeToken(): Promise<string | null> {
+    const prefix = `acme.${ACME_ID}`;
+    const values = await this.getSettings([`${prefix}.provider`, `${prefix}.secret`]);
+    if (values[`${prefix}.provider`] !== 'cloudflare') return null;
+    return values[`${prefix}.secret`] || null;
+  }
+
   /** Escribe ajustes (clave → valor) y recarga la configuración. */
   private async applySettings(values: Record<string, string>): Promise<EngineReloadResult> {
     const entries = Object.entries(values);
@@ -612,6 +652,128 @@ export class Stalwart015Engine implements MailEngine {
     return { pending: total, oldestSeconds: total > 0 ? oldestSeconds : null };
   }
 
+  /**
+   * Reglas de entrega de los dominios con el correo en otro proveedor
+   * (engine/recepcion.ts). Se leen las tres claves (también en su forma de
+   * valor directo, que tendría prioridad sobre el bloque) y solo se escriben
+   * si faltan o son de Mailway. Las tres se vacían y se vuelven a escribir en
+   * la misma petición (`assert_empty`: tras vaciarlas, la primera clave no
+   * puede existir). Con una lista vacía solo se vacían: el motor vuelve a sus
+   * valores por defecto.
+   */
+  async syncRemoteDomains(domains: string[], opts: { reload?: boolean } = {}): Promise<RemoteDomainsResult> {
+    const claves = CLAVES_RECEPCION.join(',');
+    const leidos = await this.request<Record<string, string | null> | null>(
+      'GET',
+      `/api/settings/keys?keys=${claves}&prefixes=${claves}`,
+    );
+    const actuales = soloClavesDeRecepcion(
+      Object.fromEntries(Object.entries(leidos || {}).filter((e): e is [string, string] => typeof e[1] === 'string')),
+    );
+    const deseadas = reglasRecepcionRemota(domains);
+    if (reglasIguales(actuales, deseadas)) {
+      if (!opts.reload) return { changed: false, customized: false, errors: [], warnings: [] };
+      return { changed: false, customized: false, ...(await this.reload()) };
+    }
+    if (!esReglaDeMailway(actuales)) return { changed: false, customized: true, errors: [], warnings: [] };
+    const valores = Object.entries(deseadas);
+    await this.request('POST', '/api/settings', [
+      ...CLAVES_RECEPCION.map((c) => ({ type: 'clear', prefix: `${c}.` })),
+      ...(valores.length > 0 ? [{ type: 'insert', prefix: null, values: valores, assert_empty: true }] : []),
+    ]);
+    return { changed: true, customized: false, ...(await this.reload()) };
+  }
+
+  /* ----------------------------- Cambio de dominio ---------------------------- */
+
+  async getPrincipal(name: string): Promise<EnginePrincipal | null> {
+    let data: PrincipalLeido | null;
+    try {
+      data = await this.request<PrincipalLeido>('GET', `/api/principal/${encodeURIComponent(name)}`);
+    } catch (err) {
+      // En un GET por nombre, «notFound» solo puede referirse a ese nombre.
+      if (err instanceof HttpError && err.code === 'engine_not_found') return null;
+      throw err;
+    }
+    return principalLeido(data, name);
+  }
+
+  async setAddresses(
+    name: string,
+    ops: { add?: string[]; remove?: string[]; primary?: string },
+  ): Promise<string[]> {
+    const actual = await this.getPrincipal(name);
+    if (!actual) throw noEncontrado(name);
+    const final = fusionarDirecciones(actual.emails, ops);
+    if (final.length === actual.emails.length && final.every((d, i) => d === actual.emails[i])) return final;
+    // Un solo «set emails»: el motor valida todas las direcciones nuevas
+    // (dominio dado de alta y que no sean de otro principal) antes de
+    // escribir nada, así que un fallo deja el principal como estaba.
+    await this.updatePrincipal(name, [{ action: 'set', field: 'emails', value: final }]);
+    return final;
+  }
+
+  async renamePrincipal(
+    from: string,
+    to: string,
+    opts: { expectEmail: string; emails?: string[] },
+  ): Promise<void> {
+    // Nombre y direcciones en el MISMO PATCH: Stalwart lo aplica entero o no
+    // aplica nada. Nunca se envían los miembros: van por id y renombrar no
+    // los cambia; reescribirlos podría perder a quien ya no se llama igual.
+    const updates: PrincipalUpdate[] = [{ action: 'set', field: 'name', value: to.trim().toLowerCase() }];
+    if (opts.emails) updates.push({ action: 'set', field: 'emails', value: fusionarDirecciones(opts.emails, {}) });
+    try {
+      await this.updatePrincipal(from, updates);
+    } catch (err) {
+      // Solo «el principal de origen no existe» puede ser un reintento de un
+      // renombrado que ya se hizo; un dominio inexistente o una dirección de
+      // otro se propagan tal cual.
+      if (!isNotFoundOf(err, from)) throw err;
+      const destino = await this.getPrincipal(to);
+      if (!destino) throw err;
+      if (destino.emails.includes(opts.expectEmail.trim().toLowerCase())) return;
+      throw new HttpError(
+        502,
+        `El servidor de correo ya tiene otro buzón o alias con el nombre «${to}».`,
+        'engine_exists',
+      );
+    }
+  }
+
+  async reloadDirectory(): Promise<void> {
+    // Stalwart guarda en caché qué direcciones existen (24 h) y cuáles no
+    // (1 h): sin esta recarga, una dirección recién añadida se rechaza y una
+    // recién quitada se sigue aceptando. Una recarga con errores no aplica
+    // nada nuevo, así que no puede darse por buena.
+    const resultado = await this.reload();
+    if (resultado.errors.length > 0) {
+      throw new HttpError(
+        502,
+        `El motor de correo no pudo recargar su configuración: ${resultado.errors.slice(0, 3).join('; ')}`,
+        'engine_error',
+      );
+    }
+  }
+
+  async removeDkim(domain: string): Promise<string[]> {
+    const ajustes = await this.request<Record<string, string | null> | null>(
+      'GET',
+      '/api/settings/keys?prefixes=signature',
+    );
+    const { ids, claves } = clavesDkimDe(ajustes || {}, domain);
+    // Claves exactas, nunca un prefijo: «clear signature.rsa-d.es.» se
+    // llevaría también las de rsa-d.es.mx.
+    if (claves.length > 0) await this.request('POST', '/api/settings', [{ type: 'delete', keys: claves }]);
+    // Recarga también sin nada que borrar. Si un intento anterior borró las
+    // claves y su recarga trajo errores, el motor no aplicó nada y sigue
+    // firmando con ellas; el reintento ya no las encuentra, y sin recargar
+    // daría por terminado el borrado y el error saldría en la recarga de
+    // otra operación sin relación.
+    await this.reloadDirectory();
+    return ids;
+  }
+
   private async updatePrincipal(name: string, updates: PrincipalUpdate[]): Promise<void> {
     await this.request('PATCH', `/api/principal/${encodeURIComponent(name)}`, updates);
   }
@@ -668,6 +830,61 @@ class EngineProblem extends HttpError {
     super(status, message, code);
     this.item = item;
   }
+}
+
+/** Principal tal y como lo devuelve GET /api/principal/<nombre> (campos vacíos omitidos). */
+/**
+ * Normaliza la lectura de un principal. Stalwart omite los campos vacíos y
+ * da un campo de lista con un solo valor como cadena (`append_str` de
+ * principal.rs), así que `emails` puede faltar, ser una cadena o una lista.
+ */
+function principalLeido(data: PrincipalLeido | null, name: string): EnginePrincipal {
+  const raw = data?.emails;
+  const lista = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : [];
+  return {
+    id: typeof data?.id === 'number' ? data.id : Number(data?.id ?? NaN),
+    type: typeof data?.type === 'string' ? data.type : '',
+    name: typeof data?.name === 'string' ? data.name : name.toLowerCase(),
+    emails: lista.filter((e): e is string => typeof e === 'string' && e !== '').map((e) => e.toLowerCase()),
+  };
+}
+
+/** «notFound» de un principal, con el mismo formato que los que devuelve el motor. */
+function noEncontrado(item: string): HttpError {
+  return new EngineProblem(502, `El motor de correo no encuentra el elemento (${item}).`, 'engine_not_found', item);
+}
+
+const PREFIJO_FIRMA = 'signature.';
+const SUFIJO_DOMINIO = '.domain';
+
+/**
+ * Claves DKIM de un dominio exacto entre los ajustes `signature.*`. Los ids
+ * son los X con `signature.X.domain` igual al dominio; cada clave se asigna al
+ * id MÁS LARGO que la prefija, porque los ids llevan puntos: con los dominios
+ * d.es y d.es.mx, `signature.rsa-d.es.mx.private-key` es de rsa-d.es.mx,
+ * aunque también empiece por `signature.rsa-d.es.`.
+ */
+function clavesDkimDe(ajustes: Record<string, string | null>, domain: string): { ids: string[]; claves: string[] } {
+  const dominio = domain.trim().toLowerCase();
+  const todos: string[] = [];
+  const delDominio = new Set<string>();
+  for (const [clave, valor] of Object.entries(ajustes)) {
+    if (!clave.startsWith(PREFIJO_FIRMA) || !clave.endsWith(SUFIJO_DOMINIO)) continue;
+    const id = clave.slice(PREFIJO_FIRMA.length, -SUFIJO_DOMINIO.length);
+    if (!id) continue;
+    todos.push(id);
+    if (typeof valor === 'string' && valor.trim().toLowerCase() === dominio) delDominio.add(id);
+  }
+  if (delDominio.size === 0) return { ids: [], claves: [] };
+  todos.sort((a, b) => b.length - a.length);
+  const claves: string[] = [];
+  for (const clave of Object.keys(ajustes)) {
+    if (!clave.startsWith(PREFIJO_FIRMA)) continue;
+    const resto = clave.slice(PREFIJO_FIRMA.length);
+    const id = todos.find((i) => resto === i || resto.startsWith(`${i}.`));
+    if (id && delDominio.has(id)) claves.push(clave);
+  }
+  return { ids: [...delDominio].sort(), claves: claves.sort() };
 }
 
 /** ¿Es un «notFound» del propio principal `name` (y no de otro elemento)? */

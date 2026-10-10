@@ -357,3 +357,40 @@ test('los avisos del certificado siguen su estado', () => {
   evaluateTlsAlerts(tlsStatus({ daysLeft: 80 }), HOST);
   assert.deepEqual(openTlsAlerts(), [], 'renovado: todo cerrado');
 });
+
+/* ------------- La cuenta de Cloudflare que usa el ACME (MW-OP-09) ---------- */
+
+test('se reconoce la cuenta cuyo token usa el motor para renovar, aunque la configurara el instalador', async () => {
+  // Como el instalador: el token va directo al motor y no queda engine_acme.
+  db.prepare("DELETE FROM settings WHERE key = 'engine_acme'").run();
+  insertCloudflareAccount('cf-instalador', null);
+  db.prepare(
+    `INSERT INTO cloudflare_accounts (id, client_id, label, token_enc, token_hint, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run('cf-otra', null, 'Otra cuenta', encryptSecret('otro-token-distinto'), 'into', now());
+  await getEngine().configureAcme({
+    directory: 'https://acme-v02.api.letsencrypt.org/directory',
+    token: CF_TOKEN,
+    contact: 'postmaster@proveedor.test',
+    hostname: 'mail.proveedor.test',
+    zone: 'proveedor.test',
+  });
+
+  const uso = async (id: string) => {
+    const res = await ctx.app.inject({ method: 'GET', url: `/api/engine/acme/accounts/${id}`, headers: { cookie: ctx.adminCookie } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.ok(!res.body.includes(CF_TOKEN), 'el token nunca sale');
+    return (res.json() as { inUse: boolean | null }).inUse;
+  };
+  // La primera cuenta con ese token (la de la instancia de la prueba anterior o la del instalador).
+  const deLaInstancia = db.prepare("SELECT id FROM cloudflare_accounts WHERE client_id IS NULL AND id IN ('cf-instancia','cf-instalador') ORDER BY rowid LIMIT 1").get() as { id: string };
+  assert.equal(await uso(deLaInstancia.id), true, 'el diálogo de eliminarla no debe recomendar revocar el token');
+  assert.equal(await uso('cf-otra'), false);
+
+  const status = await ctx.app.inject({ method: 'GET', url: '/api/engine/status', headers: { cookie: ctx.adminCookie } });
+  assert.ok(!status.body.includes(CF_TOKEN));
+  assert.equal((status.json() as { acme: { accountId: string | null } }).acme.accountId, deLaInstancia.id);
+
+  const deCliente = await ctx.app.inject({ method: 'GET', url: '/api/engine/acme/accounts/cf-otra', headers: { cookie: clientCookie } });
+  assert.equal(deCliente.statusCode, 403, 'solo la administración');
+});

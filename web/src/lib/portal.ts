@@ -26,6 +26,20 @@ export interface DatosConexion {
 /** GET /api/public/setup/:token */
 export interface SetupPublico {
   email: string;
+  /**
+   * Usuario con el que entran los dispositivos. Tras un cambio de dominio es
+   * el de la dirección anterior hasta que el titular lo actualiza.
+   */
+  login: string;
+  /** El usuario aún es el de la dirección anterior: se ofrece «Actualizar y continuar». */
+  loginPending: boolean;
+  /**
+   * Una aplicación de Skyway envía con este buzón: el titular no puede
+   * actualizar el usuario. No está en el contrato de §3.14 (sí en «Mi
+   * buzón»); sin el campo, la página lo descubre al pulsar, por el 409
+   * `mailbox_used_by_app`.
+   */
+  usadoPorApp?: boolean;
   displayName: string;
   brandName: string;
   connection: DatosConexion;
@@ -42,6 +56,15 @@ export interface SetupPublico {
 /** GET /api/portal/me */
 export interface PortalMe {
   email: string;
+  /** Usuario con el que entran los dispositivos (el anterior hasta actualizarlo). */
+  login: string;
+  /** Pendiente de actualizar dispositivos tras un cambio de dominio. */
+  loginPending: boolean;
+  /**
+   * Una aplicación de Skyway envía con este buzón: el titular no puede
+   * actualizar el usuario (lo hace Skyway para que la aplicación no deje de enviar).
+   */
+  usadoPorApp: boolean;
   displayName: string;
   domain: string;
   quotaMb: number;
@@ -73,6 +96,12 @@ export interface ContrasenaAplicacion {
 
 /** Explicación común (panel y «Mi buzón») de una contraseña de aplicación invalidada. */
 export const TEXTO_INVALIDADA = 'Dejó de funcionar con la actualización del servidor de correo. Crea una nueva.';
+/** POST /api/portal/login-update y POST /api/public/setup/:token/login-update. */
+export interface RespuestaActualizarUsuario {
+  ok: true;
+  /** El usuario vigente: la dirección del buzón. */
+  login: string;
+}
 
 /** Fila de GET /api/mailboxes/:id/setup-links */
 export interface EnlaceConfiguracion {
@@ -127,6 +156,20 @@ export function esDispositivoMovil(): boolean {
 export function mensajeError(err: unknown, porDefecto: string): string {
   return err instanceof ApiError ? err.message : porDefecto;
 }
+
+/**
+ * El servidor no deja actualizar el usuario porque una aplicación de Skyway
+ * envía con el buzón (409 `mailbox_used_by_app`). Su mensaje habla a quien
+ * administra el correo («revoca sus contraseñas de aplicación…»): al titular
+ * se le muestra `TEXTO_USADO_POR_APP`.
+ */
+export function esUsadoPorApp(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'mailbox_used_by_app';
+}
+
+/** Lo que ve el titular cuando una aplicación envía con su buzón (§3.15). */
+export const TEXTO_USADO_POR_APP =
+  'Este buzón lo usa una aplicación para enviar. Pide a quien gestiona la web que lo actualice desde Skyway.';
 
 /**
  * Copia al portapapeles con alternativa: la API moderna solo funciona en

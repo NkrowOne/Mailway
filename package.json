@@ -1,6 +1,6 @@
 {
   "name": "mailway",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Servicio de correo auto-alojado y multi-cliente: buzones, panel por cliente, API transaccional y asistente de entregabilidad, todo sobre Docker.",
   "workspaces": [

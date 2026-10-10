@@ -99,14 +99,18 @@ un motor que ya tiene datos.
 | Nombre del servicio en el webmail | `Webmail` | `MAILWAY_MARCA` |
 | Correo de contacto para Let's Encrypt | `postmaster@<dominio>` | `LETSENCRYPT_EMAIL` |
 | Correo de la cuenta de administración del panel (junto a Skyway) | el de Let's Encrypt | `MAILWAY_ADMIN_EMAIL` |
-| IPv4 pública del servidor | la detectada | `MAILWAY_IP` |
+| IPv4 pública del servidor | la de una ejecución anterior si coincide con la detectada, si sigue siendo de una interfaz del servidor (se conserva con un aviso) o si no se puede detectar ninguna; si no, con terminal se propone la detectada y sin terminal el instalador se detiene (sección 8.4) | `MAILWAY_IP` |
 | Token de API de Cloudflare (Intro para omitir) | — | `CLOUDFLARE_API_TOKEN` |
 | Token de API de Skyway (solo si Skyway no corre en este servidor; Intro para omitir) | — | `SKYWAY_TOKEN` |
 | ¿Configurar el Traefik de Skyway para los dominios de los clientes? | sí | `MAILWAY_TRAEFIK_PROVEEDOR` |
 
 Los nombres `mail.`, `webmail.` y `panel.` cuelgan del dominio base; se
 pueden cambiar con `MAILWAY_MAIL_HOST`, `MAILWAY_WEBMAIL_HOST` y
-`MAILWAY_PANEL_HOST` (deben seguir siendo subdominios del dominio base).
+`MAILWAY_PANEL_HOST` (deben seguir siendo subdominios del dominio base). Si
+los nombres resultantes no son los de la ejecución anterior (otro dominio
+base, por ejemplo), el instalador resume lo que supone y pide confirmación
+antes de tocar nada; sin terminal hace falta `MAILWAY_CAMBIAR_NOMBRES=1`
+(sección 8.4).
 
 Si el motor ya tiene datos y `deploy/.env` no guarda su contraseña, el
 instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
@@ -117,7 +121,10 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
    `skyway-traefik` y red `skyway-edge` (salvo con `--sin-skyway`), puertos de
    correo libres y puerto 25 de salida.
 2. **Datos**: dominio, nombres, marca, correo de Let's Encrypt (rechaza los
-   de `example.com`, que Let's Encrypt no admite) e IP. Comprueba que la
+   de `example.com`, que Let's Encrypt no admite) e IP. Si los nombres
+   cambian respecto a la ejecución anterior, pide confirmación; si la IP
+   guardada no es la de este servidor, la propone o se detiene (sección
+   8.4). Comprueba que la
    subred interna no se solapa con otra red de Docker ni con una ruta del
    servidor (VPN, red privada del proveedor). Con Skyway, detecta el volumen
    de certificados de su Traefik y la carpeta de Skyway, y avisa si su
@@ -144,17 +151,23 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
    cambiarlos. Sin terminal (ejecución desatendida o `--actualizar`) no
    modifica ningún registro existente: lo informa como conflicto y sigue;
    con `MAILWAY_DNS_REEMPLAZAR=1` cambia los A de `mail.`, `webmail.` y
-   `panel.`, nunca los CNAME de autoconfiguración.
+   `panel.`, nunca los CNAME de autoconfiguración. Un A que ya apunta a la
+   IP con la que sale el servidor no se devuelve a otra sin preguntar (por
+   defecto, no), ni siquiera con esa variable.
 7. **Propagación**: espera (hasta `MAILWAY_ESPERA_DNS` segundos, 300 por
    defecto) a que los tres nombres resuelvan a la IP. Así Traefik no pide
    certificados que Let's Encrypt rechazaría.
-8. **PTR**: comprueba el DNS inverso y lo incluye en el resumen.
+8. **PTR**: comprueba el DNS inverso en dos resolutores (Cloudflare y
+   Google) y lo incluye en el resumen; si ninguno responde, lo da por «sin
+   comprobar», no por «sin configurar».
 9. **Motor y webmail**: elige el motor (`MAILWAY_MOTOR` en `deploy/.env`):
    el que ya diga `deploy/.env`; si no lo dice, el de los datos que ya hay
    (una instalación con Stalwart 0.15 sigue en la 0.15) y, en una
    instalación nueva, **Stalwart 0.16**. Una actualización nunca cambia de
-   motor (eso es `--migrar-motor`, sección 8.3). Levanta `mailway-mail`,
-   espera a que esté sano y después la pasarela del motor
+   motor (eso es `--migrar-motor`, sección 8.3). Con `--actualizar` descarga
+   antes las imágenes; si no puede (límite de Docker Hub, sin conexión),
+   avisa de que siguen las anteriores y lo deja en el resumen. Levanta
+   `mailway-mail`, espera a que esté sano y después la pasarela del motor
    (`mailway-mail-gw`, sección 4.4), `mailway-webmail` y, con Bulwark activo,
    `mailway-bulwark` y su pasarela (sección 11.1). Con la 0.16, el
    primer arranque se completa solo: el instalador fija el nombre del
@@ -184,8 +197,11 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
       certificado: con Cloudflare, ACME del propio motor por DNS-01 (sección
       5.1); sin Cloudflare, el de Traefik con el extractor (sección 5.2).
 
-    En la instalación autónoma, con un token de Cloudflare y el panel sano,
-    se lo pasa como cuenta de la instancia (sección 2.7).
+    Si el nombre del servidor ha cambiado, lleva el certificado al nombre
+    nuevo (sección 8.4). En la instalación autónoma, tras un cambio de
+    nombres o de IP confirmado, el panel adopta los valores nuevos y, con un
+    token de Cloudflare y el panel sano, se lo pasa como cuenta de la
+    instancia (sección 2.7).
 11. **Panel en Skyway**: sin `SKYWAY_TOKEN`, si Skyway corre en este
     servidor (contenedor `skyway`), crea un token de API temporal con la
     herramienta de terminal de Skyway (caduca en 60 minutos y se revoca al
@@ -212,7 +228,11 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     Skyway anterior a 0.34, si su Traefik no consulta todavía ningún
     proveedor HTTP, ofrece crear ese fichero en la carpeta de Skyway
     (sección 4.3).
-13. **Emparejado con Skyway** (sección 2.6): con el panel desplegado y sano,
+13. **Emparejado con Skyway** (sección 2.6): tras un cambio de nombres o de
+    IP confirmado, el panel adopta antes los valores nuevos (sección 8.4); si
+    no puede (el panel en marcha aún tiene los anteriores), no se empareja y
+    el resumen dice que se repita `--actualizar`. Con el panel desplegado y
+    sano,
     crea su cuenta de administración si aún no existe, completa su puesta en
     marcha y conecta Skyway con un token de gestión, sin pasos manuales. Se
     hace en cada ejecución, así que repetir el instalador completa lo que
@@ -223,13 +243,17 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
     haga o falle, se lo pasa al panel sano como cuenta de la instancia y, a
     continuación, a Skyway (sección 2.7).
 14. **Resumen**: dirección del panel, estado del DNS, del PTR, del puerto 25,
-    del certificado, del emparejado y de las cuentas de Cloudflare que han
+    del certificado, de las imágenes (con `--actualizar`), de la identidad en
+    el panel (tras un cambio), del emparejado y de las cuentas de Cloudflare que han
     quedado conectadas en el panel y en Skyway, el comando de copia de seguridad del
     correo y los de diagnóstico (sección 13.1). Con el emparejado hecho,
     muestra la cuenta de administración del panel y, si se acaba de crear, su
     contraseña: **una sola vez**, porque no se guarda en ningún sitio. Sin
     emparejado, muestra en su lugar la dirección de la puesta en marcha con
-    su token.
+    su token. «Siguientes pasos» incluye pedir al proveedor el puerto 25 si
+    está bloqueado y, tras cambiar el nombre del servidor, el MX de los
+    dominios de los clientes y los programas de correo que hay que
+    reconfigurar.
 
 ### 2.4 Opciones
 
@@ -238,7 +262,7 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | `--sin-skyway` | Instalación autónoma con `docker-compose.standalone.yml`: panel, motor y webmail, y un Traefik propio en 80/443 si esos puertos están libres (sección 7). |
 | `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean a mano. |
 | `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecuta antes `git pull`. |
-| `--comprobar` | Diagnóstico de solo lectura: contenedores, ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail y estado del extractor (sección 13.1). Termina con código 1 si algo falla. |
+| `--comprobar` | Diagnóstico de solo lectura: contenedores (también el del panel), ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail, enlace del webmail con el panel, estado del extractor, rutas de Traefik (junto a Skyway), DNS público de los tres nombres, PTR y puerto 25 de salida (sección 13.1). Termina con código 1 si algo falla. |
 | `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, e inicia sesión desde el webmail con un único intento (sección 13.1). |
 | `--emparejar` | Repite solo el emparejado con Skyway (sección 2.6) con la configuración de `deploy/.env`, sin preguntas. Renueva siempre el token de gestión «Skyway». Termina con código 1 si no se completa. |
 | `--migrar-motor` | Pasa el motor de Stalwart 0.15 a 0.16 con vuelta atrás automática si algo falla (sección 8.3). Pide confirmación. |
@@ -258,7 +282,8 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 |---|---|
 | `MAILWAY_DOMINIO` | Dominio base (`mail.`, `webmail.` y `panel.` cuelgan de él). **Obligatoria** en la primera ejecución. |
 | `MAILWAY_MAIL_HOST`, `MAILWAY_WEBMAIL_HOST`, `MAILWAY_PANEL_HOST` | Nombres concretos (por defecto `mail.`, `webmail.` y `panel.` del dominio). |
-| `MAILWAY_IP` | IPv4 pública (se detecta si falta). |
+| `MAILWAY_IP` | IPv4 pública. Sin ella se detecta y se compara con la de `deploy/.env`: si no coinciden y la guardada no es de ninguna interfaz del servidor, una ejecución desatendida se detiene y dice qué valor indicar (sección 8.4). |
+| `MAILWAY_CAMBIAR_NOMBRES` | `1` confirma, sin terminal, que cambian los nombres de la plataforma (otro `MAILWAY_DOMINIO` o `MAILWAY_*_HOST` distintos de los de `deploy/.env`). Sin ella, una ejecución desatendida que los cambiaría se detiene sin tocar nada (sección 8.4). |
 | `MAILWAY_MARCA` | Nombre del servicio en el webmail (por defecto `Webmail`). |
 | `LETSENCRYPT_EMAIL` | Correo de contacto para Let's Encrypt. |
 | `CLOUDFLARE_API_TOKEN` | Token de Cloudflare. Vacío = sin Cloudflare. Se guarda también en el panel (cuenta de la instancia) y en Skyway (sección 2.7); nunca en `deploy/.env`. |
@@ -278,6 +303,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 | `MAILWAY_COMPOSE_EXTRA` | Fichero de Compose adicional que se aplica sobre el del instalador (ajustes locales; lo usa la prueba de la pila en la CI, sección 16). |
 | `MAILWAY_MOTOR` | Motor de una instalación **nueva**: `stalwart-0.16` (por defecto) o `stalwart-0.15`. En una que ya existe manda `deploy/.env`; pedir otro se rechaza (para cambiar, `--migrar-motor`). |
 | `MAILWAY_MIGRACION_COLA_MAX`, `MAILWAY_MIGRACION_MINUTOS`, `MAILWAY_MIGRACION_DIR`, `MAILWAY_MIGRACION_CONSERVAR`, `MAILWAY_RETIRAR_VOLUMEN` | Órdenes del motor (sección 8.3). |
+| `MAILWAY_COMPROBAR_SOLO_MOTOR` | `1` limita `--comprobar` al motor, el webmail y el extractor, sin el panel, Traefik ni las comprobaciones desde Internet (la usa la prueba de la pila en la CI, sección 16). |
 
 Ejemplo, con el token leído sin mostrarlo y exportado (nunca escrito en la
 orden):
@@ -323,8 +349,9 @@ servidor; ninguna abre un puerto ni recibe nada por la red:
      indicado (`MAILWAY_ADMIN_EMAIL`) y una contraseña aleatoria; si ya la
      tiene, usa la que tiene ese correo o, si no, la primera que se creó;
    - completa la puesta en marcha con las variables del panel, con los mismos
-     pasos que el asistente: identidad del servidor (solo lo que falte: lo que
-     se haya cambiado en el panel no se pisa), motor de correo (`STALWART_*`)
+     pasos que el asistente: identidad del servidor (lo que falte y lo que el
+     instalador haya cambiado desde la última vez; lo que se haya cambiado en
+     el panel no se pisa y se avisa, sección 8.4), motor de correo (`STALWART_*`)
      si aún no hay ninguno conectado y ajustes recomendados del motor. Si el
      motor no responde, lo avisa: la puesta en marcha queda abierta y el
      asistente continúa en ese paso al entrar;
@@ -362,6 +389,12 @@ Toma de `deploy/.env` el correo de la cuenta de administración
 (`MAILWAY_ADMIN_EMAIL`, o el de Let's Encrypt), la URL del panel y su
 contenedor (`MAILWAY_PANEL_INTERNAL_URL`); el servicio y el proyecto de
 Skyway salen de las etiquetas del contenedor. No necesita token de Skyway.
+
+El emparejado no se hace mientras el panel no haya adoptado un cambio de
+nombres o de IP confirmado (`MAILWAY_ADOPCION_PENDIENTE` en `deploy/.env`):
+aplicaría en el motor los ajustes del panel, que aún tiene la identidad
+anterior. Tanto la instalación como `--emparejar` intentan antes esa
+adopción y solo emparejan si se completa (sección 8.4).
 
 A mano, el mismo emparejado es (con `jq` instalado en el servidor):
 
@@ -646,8 +679,19 @@ caducar y sirve para IMAP y SMTP.
   de administrador.
 
 La emisión tarda unos minutos. **Ajustes → Servidor de correo** muestra el
-emisor y los días de validez; el botón de recarga (`POST
+emisor, los días de validez y la cuenta de Cloudflare cuyo token usa el motor
+para renovar (también si la configuró el instalador, que copia el token en el
+motor: se reconoce por el token). El botón de recarga (`POST
 /api/engine/reload-certificate`) hace que el motor use el certificado nuevo.
+
+**No revoques el token que usa el motor.** Al eliminar una cuenta de
+Cloudflare de la instancia, el diálogo comprueba
+(`GET /api/engine/acme/accounts/:id` → `{ inUse }`, solo administración) si el
+motor renueva con su token y, en ese caso, avisa de que no se revoque en
+Cloudflare: la siguiente renovación fallaría y, al caducar el certificado, los
+programas de correo dejarían de conectar. Para dejar de usarlo, emite antes
+el certificado con otra cuenta. El aviso del vigilante sobre un certificado que
+caduca recuerda comprobar ese token.
 
 ### 5.2 El certificado de Traefik, con el extractor
 
@@ -682,7 +726,18 @@ de migrar). Cada 30 segundos:
 Si el motor obtiene su propio certificado por ACME (sección 5.1), el extractor
 no hace nada. Si además conserva `certificate.mailway`, mantiene esos ficheros
 al día sin recargar el motor, porque el motor los vuelve a cargar en cada
-recarga de certificados.
+recarga de certificados. Si `certificate.mailway` apunta al par de otro
+nombre (el anterior a cambiar `MAIL_HOSTNAME`), ya no es «nada que hacer»: ese
+par no lo renueva nadie, así que el extractor deja listo el del nombre actual
+y su estado lo señala hasta que el instalador traslada `certificate.mailway`.
+
+Tras cambiar `MAIL_HOSTNAME`, `certificate.mailway` sigue apuntando al par del
+nombre anterior hasta que el instalador lo traslada (sección 8.4). Mientras
+tanto, el extractor no retira ese par ni la versión a la que apunta, aunque
+sea de otro nombre: si lo hiciera, la siguiente recarga o el siguiente
+arranque dejarían al motor sin certificado. Si la API del motor no responde y
+no se sabe qué usa, no retira ningún enlace. Su estado lo indica («El motor aún
+usa el certificado de …»).
 
 > **Seguridad.** Hasta ahora el perfil `tls` usaba `traefik-certs-dumper`,
 > que copiaba al volumen del motor las claves privadas de **todos** los
@@ -1009,7 +1064,10 @@ abrir el 587 (sección 2.3, paso 10).
   Todas las imágenes van con su versión exacta (p. ej. Stalwart `v0.16.25`,
   `roundcube/roundcubemail:1.7.4-apache`, `python:3.14.8-alpine`): `pull`
   nunca trae una versión que no se haya probado. Las versiones nuevas llegan
-  con Dependabot (más abajo).
+  con Dependabot (más abajo). Si no se pueden descargar las imágenes (límite
+  de descargas de Docker Hub, sin conexión), el instalador lo avisa y lo deja
+  en el resumen: el motor y el webmail siguen con las anteriores, que pueden
+  no tener los últimos parches. Repite `--actualizar` cuando se resuelva.
 - **Motor de correo**: ninguna actualización cambia de motor. Un servidor
   con Stalwart 0.15 sigue en la 0.15 (con sus parches 0.15.x) y `mailway
   update` le recuerda que **deja de recibir parches de seguridad el 1 de
@@ -1275,6 +1333,10 @@ atrás.
 - Un momento tranquilo: el correo se detiene unos minutos. Una copia de
   seguridad previa (sección 13) nunca está de más, aunque la migración no
   toque el volumen de la 0.15.
+- Ningún cambio de dominio de un cliente a medias: con uno sin terminar, o
+  con buzones que siguen con el usuario del dominio anterior, la migración no
+  empieza (el panel dice cuáles). Termina el cambio dando de baja el dominio
+  anterior (o cancélalo) y actualiza esos usuarios desde la ficha del buzón.
 
 ```bash
 sudo mailway migrar-motor        # explica lo que va a pasar y pide confirmación
@@ -1293,8 +1355,8 @@ deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
    contraseña (una sola petición: cada intento fallido cuenta para su
    bloqueo automático), la cola de salida (con más de 50 mensajes no
    empieza: suele ser un problema de entrega que conviene resolver antes;
-   `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, el
-   origen del certificado, el espacio, las imágenes, el script oficial de
+   `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, que
+   no haya un cambio de dominio a medias, el origen del certificado, el espacio, las imágenes, el script oficial de
    Stalwart (`migrate_v016.py`, fijado a su versión y comprobado con su
    sha256) y sus dependencias, y el certificado que sirve la 0.15.
 2. **Panel en mantenimiento** (120 minutos que se prolongan en cada paso
@@ -1392,6 +1454,112 @@ atrás.
 
 ---
 
+### 8.4 Cambiar el dominio o la IP de la plataforma
+
+El instalador compara los nombres y la IP con los de la ejecución anterior
+(`deploy/.env` o, sin él, el panel que ya despliega Skyway) antes de escribir
+nada.
+
+**Otro dominio base u otros nombres** (`MAILWAY_DOMINIO`, `MAILWAY_*_HOST`):
+resume lo que cambia y lo que supone, y pide confirmación (por defecto, no);
+sin terminal, se detiene salvo que se indique `MAILWAY_CAMBIAR_NOMBRES=1`.
+
+```bash
+cd /ruta/a/Mailway
+git pull
+sudo MAILWAY_DOMINIO=nuevo.com MAILWAY_CAMBIAR_NOMBRES=1 bash deploy/instalar.sh --actualizar
+```
+
+Con el cambio confirmado, el instalador:
+
+- escribe los nombres nuevos en `deploy/.env` y en las variables del panel,
+  y con Cloudflare crea los registros A que falten;
+- fija el nombre nuevo en el motor y le lleva el certificado:
+  - **ACME del motor** sin token en esta ejecución: pasa
+    `acme.mailway.domains.0` al nombre nuevo con el token que ya guarda el
+    motor si el nombre nuevo está en la misma zona de Cloudflare. Si está en
+    otra, ese token puede no tener acceso: lo deja como estaba, lo avisa y
+    hay que repetir con `CLOUDFLARE_API_TOKEN` (permisos en la zona nueva) o
+    emitirlo en Ajustes → Servidor de correo → certificado automático. Con
+    `CLOUDFLARE_API_TOKEN`, lo configura entero para la zona nueva. Si el
+    motor conserva además `certificate.mailway` en el par del extractor del
+    nombre anterior (instalaciones que empezaron con el extractor y
+    añadieron después un token de Cloudflare), ese par ya no lo renueva
+    nadie: pasa al del nombre nuevo como con el extractor (abajo). Con el
+    ACME en otra zona, es además el certificado que el motor presenta para
+    el nombre nuevo;
+  - **extractor**: arranca con el nombre nuevo, espera a que Traefik tenga su
+    certificado y entonces cambia `certificate.mailway` (certificado, clave y
+    sujeto) en una sola operación. Hasta entonces el motor conserva el par
+    del nombre anterior, que el extractor no retira mientras el motor lo use
+    (sección 5.2). Si el DNS aún no apunta aquí, el resumen lo dice y basta
+    con repetir `--actualizar` más tarde;
+  - **certificado propio**: no lo toca, pero pide comprobar que cubre el
+    nombre nuevo;
+- hace que el panel adopte los nombres nuevos en Ajustes → Identidad del
+  servidor (nombre del servidor, URL del webmail y URL del panel) aunque se
+  hubieran cambiado a mano, y le aplica al motor los ajustes recomendados con
+  el nombre nuevo, antes del emparejado (`server/dist/tools/identidad.js`).
+
+**Si algo queda a medias.** Lo que el panel aún no ha adoptado se guarda en
+`deploy/.env` (`MAILWAY_ADOPCION_PENDIENTE`, con un comentario) desde la
+primera escritura, y cada ejecución (también `--emparejar`) lo retoma hasta
+lograrlo; después se borra. Así, si la ejecución se interrumpe después de
+escribir `deploy/.env` (un error de Skyway o de Cloudflare, Ctrl-C), basta con
+repetir `sudo bash deploy/instalar.sh --actualizar`, aunque `deploy/.env` ya
+tenga los nombres nuevos. Antes de adoptar, el instalador comprueba que el
+panel en marcha arranca ya con los valores nuevos: si el despliegue en
+Skyway ha fallado o sigue en curso, el contenedor que corre es el anterior,
+con el entorno anterior. En ese caso, y siempre que la adopción quede
+pendiente, **no empareja** (el emparejado aplica en el motor los ajustes del
+panel y lo devolvería al nombre anterior) y el resumen dice que se repita
+`--actualizar` cuando el panel esté desplegado y en marcha. `--comprobar`
+también lo señala. Para descartar lo pendiente sin adoptarlo, borra esa línea
+de `deploy/.env`.
+
+Lo que el instalador no puede hacer por ti, y recuerda en «Siguientes pasos»:
+
+- cambiar el **MX** (y la autoconfiguración) de los dominios de los clientes
+  al nombre nuevo: la ficha de cada dominio muestra los registros o los
+  aplica en Cloudflare; hasta entonces figuran como pendientes de DNS;
+- volver a configurar los programas de correo que usaban el nombre anterior
+  (sus enlaces de configuración ya llevan el nuevo);
+- pedir al proveedor el **PTR** de la IP hacia el nombre nuevo.
+
+El webmail deja de responder en el nombre anterior. Junto a Skyway, el panel
+conserva su nombre anterior además del nuevo; en la instalación autónoma, el
+anterior deja de responder.
+
+**Otra IP** (mudanza, IP nueva del proveedor): si la IP guardada no es la de
+este servidor y ninguna de sus interfaces la tiene, con terminal se propone la
+detectada y sin terminal el instalador se detiene y dice qué indicar:
+`MAILWAY_IP=<nueva>` si el servidor ha cambiado de IP, o `MAILWAY_IP=<guardada>`
+si sale a Internet por otra IP y la guardada es la correcta. Con la IP nueva
+confirmada, el panel la adopta, y con Cloudflare los A pasan a ella
+(preguntando, o sin terminal con `MAILWAY_DNS_REEMPLAZAR=1`); un A que ya
+apunta a la IP con la que sale el servidor nunca se devuelve a la anterior
+sin confirmación. Revisa el PTR de la IP nueva y el SPF de los dominios que
+incluyan la anterior de forma explícita.
+
+**Qué adopta el panel solo.** El panel guarda el último valor que le dio el
+instalador de cada campo de la identidad. Al arrancar (el instalador recrea
+su contenedor o Skyway lo vuelve a desplegar) y al emparejar, lo que nadie
+ha cambiado en Ajustes pasa al valor nuevo. Lo que la administración cambió
+a mano se conserva, y la diferencia se dice en la salida del emparejado y en
+el registro del panel. Si es el nombre del servidor o la IP, se abre además
+el aviso «Ajustes y el instalador no coinciden en …», con los dos valores: si
+el correcto es el del instalador, cámbialo en Ajustes → Identidad del
+servidor (el aviso se cierra al guardar); si es el de Ajustes, repite el
+instalador con ese valor. Las URL del webmail y del panel no abren aviso:
+una propia que funcione es legítima y, si el webmail no responde, ya avisa
+el vigilante. Un panel anterior a este registro solo adopta valores nuevos
+cuando el instalador lo pide tras una confirmación. Hasta entonces, como no
+consta si lo guardado vino del instalador o se cambió en el panel, el aviso
+lo dice así y solo aparece en la campana del panel, sin enviarse a los
+canales de aviso: al cambiar el dominio de un panel de antes de este
+registro, se abre en su primer arranque y el instalador lo cierra segundos
+después.
+
 ## 9. Primer cliente
 
 En el panel (`https://panel.miempresa.com`):
@@ -1421,10 +1589,14 @@ En el panel (`https://panel.miempresa.com`):
 ## 10. Avisos
 
 El vigilante del panel comprueba cada minuto el motor, el webmail y la cola de
-salida; el DNS de los dominios cada 10 minutos mientras se espera un cambio
-(48 horas tras aplicar el DNS o 7 días tras el alta) y cada hora después; la
-marca blanca cada 10 minutos; la autoconfiguración cada hora; las listas
-negras y el certificado del motor una vez al día. Cuando algo falla abre una
+salida (50 mensajes pendientes, o uno retenido más de una hora sin el puerto
+25 comprobado como abierto); el DNS de los
+dominios cada 10 minutos mientras se espera un cambio (48 horas tras aplicar
+el DNS o 7 días tras el alta) y cada hora después; la marca blanca cada 10
+minutos; la autoconfiguración y la caducidad de los tokens de gestión cada
+hora (avisa 14 días antes de que caduque uno en uso); las listas negras, el
+certificado del motor, el puerto 25 de salida (cada hora mientras está
+bloqueado) y la IP pública una vez al día. Cuando algo falla abre una
 incidencia en **Avisos** y la envía por los canales configurados, sin repetir
 el mismo aviso y con mensaje de recuperación.
 
@@ -1451,6 +1623,12 @@ abiertas de su familia, lo que va antes del primer «:» de la clave), `aviso`
 o `critico` (abren una incidencia en **Avisos**, que no se repite mientras
 siga abierta con la misma clave). Sin canales configurados termina bien y no
 muestra nunca sus URL ni sus tokens.
+
+Además, al arrancar el panel, al emparejarlo y al guardar Ajustes → Identidad
+del servidor, se compara la identidad con la que fijó el instalador: si el
+nombre del servidor o la IP se cambiaron a mano y no coinciden, se abre
+«Ajustes y el instalador no coinciden en …», con los dos valores (sección
+8.4).
 
 ---
 
@@ -1690,8 +1868,10 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
 
 **`--comprobar`** revisa, con los datos de `deploy/.env` y sin preguntar nada:
 
-- que `mailway-mail`, su pasarela (`mailway-mail-gw`) y `mailway-webmail`
-  (y `mailway-panel` en la instalación autónoma) están en marcha y sanos;
+- que `mailway-mail`, su pasarela (`mailway-mail-gw`), `mailway-webmail` y
+  el panel (`mailway-panel` en la instalación autónoma; junto a Skyway, el
+  contenedor que nombra `MAILWAY_PANEL_INTERNAL_URL`) están en marcha y
+  sanos;
 - en el motor: el nombre del servidor, la exención de la red interna y qué
   certificado usa (ACME propio, el de Traefik con el extractor o uno a mano).
   Con Stalwart 0.16, además, que toma la IP real de `X-Forwarded-For`, que
@@ -1705,15 +1885,29 @@ sudo bash deploy/instalar.sh --probar-acceso   # un inicio de sesión real
 - la conexión IMAP y SMTP del webmail con el motor, con la configuración
   efectiva de Roundcube (`imap_conn_options` y `smtp_conn_options` de
   `deploy/roundcube/mailway.php`) y sin credenciales;
+- que el webmail llega al panel por la dirección interna con la que cambia
+  las contraseñas (`/api/health`), y la versión del panel;
 - el estado del extractor del certificado, si está en marcha;
 - con Bulwark activo (sección 11.1): sus dos contenedores, sus secretos, su
   salud a través de su pasarela, que el motor sirve HTTPS en su 443 interno
   con el certificado de `MAIL_HOSTNAME` (verificado desde Bulwark) y si el
-  bloqueo por fallos del motor caduca (esto último solo como aviso).
+  bloqueo por fallos del motor caduca (esto último solo como aviso);
+- si queda pendiente que el panel adopte los nombres o la IP nuevos de un
+  cambio confirmado (`MAILWAY_ADOPCION_PENDIENTE` en `deploy/.env`, sección
+  8.4);
+- junto a Skyway, que su Traefik lee las rutas de Mailway (webmail de marca
+  blanca y autoconfiguración de los dominios de los clientes);
+- desde Internet: que `mail.`, `webmail.` y `panel.` resuelven a la IP de
+  `deploy/.env` en los resolutores públicos, el DNS inverso (PTR) de esa IP
+  y el puerto 25 de salida. Lo que no se puede consultar (resolutores
+  filtrados) se indica, pero no cuenta como incidencia.
 
-Termina con código 0 si todo es correcto y 1 si algo falla. No cubre el DNS
-público, el PTR, los puertos vistos desde Internet ni la entrega a otros
-servidores: eso sigue en la lista de la sección 12.1.
+Termina con código 0 si todo es correcto y 1 si algo falla. No cubre los
+puertos de entrada vistos desde Internet, las listas negras ni la entrega a
+otros servidores: eso sigue en la lista de la sección 12.1 y en
+Entregabilidad. `MAILWAY_COMPROBAR_SOLO_MOTOR=1` lo limita al motor, el
+webmail y el extractor (lo usa la prueba de la pila de la CI, sin panel ni
+DNS público).
 
 **`--probar-acceso`** pide la dirección y la contraseña de un buzón (la
 contraseña no se muestra, no se guarda y no aparece en la lista de procesos)
@@ -1726,6 +1920,50 @@ líneas de la entrada estándar.
 Las dos opciones usan `deploy/roundcube/diagnostico/comprobar.php`, que los
 compose montan en el webmail en `/opt/mailway` (fuera de la raíz web) y que
 solo funciona por línea de órdenes.
+
+### 13.2 Cambio de IP del servidor
+
+Tras una mudanza o si el proveedor cambia la IP, Ajustes conserva la IP
+anterior hasta que alguien la corrige (lo guardado en el panel manda sobre el
+entorno). Mientras tanto:
+
+- El webmail de marca blanca de los clientes **sigue en servicio** si su
+  dominio es un CNAME al servidor de correo o un A ya movido a la IP nueva:
+  la comprobación acepta las IP que tiene en ese momento el nombre del
+  servidor de correo, no solo la de Ajustes.
+- El vigilante compara a diario la IP de salida con la de Ajustes y, si el
+  nombre del servidor de correo ya no apunta a la guardada, abre el aviso «La
+  IP pública del servidor ha cambiado». Un servidor con varias IP cuyo nombre
+  sigue en la guardada no recibe el aviso.
+- En **Ajustes → Identidad del servidor**, con la misma regla, «Usar esta IP»
+  propone la IP detectada; guarda los cambios para aplicarla (el aviso se
+  cierra al guardar). Hasta entonces, Entregabilidad comprueba el PTR y las
+  listas negras de la IP anterior y «DNS de la plataforma» propone registros A
+  hacia ella.
+
+Recuerda también el PTR de la IP nueva (panel del proveedor) y el SPF de los
+dominios que incluyan la IP de forma explícita.
+
+### 13.3 Cambio del nombre del servidor de correo
+
+El nombre del servidor (`mail.<dominio>`) no hace falta cambiarlo al cambiar
+de marca: los titulares no lo ven más allá de sus datos de conexión. Si se
+cambia, al guardarlo en **Ajustes → Identidad del servidor** el panel muestra
+antes lo que arrastra:
+
+- los datos de conexión de los titulares (portal, perfiles, enlaces de
+  configuración) cambian al momento;
+- al aplicarlo en el motor («Aplicar ajustes recomendados», que también pide
+  confirmación), **todos los dominios** pasan a exigir el MX hacia el nombre
+  nuevo y figuran como pendientes de DNS hasta cambiarlo;
+- el nombre nuevo necesita su registro A, el PTR de la IP y un certificado
+  que lo cubra;
+- las rutas de Traefik, el certificado del extractor y `MAIL_HOSTNAME` de
+  `deploy/.env` solo los actualiza el instalador:
+  `sudo MAILWAY_MAIL_HOST=<nombre> bash deploy/instalar.sh --actualizar`
+  (con `MAILWAY_DOMINIO=<dominio>` delante si el nombre nuevo cuelga de otro
+  dominio base que el `MAIL_HOSTNAME` actual, lo que traslada también el
+  webmail y el panel).
 
 ---
 
@@ -1775,7 +2013,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `--comprobar`: «El 587 está en los ajustes del motor, pero no escucha» | La 0.16 abre una escucha nueva solo al reiniciarse | `docker restart mailway-mail` (o `sudo mailway update -y --reaplicar`, que lo hace solo). |
 | `https://mail.<dominio>` responde 502 o 504 | La pasarela del motor (`mailway-mail-gw`) no está en marcha o no llega al motor | `docker logs mailway-mail-gw` y `sudo mailway update -y --reaplicar` (sección 4.4). IMAP y SMTP no dependen de ella. |
 | `https://mail.<dominio>/admin` (o `/account`, `/login`) responde 403 | Con Stalwart 0.16, Traefik solo publica en ese nombre lo que necesitan los programas de correo | Es lo esperado: el motor se administra desde el panel. Por la red interna sigue en `http://mailway-mail:8080`. |
-| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
+| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, un cambio de dominio sin terminar, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
 | `mailway migrar-motor` ha vuelto a la 0.15 | Un paso no ha superado su comprobación | El motivo está en la salida y en `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`. La 0.15 sigue con sus datos de siempre; repite cuando esté resuelto (sección 8.3). |
 | `sudo mailway bulwark on` responde que Bulwark necesita Stalwart 0.16 | El servidor sigue con la 0.15 | Migra el motor (`sudo mailway migrar-motor`, sección 8.3) y repite. No se ha cambiado nada. |
 | El panel no deja elegir Bulwark para un cliente | Al panel le falta alguna de sus tres variables, o Bulwark no está sano | `sudo mailway bulwark status` dice qué falta; `sudo mailway update -y --reaplicar` se las vuelve a dar (sección 11.1). |
@@ -1783,7 +2021,9 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | Un usuario de Bulwark no puede entrar tras cambiar su contraseña | Una pestaña abierta con la contraseña anterior ha hecho que el motor bloquee su IP | El bloqueo caduca a la hora si los ajustes recomendados están aplicados (sección 11.1); antes, bórralo como se indica más abajo («Una IP legítima…»). |
 | Gmail rechaza con «PTR record» | DNS inverso sin configurar | Panel del proveedor del servidor → DNS inverso → `mail.<dominio>` (sección 1). |
 | No llega correo de fuera | Puerto 25 de entrada cerrado o MX incorrecto | `dig MX tu-dominio.com`; abre el 25 de entrada en el cortafuegos del proveedor. |
-| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). |
+| No sale correo hacia Gmail u Outlook | Puerto 25 de salida bloqueado | Solicítalo al proveedor (sección 1). Entregabilidad lo mide y el vigilante abre «El puerto 25 de salida está bloqueado». |
+| Aviso «La IP pública del servidor ha cambiado» | Mudanza o IP nueva del proveedor, con Ajustes aún en la anterior | Ajustes → Identidad del servidor → «Usar esta IP» y guardar (sección 13.2). |
+| Aviso «El token de gestión «Skyway» caduca el …» | Token creado a mano con caducidad | `sudo bash deploy/instalar.sh --emparejar` crea uno sin caducidad y lo configura en Skyway, o crea otro en Conexiones → Tokens de gestión. |
 | Thunderbird o el iPhone avisan del certificado | Certificado de IMAP/SMTP sin configurar o autofirmado | Sección 5; estado en Ajustes → Servidor de correo o con `deploy/instalar.sh --comprobar`. |
 | `mailway-certs-dumper` no está sano y su registro dice «El motor rechaza la contraseña de administración (HTTP 401)» | `STALWART_ADMIN_PASSWORD` de `deploy/.env` no es la contraseña vigente del motor | Corrígela y recrea el extractor (`docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls up -d --force-recreate certs-dumper`). No reintenta antes de una hora para no alimentar el bloqueo automático. |
 | El extractor dice «Traefik aún no tiene un certificado válido para mail.…» | El DNS de `mail.` aún no apunta aquí, los puertos 80/443 están cerrados o Traefik no tiene correo de Let's Encrypt | Sección 1; `docker logs skyway-traefik`. El motor conserva mientras tanto el certificado que tenga. |
@@ -1807,6 +2047,12 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | No llegan los avisos | Ningún canal configurado, o token o URL incorrectos | Avisos → «Enviar aviso de prueba»; el panel indica qué canal falla. |
 | Aviso «Actualización automática detenida» o «pendiente» | Cambios hechos a mano en la copia de Mailway, sin conexión con GitHub, o el servidor ya no superaba la comprobación antes de actualizar | `sudo mailway auto-update status` muestra el motivo; resuélvelo (`git -C /ruta/a/Mailway stash`, `sudo mailway comprobar`) y la siguiente ejecución sigue sola. |
 | Aviso «Actualización automática revertida» | La versión nueva no superó la comprobación y el servidor volvió a la anterior | El detalle está en `sudo mailway auto-update status`. Se reintenta una vez más; después, cuando lo hayas revisado, `sudo mailway update -y` la aplica a mano. |
+| Aviso «El webmail no está disponible» | El contenedor del webmail está parado o no arranca | `docker logs mailway-webmail`; en la carpeta de Mailway, `sudo bash deploy/instalar.sh --comprobar` y, si hace falta, `--actualizar`, que lo levanta con el compose de la instalación (junto a Skyway o autónoma). |
+| El instalador se detiene: «La IP guardada (…) no es la de este servidor» | Mudanza, IP nueva del proveedor o un servidor que sale a Internet por otra IP | `MAILWAY_IP=<detectada>` si ha cambiado de IP; `MAILWAY_IP=<guardada>` si la guardada es la correcta (sección 8.4). |
+| El instalador se detiene: «Los nombres de la plataforma cambiarían» | `MAILWAY_DOMINIO` o `MAILWAY_*_HOST` distintos de los de `deploy/.env`, sin terminal | Si es lo que quieres, repite con `MAILWAY_CAMBIAR_NOMBRES=1`; si no, sin esas variables (sección 8.4). |
+| Aviso «Ajustes y el instalador no coinciden en …» | El nombre del servidor o la IP de Ajustes → Identidad del servidor, cambiados a mano, no son los que fijó el instalador | Si el correcto es el del instalador, cámbialo en Ajustes; si es el de Ajustes, repite el instalador con ese valor (sección 8.4). |
+| El extractor dice «El motor aún usa el certificado de …» | Ha cambiado `MAIL_HOSTNAME` y el motor sigue con el par del nombre anterior | `sudo bash deploy/instalar.sh --actualizar` lo traslada cuando Traefik tenga el certificado del nombre nuevo, también si el motor usa además su propio ACME (sección 8.4). |
+| Resumen del instalador: «Identidad en el panel: pendiente» y «sin emparejar: el panel aún no ha adoptado la identidad nueva» | Tras un cambio de nombres o de IP, el panel en marcha aún arranca con los valores anteriores (despliegue fallido o en curso en Skyway), no está sano o no tiene `identidad.js` | Resuelve el despliegue en Skyway (o despliega la versión actual) y repite `sudo bash deploy/instalar.sh --actualizar`: retoma la adopción y el emparejado (sección 8.4). |
 
 ---
 
@@ -1864,7 +2110,12 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    SQLite con el esquema de Roundcube (necesita php con `pdo_sqlite`) y el
    override de Traefik copiado a mano se retira; y también que no cambia un
    certificado propio, un webmail que ya usaba `mailway-mail` ni un override
-   ajeno. `deploy/prueba-actualizacion.sh` prueba `mailway update --auto` y
+   ajeno. Las dos comprueban además el cambio de dominio y de IP de la
+   plataforma (sección 8.4: confirmación, certificado del motor al nombre
+   nuevo, identidad adoptada en el panel, registros A), el PTR consultado en
+   dos resolutores, el aviso de las imágenes no descargadas, los «Siguientes
+   pasos» del resumen y lo que revisa `--comprobar`.
+   `deploy/prueba-actualizacion.sh` prueba `mailway update --auto` y
    `mailway auto-update` con git de verdad sobre repositorios locales y
    `docker`, `systemctl`, la espera y el instalador simulados: sin nada nuevo
    no se toca nada; una versión que funciona se aplica una vez (con
@@ -1884,7 +2135,10 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    (`server/test/motor016-real.test.ts`) y el panel de extremo a extremo
    (`server/test/panel-motor-real.test.ts`) contra Stalwart 0.16 y 0.15 de
    verdad, con las imágenes de `deploy/motor/*/compose.yml` (las que sube
-   Dependabot).
+   Dependabot), incluido el cambio de dominio de un cliente
+   ([INTEGRACIONES.md](INTEGRACIONES.md#10-cambio-de-dominio)): direcciones
+   nuevas, renombrado del buzón, inicio de sesión con el usuario anterior y
+   baja del dominio viejo.
 3. **La pila con contenedores reales** (`deploy/prueba-stack.py --motor
    stalwart-0.16` y `--motor stalwart-0.15`): monta con `deploy/instalar.sh
    --actualizar` el motor, Roundcube y el extractor con la topología de
@@ -1892,7 +2146,9 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    laboratorio y credenciales desechables) y comprueba el TLS de 993 y 465
    (y el 587 con STARTTLS), el inicio de sesión IMAP desde el webmail y
    directo, la autenticación SMTP en 465 y 587 (sin enviar correo), la
-   renovación y el paso a un comodín, `--comprobar` y `--probar-acceso`. Con
+   renovación y el paso a un comodín, `--comprobar` (con
+   `MAILWAY_COMPROBAR_SOLO_MOTOR=1`: no hay panel ni DNS público) y
+   `--probar-acceso`. Con
    la 0.15, además, que el extractor sustituye al volcado antiguo sin dejar
    claves de otros dominios. Con la 0.16, el primer arranque, los ajustes de
    Mailway con la herramienta del motor del panel (simulada en
@@ -1940,6 +2196,15 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    que todo lo demás funciona igual que sin ella: sesión y descubrimiento de
    JMAP, subidas grandes, push por EventSource, WebSocket, DAV y
    autoconfiguración.
+7. **El cambio de dominio de un cliente con contenedores reales**
+   (`deploy/prueba-cambio-dominio.py`): un Stalwart 0.15 desechable recibe
+   las mismas peticiones que el driver (direcciones nuevas, paso de la
+   principal, renombrado y baja del dominio viejo) y comprueba que el correo
+   entra por los dos dominios, que el usuario anterior ya envía como la
+   dirección nueva, que renombrar conserva el correo y las contraseñas y que
+   la baja solo borra las claves DKIM del dominio viejo. El complemento
+   `mailway_cuentas` de Roundcube se prueba con la imagen real del webmail.
+   Con la 0.16, lo mismo lo cubre el punto 2.
 
 Las pruebas unitarias se ejecutan en cualquier equipo con Python 3 y openssl.
 La prueba de la pasarela usa nombres propios (`mwp-`, o los de

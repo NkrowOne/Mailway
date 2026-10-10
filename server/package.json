@@ -1,6 +1,6 @@
 {
   "name": "@mailway/server",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "main": "dist/index.js",
   "scripts": {
@@ -11,6 +11,7 @@
     "emparejar": "tsx src/tools/emparejar.ts",
     "cloudflare": "tsx src/tools/cloudflare.ts",
     "motor": "tsx src/tools/motor.ts",
+    "identidad": "tsx src/tools/identidad.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx --import ./test/env.ts test/*.test.ts"
   },

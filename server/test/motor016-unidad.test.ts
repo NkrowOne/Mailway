@@ -99,6 +99,8 @@ interface Lista {
   domainId: string;
   description: string | null;
   recipients: Record<string, boolean>;
+  /** Direcciones adicionales (el cambio de dominio). */
+  aliases?: unknown;
 }
 
 const ALGORITMOS = ['Dkim1Ed25519Sha256', 'Dkim1RsaSha256'];
@@ -570,7 +572,25 @@ class MotorFalso {
         (r.notUpdated ??= {})[id] = { type: 'notFound' };
         continue;
       }
+      // Cambio de dominio: nombre y dominio a la vez, con el mismo índice
+      // único que el alta (la actualización entera falla o se aplica entera).
+      if ('name' in cambio || 'domainId' in cambio) {
+        const nombre = cambio.name ?? c.name;
+        const dominioId = cambio.domainId ?? c.domainId;
+        if (!this.dominios.has(dominioId)) {
+          (r.notUpdated ??= {})[id] = { type: 'invalidForeignKey', objectId: { object: 'Domain', id: dominioId } };
+          continue;
+        }
+        const ocupa = this.ocupante(nombre, dominioId);
+        if (ocupa && ocupa.id !== id) {
+          (r.notUpdated ??= {})[id] = errorGrabado(ERR_OBJETO.cuentaDuplicada.notCreated.a, { objectId: ocupa });
+          continue;
+        }
+        c.name = nombre;
+        c.domainId = dominioId;
+      }
       for (const [clave, valor] of Object.entries<any>(cambio)) {
+        if (clave === 'name' || clave === 'domainId') continue;
         const partes = clave.split('/');
         if (partes[0] === 'credentials' && partes.length === 3 && partes[2] === 'secret') {
           c.credentials[Number(partes[1])]!.secret = valor;
@@ -666,11 +686,18 @@ class MotorFalso {
     }
     for (const [id, cambio] of Object.entries<any>(a.update ?? {})) {
       const l = this.listas.get(id);
-      if (!l) (r.notUpdated ??= {})[id] = { type: 'notFound' };
-      else {
-        Object.assign(l, cambio);
-        (r.updated ??= {})[id] = null;
+      if (!l) {
+        (r.notUpdated ??= {})[id] = { type: 'notFound' };
+        continue;
       }
+      // Renombrar: el mismo índice único de direcciones que el alta.
+      const ocupa = this.ocupante(cambio.name ?? l.name, cambio.domainId ?? l.domainId);
+      if (ocupa && ocupa.id !== id) {
+        (r.notUpdated ??= {})[id] = errorGrabado(ERR_OBJETO.listaContraCuenta.notCreated.l, { objectId: ocupa });
+        continue;
+      }
+      Object.assign(l, cambio);
+      (r.updated ??= {})[id] = null;
     }
     for (const id of a.destroy ?? []) {
       if (this.listas.delete(id)) (r.destroyed ??= []).push(id);
@@ -1589,5 +1616,204 @@ describe('ajustes recomendados y estado', () => {
       domain: null,
       zone: null,
     });
+  });
+});
+
+/* ------------------------------ Cambio de dominio ------------------------------ */
+
+describe('cambio de dominio (contrato de 0.15 sobre las cuentas y listas de 0.16)', () => {
+  let motor: Stalwart016Engine;
+  const id = (dominio: string) => [...motorFalso.dominios.values()].find((d) => d.name === dominio)!.id;
+  const cuenta = (email: string) =>
+    [...motorFalso.cuentas.values()].find((c) => `${c.name}@${motorFalso.dominios.get(c.domainId)!.name}` === email);
+  const lista = (email: string) =>
+    [...motorFalso.listas.values()].find((l) => `${l.name}@${motorFalso.dominios.get(l.domainId)!.name}` === email);
+  const sets = (objeto: string) => motorFalso.llamadas.filter(([m]) => m === `x:${objeto}/set`).map(([, a]) => a);
+
+  beforeEach(async () => {
+    motor = await nuevoMotor();
+    await motor.createDomain('viejo.test');
+    await motor.createDomain('nuevo.test');
+    await motor.createMailbox({ email: 'ana@viejo.test', passwordHash: '$6$sal$hash' });
+    await motor.addAppPassword('ana@viejo.test', 'movil', 'x');
+    await motor.upsertAlias('info@viejo.test', ['ana@viejo.test'], ['fuera@otro.test']);
+    motorFalso.llamadas = [];
+  });
+
+  test('getPrincipal: la dirección de la cuenta es su nombre y los alias activos van después', async () => {
+    assert.deepEqual(await motor.getPrincipal('ANA@viejo.test'), {
+      id: cuenta('ana@viejo.test')!.id,
+      type: 'individual',
+      name: 'ana@viejo.test',
+      emails: ['ana@viejo.test'],
+    });
+    assert.deepEqual((await motor.getPrincipal('info@viejo.test'))?.type, 'list');
+    assert.equal(await motor.getPrincipal('nadie@viejo.test'), null);
+    // Una dirección que solo es alias no es el nombre de nadie (como en 0.15).
+    await motor.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] });
+    assert.equal(await motor.getPrincipal('ana@nuevo.test'), null);
+  });
+
+  test('setAddresses: añade alias por id de dominio, idempotente, y no escribe nada si falla', async () => {
+    assert.deepEqual(await motor.setAddresses('ana@viejo.test', { add: ['Ana@Nuevo.test'] }), [
+      'ana@viejo.test',
+      'ana@nuevo.test',
+    ]);
+    assert.deepEqual(cuenta('ana@viejo.test')!.aliases, { '0': { enabled: true, name: 'ana', domainId: id('nuevo.test') } });
+    // La principal no se mueve: es el nombre de la cuenta (y sus dispositivos entran con él).
+    assert.deepEqual(await motor.setAddresses('ana@viejo.test', { primary: 'ana@nuevo.test' }), [
+      'ana@viejo.test',
+      'ana@nuevo.test',
+    ]);
+    motorFalso.llamadas = [];
+    assert.deepEqual(await motor.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] }), [
+      'ana@viejo.test',
+      'ana@nuevo.test',
+    ]);
+    assert.deepEqual(sets('Account'), [], 'sin cambios no escribe');
+
+    await assert.rejects(
+      motor.setAddresses('ana@viejo.test', { add: ['ana@otro.test'] }),
+      (err: HttpError) => err.code === 'engine_not_found' && /otro\.test/.test(err.message),
+    );
+    await assert.rejects(motor.setAddresses('nadie@viejo.test', { add: ['x@nuevo.test'] }), codigo('engine_not_found'));
+    await assert.rejects(motor.setAddresses('ana@viejo.test', { remove: ['ana@viejo.test'] }), codigo('engine_error'));
+    assert.deepEqual(sets('Account'), [], 'los errores no escriben nada');
+    // Las listas también tienen alias.
+    assert.deepEqual(await motor.setAddresses('info@viejo.test', { add: ['info@nuevo.test'] }), [
+      'info@viejo.test',
+      'info@nuevo.test',
+    ]);
+    assert.deepEqual(lista('info@viejo.test')!.aliases, { '0': { enabled: true, name: 'info', domainId: id('nuevo.test') } });
+  });
+
+  test('setAddresses conserva los alias desactivados y redirige las listas que apuntaban a lo que se quita', async () => {
+    cuenta('ana@viejo.test')!.aliases = {
+      '0': { enabled: false, name: 'antigua', domainId: id('viejo.test') },
+      '1': { enabled: true, name: 'ana', domainId: id('nuevo.test') },
+    };
+    await motor.upsertAlias('equipo@viejo.test', ['ana@nuevo.test', 'luis@viejo.test']);
+    assert.deepEqual(await motor.getPrincipal('ana@viejo.test').then((p) => p?.emails), ['ana@viejo.test', 'ana@nuevo.test']);
+
+    await motor.setAddresses('ana@viejo.test', { remove: ['ana@nuevo.test'] });
+    assert.deepEqual(cuenta('ana@viejo.test')!.aliases, {
+      '0': { enabled: false, name: 'antigua', domainId: id('viejo.test') },
+    });
+    // La dirección que se quita deja de existir: la lista entrega a la cuenta por su dirección.
+    assert.deepEqual(lista('equipo@viejo.test')!.recipients, { 'ana@viejo.test': true, 'luis@viejo.test': true });
+    assert.deepEqual(lista('info@viejo.test')!.recipients, { 'ana@viejo.test': true, 'fuera@otro.test': true }, 'otra lista no se toca');
+  });
+
+  test('renamePrincipal: nombre, dominio y alias en una sola escritura; conserva id, credenciales y destinos', async () => {
+    const antes = cuenta('ana@viejo.test')!;
+    await motor.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] });
+    motorFalso.llamadas = [];
+
+    await motor.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'ana@nuevo.test' });
+    assert.deepEqual(sets('Account'), [
+      {
+        update: {
+          [antes.id]: {
+            name: 'ana',
+            domainId: id('nuevo.test'),
+            aliases: { '0': { enabled: true, name: 'ana', domainId: id('viejo.test') } },
+          },
+        },
+      },
+    ]);
+    const despues = cuenta('ana@nuevo.test')!;
+    assert.equal(despues.id, antes.id, 'el id (y con él el correo) no cambia');
+    assert.deepEqual(despues.credentials.map((c) => c['@type']), ['Password', 'AppPassword']);
+    // La dirección anterior sigue siendo suya (alias): la lista sigue entregando.
+    assert.deepEqual(await motor.getPrincipal('ana@nuevo.test').then((p) => p?.emails), ['ana@nuevo.test', 'ana@viejo.test']);
+    assert.equal(await motor.getPrincipal('ana@viejo.test'), null);
+    assert.deepEqual(lista('info@viejo.test')!.recipients, { 'ana@viejo.test': true, 'fuera@otro.test': true });
+    // Las operaciones por usuario ya van con el nombre nuevo (la caché se actualizó).
+    await motor.setMailboxPassword('ana@nuevo.test', '$6$otra$hash');
+    assert.equal(cuenta('ana@nuevo.test')!.credentials[0]!.secret, '$6$otra$hash');
+
+    // Reintento de un renombrado ya hecho: nada que hacer.
+    motorFalso.llamadas = [];
+    await motor.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'ana@nuevo.test' });
+    assert.deepEqual(sets('Account'), []);
+    // Otro principal con ese nombre, o ninguno de los dos.
+    await assert.rejects(
+      motor.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'otra@nuevo.test' }),
+      (err: HttpError) => {
+        assert.equal(err.code, 'engine_exists');
+        assert.equal(err.message, 'El servidor de correo ya tiene otro buzón o alias con el nombre «ana@nuevo.test».');
+        return true;
+      },
+    );
+    await assert.rejects(
+      motor.renamePrincipal('luis@viejo.test', 'luis@nuevo.test', { expectEmail: 'luis@nuevo.test' }),
+      codigo('engine_not_found'),
+    );
+  });
+
+  test('renamePrincipal de una lista con sus direcciones, y la baja redirige sus destinos', async () => {
+    await motor.setAddresses('info@viejo.test', { add: ['info@nuevo.test'] });
+    await motor.upsertAlias('todos@viejo.test', ['info@viejo.test']);
+    await motor.renamePrincipal('info@viejo.test', 'info@nuevo.test', {
+      expectEmail: 'info@viejo.test',
+      emails: ['info@nuevo.test', 'info@viejo.test'],
+    });
+    const info = lista('info@nuevo.test')!;
+    assert.deepEqual(info.recipients, { 'ana@viejo.test': true, 'fuera@otro.test': true });
+    assert.deepEqual(await motor.getPrincipal('info@nuevo.test').then((p) => p?.emails), ['info@nuevo.test', 'info@viejo.test']);
+    // Baja del dominio viejo: se quita la dirección y quien apuntaba a ella pasa a la nueva.
+    await motor.setAddresses('info@nuevo.test', { remove: ['info@viejo.test'] });
+    assert.deepEqual(info.aliases, {});
+    assert.deepEqual(lista('todos@viejo.test')!.recipients, { 'info@nuevo.test': true });
+    // Ocupado: el nombre de destino es de otro.
+    await motor.createMailbox({ email: 'ventas@nuevo.test', passwordHash: '$6$s$h' });
+    await motor.upsertAlias('ventas@viejo.test', ['ana@viejo.test']);
+    await assert.rejects(
+      motor.renamePrincipal('ventas@viejo.test', 'ventas@nuevo.test', { expectEmail: 'ventas@viejo.test' }),
+      codigo('engine_exists'),
+    );
+  });
+
+  test('una cuenta con el nombre ocupado en el destino: el motor se niega y nada cambia', async () => {
+    await motor.createMailbox({ email: 'ana@nuevo.test', passwordHash: '$6$s$h' });
+    // Otro proceso del panel sin la caché del destino.
+    const otro = crearMotor();
+    await assert.rejects(
+      otro.renamePrincipal('ana@viejo.test', 'ana@nuevo.test', { expectEmail: 'ana@viejo.test' }),
+      codigo('engine_exists'),
+    );
+    assert.ok(cuenta('ana@viejo.test'));
+  });
+
+  test('createMailbox no adopta una cuenta con alias (el usuario anterior de otro buzón)', async () => {
+    await motor.setAddresses('ana@viejo.test', { add: ['ana@nuevo.test'] });
+    const otro = crearMotor();
+    await assert.rejects(otro.createMailbox({ email: 'ana@viejo.test', passwordHash: '$6$nueva$h' }), codigo('engine_exists'));
+    assert.equal(cuenta('ana@viejo.test')!.credentials[0]!.secret, '$6$sal$hash', 'su contraseña no cambia');
+  });
+
+  test('removeDkim: pasa el dominio a manual y borra solo sus firmas; idempotente', async () => {
+    await motor.createDomain('viejo.test.ejemplo');
+    for (const d of ['viejo.test', 'viejo.test.ejemplo', 'nuevo.test']) await motor.ensureDkim(d, '');
+    const firmasDe = (d: string) => [...motorFalso.firmas.values()].filter((f) => f.domainId === id(d)).map((f) => f.id);
+    const borrar = firmasDe('viejo.test').sort();
+    assert.equal(borrar.length, 2);
+
+    assert.deepEqual(await motor.removeDkim('viejo.test'), borrar);
+    assert.deepEqual(firmasDe('viejo.test'), []);
+    assert.equal(firmasDe('viejo.test.ejemplo').length, 2, 'la trampa del prefijo');
+    assert.equal(firmasDe('nuevo.test').length, 2);
+    assert.equal(motorFalso.dominios.get(id('viejo.test'))!.dkimManagement['@type'], 'Manual', 'la tarea DKIM no las vuelve a crear');
+    assert.deepEqual(await motor.removeDkim('viejo.test'), []);
+    assert.deepEqual(await motor.removeDkim('no-existe.test'), []);
+  });
+
+  test('sin recarga del directorio, sin reglas de recepción externa y sin token de ACME propio', async () => {
+    await motor.reloadDirectory();
+    assert.deepEqual(motorFalso.llamadas, [], 'recargar no hace ninguna petición');
+    const r = await motor.syncRemoteDomains(['fuera.test']);
+    assert.equal(r.unsupported, true);
+    assert.equal(r.changed, false);
+    assert.equal(await motor.getAcmeToken(), null);
   });
 });

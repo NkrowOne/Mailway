@@ -9,7 +9,9 @@
  *
  *   1. completa la puesta en marcha con el entorno del panel, con los mismos
  *      pasos que el asistente (`modules/setup.ts`): identidad del servidor
- *      (solo lo que falte), motor (`STALWART_*`) si aún no hay ninguno y
+ *      (lo que falte y lo que el instalador haya cambiado desde la última
+ *      vez, salvo lo que la administración cambió en el panel:
+ *      `modules/entorno.ts`), motor (`STALWART_*`) si aún no hay ninguno y
  *      ajustes recomendados del motor. Lo que no se pueda hacer queda en los
  *      avisos, nunca hace fallar el emparejado;
  *   2. en una sola transacción, y como último paso para que nunca quede una
@@ -35,22 +37,16 @@ import { HttpError } from '../core/errors';
 import { engineConfigured } from '../engine';
 import { auditSystem } from '../modules/audit';
 import { countUsers, type AuthedUser } from '../modules/auth';
+import { detalleDeCambios, sincronizarIdentidadConEntorno } from '../modules/entorno';
 import {
   applyRecommendedQuietly,
   connectEngine,
   createFirstAdmin,
   engineFromEnv,
-  instanceFromEnv,
   scrub,
   type RecommendedOutcome,
 } from '../modules/setup';
-import {
-  getEngineSettings,
-  getInstanceSettings,
-  isSetupComplete,
-  markSetupComplete,
-  setInstanceSettings,
-} from '../modules/settings';
+import { getEngineSettings, getInstanceSettings, isSetupComplete, markSetupComplete } from '../modules/settings';
 import { activeAdminTokensNamed, createManagementToken, revokeManagementToken } from '../modules/tokens';
 
 /** Nombre del token de gestión que usa Skyway. */
@@ -196,20 +192,15 @@ function avisoRecomendados(outcome: RecommendedOutcome): string | null {
  * queda en los avisos y el asistente del panel lo retoma al entrar.
  */
 async function completarPuestaEnMarcha(avisos: string[]): Promise<void> {
-  const { patch, warnings } = instanceFromEnv();
-  avisos.push(...warnings);
-  if (Object.keys(patch).length > 0) {
-    try {
-      setInstanceSettings(patch);
-      auditSystem('setup.instance_configured', { origen: ORIGEN });
-    } catch (err) {
-      // instanceFromEnv ya descarta lo que no se puede guardar; si aun así
-      // falla, la identidad se completa en el panel y el emparejado sigue.
-      const motivo = err instanceof HttpError ? ` (${err.message})` : '';
-      avisos.push(
-        `No se ha podido guardar la identidad del servidor del entorno del panel${motivo}. Revísala en Ajustes → Identidad del servidor.`,
-      );
-    }
+  // Lo que falte, y lo que el instalador haya cambiado (otro dominio, otra
+  // IP) en los campos que nadie ha tocado en el panel. Sin esto, el panel se
+  // quedaba con los nombres de la primera instalación y los ajustes
+  // recomendados de abajo devolvían el motor al nombre anterior.
+  const identidad = sincronizarIdentidadConEntorno({ rellenar: true });
+  avisos.push(...identidad.avisos);
+  if (identidad.rellenados.length > 0) auditSystem('setup.instance_configured', { origen: ORIGEN });
+  if (identidad.cambios.length > 0) {
+    auditSystem('settings.instance_env_adopted', { cambios: detalleDeCambios(identidad.cambios), origen: ORIGEN });
   }
 
   let recommended: RecommendedOutcome | null = null;
