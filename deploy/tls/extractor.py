@@ -1381,8 +1381,10 @@ class Extractor:
         api, problema = self._detectar(ahora)
         ajustes = None
         # Con 0.16 el certificado va registrado en el motor (no por fichero):
-        # nada del volumen tiene que conservarse para él.
-        self.volumen.proteger = set()
+        # nada del volumen tiene que conservarse para él. Sin saber qué motor
+        # hay (no responde), no se retira nada: puede ser una 0.15 que aún lee
+        # el par del nombre anterior.
+        self.volumen.proteger = None if api is None else set()
         if api == MOTOR_015:
             ajustes, problema = self._consultar_motor(ahora)
             # Tras cambiar MAIL_HOSTNAME, el motor sigue con el par del nombre

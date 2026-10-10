@@ -1439,7 +1439,7 @@ reiniciar_diagnostico() {
   : >"$REGISTRO"
   ENV_FILE="$TMP/env-diagnostico"
   : >"$ENV_FILE"
-  FAKE_ESTADOS=([mailway-mail]=healthy [mailway-webmail]=healthy [skyway-mailway-panel]=healthy [skyway-traefik]=running [mailway-certs-dumper]=ausente)
+  FAKE_ESTADOS=([mailway-mail]=healthy [mailway-mail-gw]=healthy [mailway-webmail]=healthy [skyway-mailway-panel]=healthy [skyway-traefik]=running [mailway-certs-dumper]=ausente)
   FAKE_PANEL_RESPONDE=1
   FAKE_TRAEFIK='["--providers.http.endpoint=http://skyway:4000/api/traefik/mailway"]'
   FAKE_DNS=0
