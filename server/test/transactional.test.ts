@@ -195,6 +195,52 @@ test('un cuerpo inválido responde 400 sin gastar cupo diario', async () => {
   assert.equal(usage.c, 1);
 });
 
+test('las cabeceras de destinatarios, remitente, estructura o autenticación se rechazan sin gastar cupo', async () => {
+  // nodemailer calcula el sobre SMTP con las cabeceras de direcciones: un
+  // «Bcc» en «headers» añadía destinatarios sin validar y por encima de los
+  // límites, y un «From» cambiaba el remitente fijado por la clave.
+  const { key, info } = await crearClave({ dailyLimit: 1 });
+  const rechazadas: Record<string, string>[] = [
+    { Bcc: 'oculto@fuera.example' },
+    { cc: 'oculto@fuera.example' },
+    { TO: 'oculto@fuera.example' },
+    { From: 'jefe@otro-cliente.example' },
+    { Sender: 'jefe@otro-cliente.example' },
+    { 'Reply-To': 'respuestas@fuera.example' },
+    { Subject: 'Otro asunto' },
+    { 'Resent-To': 'oculto@fuera.example' },
+    { 'Content-Type': 'text/html' },
+    { 'MIME-Version': '1.0' },
+    { 'DKIM-Signature': 'v=1; d=otro.example' },
+    { 'Authentication-Results': 'mx; dmarc=pass' },
+    { 'X-Campaign': 'otoño\r\nBcc: oculto@fuera.example' },
+    { 'Mal nombre': 'x' },
+    { 'X-Campaña': 'x' },
+  ];
+  for (const headers of rechazadas) {
+    const res = await enviar(key, { headers });
+    assert.equal(res.statusCode, 400, `${JSON.stringify(headers)} → ${res.body}`);
+  }
+  const bcc = await enviar(key, { headers: { Bcc: 'oculto@fuera.example' } });
+  assert.match((bcc.json() as { error: string }).error, /«Bcc»/);
+
+  const buenas = await enviar(key, {
+    headers: { 'X-Campaign': 'otoño', 'List-Unsubscribe': '<mailto:baja@ejemplo.com>', 'In-Reply-To': '<a@b>' },
+  });
+  assert.equal(buenas.statusCode, 200, buenas.body);
+  const usage = db
+    .prepare('SELECT COALESCE(SUM(count), 0) AS c FROM api_usage WHERE api_key_id = ?')
+    .get(info.id) as { c: number };
+  assert.equal(usage.c, 1, 'solo cuenta el envío válido');
+});
+
+test('se admiten como máximo 30 cabeceras adicionales', async () => {
+  const { key } = await crearClave();
+  const cabeceras = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`X-Dato-${i}`, 'v']));
+  assert.equal((await enviar(key, { headers: cabeceras(30) })).statusCode, 200);
+  assert.equal((await enviar(key, { headers: cabeceras(31) })).statusCode, 400);
+});
+
 /** Cliente propio con un plan a medida: los límites del plan son por cliente. */
 async function clienteConPlan(limites: { apiDailyLimit: number; apiPerMinuteLimit: number }) {
   const plan = await ctx.app.inject({
