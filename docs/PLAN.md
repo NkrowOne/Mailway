@@ -163,15 +163,15 @@ cifrado, DNS, Cloudflare, cerrojos, errores, avisos). La web, en
     la categoría `verificacion`; sin propiedad, crear buzones o alias responde
     `409 domain_ownership_pending`.
 
-    **El dominio solo existe en el motor cuando es del cliente.** Para
-    Stalwart, un dominio que existe es local para todo el servidor (rechaza las
-    direcciones que no tiene y entrega en local las demás), así que bastaría
-    con darlo de alta para que nadie pudiera escribirle. El alta no lo crea en
-    el motor: lo crea el primer buzón o alias (`asegurarDominioEnMotor`),
-    después de exigir la propiedad. Las claves DKIM y los registros que propone
-    el motor no necesitan que exista. Al actualizar desde la 1.2, una tarea
-    única (al arrancar y en el vigilante hasta completarse) retira del motor
-    los dominios sin propiedad y sin buzones ni alias.
+    **El dominio existe en el motor desde su alta.** Con Stalwart 0.16 sus
+    claves DKIM y los registros que hay que publicar (con los que también se
+    comprueba la propiedad) solo existen con el dominio creado, así que el
+    alta lo crea con su DKIM, como en la 1.4; cada buzón o alias lo vuelve a
+    asegurar (`asegurarDominioEnMotor`, idempotente). La rama del cambio de
+    dominio lo retrasaba hasta el primer buzón o alias (con una tarea única que
+    retiraba del motor los dominios sin propiedad), porque para Stalwart un
+    dominio que existe es local para todo el servidor; eso solo funcionaba con
+    la 0.15 y no se ha integrado (límites conocidos).
 
     **Recepción en otro proveedor.** Con la propiedad probada por el TXT y el
     MX todavía en otro sitio (un traslado en preparación, o solo el envío en
@@ -783,6 +783,13 @@ controles táctiles de 44 px y un paso a la vez.
   se escriben en el motor (son expresiones de la 0.15): lo que se envía desde
   este servidor a un dominio cuyo MX apunta a otro proveedor se entrega en
   sus buzones de aquí, y el panel lo avisa mientras haya dominios afectados.
+- Un dominio dado de alta existe en el motor aunque su propiedad no esté
+  comprobada (decisión de la 1.4, necesaria con Stalwart 0.16): hasta que
+  se mide su MX, lo que este servidor envíe a ese dominio se entrega aquí (o
+  se rechaza si la dirección no existe), y con Stalwart 0.16 también después,
+  porque la recepción en otro proveedor aún no se escribe en el motor.
+  Retrasar su creación hasta comprobar la propiedad exige que el panel
+  calcule los registros sin el motor.
 - Con un cambio de dominio sin terminar, o con buzones que siguen con el
   usuario del dominio anterior, no se puede migrar el motor de la 0.15 a la
   0.16 (decisión 41): antes hay que dar de baja el dominio anterior (o

@@ -5,7 +5,7 @@ import { db, now } from '../core/db';
 import { clientLockKey, withLock } from '../core/locks';
 import { randomId } from '../core/crypto';
 import { badRequest, conflict, HttpError, isUniqueViolation, notFound } from '../core/errors';
-import { engineConfigured, getEngine } from '../engine';
+import { getEngine } from '../engine';
 import type { EngineDnsRecord } from '../engine/types';
 import { resolveAlert } from './alerts';
 import { audit } from './audit';
@@ -36,7 +36,7 @@ import { exigirSinMantenimiento } from './mantenimiento';
 import { sincronizarRecepcionExterna } from './recepcion';
 import { dominiosPropiosDe, eliminarDominioPropio } from './whitelabel';
 import { cambioAbiertoDeDominio, loginParaMotor, nombreEnMotor } from './direcciones';
-import { getInstanceSettings, getSetting, setSetting } from './settings';
+import { getInstanceSettings } from './settings';
 
 /** Registro TXT que demuestra la propiedad del dominio sin tocar el MX. */
 export interface OwnershipRecord {
@@ -258,13 +258,10 @@ export function marcarPropiedadComprobada(domainId: string): void {
 }
 
 /**
- * Sin propiedad comprobada no se crean buzones ni alias, y por tanto el
- * dominio tampoco existe en el motor (asegurarDominioEnMotor): si no, un
- * cliente podría dar de alta un dominio ajeno (gmail.com) y el motor
- * entregaría en local, o rechazaría, el correo que otros clientes del
- * servidor envían a ese dominio. Se aplica a todos, también a la
- * administración y a los tokens (Skyway trabaja con un token de
- * administrador en nombre de sus proyectos).
+ * Sin propiedad comprobada no se crean buzones ni alias: si no, un cliente
+ * podría dar de alta un dominio ajeno (gmail.com) y recibir su correo. Se
+ * aplica a todos, también a la administración y a los tokens (Skyway trabaja
+ * con un token de administrador en nombre de sus proyectos).
  */
 export function assertDomainOwnership(domainId: string): void {
   const row = db.prepare('SELECT domain, owner_verified_at FROM domains WHERE id = ?').get(domainId) as
@@ -279,63 +276,15 @@ export function assertDomainOwnership(domainId: string): void {
 }
 
 /**
- * Crea el dominio en el motor justo antes de su primer buzón o alias:
- * Stalwart rechaza un buzón cuyo dominio no existe como principal. Quien la
- * llama ya ha exigido la propiedad (assertDomainOwnership). Es idempotente:
- * el driver adopta un dominio que ya exista.
+ * Asegura el dominio en el motor justo antes de su primer buzón o alias (el
+ * alta ya lo crea, pero un borrado interrumpido o una versión anterior pueden
+ * haberlo dejado sin él): Stalwart rechaza un buzón cuyo dominio no existe
+ * como principal. Quien la llama ya ha exigido la propiedad
+ * (assertDomainOwnership). Es idempotente: el driver adopta un dominio que ya
+ * exista.
  */
 export async function asegurarDominioEnMotor(domain: string): Promise<void> {
   await getEngine().createDomain(domain);
-}
-
-const CLAVE_RETIRADA = 'motor_dominios_sin_propiedad_retirados';
-
-/**
- * Hasta la 1.2, el alta creaba el dominio en el motor antes de comprobar la
- * propiedad, así que un dominio ajeno dado de alta y nunca comprobado sigue
- * siendo local para el motor. Esta tarea, que se ejecuta una vez al arrancar
- * (y la repite el vigilante si el motor no respondía), lo retira del motor.
- *
- * Solo toca dominios sin propiedad comprobada y sin buzones ni alias (la
- * migración 004 marcó como comprobados los que los tenían). Cada uno se
- * vuelve a mirar dentro del cerrojo de su cliente, el mismo de las altas de
- * buzones y alias: si en ese momento se comprueba la propiedad y se crea un
- * buzón, no se le retira el dominio por debajo.
- */
-export async function retirarDelMotorDominiosSinPropiedad(): Promise<{ retirados: string[]; fallidos: string[] } | null> {
-  if (getSetting(CLAVE_RETIRADA) || !engineConfigured()) return null;
-  const candidatos = db
-    .prepare(
-      `SELECT id, client_id, domain FROM domains d
-       WHERE owner_verified_at IS NULL
-         AND NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.domain_id = d.id)
-         AND NOT EXISTS (SELECT 1 FROM aliases a WHERE a.domain_id = d.id)`,
-    )
-    .all() as { id: string; client_id: string; domain: string }[];
-  const retirados: string[] = [];
-  const fallidos: string[] = [];
-  for (const c of candidatos) {
-    await withLock(clientLockKey(c.client_id), async () => {
-      const sigue = db
-        .prepare(
-          `SELECT 1 FROM domains d WHERE d.id = ? AND owner_verified_at IS NULL
-             AND NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.domain_id = d.id)
-             AND NOT EXISTS (SELECT 1 FROM aliases a WHERE a.domain_id = d.id)`,
-        )
-        .get(c.id);
-      if (!sigue) return;
-      try {
-        // Idempotente: un dominio que el motor no tiene cuenta como retirado.
-        await getEngine().deleteDomain(c.domain);
-        retirados.push(c.domain);
-      } catch {
-        fallidos.push(c.domain);
-      }
-    });
-  }
-  // Con algún fallo (motor caído) se reintenta en la siguiente vuelta.
-  if (fallidos.length === 0) setSetting(CLAVE_RETIRADA, String(now()));
-  return { retirados, fallidos };
 }
 
 export function getDomain(id: string): DomainRecord {
@@ -611,18 +560,20 @@ export async function altaDeDominioSinCerrojo(input: {
   assertDominioNoReservado(domain, clientId, input.comoAdministrador);
   const reserva = reservaDeDominio(domain);
 
-  // El dominio NO se crea en el motor al darlo de alta: para Stalwart, un
-  // dominio que existe es local para todo el servidor (responde «550
-  // Mailbox does not exist» a cualquier dirección que no tenga y entrega
-  // en local lo demás). Dar de alta gmail.com, o el dominio de otro
-  // cliente, dejaría a todos los clientes sin poder escribirle. Se crea
-  // con el primer buzón o alias (asegurarDominioEnMotor), que exigen la
-  // propiedad comprobada. Las claves DKIM y los registros DNS que propone
-  // el motor no necesitan que el dominio exista.
+  // El dominio se crea en el motor al darlo de alta, como en la 1.4: con
+  // Stalwart 0.16 las claves DKIM y el fichero de zona (los registros que hay
+  // que publicar, con los que también se comprueba la propiedad) solo existen
+  // con el dominio creado. La rama del cambio de dominio lo dejaba para el
+  // primer buzón o alias, que solo funciona con la 0.15 (ver PLAN.md,
+  // límites conocidos). El motor adopta un dominio que ya existiera allí
+  // (p. ej. huérfano de un borrado interrumpido): el panel es la fuente de
+  // verdad.
   const engine = getEngine();
+  await engine.createDomain(domain);
   try {
     await engine.ensureDkim(domain, 'mail');
   } catch (err) {
+    // El dominio queda creado; el DKIM se puede regenerar desde la ficha.
     input.avisar?.(err);
   }
 
@@ -633,10 +584,15 @@ export async function altaDeDominioSinCerrojo(input: {
        VALUES (?, ?, ?, ?, ?)`,
     ).run(nuevoId, clientId, domain, 'mail', now());
   } catch (err) {
-    // Otra alta lo guardó entre la comprobación y el INSERT.
+    // Si el dominio ya existe en la base (otra alta lo guardó entre la
+    // comprobación y el INSERT), el dominio del motor es el de esa alta:
+    // borrarlo dejaría sin correo un dominio que el panel muestra activo.
     if (isUniqueViolation(err)) {
       throw conflict('Ese dominio ya está dado de alta en esta instancia.', 'domain_exists');
     }
+    // Cualquier otro fallo (p. ej. el cliente se borró en paralelo): se
+    // deshace el dominio en el motor para no dejarlo huérfano.
+    await engine.deleteDomain(domain).catch(() => undefined);
     throw err;
   }
   // El administrador decide a quién sirven esos registros: la reserva pasa al cliente nuevo.

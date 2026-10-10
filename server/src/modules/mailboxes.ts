@@ -425,8 +425,8 @@ async function createMailboxRecord(input: {
   const password = input.password || generateMailboxPassword();
 
   const engine = getEngine();
-  // El dominio solo existe en el motor desde su primer buzón o alias (con
-  // la propiedad ya comprobada): véase el alta de dominios.
+  // El alta ya creó el dominio en el motor, pero un borrado interrumpido o
+  // una versión anterior pueden haberlo dejado sin él (idempotente).
   await asegurarDominioEnMotor(domain.domain);
   // El hash se calcula una vez: lo recibe el motor y el panel guarda su copia.
   const passwordHash = await crearBuzonEnMotor(

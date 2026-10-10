@@ -10,7 +10,7 @@ import { vigilarCambiosDeDominio } from './domainmigrations';
 import { refreshAutoconfigHosts } from './autoconfig';
 import { vigilarCorreoWebNuevo } from './correoweb';
 import { capturarSiProcede } from './credenciales';
-import { listDomains, refreshDomainDns, retirarDelMotorDominiosSinPropiedad, type DomainRecord } from './domains';
+import { listDomains, refreshDomainDns, type DomainRecord } from './domains';
 import { checkEngineHostname, checkEngineTls } from './engineops';
 import { revisarIpPublica } from './ipservidor';
 import { mantenimientoActivo } from './mantenimiento';
@@ -685,11 +685,6 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
       // Lo que escribe en el motor también espera al final del mantenimiento.
       await paso('recepción en otro proveedor', checkRecepcionExterna, log);
       await paso('cambios de dominio', () => tickCambiosDeDominio(log), log);
-      // Tarea única de la actualización (dominios sin propiedad que versiones
-      // anteriores crearon en el motor): solo trabaja hasta completarse.
-      await paso('dominios sin propiedad en el motor', async () => {
-        await retirarDelMotorDominiosSinPropiedad();
-      }, log);
     }
     await paso('puerto 25 de salida', checkPuerto25, log);
     await paso('IP pública', checkIpPublica, log);
