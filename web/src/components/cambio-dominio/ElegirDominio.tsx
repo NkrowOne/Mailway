@@ -8,6 +8,7 @@ import {
   mensajeCambio,
   nombresApps,
   resumenPlan,
+  textoAppsManuales,
   type CambioDominioVista,
   type PlanCambioDominio,
 } from '../../lib/cambioDominio';
@@ -209,6 +210,9 @@ function DetallePlan({ plan }: { plan: PlanCambioDominio }) {
                 <p className="text-sm text-tinta-3">
                   Lo usa una aplicación para enviar ({nombresApps(b.usadoPorApps)}).
                 </p>
+              )}
+              {b.appsManuales.length > 0 && (
+                <p className="text-sm text-tinta-3 [overflow-wrap:anywhere]">{textoAppsManuales(b.appsManuales, b.a)}</p>
               )}
             </Fila>
           ))}

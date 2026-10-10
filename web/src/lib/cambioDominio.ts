@@ -42,7 +42,8 @@ export interface AvisoCambio {
 export interface PlanCambioDominio {
   desde: { domainId: string; domain: string };
   hacia: { domain: string; existe: boolean; domainId: string | null };
-  buzones: { id: string; de: string; a: string; usadoPorApps: string[] }[];
+  /** `usadoPorApps`: contraseñas de Skyway; `appsManuales`: las demás activas (ver PersonaCambio). */
+  buzones: { id: string; de: string; a: string; usadoPorApps: string[]; appsManuales: string[] }[];
   alias: { id: string; de: string; a: string }[];
   formularios: { id: string; name: string; origenesNuevos: string[] }[];
   webmail: { viejo: string | null; nuevo: string | null };
@@ -75,6 +76,13 @@ export interface PersonaCambio {
   pendiente: boolean;
   /** Contraseñas de aplicación de Skyway («skyway:tienda»): ese buzón lo actualiza Skyway. */
   usadoPorApps: string[];
+  /**
+   * Contraseñas de aplicación activas creadas a mano (el resto, sin las que
+   * dejó sin valor la actualización del motor): siguen valiendo, pero quien
+   * las usa tiene que entrar con la dirección vigente al actualizar el
+   * usuario o tras la baja. Nadie lo hace por él.
+   */
+  appsManuales: string[];
 }
 
 /** Vista de un cambio (GET /api/domain-migrations/:id y respuesta de cada acción). */
@@ -262,6 +270,20 @@ export function nombresApps(apps: string[]): string {
 export function textoUsadoPorApp(apps: string[]): string {
   const nombres = nombresApps(apps);
   return `La usa una aplicación para enviar${nombres ? ` (${nombres})` : ''}. Actualízalo desde Skyway.`;
+}
+
+/**
+ * Bajo un buzón con contraseñas de aplicación creadas a mano: quien las usa
+ * (un programa, un bot de fuera, un dispositivo) tendrá que entrar con la
+ * dirección que se le pasa, la vigente del buzón: la de dominio2.es tras
+ * «Pasar» y la de dominio.es tras un «Volver». Skyway solo pone al día sus
+ * servicios.
+ */
+export function textoAppsManuales(apps: string[], email: string): string {
+  const nombres = [...new Set(apps)].join(', ');
+  return apps.length === 1
+    ? `Contraseña de aplicación creada a mano: ${nombres}. La aplicación que la usa tendrá que entrar con ${email}.`
+    : `Contraseñas de aplicación creadas a mano: ${nombres}. Las aplicaciones que las usan tendrán que entrar con ${email}.`;
 }
 
 /** Confirmación de «Actualizar ahora» (panel). */
