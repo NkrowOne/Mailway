@@ -30,6 +30,17 @@ updates:
       seguridad-npm:
         applies-to: security-updates
         update-types: [patch]
+    # Saltos que piden una migración propia, no un PR de Dependabot:
+    # - zod 4 retira required_error, invalid_type_error y errorMap y cambia
+    #   sus textos por defecto, que llegan a las respuestas de la API (también
+    #   /v1/send). Se migrará por módulos con «zod/v4», que ya trae la 3.25.
+    # - vite 8 compila con Rolldown y necesita @vitejs/plugin-react 6: se sube
+    #   junto con el plugin, a mano.
+    ignore:
+      - dependency-name: zod
+        update-types: ['version-update:semver-major']
+      - dependency-name: vite
+        versions: ['>=8.0.0']
 
   # Imagen base del panel (Dockerfile): Node con versión exacta.
   - package-ecosystem: docker

@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Pruebas unitarias del extractor del certificado
         run: python3 -m unittest discover -s deploy/tls -v
@@ -184,8 +184,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -251,7 +251,7 @@ jobs:
       matrix:
         motor: ['0.16', '0.15']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Pila completa montada por el instalador
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
@@ -270,7 +270,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Pila con Bulwark montada por el instalador
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
@@ -291,7 +291,7 @@ jobs:
       matrix:
         motor: ['0.16', '0.15']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Prueba con contenedores reales
         run: bash deploy/prueba-pasarela.sh --motor "stalwart-${{ matrix.motor }}"
 
@@ -305,7 +305,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: ¿El PR toca Bulwark?
@@ -325,7 +325,7 @@ jobs:
           else
             echo "Este PR no toca Bulwark: no se ensaya."
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: steps.cambios.outputs.ensayar == '1'
         with:
           node-version: 22
@@ -356,7 +356,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Migración con contenedores reales
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
