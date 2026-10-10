@@ -11,6 +11,8 @@ import {
 } from '../src/modules/domainmigrations';
 import { getDomain, ownershipRecord } from '../src/modules/domains';
 import { getMailbox } from '../src/modules/mailboxes';
+import { activarMantenimiento, desactivarMantenimiento } from '../src/modules/mantenimiento';
+import { asegurarRemitenteConfiguracion } from '../src/modules/remitente';
 import { getInstanceSettings, setInstanceSettings } from '../src/modules/settings';
 import { reviewDomainDns } from '../src/modules/watchdog';
 import { MAX_WHITELABEL_PER_CLIENT } from '../src/modules/whitelabel';
@@ -1437,4 +1439,68 @@ test('Cloudflare: el DNS automático no toca el MX de otro proveedor y «Cambiar
     .prepare("SELECT 1 FROM audit_log WHERE action = 'domain.migration_mx_changed' AND detail LIKE ?")
     .get(`%${creado.vista.id}%`);
   assert.ok(auditado);
+});
+
+/* ------------------- Con lo de la 1.4: mantenimiento y remitente ------------------- */
+
+test('con el motor en mantenimiento no se crea, ni se pasa, ni se actualiza un usuario; «Comprobar» solo mira', async () => {
+  const e = await escenario('mant-viejo.test', { buzones: ['ana'] });
+  const vista = await cambioListo(e, 'mant-nuevo.test');
+  const otro = await escenario('mant-otro.test', { buzones: ['eva'] });
+  activarMantenimiento(30);
+  try {
+    const crear = await crearCambioDeDominio(ctx, otro.viejo.domainId, 'mant-otro-nuevo.test');
+    assert.equal(crear.statusCode, 503, crear.body);
+    assert.equal((JSON.parse(crear.body) as { code: string }).code, 'engine_maintenance');
+    assert.equal(db.prepare("SELECT 1 FROM domains WHERE domain = 'mant-otro-nuevo.test'").get(), undefined, 'no ha creado nada');
+
+    for (const nombre of ['switch', 'cancel', 'rollback']) {
+      const res = await accion(vista.id, nombre);
+      assert.equal(res.statusCode, 503, `${nombre}: ${res.body}`);
+      assert.equal(res.json().code, 'engine_maintenance');
+    }
+    const comprobar = await accion(vista.id, 'check');
+    assert.equal(comprobar.statusCode, 200, comprobar.body);
+    assert.equal((comprobar.json() as CambioDominioVista).estado, 'listo');
+  } finally {
+    desactivarMantenimiento();
+  }
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  // Con el usuario anterior pendiente, actualizarlo también espera al motor.
+  activarMantenimiento(30);
+  try {
+    const res = await post(`/api/mailboxes/${e.buzones.ana!.mailboxId}/login-update`);
+    assert.equal(res.statusCode, 503, res.body);
+    assert.equal(res.json().code, 'engine_maintenance');
+    assert.equal(fila(e.buzones.ana!.mailboxId).usuario_motor, 'ana@mant-viejo.test');
+  } finally {
+    desactivarMantenimiento();
+  }
+});
+
+test('la baja retira la cuenta remitente del dominio anterior y el webmail automático sigue siéndolo', async (t) => {
+  const e = await escenario('remi-viejo.test', { buzones: ['ana'] });
+  // El webmail que la 1.4 crea solo para cada dominio, en servicio y principal.
+  db.prepare(
+    `INSERT INTO client_domains (id, client_id, hostname, kind, status, created_at, activated_at, is_primary, automatico)
+     VALUES ('wld_remi_auto', ?, 'webmail.remi-viejo.test', 'webmail', 'active', ?, ?, 1, 1)`,
+  ).run(e.clientId, Date.now(), Date.now());
+  // Se envió un correo de configuración desde configuration@remi-viejo.test.
+  await asegurarRemitenteConfiguracion({ id: e.viejo.domainId, domain: 'remi-viejo.test' });
+  const motor = motorDemo();
+  assert.equal((await motor.getPrincipal('configuration@remi-viejo.test'))?.type, 'individual');
+
+  const vista = await cambioListo(e, 'remi-nuevo.test');
+  const nuevo = db
+    .prepare("SELECT automatico FROM client_domains WHERE hostname = 'webmail.remi-nuevo.test'")
+    .get() as { automatico: number } | undefined;
+  assert.equal(nuevo?.automatico, 1, 'el webmail nuevo es automático como el anterior');
+
+  assert.equal((await accion(vista.id, 'switch')).statusCode, 200);
+  mxFuera(t, 'remi-viejo.test');
+  const baja = await accion(vista.id, 'retire', { confirm: 'remi-viejo.test' });
+  assert.equal(baja.statusCode, 200, baja.body);
+  assert.equal(await motor.getPrincipal('configuration@remi-viejo.test'), null, 'la cuenta remitente no queda huérfana');
+  assert.equal(db.prepare('SELECT 1 FROM remitentes_configuracion WHERE domain_id = ?').get(e.viejo.domainId), undefined);
+  assert.equal(motor.dominios.has('remi-viejo.test'), false);
 });

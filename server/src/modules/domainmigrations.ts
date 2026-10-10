@@ -38,8 +38,10 @@ import {
   type DomainRecord,
 } from './domains';
 import { normalizarOrigen } from './forms';
+import { exigirSinMantenimiento, mantenimientoActivo } from './mantenimiento';
 import { crearEnlaceConfiguracion } from './portal';
 import { sincronizarRecepcionExterna } from './recepcion';
+import { borrarRemitenteConfiguracion } from './remitente';
 import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import {
   crearDominioPropio,
@@ -1148,7 +1150,15 @@ async function crearWebmailNuevo(fila: FilaCambio, to: DomainRecord, log?: Regis
   const viejo = webmailViejo(fila);
   if (!viejo) return;
   const hostname = hostEnDestino(viejo.hostname, fila.from_domain, fila.to_domain);
+  // Ya existe (p. ej. el webmail automático de dominio2.es, que se crea al
+  // comprobar su propiedad): webmailNuevo lo encuentra por su nombre y pasa a
+  // ser el principal igual. Aquí ya se tiene el cerrojo del cliente, así que
+  // asegurarWebmailDeDominio no puede estar creándolo a la vez.
   if (db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(hostname)) return;
+  // El viejo era el automático: el nuevo también lo es (lo retira el
+  // interruptor del cliente) y, como él, no vuelve si alguien lo descartó.
+  const automatico = viejo.automatico;
+  if (automatico && db.prepare('SELECT 1 FROM webmail_descartados WHERE hostname = ?').get(hostname)) return;
   let creado: ClientDomain;
   try {
     creado = crearDominioPropio(fila.client_id, hostname, 'webmail');
@@ -1156,10 +1166,11 @@ async function crearWebmailNuevo(fila: FilaCambio, to: DomainRecord, log?: Regis
     if (!esCodigo(err, 'whitelabel_limit')) log?.(`No se ha podido crear ${hostname}: ${mensajeDe(err)}`);
     return;
   }
+  if (automatico) db.prepare('UPDATE client_domains SET automatico = 1 WHERE id = ?').run(creado.id);
   actualizar(fila.id, { creo_webmail_id: creado.id });
   auditSystem(
     'whitelabel.domain_created',
-    { id: creado.id, hostname, kind: 'webmail', migrationId: fila.id },
+    { id: creado.id, hostname, kind: 'webmail', migrationId: fila.id, ...(automatico ? { automatico: true } : {}) },
     fila.client_id,
   );
   if (to.cloudflare) {
@@ -1640,6 +1651,8 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
   app.post('/api/domain-migrations', async (req, reply) => {
     const user = requireAuth(req);
     const body = crearSchema.parse(req.body ?? {});
+    // El cambio escribe en el motor desde el primer paso: no mientras cambia de versión.
+    exigirSinMantenimiento();
     const inicial = getDomain(body.fromDomainId);
     const clientId = inicial.clientId;
     requireClientAccess(req, clientId);
@@ -1803,7 +1816,9 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
   app.post('/api/domain-migrations/:id/check', async (req) => {
     const fila = cambioConAcceso(req);
     vacioSchema.parse(req.body ?? {});
-    await avanzarPreparacion(fila.id, (msg) => req.log.warn(msg));
+    // Con el motor cambiando de versión no se avanza (lo retoma el vigilante
+    // al terminar): el asistente sigue viendo el estado sin un error cada 30 s.
+    if (!mantenimientoActivo()) await avanzarPreparacion(fila.id, (msg) => req.log.warn(msg));
     return vistaDe(exigir(fila.id));
   });
 
@@ -1883,6 +1898,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     vacioSchema.parse(req.body ?? {});
+    exigirSinMantenimiento();
     let hecho = false;
     await conCerrojos(inicial, async () => {
       const fila = exigir(inicial.id);
@@ -1955,6 +1971,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     vacioSchema.parse(req.body ?? {});
+    exigirSinMantenimiento();
     await conCerrojos(inicial, async () => {
       const fila = exigir(inicial.id);
       const valido =
@@ -1999,6 +2016,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     vacioSchema.parse(req.body ?? {});
+    exigirSinMantenimiento();
     const resultado = await conCerrojos(inicial, async () => {
       const fila = exigir(inicial.id);
       const aMedias = (fila.estado === 'pasando' || fila.estado === 'volviendo') && fila.error !== null;
@@ -2043,6 +2061,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const inicial = cambioConAcceso(req);
     exigirOrigen(req, inicial);
     const body = bajaSchema.parse(req.body ?? {});
+    exigirSinMantenimiento();
     const confirmado = body.confirm.trim().toLowerCase().replace(/\.$/, '');
     if (confirmado !== inicial.from_domain && confirmado !== visible(inicial.from_domain).toLowerCase()) {
       throw badRequest(`Escribe ${visible(inicial.from_domain)} exactamente para confirmar.`, 'confirm_mismatch');
@@ -2242,6 +2261,8 @@ async function cancelarSinCerrojo(
       db.prepare('SELECT 1 FROM mailboxes WHERE domain_id = ? LIMIT 1').get(to.id) ||
       db.prepare('SELECT 1 FROM aliases WHERE domain_id = ? LIMIT 1').get(to.id);
     if (!propias) {
+      // Como en la baja: primero su cuenta remitente, si se llegó a crear.
+      if (!(await borrarRemitenteConfiguracion(to))) throw remitenteSinRetirar(visible(to.domain));
       await engine.deleteDomain(to.domain);
       await engine.removeDkim(to.domain);
       for (const propio of dominiosPropiosDe(to.id)) eliminarDominioPropio(propio.id);
@@ -2258,6 +2279,15 @@ async function cancelarSinCerrojo(
     olvidarNotasDePasar(fila.id);
   })();
   return { destinoEliminado, volvio };
+}
+
+/** La cuenta remitente del dominio sigue en el motor: se repite la operación. */
+function remitenteSinRetirar(dominio: string): HttpError {
+  return new HttpError(
+    502,
+    `No se ha podido retirar del servidor de correo la cuenta que envía los correos de configuración de ${dominio}. Vuelve a intentarlo.`,
+    'engine_error',
+  );
 }
 
 /* -------------------------------- Dar de baja ------------------------------- */
@@ -2320,8 +2350,11 @@ async function darDeBajaSinCerrojo(
     );
   }
 
-  // 3. El dominio y sus claves DKIM fuera del motor.
+  // 3. El dominio y sus claves DKIM fuera del motor. Antes, la cuenta oculta
+  // configuration@dominio.es (la que envía los correos de configuración): si
+  // no, quedaría en el motor con una dirección de un dominio que ya no existe.
   actualizar(fila.id, { paso: 'dominio' });
+  if (!(await borrarRemitenteConfiguracion({ id: fromId, domain: from }))) throw remitenteSinRetirar(desde);
   await engine.deleteDomain(from);
   await engine.removeDkim(from);
 

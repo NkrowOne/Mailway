@@ -16,6 +16,7 @@ import {
   recuentoCopias,
   type RecuentoCopias,
 } from './credenciales';
+import { bloqueoMigracionMotor } from './direcciones';
 import {
   ajustesRecomendadosAplicados,
   applyRecommendedEngineSettings,
@@ -43,6 +44,12 @@ import { corsPermisivoNecesario } from './webmailmotor';
  * ocurre precisamente durante él) y es idempotente: repetir una orden no
  * rehace lo que ya está hecho, así que el instalador puede reintentar.
  */
+
+/**
+ * Usuario del motor de un buzón en SQL (alias m: mailboxes y d: domains): la
+ * dirección salvo tras un cambio de dominio, como loginDe en direcciones.ts.
+ */
+const LOGIN_SQL = `COALESCE(m.usuario_motor, m.local_part || '@' || d.domain)`;
 
 /** El motor configurado, sin el guardián del modo mantenimiento. */
 export function motorDeMigracion(): MailEngine {
@@ -85,6 +92,11 @@ export interface EstadoCambioMotor {
     porApi: Record<string, number>;
     invalidadas: number;
   };
+  /**
+   * Por qué no se puede migrar ahora (un cambio de dominio abierto o buzones
+   * con el usuario anterior), o null. El instalador no empieza si lo hay.
+   */
+  bloqueo: string | null;
 }
 
 function contarPorApi(filas: { api: string | null; invalidada: number | null }[]): {
@@ -125,6 +137,7 @@ export async function estadoCambioMotor(engine?: MailEngine): Promise<EstadoCamb
     buzones: recuentoCopias(),
     contrasenasAplicacion: contarPorApi(aplicacion),
     credencialesInternas: contarPorApi(internas),
+    bloqueo: bloqueoMigracionMotor(),
   };
   try {
     estado.api = await (engine ?? motorDeMigracion()).detectApi();
@@ -152,6 +165,11 @@ export interface ResultadoCapturaMigracion {
  */
 export async function capturarParaMigrar(engine?: MailEngine): Promise<ResultadoCapturaMigracion> {
   const vacio = { capturados: 0, yaEstaban: 0, fallidos: [] as string[] };
+  // Es el primer paso que da la migración: un cambio de dominio a medias la
+  // detiene aquí, antes de tocar el motor (también con un instalador
+  // anterior, que no mira el bloqueo del estado).
+  const bloqueo = bloqueoMigracionMotor();
+  if (bloqueo) return { ok: false, error: bloqueo, ...vacio };
   let api: EngineApi;
   try {
     const motor = engine ?? motorDeMigracion();
@@ -272,10 +290,12 @@ export async function provisionarMotor(engine?: MailEngine): Promise<ResultadoPr
   }
 
   // 2. Suspensiones: el efectivo es «suspendido si lo está el buzón o su cliente».
+  // Por el usuario del motor de cada buzón (la migración no empieza con uno
+  // distinto de su dirección, pero se lee igual que en el resto del panel).
   const suspendidos = (
     db
       .prepare(
-        `SELECT m.local_part || '@' || d.domain AS email
+        `SELECT ${LOGIN_SQL} AS email
          FROM mailboxes m JOIN domains d ON d.id = m.domain_id JOIN clients c ON c.id = d.client_id
          WHERE m.status = 'suspended' OR c.suspended = 1
          ORDER BY email`,
@@ -302,7 +322,7 @@ export async function provisionarMotor(engine?: MailEngine): Promise<ResultadoPr
     const deLaBase = (sql: string) => (db.prepare(sql).all() as { nombre: string }[]).map((f) => f.nombre.toLowerCase());
     resultado.faltan.dominios = deLaBase('SELECT domain AS nombre FROM domains ORDER BY domain').filter((d) => !dominios.has(d));
     resultado.faltan.buzones = deLaBase(
-      `SELECT m.local_part || '@' || d.domain AS nombre FROM mailboxes m JOIN domains d ON d.id = m.domain_id ORDER BY nombre`,
+      `SELECT ${LOGIN_SQL} AS nombre FROM mailboxes m JOIN domains d ON d.id = m.domain_id ORDER BY nombre`,
     ).filter((b) => !cuentas.has(b));
     resultado.faltan.alias = deLaBase(
       `SELECT a.local_part || '@' || d.domain AS nombre FROM aliases a JOIN domains d ON d.id = a.domain_id ORDER BY nombre`,
@@ -408,6 +428,8 @@ interface FilaInterna {
   nombre: string;
   etiqueta: string;
   email: string;
+  /** Usuario del motor del buzón (la dirección salvo tras un cambio de dominio). */
+  login: string;
   smtp_engine_api: string | null;
 }
 
@@ -457,7 +479,7 @@ export async function trasMigrarMotor(
     db
       .prepare(
         `SELECT k.id, k.name AS nombre, 'mailway-' || k.prefix AS etiqueta, k.smtp_engine_api,
-                m.local_part || '@' || d.domain AS email
+                m.local_part || '@' || d.domain AS email, ${LOGIN_SQL} AS login
          FROM api_keys k JOIN mailboxes m ON m.id = k.sender_mailbox_id JOIN domains d ON d.id = m.domain_id
          WHERE k.revoked_at IS NULL`,
       )
@@ -467,14 +489,14 @@ export async function trasMigrarMotor(
     db
       .prepare(
         `SELECT f.id, f.name AS nombre, 'mailway-form-' || substr(f.id, 5, 8) AS etiqueta, f.smtp_engine_api,
-                m.local_part || '@' || d.domain AS email
+                m.local_part || '@' || d.domain AS email, ${LOGIN_SQL} AS login
          FROM forms f JOIN mailboxes m ON m.id = f.recipient_mailbox_id JOIN domains d ON d.id = m.domain_id`,
       )
       .all() as FilaInterna[]
   ).filter((f) => esDeOtroMotor(f.smtp_engine_api, api));
   const renovar = async (tabla: 'api_keys' | 'forms', fila: FilaInterna, descripcion: string) => {
     try {
-      const { secret, ref } = await motor.addAppPassword(fila.email, fila.etiqueta, generateMailboxPassword(24));
+      const { secret, ref } = await motor.addAppPassword(fila.login, fila.etiqueta, generateMailboxPassword(24));
       db.prepare(
         `UPDATE ${tabla} SET smtp_password_enc = ?, smtp_engine_api = ?, smtp_invalidated_at = NULL WHERE id = ?`,
       ).run(cifrarCredencialSmtp(secret, ref), api, fila.id);
@@ -584,23 +606,32 @@ async function recuperarInvalidadas(motor: MailEngine, api: EngineApi, resultado
   const invalidadas = (
     db
       .prepare(
-        `SELECT ap.id, ap.stored_secret, ap.engine_api, m.local_part || '@' || d.domain AS email, d.client_id
+        `SELECT ap.id, ap.stored_secret, ap.engine_api, m.local_part || '@' || d.domain AS email,
+                ${LOGIN_SQL} AS login, d.client_id
          FROM app_passwords ap JOIN mailboxes m ON m.id = ap.mailbox_id JOIN domains d ON d.id = m.domain_id
          WHERE ap.revoked_at IS NULL AND ap.invalidated_at IS NOT NULL`,
       )
-      .all() as { id: string; stored_secret: string; engine_api: string | null; email: string; client_id: string }[]
+      .all() as {
+      id: string;
+      stored_secret: string;
+      engine_api: string | null;
+      email: string;
+      login: string;
+      client_id: string;
+    }[]
   ).filter((f) => !esDeOtroMotor(f.engine_api, api));
 
+  // Por el usuario del motor: es el nombre con el que el motor las guarda.
   const porBuzon = new Map<string, typeof invalidadas>();
   for (const fila of invalidadas) {
-    if (!porBuzon.has(fila.email)) porBuzon.set(fila.email, []);
-    porBuzon.get(fila.email)!.push(fila);
+    if (!porBuzon.has(fila.login)) porBuzon.set(fila.login, []);
+    porBuzon.get(fila.login)!.push(fila);
   }
   const recuperadas: typeof invalidadas = [];
-  for (const [email, filas] of porBuzon) {
+  for (const [login, filas] of porBuzon) {
     let enElMotor: Set<string>;
     try {
-      const credenciales = await motor.readMailboxCredentials(email);
+      const credenciales = await motor.readMailboxCredentials(login);
       // Sin la lista del motor no se puede saber si siguen: se quedan como están.
       if (!credenciales) continue;
       enElMotor = new Set(credenciales.appPasswords.map((a) => a.ref));

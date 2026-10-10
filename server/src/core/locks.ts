@@ -32,9 +32,10 @@ export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T>
  * dos tareas que los tomaran en orden distinto se esperarían para siempre):
  *
  *   altas:dominios → altas:<clientId> → cambio:<id> → buzon:<mailboxId>
- *     → contrasenas-app:<mailboxId>
+ *     → estado-buzon:<mailboxId> | credenciales:<mailboxId> | contrasenas-app:<mailboxId>
  *
- * Quien ya tiene uno de ellos solo puede pedir los que van después.
+ * Quien ya tiene uno de ellos solo puede pedir los que van después. Los tres
+ * últimos no se anidan entre sí.
  */
 
 /** Clave común para las altas de un cliente (dominios, buzones, alias). */

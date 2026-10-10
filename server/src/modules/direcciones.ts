@@ -4,6 +4,7 @@ import { buzonLockKey, cambioLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { fireAlert, resolveAlert } from './alerts';
 import { auditSystem } from './audit';
+import { exigirSinMantenimiento } from './mantenimiento';
 
 /**
  * Usuario del motor, direcciones y cambios de dominio abiertos.
@@ -216,6 +217,44 @@ export function dominiosExentos(clientId: string): string[] {
   return filas.map((f) => f.id);
 }
 
+/**
+ * Lo que impide cambiar de versión el motor (Stalwart 0.15 → 0.16, o volver):
+ * un cambio de dominio abierto o un buzón cuyo usuario del motor no es su
+ * dirección. La migración oficial convierte cada cuenta a partir de su nombre
+ * y sus direcciones, y el panel no sabría con qué usuario quedaría cada una;
+ * terminar antes el cambio y actualizar esos usuarios deja usuario y
+ * dirección iguales. null si no hay nada.
+ */
+export function bloqueoMigracionMotor(): string | null {
+  const abiertos = db
+    .prepare(`SELECT from_domain, to_domain FROM domain_migrations WHERE estado NOT IN ${CERRADOS} ORDER BY created_at`)
+    .all() as { from_domain: string; to_domain: string }[];
+  const conUsuario = db
+    .prepare(
+      `SELECT m.local_part || '@' || d.domain AS email FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+       WHERE m.usuario_motor IS NOT NULL OR m.usuario_cambiando_a IS NOT NULL
+       ORDER BY email`,
+    )
+    .all() as { email: string }[];
+  const partesTexto: string[] = [];
+  if (abiertos.length > 0) {
+    const lista = abiertos.slice(0, 5).map((c) => `${c.from_domain} → ${c.to_domain}`);
+    if (abiertos.length > 5) lista.push(`y ${abiertos.length - 5} más`);
+    partesTexto.push(
+      `${abiertos.length === 1 ? 'hay un cambio de dominio sin terminar' : `hay ${abiertos.length} cambios de dominio sin terminar`} (${lista.join(', ')}): termínalo dando de baja el dominio anterior, o cancélalo`,
+    );
+  }
+  if (conUsuario.length > 0) {
+    const lista = conUsuario.slice(0, 5).map((f) => f.email);
+    if (conUsuario.length > 5) lista.push(`y ${conUsuario.length - 5} más`);
+    partesTexto.push(
+      `${conUsuario.length === 1 ? 'un buzón sigue' : `${conUsuario.length} buzones siguen`} con el usuario del dominio anterior (${lista.join(', ')}): actualiza su usuario desde su ficha o desde «Mi buzón»`,
+    );
+  }
+  if (partesTexto.length === 0) return null;
+  return `No se puede cambiar de versión el motor mientras ${partesTexto.join('; y ')}.`;
+}
+
 /** Estados del cambio en los que el destino todavía no admite altas. */
 const DESTINO_SIN_ALTAS = new Set(['preparando', 'listo', 'pasando', 'volviendo']);
 
@@ -287,6 +326,9 @@ export async function actualizarUsuario(mailboxId: string): Promise<{ de: string
   const fila = leerBuzon(mailboxId);
   if (!fila) throw notFound('Buzón no encontrado.');
   if (fila.usuario_motor === null && !fila.usuario_cambiando_a) return null;
+  // Renombra en el motor: no mientras cambia de versión (la migración copia
+  // las cuentas con el nombre que tengan al empezar).
+  exigirSinMantenimiento();
   const cambio = cambioAbiertoDeDominio(fila.domain_id);
   if (!cambio) return actualizarUsuarioEnCambio(mailboxId);
   return withLock(cambioLockKey(cambio.id), () => actualizarUsuarioEnCambio(mailboxId));

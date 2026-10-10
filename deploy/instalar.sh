@@ -4452,7 +4452,7 @@ CA_PRUEBAS=()
 comprobaciones_migracion() {
   titulo "Comprobaciones previas (no cambian nada)"
   if [ -n "${MAILWAY_TLS_CA_FILE:-}" ]; then CA_PRUEBAS=(--ca /prueba/ca.pem); fi
-  local cmd cola datos libre necesario linea imagen dep url suma
+  local cmd cola datos libre necesario linea imagen dep url suma bloqueo
   local maximo=${MAILWAY_MIGRACION_COLA_MAX:-50}
   for cmd in curl sha256sum timeout; do
     tiene "$cmd" || fallo "Falta $cmd en el servidor."
@@ -4499,6 +4499,11 @@ comprobaciones_migracion() {
     *) fallo "El panel no ve un Stalwart 0.15 en el motor (ve «$(hm_campo '.api // "nada"')»): no se puede migrar así." ;;
   esac
   ok "Buzones en el panel: $(hm_campo '.buzones.total // "?"'); con su contraseña ya copiada: $(hm_campo '.buzones.conHash // "?"')."
+  # Un cambio de dominio a medias (o buzones con el usuario del dominio
+  # anterior): la migración convierte cada cuenta por su nombre y el panel no
+  # sabría con qué usuario queda cada buzón. Lo explica el panel.
+  bloqueo=$(hm_campo '.bloqueo // empty')
+  [ -z "$bloqueo" ] || fallo "$bloqueo No se ha cambiado nada."
   if [ "$(hm_campo '.mantenimiento.activo')" = true ]; then
     aviso "El panel ya estaba en mantenimiento (¿una migración interrumpida?): se renueva y se quita al terminar."
   fi
@@ -4616,6 +4621,11 @@ capturar_contrasenas() {
   herramienta_motor "$PANEL_MOTOR" 3600 capturar || codigo=$?
   fallidos=$(hm_campo '(.fallidos // []) | length')
   if [ "$codigo" != 0 ] || [ "$(hm_campo '.ok')" != true ] || [ "${fallidos:-0}" != 0 ]; then
+    # Sin buzones fallidos, el motivo es otro (p. ej. un cambio de dominio sin
+    # terminar): lo dice el panel.
+    if [ "${fallidos:-0}" = 0 ] && [ -n "$(hm_campo '.error // empty')" ]; then
+      fallo "$(hm_campo '.error') No se ha cambiado nada del motor."
+    fi
     fallo "El panel no ha podido copiar la contraseña de todos los buzones (${fallidos:-?} sin copiar: $(hm_campo '(.fallidos // []) | map(if type == "string" then . else (.email // .buzon // tostring) end) | join(", ")' | cut -c1-300)): sin ellas no podría comprobarlas con la 0.16. No se ha cambiado nada del motor."
   fi
   ok "Contraseñas copiadas en el panel (nuevas: $(hm_campo '.capturados // 0'); ya estaban: $(hm_campo '.yaEstaban // 0'))."
@@ -4937,7 +4947,7 @@ revertir_motor() {
   preparar_registro_motor revertir-motor
   titulo "Vuelta a Stalwart 0.15"
   aviso "El correo recibido desde la migración ($MAILWAY_MOTOR_MIGRADO) se queda en el volumen de la 0.16 ($(volumen_016_datos)): con la 0.15 no se verá."
-  aviso "Lo que se haya creado o cambiado en el panel desde entonces (buzones, alias, contraseñas) no está en la 0.15; las contraseñas de aplicación de la 0.16 no valen allí y las anteriores vuelven a valer."
+  aviso "Lo que se haya creado o cambiado en el panel desde entonces (buzones, alias, contraseñas, cambios de dominio) no está en la 0.15; las contraseñas de aplicación de la 0.16 no valen allí y las anteriores vuelven a valer."
   if [ "$SIN_CONFIRMAR" = 0 ]; then
     [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal no se puede confirmar: añade -y (sudo mailway revertir-motor -y)."
     confirmar "¿Volver a Stalwart 0.15?" n || fallo "Cancelado: no se ha cambiado nada."
