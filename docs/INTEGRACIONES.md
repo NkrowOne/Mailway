@@ -517,7 +517,10 @@ varias peticiones simultáneas nunca superan el plan.
 
 Una por dispositivo o programa (el móvil, una aplicación de Skyway…). Se
 revocan una a una sin tocar la contraseña principal. Usuario IMAP/SMTP: la
-dirección completa del buzón.
+dirección completa del buzón (durante un cambio de dominio, su usuario del
+motor, que puede ser la dirección anterior: sección 10). Dan acceso IMAP y
+SMTP al buzón entero: para un bot o un worker que solo envía es preferible una
+clave de API, que solo envía desde su buzón ([API.md](API.md#4-bots-y-workers)).
 
 | Método y ruta | Descripción |
 |---|---|
@@ -970,17 +973,23 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
   configuración para el titular, restablecer la contraseña y eliminar.
 - **Conectar a un servicio**: elige un servicio del proyecto (no de base de
   datos) y un buzón.
-  - *SMTP*: crea una contraseña de aplicación `skyway:<servicio>` y añade
+  - *SMTP*: crea una contraseña de aplicación `skyway:<servicio>` (en un
+    proyecto de una cuenta, `skyway:<proyecto>/<servicio>`) y añade
     `SMTP_HOST` (`mail.<dominio>`), `SMTP_PORT=587`, `SMTP_SECURE=false`
-    (STARTTLS), `SMTP_USER` y `SMTP_FROM` (la dirección del buzón) y
-    `SMTP_PASS`.
-  - *API*: crea una clave de envío y añade `MAILWAY_API_URL` (URL pública del
-    panel), `MAILWAY_API_KEY` y `MAIL_FROM`.
+    (STARTTLS), `SMTP_USER` (el usuario del motor del buzón), `SMTP_FROM` (la
+    dirección del buzón) y `SMTP_PASS`. La contraseña de aplicación también
+    permite leer el buzón por IMAP.
+  - *API*: crea una clave de envío («Skyway · <servicio>») y añade
+    `MAILWAY_API_URL` (la URL base pública del panel: el envío es
+    `POST {MAILWAY_API_URL}/v1/send`), `MAILWAY_API_KEY` y `MAIL_FROM`. Es el
+    modo recomendado para bots y workers: la clave solo envía desde ese buzón
+    y no da acceso a su contenido ([API.md](API.md#4-bots-y-workers)).
   - Las variables se fusionan con las existentes y sus valores nunca se
     muestran ni se anotan. Opcionalmente vuelve a desplegar el servicio.
-  - Conectar de nuevo crea una credencial nueva, pero **no revoca la
-    anterior**: retírala en Mailway (contraseñas de aplicación del buzón o
-    **API de envío**) si ya no se usa.
+  - Conectar de nuevo **revoca la credencial anterior** de Skyway de ese
+    servicio en ese modo y crea otra: hasta que el servicio se vuelve a
+    desplegar con la nueva, no puede enviar (Skyway propone volver a
+    desplegarlo en ese caso).
   - Si el motor de correo se actualiza, las contraseñas `skyway:<servicio>`
     dejan de funcionar y hay que volver a conectar esos servicios
     (sección 3.5).
@@ -2062,24 +2071,38 @@ CNAME del webmail nuevo al probarse la propiedad, `POST …/mx`): quien la
 reserve tiene que volver a leerla en cada `GET` o `check`.
 
 `PlanCambioDominio`: `{ desde: { domainId, domain }, hacia: { domain, existe,
-domainId }, buzones: [{ id, de, a, usadoPorApps }], alias: [{ id, de, a }],
-formularios: [{ id, name, origenesNuevos }], webmail: { viejo, nuevo }, avisos,
-bloqueos }`. Con `bloqueos` no vacío, la creación responde con el código del
-primero. Avisos: `apps_smtp` (buzones con contraseñas de aplicación
-`skyway:*`), `whitelabel_limit` (no cabe el webmail nuevo) y
-`domain_hosts_instance` (el dominio viejo aloja la instancia y no se podrá dar
-de baja desde aquí).
+domainId }, buzones: [{ id, de, a, usadoPorApps, appsManuales }], alias: [{ id,
+de, a }], formularios: [{ id, name, origenesNuevos }], webmail: { viejo, nuevo
+}, avisos, bloqueos }`. Con `bloqueos` no vacío, la creación responde con el código del
+primero. En cada buzón, `usadoPorApps` son los nombres de sus contraseñas de
+aplicación activas `skyway:*` y `appsManuales`, los de las demás activas
+(creadas a mano en el panel, en «Mi buzón» o por un programa con un token),
+por fecha de creación; las revocadas no aparecen. Avisos: `apps_smtp`
+(buzones con contraseñas de aplicación `skyway:*`), `apps_manuales` (buzones
+con contraseñas creadas a mano: tras actualizar su usuario o dar de baja
+dominio.es, las aplicaciones que las usan tienen que entrar con la dirección
+nueva, y nadie las pone al día; no bloquea), `whitelabel_limit` (no cabe el
+webmail nuevo) y `domain_hosts_instance` (el dominio viejo aloja la instancia
+y no se podrá dar de baja desde aquí).
 
 `CambioDominioVista`: `{ id, clientId, origen, referenciaExterna, desde: {
 domainId, domain }, hacia: { domainId, domain, cloudflare,
 recibeEnOtroProveedor }, estado, paso, error, recepcionPreparada, compuertas,
 puedePasar, puedeVolver, puedeCancelar, puedeDarDeBaja, bloqueosBaja, buzones:
-{ total, pendientes, lista: [{ id, email, login, pendiente, usadoPorApps }] },
-alias: { total }, webmail: { viejo, nuevo }, nombresCloudflare, avisos, fechas:
-{ creado, listo, pasado, terminado }, creoDestino }`. `bloqueosBaja` dice, sin
-consultar la red, lo que impide la baja (apps SMTP pendientes e instancia); el
-MX se mide al pulsar. `creoDestino` indica que dominio2.es lo dio de alta este
-cambio: cancelar lo elimina si no tiene buzones ni alias propios.
+{ total, pendientes, lista: [{ id, email, login, pendiente, usadoPorApps,
+appsManuales }] }, alias: { total }, webmail: { viejo, nuevo },
+nombresCloudflare, avisos, fechas: { creado, listo, pasado, terminado },
+creoDestino }`. `bloqueosBaja` dice, sin consultar la red, lo que impide la
+baja (apps SMTP pendientes e instancia); el MX se mide al pulsar. `usadoPorApps`
+y `appsManuales`, como en el plan. En `avisos`, mientras el cambio no esté
+dado de baja ni cancelado: `apps_smtp` y `apps_manuales` cuentan solo los
+buzones pendientes (los que aún entran con su usuario anterior); un buzón ya
+actualizado sigue nombrando sus `appsManuales` en la lista, porque sus
+aplicaciones también tienen que entrar ya con la dirección nueva.
+`apps_manuales` no bloquea la baja ni cambia `puedeDarDeBaja`: Skyway pone al
+día las de sus servicios si las encuentra en sus variables, y las de fuera las
+cambia quien las configuró. `creoDestino` indica que dominio2.es lo dio de
+alta este cambio: cancelar lo elimina si no tiene buzones ni alias propios.
 
 ### 10.4 Condiciones de la baja y de la cancelación
 
@@ -2089,7 +2112,8 @@ cambio: cancelar lo elimina si no tiene buzones ni alias propios.
 - ningún buzón pendiente puede tener contraseñas de aplicación `skyway:*`
   activas (`409 mailbox_used_by_app`): una aplicación de Skyway envía con el
   usuario anterior, y es Skyway quien lo actualiza, cambia sus variables y la
-  vuelve a desplegar;
+  vuelve a desplegar. Las creadas a mano no bloquean (aviso `apps_manuales`):
+  tras la baja, quien las use tiene que entrar con la dirección nueva;
 - dominio.es no puede alojar el servidor de correo, el panel ni el webmail de
   la instancia (`409 domain_hosts_instance`);
 - el MX de dominio.es, medido en ese momento, no puede apuntar a este servidor

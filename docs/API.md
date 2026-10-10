@@ -398,11 +398,85 @@ contraseñas de aplicación traen bloques equivalentes para SMTP
   nueva lleva segundos.
 - Para enviar desde un programa que ya habla SMTP, usa una contraseña de
   aplicación del buzón (`mail.<dominio>`, puerto 587 con STARTTLS o 465 con
-  TLS): ver [INTEGRACIONES.md](INTEGRACIONES.md#8-otras-plataformas).
+  TLS): ver [INTEGRACIONES.md](INTEGRACIONES.md#8-otras-plataformas). Ten en
+  cuenta que también permite leer el buzón por IMAP: para un bot o un worker
+  que solo envía, mejor una clave de API (sección 4).
 
 ---
 
-## 4. API de gestión
+## 4. Bots y workers
+
+Un bot (Telegram, Discord, Slack…) o un worker que manda avisos solo
+necesita **enviar**. Para ellos se recomienda la API de envío con una clave
+de API, en lugar de SMTP con una contraseña de aplicación:
+
+| | Clave de API (`POST /v1/send`) | Contraseña de aplicación (SMTP) |
+|---|---|---|
+| Qué permite | Solo enviar, siempre desde su buzón remitente | Enviar por SMTP y **leer el buzón entero por IMAP**, también el correo que no tiene nada que ver con el bot |
+| Si se filtra | Solo sirve para enviar desde ese buzón, con los límites del plan | Da acceso al contenido del buzón hasta que se revoca |
+| Registro | Cada envío queda en el historial de la clave (sección 1.8) | No aparece en el historial de la API |
+| Reintentos | `Idempotency-Key`: un reintento no duplica el mensaje (sección 1.4) | Un reintento tras un corte puede enviarlo dos veces |
+| Cambio de dominio del cliente | No hay nada que hacer: Mailway entra en cada envío con el usuario vigente del buzón, y el remitente pasa solo a la dirección nueva al pasar | El programa entra con el usuario del buzón: tras actualizarlo, o tras dar de baja el dominio anterior, tiene que entrar con la dirección nueva ([DESPLIEGUE-SKYWAY.md](DESPLIEGUE-SKYWAY.md#45-bots-y-servicios-que-envían-correo-en-un-cambio-de-dominio)) |
+
+**La URL.** Skyway, al conectar un servicio en modo API, añade
+`MAILWAY_API_URL`, `MAILWAY_API_KEY` y `MAIL_FROM` (los mismos nombres que los
+bloques de la sección 2.1). `MAILWAY_API_URL` es la **URL base** del panel
+(`https://panel.miempresa.com`, sin ruta), no la del envío: se envía con
+`POST {MAILWAY_API_URL}/v1/send`, la cabecera
+`Authorization: Bearer {MAILWAY_API_KEY}` y un JSON con `to`, `subject` y
+`text` o `html` (sección 1.2). `MAIL_FROM` solo informa: el remitente es
+siempre el buzón de la clave.
+
+**Reintentos sin duplicados.** Un worker que reintenta trabajos fallidos debe
+enviar una `Idempotency-Key` estable por mensaje (el identificador del trabajo
+o del aviso) y repetirla en cada reintento: durante 24 horas, si el primer
+intento llegó a enviarse, el reintento recibe la respuesta original sin enviar
+otra vez. Con `409 idempotency_in_progress`, reintenta en unos segundos. Un
+envío con `status: "failed"` se reintenta con un valor nuevo.
+
+**Límites del plan.** Todas las claves de un cliente comparten los límites
+por minuto y por día de su plan (sección 1.7): un bot que envía en ráfagas
+puede agotarlos para el resto de sus aplicaciones. Para acotarlo, crea su
+clave con un `dailyLimit` propio. Ante `429 rate_limited`, espera con
+retroceso exponencial; ante `429 daily_limit_reached`, el trabajo tiene que
+esperar a medianoche UTC.
+
+**Una clave por servicio.** Así se revoca la de uno sin tocar los demás.
+Skyway crea una por servicio («Skyway · <servicio>») y, al volver a
+conectarlo, revoca la anterior: hasta que el servicio se vuelve a desplegar
+con la nueva, no puede enviar.
+
+**Python (worker con reintentos):**
+
+```python
+import os, requests
+
+def enviar_aviso(id_aviso, para, asunto, texto):
+    """id_aviso: identificador estable del aviso; cada reintento repite el mismo."""
+    r = requests.post(
+        f"{os.environ['MAILWAY_API_URL']}/v1/send",
+        headers={
+            "Authorization": f"Bearer {os.environ['MAILWAY_API_KEY']}",
+            "Idempotency-Key": f"aviso-{id_aviso}",
+        },
+        json={"to": para, "subject": asunto, "text": texto},
+        timeout=30,
+    )
+    data = r.json()
+    if r.status_code != 200 or data.get("status") != "sent":
+        # 429 o 409 idempotency_in_progress: la cola lo reintenta más tarde con el mismo id_aviso.
+        raise RuntimeError(data.get("code") or data.get("status"), data.get("error"))
+    return data
+```
+
+Si la biblioteca del bot solo sabe enviar por SMTP, crea para él una
+contraseña de aplicación propia en un buzón dedicado (por ejemplo,
+`avisos@tu-dominio.com`) y revócala en cuanto deje de usarse: quien la tenga
+puede leer ese buzón.
+
+---
+
+## 5. API de gestión
 
 Todo lo que hace el panel está disponible bajo `/api` con un **token de
 gestión** (`Authorization: Bearer mwt_…`): clientes y planes, dominios y su

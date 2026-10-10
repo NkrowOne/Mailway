@@ -647,6 +647,51 @@ administración y el autoservicio dan 403).
 `deploy/prueba-pasarela.sh` la ensaya con contenedores reales y cada motor
 (sección 16).
 
+### 4.5 Bots y servicios que envían correo en un cambio de dominio
+
+Cuando un cliente cambia de dominio (dominio.es → dominio2.es, desde
+«Cambiar de dominio» en Skyway o desde el panel), sus servicios siguen
+enviando durante la transición: al pasar, el remitente pasa a ser la dirección
+nueva y el buzón sigue entrando con su usuario anterior hasta que se actualiza
+(«Actualizar ahora», «Actualizar mis dispositivos» o la baja, que actualiza a
+todos los pendientes). Lo que tiene que cambiar depende de cómo envía cada
+servicio:
+
+- **Con clave de API** (`MAILWAY_API_URL` y `MAILWAY_API_KEY`): nada. Mailway
+  entra en cada envío con el usuario vigente del buzón. Es el modo
+  recomendado para bots y workers ([API.md](API.md#4-bots-y-workers)).
+- **Por SMTP con la credencial de Skyway** (contraseña de aplicación
+  `skyway:*`): `SMTP_USER` es el usuario del motor. Skyway actualiza el
+  usuario en Mailway, reescribe las variables del servicio y lo vuelve a
+  desplegar con la imagen en marcha, desde «Actualizar ahora» en «Cambiar de
+  dominio» o en la baja. Mailway no deja actualizar esos buzones desde el
+  panel ni darlos de baja sin Skyway (`409 mailbox_used_by_app`).
+- **Por SMTP con una contraseña creada a mano y pegada en las variables de un
+  servicio de Skyway**, también con nombres propios (`TG_SMTP_LOGIN`,
+  `BOT_SMTP_USER`…) o dentro de una `SMTP_URL`: Skyway las encuentra en sus
+  variables, las muestra en «Servicios que envían con un usuario que cambia»
+  y las pone al día con «Actualizar y desplegar» y en la baja. Si el
+  despliegue falla dos veces, abre una alerta crítica
+  (`mail_login_deploy_failed`) y el servicio se reintenta con «Reintentar
+  este servicio». Un Skyway anterior solo pone al día los servicios con la
+  credencial `skyway:*`.
+- **Aplicaciones de fuera de Skyway** (un n8n, un bot en otro servidor, un
+  programa de escritorio) con contraseñas de aplicación creadas a mano: nadie
+  las pone al día. Mailway las nombra en el plan y en la vista del cambio
+  (`appsManuales`, aviso `apps_manuales`, que no bloquea la baja) y el panel
+  lo repite bajo cada persona pendiente y al confirmar «Actualizar ahora».
+  Tras actualizar el usuario del buzón, o tras la baja, quien las configuró
+  tiene que cambiar su usuario a la dirección nueva; la contraseña no cambia.
+  Skyway muestra estas contraseñas en los buzones que no usa ningún servicio
+  del proyecto.
+
+Con Stalwart 0.15, el usuario anterior deja de entrar en cuanto se actualiza el
+del buzón; con la 0.16, en la baja. Cada intento que un programa haga después
+con el usuario anterior cuenta para el bloqueo automático de IPs del motor:
+cambia su usuario (o detenlo) justo después. Los webhooks de los bots que
+reciben en un nombre que cambia (Telegram, Stripe…) y el despliegue de los
+servicios son cosa de Skyway (su `docs/FUNCIONALIDAD.md`, §6.1).
+
 ---
 
 ## 5. Certificado TLS de IMAP y SMTP
