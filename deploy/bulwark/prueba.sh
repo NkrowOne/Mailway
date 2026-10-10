@@ -293,6 +293,13 @@ CERTIFICADO=$(jq -r '.methodResponses[3][1].created.k.id' <<<"$R")
 jmap_ok "{$USING,\"methodCalls\":[[\"x:SystemSettings/set\",{\"update\":{\"singleton\":{\"defaultCertificateId\":\"$CERTIFICADO\"}}},\"a\"],[\"x:Action/set\",{\"create\":{\"r\":{\"@type\":\"ReloadSettings\"},\"t\":{\"@type\":\"ReloadTlsCertificates\"}}},\"b\"]]}" >/dev/null ||
   detener 'No se pudieron recargar los ajustes del motor.'
 ok 'motor: CORS permisivo, X-Forwarded, red exenta, umbral de 10 fallos y certificado en el 443'
+# Este ensayo es de Bulwark y de su pasarela, no de cuándo aplica el motor una
+# recarga: con Internet (la CI), la 0.16 termina de arrancar en segundo plano
+# y una recarga recién arrancado puede no llegar a aplicarse (sin CORS en el
+# preflight). Se reinicia, como hacen la instalación y la migración tras
+# aplicar los ajustes, para que arranque con ellos ya guardados.
+docker restart mwb-stalwart >/dev/null
+esperar 'el motor (con los ajustes)' curl -fsS "http://127.0.0.1:$PUERTO_MOTOR/healthz/ready"
 
 # Un mensaje en la bandeja de entrada (subida y Email/import como el titular).
 dejar_mensaje() { # dejar_mensaje <buzón> <contraseña> <asunto>

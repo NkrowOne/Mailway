@@ -44,12 +44,22 @@ muestra el prefijo para reconocerla; en la base de datos solo queda su hash.
 | `fromName` | cadena | no | Nombre visible del remitente, hasta 80 caracteres |
 | `replyTo` | cadena | no | Dirección de respuesta |
 | `cc`, `bcc` | lista de cadenas | no | Hasta 20 direcciones cada una |
-| `headers` | objeto | no | Cabeceras adicionales (p. ej. `X-Campaign`), valores de hasta 500 caracteres |
+| `headers` | objeto | no | Hasta 30 cabeceras adicionales (p. ej. `X-Campaign`, `List-Unsubscribe`): nombres con letras, cifras y guiones, y valores de hasta 500 caracteres sin saltos de línea (sección 1.2.1) |
 | `attachments` | lista de objetos | no | Hasta 5 adjuntos y 10 MB en total una vez decodificados (sección 1.3) |
 
 El remitente (`From`) es siempre el buzón asociado a la clave: `fromName` solo
 cambia el nombre visible. La petición completa no puede superar 20 MB (los
 adjuntos en base64 ocupan un tercio más que el fichero).
+
+#### 1.2.1 Cabeceras que no se admiten en `headers`
+
+Responden `400 validation` las que tienen campo propio o las pone Mailway:
+`From`, `Sender`, `To`, `Cc`, `Bcc`, `Reply-To`, `Subject`, `Date`,
+`Return-Path`, `Delivered-To`, `Envelope-To`, `Received`, `Received-SPF`,
+`MIME-Version`, las `Content-*`, las `Resent-*`, `DKIM-Signature`, las `ARC-*`
+y `Authentication-Results`, en mayúsculas o minúsculas. Los destinatarios
+van siempre en `to`, `cc` y `bcc`, que es donde se comprueban las direcciones
+y los límites; una cabecera `Bcc` añadía destinatarios sin pasar por ellos.
 
 ### 1.3 Adjuntos
 

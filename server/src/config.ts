@@ -42,19 +42,36 @@ function detectPanelBackend(): string {
   return '';
 }
 
+/** Valor de `trustProxy` que recibe Fastify. */
+export type TrustProxy = boolean | string | ((address: string, hop: number) => boolean);
+
 /**
  * Cuántos proxies hay delante del panel. Con `true`, Fastify se creería la
  * primera IP de X-Forwarded-For, que la pone el propio cliente: cualquiera
  * podría cambiar de IP en cada intento y saltarse los límites de intentos.
  * Por defecto se confía en un salto (Traefik, el despliegue normal).
  */
-function parseTrustProxy(): boolean | number | string {
-  const raw = process.env.MAILWAY_TRUST_PROXY?.trim();
-  if (!raw) return 1;
+export function parseTrustProxy(raw = process.env.MAILWAY_TRUST_PROXY?.trim()): TrustProxy {
+  if (!raw) return confiarEnSaltos(1);
   if (raw === 'true') return true;
   if (raw === 'false') return false;
-  if (/^\d+$/.test(raw)) return Number(raw);
+  if (/^\d+$/.test(raw)) return confiarEnSaltos(Number(raw));
   return raw; // lista de IPs o CIDR separadas por comas
+}
+
+/**
+ * Un número de saltos se entrega a Fastify como función. Desde la 5.12.5,
+ * Fastify no admite un número (no puede saber si el par inmediato es un
+ * proxy) y deja de creer X-Forwarded-*: todas las peticiones parecerían
+ * venir de Traefik, con un único cupo de intentos por IP para todo el mundo,
+ * la IP de Traefik en la actividad y los enlaces en http. La función conserva
+ * el modelo de siempre: se confía en los `saltos` más cercanos al panel, al
+ * que solo se llega por Traefik o por las redes internas de Docker (ver
+ * docs/SEGURIDAD.md). Con 0 no se confía en ningún proxy, como antes.
+ */
+function confiarEnSaltos(saltos: number): TrustProxy {
+  if (saltos === 0) return false;
+  return (_address, hop) => hop < saltos;
 }
 
 export const config = {
