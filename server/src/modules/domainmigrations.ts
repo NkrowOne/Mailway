@@ -18,6 +18,7 @@ import { aplicarDnsDominio, aplicarDnsDominioPropio, claveCambio, permiteInstanc
 import { publicBaseUrl } from './connection';
 import {
   actualizarUsuarioEnCambio,
+  appsManualesDe,
   appsSkywayDe,
   conciliarUsuariosEnCambio,
   dominiosExentos,
@@ -98,7 +99,12 @@ export interface AvisoCambio {
 export interface PlanCambioDominio {
   desde: { domainId: string; domain: string };
   hacia: { domain: string; existe: boolean; domainId: string | null };
-  buzones: { id: string; de: string; a: string; usadoPorApps: string[] }[];
+  /**
+   * `usadoPorApps`: contraseñas de aplicación de Skyway («skyway:…»), que
+   * Skyway pone al día; `appsManuales`: las demás activas, que nadie pone al
+   * día (solo informan, con el aviso `apps_manuales`).
+   */
+  buzones: { id: string; de: string; a: string; usadoPorApps: string[]; appsManuales: string[] }[];
   alias: { id: string; de: string; a: string }[];
   formularios: { id: string; name: string; origenesNuevos: string[] }[];
   webmail: { viejo: string | null; nuevo: string | null };
@@ -146,7 +152,15 @@ export interface CambioDominioVista {
   buzones: {
     total: number;
     pendientes: number;
-    lista: { id: string; email: string; login: string; pendiente: boolean; usadoPorApps: string[] }[];
+    lista: {
+      id: string;
+      email: string;
+      login: string;
+      pendiente: boolean;
+      usadoPorApps: string[];
+      /** Contraseñas de aplicación activas que no son de Skyway (aviso `apps_manuales`). */
+      appsManuales: string[];
+    }[];
   };
   alias: { total: number };
   webmail: { viejo: WebmailVista | null; nuevo: WebmailVista | null };
@@ -719,6 +733,81 @@ function quienLoUsa(apps: string[]): string {
 }
 
 /**
+ * Buzones pendientes con contraseñas de aplicación creadas a mano, según hacia
+ * dónde cambiaría su usuario. `alNuevo`: entran con su usuario de dominio.es
+ * (tras «Pasar»); al actualizarlos o en la baja pasan a su dirección de
+ * dominio2.es. `deVuelta`: los actualizaron antes de un «Volver» y entran con
+ * su usuario de dominio2.es; cancelar o actualizarlos los devuelve a su
+ * dirección de dominio.es, y volver a pasar los deja al día sin cambiar nada.
+ * El mismo texto para los dos daría la instrucción contraria a la mitad.
+ */
+function pendientesConAppsManuales(fila: FilaCambio): {
+  alNuevo: { buzon: BuzonDelCambio; apps: string[] }[];
+  deVuelta: { buzon: BuzonDelCambio; apps: string[] }[];
+} {
+  const conApps = buzonesDe(fila.id)
+    .filter((b) => b.usuario_motor !== null)
+    .map((buzon) => ({ buzon, apps: appsManualesDe(buzon.id) }))
+    .filter((x) => x.apps.length > 0);
+  // Mismo criterio que appsConUsuarioNuevo (los que cancelar actualiza).
+  const deVuelta = (b: BuzonDelCambio) => b.usuario_motor === `${b.local_part}@${fila.to_domain}`;
+  return {
+    alNuevo: conApps.filter((x) => !deVuelta(x.buzon)),
+    deVuelta: conApps.filter((x) => deVuelta(x.buzon)),
+  };
+}
+
+/** Nombres que caben en un aviso: con muchos buzones, la lista entera lo haría ilegible. */
+const MAX_NOMBRES_AVISO = 5;
+
+/** Piezas comunes de los dos textos de `apps_manuales` (singular y plural). */
+function partesAppsManuales(apps: string[]): { lista: string; una: boolean } {
+  const nombres = [...new Set(apps)];
+  const lista =
+    nombres.length > MAX_NOMBRES_AVISO
+      ? `${nombres.slice(0, MAX_NOMBRES_AVISO).join(', ')} y ${nombres.length - MAX_NOMBRES_AVISO} más`
+      : nombres.join(', ');
+  return { lista, una: apps.length === 1 };
+}
+
+/**
+ * Aviso `apps_manuales` (no bloquea). Una contraseña de aplicación creada a
+ * mano (un programa de fuera, un bot en otro servidor, el móvil de alguien)
+ * sigue valiendo tras el cambio, pero entra con el usuario del buzón, que pasa
+ * a ser la dirección nueva al actualizarlo o en la baja. Skyway solo pone al
+ * día sus servicios («skyway:…»): estas aplicaciones las cambia quien las
+ * configuró.
+ */
+function avisoAppsManuales(buzones: number, apps: string[], desde: string): AvisoCambio {
+  const { lista, una } = partesAppsManuales(apps);
+  const sujeto = buzones === 1 ? 'Un buzón tiene' : `${buzones} buzones tienen`;
+  const cuales = una ? 'una contraseña de aplicación creada a mano' : 'contraseñas de aplicación creadas a mano';
+  const quien = una ? 'la aplicación que la usa tiene' : 'las aplicaciones que las usan tienen';
+  return {
+    code: 'apps_manuales',
+    mensaje: `${sujeto} ${cuales} (${lista}). Tras actualizar su usuario o dar de baja ${desde}, ${quien} que entrar con la dirección nueva.`,
+  };
+}
+
+/**
+ * `apps_manuales` tras un «Volver», para los buzones que ya entraban con su
+ * usuario de dominio2.es: sus aplicaciones siguen funcionando, y lo que las
+ * obliga a cambiar es cancelar o actualizar el usuario (vuelve a la dirección
+ * de dominio.es). En este estado no hay baja que mencionar.
+ */
+function avisoAppsManualesDeVuelta(buzones: number, apps: string[], desde: string, hacia: string): AvisoCambio {
+  const { lista, una } = partesAppsManuales(apps);
+  const sujeto = buzones === 1 ? 'Un buzón entra' : `${buzones} buzones entran`;
+  const tiene = buzones === 1 ? 'tiene' : 'tienen';
+  const cuales = una ? 'una contraseña de aplicación creada a mano' : 'contraseñas de aplicación creadas a mano';
+  const quien = una ? 'la aplicación que la usa tiene' : 'las aplicaciones que las usan tienen';
+  return {
+    code: 'apps_manuales',
+    mensaje: `${sujeto} con su usuario de ${hacia} y ${tiene} ${cuales} (${lista}). Si cancelas el cambio o actualizas su usuario, ${quien} que volver a entrar con su dirección de ${desde}; si vuelves a pasar, no cambia nada.`,
+  };
+}
+
+/**
  * Buzones con aplicaciones de Skyway que hoy entran con su usuario de
  * dominio2.es (lo actualizaron antes de un «Volver»). Cancelar los devuelve a
  * local@dominio.es, y la aplicación, que envía con SMTP_USER =
@@ -810,6 +899,14 @@ function avisosDe(fila: FilaCambio, viejo: ClientDomain | null, nuevo: ClientDom
         mensaje: `${conApps.length === 1 ? 'Un buzón lo' : `${conApps.length} buzones los`} ${quienLoUsa(apps)}: su usuario se actualiza desde Skyway.`,
       });
     }
+    const { alNuevo, deVuelta } = pendientesConAppsManuales(fila);
+    const desde = visible(fila.from_domain);
+    if (alNuevo.length > 0) {
+      avisos.push(avisoAppsManuales(alNuevo.length, alNuevo.flatMap((x) => x.apps), desde));
+    }
+    if (deVuelta.length > 0) {
+      avisos.push(avisoAppsManualesDeVuelta(deVuelta.length, deVuelta.flatMap((x) => x.apps), desde, hacia));
+    }
   }
   return avisos;
 }
@@ -832,6 +929,7 @@ async function vistaDe(fila: FilaCambio, ctx: ContextoVista = {}): Promise<Cambi
     login: b.usuario_motor ?? `${b.local_part}@${b.domain}`,
     pendiente: b.usuario_motor !== null,
     usadoPorApps: appsSkywayDe(b.id),
+    appsManuales: appsManualesDe(b.id),
   }));
   const conError = fila.error !== null;
   // Un «Pasar» o un «Volver» que fallaron se pueden reintentar, volver o
@@ -1051,6 +1149,7 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
     de: `${m.local_part}@${from.domain}`,
     a: `${m.local_part}@${to}`,
     usadoPorApps: appsSkywayDe(m.id),
+    appsManuales: appsManualesDe(m.id),
   }));
   const alias = (
     db
@@ -1069,6 +1168,10 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
       code: 'apps_smtp',
       mensaje: `${conApps.length === 1 ? 'Un buzón lo' : `${conApps.length} buzones los`} ${quienLoUsa(apps)}. ${apps.length > 1 ? 'Seguirán' : 'Seguirá'} enviando durante el cambio; su usuario se actualiza desde Skyway antes de dar de baja ${desde}.`,
     });
+  }
+  const conManuales = buzones.filter((b) => b.appsManuales.length > 0);
+  if (conManuales.length > 0) {
+    avisos.push(avisoAppsManuales(conManuales.length, conManuales.flatMap((b) => b.appsManuales), desde));
   }
   if (viejo && nombreNuevo) {
     const existe = db.prepare('SELECT 1 FROM client_domains WHERE hostname = ?').get(nombreNuevo);

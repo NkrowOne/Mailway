@@ -28,7 +28,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-VERSION_INSTALADOR="1.5.0"
+VERSION_INSTALADOR="1.6.0"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$RAIZ/deploy"
 ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"

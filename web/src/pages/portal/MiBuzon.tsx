@@ -374,6 +374,16 @@ function HojaNuevaDireccion({
     },
   });
   const usadoPorApp = me.usadoPorApp || (actualizar.isError && esUsadoPorApp(actualizar.error));
+  // La misma consulta que la hoja de contraseñas de aplicación, más abajo. Los
+  // programas configurados con una también entran con el usuario: la
+  // confirmación lo recuerda. Mientras carga, o si falla, se omite la línea.
+  // Las que dejaron de funcionar con la actualización del servidor no cuentan:
+  // hay que crearlas de nuevo de todos modos.
+  const apps = useQuery({
+    queryKey: ['portal-app-passwords'],
+    queryFn: () => api.get<{ appPasswords: ContrasenaAplicacion[] }>('/api/portal/app-passwords'),
+  });
+  const conApps = (apps.data?.appPasswords ?? []).some((app) => !app.revokedAt && !app.invalidatedAt);
 
   const titulo = (
     <h2 className="text-md font-semibold text-tinta [overflow-wrap:anywhere]">Tu dirección ahora es {me.email}</h2>
@@ -445,6 +455,11 @@ function HojaNuevaDireccion({
           <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
             Los dispositivos que sigan configurados con {anterior} dejarán de conectar hasta que los actualices.
           </p>
+          {conApps && (
+            <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
+              Tus aplicaciones con contraseña de aplicación tienen que entrar con {me.email}; la contraseña no cambia.
+            </p>
+          )}
           {actualizar.isError && (
             <AvisoError>{mensajeError(actualizar.error, 'No se ha podido actualizar el usuario.')}</AvisoError>
           )}
