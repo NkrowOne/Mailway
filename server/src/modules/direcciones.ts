@@ -305,14 +305,17 @@ export function appsSkywayDe(mailboxId: string): string[] {
  * son «skyway:…»): las del titular, las del panel y las de programas de fuera
  * (n8n, un bot en otro servidor…). Nadie las pone al día por su cuenta: tras
  * actualizar el usuario o dar de baja el dominio anterior, quien las usa tiene
- * que entrar con la dirección nueva. Solo informa; no bloquea nada. El rowid
- * desempata las creadas en el mismo milisegundo (orden de creación).
+ * que entrar con la dirección nueva. Solo informa; no bloquea nada. Las que
+ * dejaron de funcionar con la actualización del motor (invalidated_at) no
+ * cuentan: hay que crearlas de nuevo de todos modos, y decir que «tienen que
+ * entrar con la dirección nueva» daría a entender que siguen valiendo. El
+ * rowid desempata las creadas en el mismo milisegundo (orden de creación).
  */
 export function appsManualesDe(mailboxId: string): string[] {
   const filas = db
     .prepare(
       `SELECT name FROM app_passwords
-       WHERE mailbox_id = ? AND revoked_at IS NULL AND substr(name, 1, ?) <> ?
+       WHERE mailbox_id = ? AND revoked_at IS NULL AND invalidated_at IS NULL AND substr(name, 1, ?) <> ?
        ORDER BY created_at, rowid`,
     )
     .all(mailboxId, PREFIJO_SKYWAY.length, PREFIJO_SKYWAY) as { name: string }[];

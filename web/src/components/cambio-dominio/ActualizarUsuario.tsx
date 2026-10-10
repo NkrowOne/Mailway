@@ -91,10 +91,13 @@ export function ConfirmarActualizarUsuario({
     queryFn: () => api.get<{ appPasswords: AppPasswordInfo[] }>(`/api/mailboxes/${buzon.id}/app-passwords`),
     enabled: buzon.appsManuales === undefined,
   });
-  // Mismo criterio que el servidor (appsManualesDe): activas y que no son de Skyway.
+  // Mismo criterio que el servidor (appsManualesDe): activas, que siguen
+  // valiendo tras la actualización del motor y que no son de Skyway.
   const appsManuales =
     buzon.appsManuales ??
-    (apps.data?.appPasswords ?? []).filter((a) => !a.revokedAt && !a.name.startsWith('skyway:')).map((a) => a.name);
+    (apps.data?.appPasswords ?? [])
+      .filter((a) => !a.revokedAt && !a.invalidatedAt && !a.name.startsWith('skyway:'))
+      .map((a) => a.name);
   const actualizar = useMutation({
     mutationFn: () => actualizarUsuarioBuzon(buzon.id),
     onSuccess: async () => {

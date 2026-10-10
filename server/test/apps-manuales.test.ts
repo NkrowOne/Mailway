@@ -1,6 +1,7 @@
 import { test, before } from 'node:test';
 import type { TestContext as NodeTestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { db } from '../src/core/db';
 import { createAppPassword, revokeAppPassword } from '../src/modules/apppasswords';
 import type { CambioDominioVista, PlanCambioDominio } from '../src/modules/domainmigrations';
 import { setInstanceSettings } from '../src/modules/settings';
@@ -153,4 +154,63 @@ test('aviso apps_manuales: solo con los buzones pendientes, sin bloquear la baja
   assert.equal(final.estado, 'dado_de_baja');
   assert.equal(aviso(final.avisos), undefined);
   assert.equal(aviso((await vistaDe(listo.id)).avisos), undefined);
+});
+
+test('las contraseñas que dejó sin valor la actualización del motor no cuentan como creadas a mano', async () => {
+  const e = await escenario('invalida-viejo.test', ['ana']);
+  await createAppPassword(e.ids.ana!, 'n8n-a-mano', null);
+  const antigua = await createAppPassword(e.ids.ana!, 'Thunderbird 0.15', null);
+  // Lo que hace cambiomotor al terminar la actualización a 0.16: sigue activa
+  // (sin revocar), pero ya no abre IMAP ni SMTP.
+  db.prepare('UPDATE app_passwords SET invalidated_at = ? WHERE id = ?').run(Date.now(), antigua.appPassword.id);
+
+  const res = await post('/api/domain-migrations/plan', { fromDomainId: e.viejo.domainId, toDomain: 'invalida-nuevo.test' });
+  assert.equal(res.statusCode, 200, res.body);
+  const plan = res.json() as PlanCambioDominio;
+  assert.deepEqual(plan.buzones[0]!.appsManuales, ['n8n-a-mano']);
+  assert.match(aviso(plan.avisos)?.mensaje ?? '', /\(n8n-a-mano\)\./);
+
+  const listo = await cambioListo(e.viejo.domainId, 'invalida-nuevo.test');
+  const pasado = (await post(`/api/domain-migrations/${listo.id}/switch`)).json() as CambioDominioVista;
+  assert.deepEqual(pasado.buzones.lista[0]!.appsManuales, ['n8n-a-mano']);
+});
+
+test('tras un «Volver», apps_manuales dice que cancelar o actualizar las devuelve a dominio.es (no habla de la baja)', async () => {
+  const e = await escenario('vuelve-manual-viejo.test', ['ana', 'luis']);
+  await createAppPassword(e.ids.ana!, 'n8n-a-mano', null);
+  await createAppPassword(e.ids.luis!, 'Móvil de Luis', null);
+
+  const listo = await cambioListo(e.viejo.domainId, 'vuelve-manual-nuevo.test');
+  assert.equal((await post(`/api/domain-migrations/${listo.id}/switch`)).statusCode, 200);
+  // Ana actualiza su usuario (entra con ana@vuelve-manual-nuevo.test); Luis no.
+  assert.equal((await post(`/api/mailboxes/${e.ids.ana}/login-update`)).statusCode, 200);
+
+  const volver = await post(`/api/domain-migrations/${listo.id}/rollback`);
+  assert.equal(volver.statusCode, 200, volver.body);
+  const vuelta = volver.json() as CambioDominioVista;
+  assert.equal(vuelta.estado, 'listo');
+  const ana = vuelta.buzones.lista.find((b) => b.id === e.ids.ana)!;
+  assert.deepEqual([ana.email, ana.login, ana.pendiente], ['ana@vuelve-manual-viejo.test', 'ana@vuelve-manual-nuevo.test', true]);
+  // Luis no llegó a actualizar: vuelve a estar al día y no cuenta.
+  assert.equal(vuelta.buzones.lista.find((b) => b.id === e.ids.luis)!.pendiente, false);
+  const avisos = vuelta.avisos.filter((a) => a.code === 'apps_manuales');
+  assert.deepEqual(
+    avisos.map((a) => a.mensaje),
+    [
+      'Un buzón entra con su usuario de vuelve-manual-nuevo.test y tiene una contraseña de aplicación creada a mano (n8n-a-mano). Si cancelas el cambio o actualizas su usuario, la aplicación que la usa tiene que volver a entrar con su dirección de vuelve-manual-viejo.test; si vuelves a pasar, no cambia nada.',
+    ],
+  );
+
+  // Volver a pasar la deja al día: Ana ya entraba con su dirección nueva, y
+  // el aviso vuelve a hablar solo de Luis, que sí tiene que cambiar.
+  const otraVez = await post(`/api/domain-migrations/${listo.id}/switch`);
+  assert.equal(otraVez.statusCode, 200, otraVez.body);
+  const pasado = otraVez.json() as CambioDominioVista;
+  assert.equal(pasado.buzones.lista.find((b) => b.id === e.ids.ana)!.pendiente, false);
+  assert.deepEqual(
+    pasado.avisos.filter((a) => a.code === 'apps_manuales').map((a) => a.mensaje),
+    [
+      'Un buzón tiene una contraseña de aplicación creada a mano (Móvil de Luis). Tras actualizar su usuario o dar de baja vuelve-manual-viejo.test, la aplicación que la usa tiene que entrar con la dirección nueva.',
+    ],
+  );
 });

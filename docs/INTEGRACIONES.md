@@ -979,7 +979,8 @@ El botón **Correo** de la cabecera del proyecto abre el correo del proyecto:
     (STARTTLS), `SMTP_USER` (el usuario del motor del buzón), `SMTP_FROM` (la
     dirección del buzón) y `SMTP_PASS`. La contraseña de aplicación también
     permite leer el buzón por IMAP.
-  - *API*: crea una clave de envío («Skyway · <servicio>») y añade
+  - *API*: crea una clave de envío («Skyway · <servicio>»; en un proyecto de
+    una cuenta, «Skyway · <proyecto>/<servicio>») y añade
     `MAILWAY_API_URL` (la URL base pública del panel: el envío es
     `POST {MAILWAY_API_URL}/v1/send`), `MAILWAY_API_KEY` y `MAIL_FROM`. Es el
     modo recomendado para bots y workers: la clave solo envía desde ese buzón
@@ -2077,7 +2078,9 @@ de, a }], formularios: [{ id, name, origenesNuevos }], webmail: { viejo, nuevo
 primero. En cada buzón, `usadoPorApps` son los nombres de sus contraseñas de
 aplicación activas `skyway:*` y `appsManuales`, los de las demás activas
 (creadas a mano en el panel, en «Mi buzón» o por un programa con un token),
-por fecha de creación; las revocadas no aparecen. Avisos: `apps_smtp`
+por fecha de creación; las revocadas no aparecen, y en `appsManuales`
+tampoco las que dejó sin valor una actualización del motor (`invalidatedAt`,
+sección 2.6: hay que crearlas de nuevo de todos modos). Avisos: `apps_smtp`
 (buzones con contraseñas de aplicación `skyway:*`), `apps_manuales` (buzones
 con contraseñas creadas a mano: tras actualizar su usuario o dar de baja
 dominio.es, las aplicaciones que las usan tienen que entrar con la dirección
@@ -2096,13 +2099,20 @@ creoDestino }`. `bloqueosBaja` dice, sin consultar la red, lo que impide la
 baja (apps SMTP pendientes e instancia); el MX se mide al pulsar. `usadoPorApps`
 y `appsManuales`, como en el plan. En `avisos`, mientras el cambio no esté
 dado de baja ni cancelado: `apps_smtp` y `apps_manuales` cuentan solo los
-buzones pendientes (los que aún entran con su usuario anterior); un buzón ya
-actualizado sigue nombrando sus `appsManuales` en la lista, porque sus
-aplicaciones también tienen que entrar ya con la dirección nueva.
-`apps_manuales` no bloquea la baja ni cambia `puedeDarDeBaja`: Skyway pone al
-día las de sus servicios si las encuentra en sus variables, y las de fuera las
-cambia quien las configuró. `creoDestino` indica que dominio2.es lo dio de
-alta este cambio: cancelar lo elimina si no tiene buzones ni alias propios.
+buzones pendientes (`pendiente`: su usuario del motor, `login`, no es su
+dirección); un buzón ya actualizado sigue nombrando sus `appsManuales` en la
+lista, porque sus aplicaciones también tienen que entrar ya con la dirección
+nueva. Un pendiente entra con su usuario de dominio.es tras «Pasar», o con
+el de dominio2.es si lo actualizaron antes de un «Volver», y `apps_manuales`
+lo dice en cada sentido: tras «Pasar», que al actualizar su usuario o en la
+baja sus aplicaciones tienen que entrar con la dirección nueva; tras un
+«Volver», que siguen funcionando, que cancelar o actualizar su usuario las
+obliga a volver a la dirección de dominio.es y que volver a pasar no cambia
+nada. `apps_manuales` no bloquea la baja ni cambia `puedeDarDeBaja`: Skyway
+pone al día las de sus servicios si las encuentra en sus variables, y las de
+fuera las cambia quien las configuró. `creoDestino` indica que dominio2.es lo
+dio de alta este cambio: cancelar lo elimina si no tiene buzones ni alias
+propios.
 
 ### 10.4 Condiciones de la baja y de la cancelación
 

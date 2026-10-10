@@ -682,6 +682,11 @@ servicio:
   lo repite bajo cada persona pendiente y al confirmar «Actualizar ahora».
   Tras actualizar el usuario del buzón, o tras la baja, quien las configuró
   tiene que cambiar su usuario a la dirección nueva; la contraseña no cambia.
+  Si el cambio vuelve a dominio.es («Volver») con el buzón ya actualizado,
+  esas aplicaciones siguen entrando con el usuario de dominio2.es: lo que las
+  obliga a volver a la dirección de dominio.es es cancelar el cambio o
+  actualizar el usuario, y el aviso lo dice así. Las contraseñas que dejó sin
+  valor una actualización del motor no se cuentan: hay que crearlas de nuevo.
   Skyway muestra estas contraseñas en los buzones que no usa ningún servicio
   del proyecto.
 

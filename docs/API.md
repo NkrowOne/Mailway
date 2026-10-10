@@ -296,6 +296,7 @@ añaden `issues: [{ path, message }]`.
 | `403` | `sender_missing` | El buzón remitente ya no existe | Crear una clave con otro remitente |
 | `409` | `idempotency_conflict` | La `Idempotency-Key` ya se usó con esta clave para un mensaje distinto | Usar un valor nuevo por mensaje |
 | `409` | `idempotency_in_progress` | Otra petición con la misma `Idempotency-Key` está en curso (como mucho 15 minutos; ver sección 1.4) | Reintentar en unos segundos |
+| `409` | `mailbox_login_updating` | Se está actualizando el usuario del buzón remitente (durante un cambio de dominio) | Reintentar en unos minutos; no gasta cupo |
 | `413` | `attachments_too_large` | Los adjuntos superan 10 MB una vez decodificados | Reducirlos o enviar un enlace de descarga |
 | `413` | `bad_request` | La petición supera 20 MB | Reducir el contenido |
 | `429` | `rate_limited` | Límite de envíos por minuto del plan, contado por cliente (todas sus claves) | Reintentar con espera exponencial |
@@ -431,42 +432,83 @@ siempre el buzón de la clave.
 enviar una `Idempotency-Key` estable por mensaje (el identificador del trabajo
 o del aviso) y repetirla en cada reintento: durante 24 horas, si el primer
 intento llegó a enviarse, el reintento recibe la respuesta original sin enviar
-otra vez. Con `409 idempotency_in_progress`, reintenta en unos segundos. Un
-envío con `status: "failed"` se reintenta con un valor nuevo.
+otra vez. Qué hacer según la respuesta:
+
+- **Sin respuesta** (corte de red, *timeout*), `409 idempotency_in_progress`,
+  `409 mailbox_login_updating` o `429`: reintentar más tarde con **la misma**
+  clave. Ninguno de estos casos la deja guardada, salvo el envío que llegó a
+  hacerse, que es justo el que no se debe repetir.
+- **`200` con `status: "failed"`**: el servidor de correo no aceptó el
+  mensaje (lo rechazó o no se pudo conectar con él) y esa respuesta **queda
+  guardada 24 horas** con la clave (sección 1.4): un reintento con la misma
+  recibe el mismo `failed` sin intentarlo de nuevo. Para reintentarlo hace
+  falta una clave nueva, por ejemplo con el número de intento
+  (`aviso-<id>-<intento>`). Revisa `error`: si rechaza el destinatario,
+  reintentar no sirve.
+- **`400`, `401`, `403`, `409 idempotency_conflict` y `413`**: reintentar no
+  lo arregla; hay que revisar la clave o el mensaje.
 
 **Límites del plan.** Todas las claves de un cliente comparten los límites
 por minuto y por día de su plan (sección 1.7): un bot que envía en ráfagas
-puede agotarlos para el resto de sus aplicaciones. Para acotarlo, crea su
-clave con un `dailyLimit` propio. Ante `429 rate_limited`, espera con
-retroceso exponencial; ante `429 daily_limit_reached`, el trabajo tiene que
-esperar a medianoche UTC.
+puede agotarlos para el resto de sus aplicaciones. Para acotarlo, crea en
+Mailway una clave a mano con un `dailyLimit` propio
+(`POST /api/apikeys`; el límite se fija al crearla y no se puede cambiar
+después) y dásela al bot. Las claves que crea Skyway al conectar un servicio
+no llevan límite propio: comparten el cupo del plan. Ante
+`429 rate_limited`, espera con retroceso exponencial; ante
+`429 daily_limit_reached`, el trabajo tiene que esperar a medianoche UTC.
 
 **Una clave por servicio.** Así se revoca la de uno sin tocar los demás.
-Skyway crea una por servicio («Skyway · <servicio>») y, al volver a
-conectarlo, revoca la anterior: hasta que el servicio se vuelve a desplegar
-con la nueva, no puede enviar.
+Skyway crea una por servicio («Skyway · <servicio>»; en un proyecto de una
+cuenta, «Skyway · <proyecto>/<servicio>») y, al volver a conectarlo, revoca
+la anterior: hasta que el servicio se vuelve a desplegar con la nueva, no
+puede enviar.
 
 **Python (worker con reintentos):**
 
 ```python
 import os, requests
 
-def enviar_aviso(id_aviso, para, asunto, texto):
-    """id_aviso: identificador estable del aviso; cada reintento repite el mismo."""
-    r = requests.post(
-        f"{os.environ['MAILWAY_API_URL']}/v1/send",
-        headers={
-            "Authorization": f"Bearer {os.environ['MAILWAY_API_KEY']}",
-            "Idempotency-Key": f"aviso-{id_aviso}",
-        },
-        json={"to": para, "subject": asunto, "text": texto},
-        timeout=30,
-    )
-    data = r.json()
-    if r.status_code != 200 or data.get("status") != "sent":
-        # 429 o 409 idempotency_in_progress: la cola lo reintenta más tarde con el mismo id_aviso.
-        raise RuntimeError(data.get("code") or data.get("status"), data.get("error"))
-    return data
+class Reintentar(Exception):
+    """La cola vuelve a intentar el aviso más tarde."""
+
+def enviar_aviso(aviso):
+    """aviso: dict con id (estable), intento (0 al crearlo), para, asunto y texto.
+    La cola guarda el aviso con su «intento» y, si salta Reintentar, lo vuelve
+    a intentar más tarde, con un máximo de intentos."""
+    try:
+        r = requests.post(
+            f"{os.environ['MAILWAY_API_URL']}/v1/send",
+            headers={
+                "Authorization": f"Bearer {os.environ['MAILWAY_API_KEY']}",
+                "Idempotency-Key": f"aviso-{aviso['id']}-{aviso['intento']}",
+            },
+            json={"to": aviso["para"], "subject": aviso["asunto"], "text": aviso["texto"]},
+            timeout=30,
+        )
+    except requests.RequestException:
+        # Sin respuesta: puede haber salido. Misma clave en el reintento.
+        raise Reintentar()
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}  # p. ej., una página de error del proxy durante un reinicio
+    codigo = data.get("code")
+    if r.status_code == 200 and data.get("status") == "sent":
+        return data
+    if r.status_code == 200:
+        # «failed»: esta respuesta queda guardada con la clave; el reintento lleva otra.
+        aviso["intento"] += 1
+        raise Reintentar(data.get("error"))
+    if (
+        r.status_code == 429
+        or r.status_code >= 500
+        or codigo in ("idempotency_in_progress", "mailbox_login_updating")
+    ):
+        # Nada quedó guardado: misma clave en el reintento.
+        raise Reintentar(codigo)
+    # 400, 401, 403, 409 idempotency_conflict, 413: reintentar no lo arregla.
+    raise RuntimeError(codigo, data.get("error"))
 ```
 
 Si la biblioteca del bot solo sabe enviar por SMTP, crea para él una

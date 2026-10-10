@@ -77,9 +77,10 @@ export interface PersonaCambio {
   /** Contraseñas de aplicación de Skyway («skyway:tienda»): ese buzón lo actualiza Skyway. */
   usadoPorApps: string[];
   /**
-   * Contraseñas de aplicación activas creadas a mano (el resto): siguen
-   * valiendo, pero quien las usa tiene que entrar con la dirección nueva al
-   * actualizar el usuario o tras la baja. Nadie lo hace por él.
+   * Contraseñas de aplicación activas creadas a mano (el resto, sin las que
+   * dejó sin valor la actualización del motor): siguen valiendo, pero quien
+   * las usa tiene que entrar con la dirección vigente al actualizar el
+   * usuario o tras la baja. Nadie lo hace por él.
    */
   appsManuales: string[];
 }
@@ -274,7 +275,9 @@ export function textoUsadoPorApp(apps: string[]): string {
 /**
  * Bajo un buzón con contraseñas de aplicación creadas a mano: quien las usa
  * (un programa, un bot de fuera, un dispositivo) tendrá que entrar con la
- * dirección nueva. Skyway solo pone al día sus servicios.
+ * dirección que se le pasa, la vigente del buzón: la de dominio2.es tras
+ * «Pasar» y la de dominio.es tras un «Volver». Skyway solo pone al día sus
+ * servicios.
  */
 export function textoAppsManuales(apps: string[], email: string): string {
   const nombres = [...new Set(apps)].join(', ');
