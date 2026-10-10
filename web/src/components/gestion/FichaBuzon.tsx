@@ -15,6 +15,7 @@ import { ContrasenasAplicacion } from './ContrasenasAplicacion';
 import { ReiniciarBuzon } from './ReiniciarBuzon';
 import { useUsuario } from './consultas';
 import { lecturaCuenta } from '../../pages/puesta/comun';
+import { ConfirmarActualizarUsuario, LineaUsuarioPendiente } from '../cambio-dominio/ActualizarUsuario';
 
 export type VistaFicha =
   | 'resumen'
@@ -25,7 +26,9 @@ export type VistaFicha =
   | 'contrasena'
   | 'aplicaciones'
   | 'estado'
-  | 'eliminar';
+  | 'eliminar'
+  /** Tras un cambio de dominio: el usuario de los dispositivos pasa a ser la dirección nueva. */
+  | 'usuario';
 
 const titulos: Record<VistaFicha, string> = {
   // El resumen lleva por título la dirección (ver abajo): orienta más que «Buzón».
@@ -38,6 +41,7 @@ const titulos: Record<VistaFicha, string> = {
   aplicaciones: 'Contraseñas de aplicación',
   estado: 'Estado del buzón',
   eliminar: 'Eliminar buzón',
+  usuario: 'Actualizar el usuario',
 };
 
 /**
@@ -152,7 +156,14 @@ export function FichaBuzon({
             />
           )}
           {vista === 'aplicaciones' && (
-            <ContrasenasAplicacion mailboxId={mailbox.id} email={mailbox.email} onPendiente={setAppPendiente} />
+            // El «Usuario» que acompaña a la contraseña nueva es el del motor:
+            // tras un cambio de dominio, la dirección nueva no autentica hasta
+            // actualizar el usuario, y cada intento fallido suma al bloqueo de IPs.
+            <ContrasenasAplicacion
+              mailboxId={mailbox.id}
+              email={mailbox.login || mailbox.email}
+              onPendiente={setAppPendiente}
+            />
           )}
           {vista === 'estado' && (
             <Estado mailbox={mailbox} clienteSuspendido={clienteSuspendido} onHecho={volver} />
@@ -160,6 +171,19 @@ export function FichaBuzon({
           {vista === 'eliminar' && (
             <Eliminar mailbox={mailbox} aliases={aliases} onHecho={onClose} onCancelar={volver} />
           )}
+          {vista === 'usuario' &&
+            (mailbox.loginPending ? (
+              <ConfirmarActualizarUsuario
+                buzon={{ id: mailbox.id, email: mailbox.email, login: mailbox.login }}
+                onHecho={volver}
+                onCancelar={volver}
+              />
+            ) : (
+              // Ya actualizado (desde otra pestaña, el portal o la baja): no queda nada que hacer.
+              <p className="text-base text-tinta-2">
+                <span className="valor break-all">{mailbox.email}</span> ya entra con su dirección.
+              </p>
+            ))}
         </div>
       )}
     </Dialogo>
@@ -202,6 +226,9 @@ function Resumen({
           <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
         </Muestra>
       </div>
+      {mailbox.loginPending && (
+        <LineaUsuarioPendiente login={mailbox.login} onActualizar={() => onVista('usuario')} className="-mt-2 px-1" />
+      )}
       <div className="border border-regla">
         <FilaDato rotulo="Nombre visible">{mailbox.displayName || <span className="text-tinta-3">Sin nombre visible</span>}</FilaDato>
         <FilaDato rotulo="Ocupación">
@@ -335,8 +362,9 @@ function Credenciales({
             Esta contraseña <strong className="font-semibold">solo se muestra ahora</strong>. Entrégala al
             titular del buzón por un canal seguro o utiliza el enlace de configuración.
           </BandaAviso>
-          <Muestra rotulo="Usuario" copiar={mailbox.email}>
-            <p className="valor break-all text-base text-tinta">{mailbox.email}</p>
+          {/* El usuario de los dispositivos: tras un cambio de dominio puede ser aún la dirección anterior. */}
+          <Muestra rotulo="Usuario" copiar={mailbox.login || mailbox.email}>
+            <p className="valor break-all text-base text-tinta">{mailbox.login || mailbox.email}</p>
           </Muestra>
           <Muestra rotulo="Contraseña" copiar={password}>
             <p className="codigo break-all text-base text-tinta">{password}</p>

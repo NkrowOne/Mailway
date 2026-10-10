@@ -444,6 +444,7 @@ test('fusionarSpf añade «mx» antes del all final y conserva lo demás', () =>
   assert.deepEqual(fusionarSpf('v=spf1 include:_spf.google.com ~all', 'v=spf1 mx ra=postmaster -all'), {
     valor: 'v=spf1 include:_spf.google.com mx ~all',
     anadidos: ['mx'],
+    consultasNuevas: 1,
   });
   assert.equal(fusionarSpf('v=spf1 +mx include:x.com -all', 'v=spf1 mx -all'), null, '+mx equivale a mx');
   assert.equal(fusionarSpf('v=spf1 include:x.com', 'v=spf1 mx -all')!.valor, 'v=spf1 include:x.com mx');
@@ -453,6 +454,7 @@ test('fusionarSpf: un «mx» detrás de «all» no cuenta y se añade delante de
   assert.deepEqual(fusionarSpf('v=spf1 include:_spf.google.com -all mx', 'v=spf1 mx ra=postmaster -all'), {
     valor: 'v=spf1 include:_spf.google.com mx -all mx',
     anadidos: ['mx'],
+    consultasNuevas: 1,
   });
   assert.equal(fusionarSpf('v=spf1 mx:ejemplo.es ~all', 'v=spf1 mx -all', { nombre: 'ejemplo.es' }), null);
   assert.equal(
@@ -869,7 +871,8 @@ test('plan y aplicación de un dominio: registros sin proxy, marcados y en un so
   assert.match(comentarioPropio(), /^Mailway \(instancia [0-9a-f]{10}\)$/);
   const spfs = registros.filter((r) => r.type === 'TXT' && r.name === 'aplicar.es');
   assert.equal(spfs.length, 1, 'nunca dos SPF');
-  assert.equal(normalizarTxt(spfs[0]!.content), 'v=spf1 include:_spf.google.com mx ~all');
+  // Mailway autoriza a su servidor por nombre (T15): vale antes y después del cambio de MX.
+  assert.equal(normalizarTxt(spfs[0]!.content), 'v=spf1 include:_spf.google.com a:mail.aplicar.es ~all');
   const dkim = registros.find((r) => r.name === 'mail._domainkey.aplicar.es')!;
   assert.ok(dkim.content.startsWith('"'), 'los TXT van entrecomillados');
   assert.equal(registros.find((r) => r.name === '_dmarc.aplicar.es')!.content, 'v=DMARC1; p=none');
@@ -966,6 +969,315 @@ test('reemplazar conflictos: borra los MX ajenos y crea el propio en el mismo lo
   assert.ok(lote.posts.length >= 1);
   const mxs = cf.enZona(z.id).filter((r) => r.type === 'MX');
   assert.deepEqual(mxs.map((r) => r.content), ['mail.mover.es']);
+});
+
+/* --------------------- Traslado: aplazar y hacer el cambio ----------------- */
+
+test('con el MX en otro proveedor, el SPF y el DMARC nuevos se aplazan hasta el cambio (T3)', () => {
+  const spfNuevo: Deseado = { type: 'TXT', name: APEX, content: 'v=spf1 a:mail.servidor.es ~all', required: true };
+  const dmarcNuevo: Deseado = { type: 'TXT', name: `_dmarc.${APEX}`, content: 'v=DMARC1; p=none', required: true };
+  const google = existente({ type: 'MX', name: APEX, content: 'aspmx.l.google.com', priority: 1 });
+  const cambios = planificar([mx, spfNuevo, dmarcNuevo], [google], { apex: APEX, dominio: APEX });
+  const de = (name: string, type = 'TXT') => cambios.find((c) => c.name === name && c.type === type)!;
+  assert.equal(de(APEX, 'MX').action, 'conflict');
+  assert.equal(de(APEX, 'MX').alCambiar, true);
+  for (const c of [de(APEX), de(`_dmarc.${APEX}`)]) {
+    assert.equal(c.action, 'conflict', `${c.name}: no se crea mientras el correo llega a otro proveedor`);
+    assert.equal(c.alCambiar, true);
+    assert.ok(c.reemplazo && c.reemplazo.posts.length === 1, 'se crea al hacer el cambio');
+    assert.match(c.reason, /se creará al hacer el cambio/);
+  }
+  // Con el MX bloqueado por Email Routing no hay cambio posible desde aquí:
+  // el SPF y el DMARC tampoco se ofrecen solos.
+  const bloqueado = planificar([mx, spfNuevo, dmarcNuevo], [{ ...google, bloqueado: true }], { apex: APEX, dominio: APEX });
+  assert.ok(bloqueado.every((c) => c.action === 'conflict' && c.reemplazo === null));
+  // Sin otro proveedor, se crean como siempre.
+  const sinOtro = planificar([mx, spfNuevo, dmarcNuevo], [], { apex: APEX, dominio: APEX });
+  assert.deepEqual(sinOtro.map((c) => c.action), ['create', 'create', 'create']);
+  // Un SPF que ya existe sí se completa: solo añade autorización.
+  const conSpf = planificar(
+    [mx, spfNuevo],
+    [google, existente({ type: 'TXT', name: APEX, content: 'v=spf1 include:_spf.google.com ~all' })],
+    { apex: APEX, dominio: APEX, servidor: 'mail.servidor.es' },
+  );
+  assert.equal(conSpf.find((c) => c.type === 'TXT')!.action, 'update');
+  assert.equal(conSpf.find((c) => c.type === 'TXT')!.content, 'v=spf1 include:_spf.google.com a:mail.servidor.es ~all');
+});
+
+test('fusionar el SPF no puede pasar de 10 consultas DNS (T15)', () => {
+  const muchos = existente({
+    type: 'TXT',
+    name: APEX,
+    content: 'v=spf1 include:_spf.google.com include:spf.protection.outlook.com include:servers.mcsv.net include:sendgrid.net include:_spf.elasticemail.com include:mail.zendesk.com ~all',
+  });
+  const spfNuevo: Deseado = { type: 'TXT', name: APEX, content: 'v=spf1 a:mail.servidor.es ~all', required: true };
+  // Con el recuento real (siguiendo los include) ya en 10: no cabe nada más.
+  const [exacto] = planificar([spfNuevo], [muchos], { apex: APEX, servidor: 'mail.servidor.es', consultasSpf: 10 });
+  assert.equal(exacto!.action, 'conflict');
+  assert.equal(exacto!.reemplazo, null, 'nunca se aplica solo');
+  assert.match(exacto!.reason, /pasaría de 10/);
+  // Sin poder contar los include: 6 de primer nivel + 1 cabe por debajo de 8…
+  const [estimado] = planificar([spfNuevo], [muchos], { apex: APEX, servidor: 'mail.servidor.es', consultasSpf: null });
+  assert.equal(estimado!.action, 'update');
+  // …pero con 8 ya no.
+  const ocho = existente({ ...muchos, content: `${muchos.content.replace(' ~all', '')} include:a.es include:b.es ~all` });
+  const [lleno] = planificar([spfNuevo], [ocho], { apex: APEX, servidor: 'mail.servidor.es' });
+  assert.equal(lleno!.action, 'conflict');
+  assert.match(lleno!.reason, /no se han podido contar/);
+});
+
+test('alta con DNS automático y el MX en otro proveedor: no se crean ni el SPF ni el DMARC (T3)', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('traslado-cf.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: 'traslado-cf.es', content: 'aspmx.l.google.com', priority: 1 });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/domains',
+    headers: { cookie: cliente.userCookie! },
+    payload: { domain: 'traslado-cf.es', autoDns: true },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const zona = cf.enZona(z.id);
+  assert.ok(!zona.some((r) => r.name === '_dmarc.traslado-cf.es'), 'sin DMARC nuevo');
+  assert.ok(!zona.some((r) => r.type === 'TXT' && r.name === 'traslado-cf.es'), 'sin SPF nuevo');
+  assert.deepEqual(
+    zona.filter((r) => r.type === 'MX').map((r) => r.content),
+    ['aspmx.l.google.com'],
+    'el MX actual sigue',
+  );
+  // Lo que no depende del proveedor sí se crea: la clave DKIM y el TXT de verificación.
+  assert.ok(zona.some((r) => r.name === '_mailway.traslado-cf.es'));
+});
+
+test('hacer el cambio reemplaza solo lo elegido, guarda copia y se puede deshacer (T5)', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('cambio.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: 'cambio.es', content: 'cambio-es.mail.protection.outlook.com', priority: 0, ttl: 3600 });
+  cf.registro(z.id, { type: 'MX', name: 'cambio.es', content: 'respaldo.otro.com', priority: 0, comment: 'del proveedor' });
+  cf.registro(z.id, { type: 'CNAME', name: 'autodiscover.cambio.es', content: 'autodiscover.outlook.com' });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'cambio.es');
+  const engine = getEngine();
+  const original = engine.getDnsRecords.bind(engine);
+  engine.getDnsRecords = async (dominio: string) => [
+    ...(await original(dominio)),
+    { type: 'CNAME', name: `autodiscover.${dominio}.`, content: `mail.${dominio}.` },
+  ];
+  try {
+    const planRes = await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: cliente.userCookie! } });
+    const plan = planRes.json() as { changes: { type: string; name: string; action: string; alCambiar?: boolean }[]; copia: unknown };
+    const delCambio = plan.changes.filter((c) => c.alCambiar).map((c) => `${c.type}:${c.name}`).sort();
+    assert.deepEqual(delCambio, ['MX:cambio.es', 'TXT:_dmarc.cambio.es', 'TXT:cambio.es'], 'el cambio: MX, SPF y DMARC');
+    assert.equal(plan.changes.find((c) => c.name === 'autodiscover.cambio.es')!.action, 'conflict');
+    assert.equal(plan.copia, null);
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/apply`,
+      headers: { cookie: cliente.userCookie! },
+      payload: { replace: delCambio },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    let zona = cf.enZona(z.id);
+    assert.deepEqual(zona.filter((r) => r.type === 'MX').map((r) => r.content), ['mail.cambio.es']);
+    assert.equal(
+      zona.find((r) => r.name === 'autodiscover.cambio.es')!.content,
+      'autodiscover.outlook.com',
+      'lo no elegido se conserva durante el traslado',
+    );
+    assert.ok(zona.some((r) => r.name === '_dmarc.cambio.es'), 'el DMARC llega con el cambio');
+
+    const conCopia = (await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare`, headers: { cookie: cliente.userCookie! } })).json() as {
+      copia: { borrados: { type: string; content: string; priority?: number }[] } | null;
+    };
+    assert.deepEqual(
+      conCopia.copia!.borrados.map((b) => b.content).sort(),
+      ['cambio-es.mail.protection.outlook.com', 'respaldo.otro.com'],
+      'queda constancia de los MX anteriores',
+    );
+
+    const deshacer = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/undo`,
+      headers: { cookie: cliente.userCookie! },
+    });
+    assert.equal(deshacer.statusCode, 200, deshacer.body);
+    zona = cf.enZona(z.id);
+    const mxs = zona.filter((r) => r.type === 'MX');
+    assert.deepEqual(mxs.map((r) => r.content).sort(), ['cambio-es.mail.protection.outlook.com', 'respaldo.otro.com']);
+    const outlook = mxs.find((r) => r.content.includes('outlook'))!;
+    assert.equal(outlook.priority, 0);
+    assert.equal(outlook.ttl, 3600, 'con su TTL');
+    assert.equal(mxs.find((r) => r.content === 'respaldo.otro.com')!.comment, 'del proveedor');
+    assert.ok(!zona.some((r) => r.name === '_dmarc.cambio.es'), 'lo que creó el cambio se retira');
+    assert.ok(!zona.some((r) => r.type === 'TXT' && r.name === 'cambio.es'));
+    const otra = await ctx.app.inject({ method: 'POST', url: `/api/domains/${domainId}/cloudflare/undo`, headers: { cookie: cliente.userCookie! } });
+    assert.equal(otra.statusCode, 409);
+    assert.equal((otra.json() as { code: string }).code, 'cloudflare_nothing_to_undo');
+    const auditoria = db.prepare("SELECT detail FROM audit_log WHERE action = 'cloudflare.dns_undone'").all();
+    assert.equal(auditoria.length, 1);
+  } finally {
+    engine.getDnsRecords = original;
+  }
+});
+
+test('el SPF y el DMARC aplazados no se crean solos, sin el MX del cambio (T3)', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('solospf.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: 'solospf.es', content: 'aspmx.l.google.com', priority: 1 });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'solospf.es');
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply`,
+    headers: { cookie: cliente.userCookie! },
+    payload: { replace: ['TXT:solospf.es', 'TXT:_dmarc.solospf.es'] },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const cuerpo = res.json() as { applied: { type: string; name: string }[]; skipped: { name: string; reason: string }[] };
+  const zona = cf.enZona(z.id);
+  assert.ok(!zona.some((r) => r.type === 'TXT' && r.name === 'solospf.es'), 'sin SPF nuevo');
+  assert.ok(!zona.some((r) => r.name === '_dmarc.solospf.es'), 'sin DMARC nuevo');
+  assert.deepEqual(zona.filter((r) => r.type === 'MX').map((r) => r.content), ['aspmx.l.google.com']);
+  assert.match(cuerpo.skipped.find((s) => s.name === '_dmarc.solospf.es')!.reason, /Pendiente del cambio de proveedor/);
+
+  // Con el MX elegido, los tres van juntos.
+  const cambio = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domains/${domainId}/cloudflare/apply`,
+    headers: { cookie: cliente.userCookie! },
+    payload: { replace: ['MX:solospf.es', 'TXT:solospf.es', 'TXT:_dmarc.solospf.es'] },
+  });
+  assert.equal(cambio.statusCode, 200, cambio.body);
+  const tras = cf.enZona(z.id);
+  assert.deepEqual(tras.filter((r) => r.type === 'MX').map((r) => r.content), ['mail.solospf.es']);
+  assert.ok(tras.some((r) => r.name === '_dmarc.solospf.es'));
+});
+
+test('la copia de cada reemplazo caduca por separado: deshacer no devuelve un MX de hace meses', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('caduca.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: 'caduca.es', content: 'aspmx.l.google.com', priority: 1 });
+  cf.registro(z.id, { type: 'CNAME', name: 'autodiscover.caduca.es', content: 'autodiscover.outlook.com' });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'caduca.es');
+  const engine = getEngine();
+  const original = engine.getDnsRecords.bind(engine);
+  engine.getDnsRecords = async (dominio: string) => [
+    ...(await original(dominio)),
+    { type: 'CNAME', name: `autodiscover.${dominio}.`, content: `mail.${dominio}.` },
+  ];
+  const aplicar = (replace: string[]) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/apply`,
+      headers: { cookie: cliente.userCookie! },
+      payload: { replace },
+    });
+  const envejecer = (dias: number) => {
+    const fila = db.prepare('SELECT borrados_json, creados_json FROM cloudflare_copias WHERE domain_id = ?').get(domainId) as {
+      borrados_json: string;
+      creados_json: string;
+    };
+    const antes = Date.now() - dias * 24 * 60 * 60 * 1000;
+    const viejo = (json: string) => JSON.stringify((JSON.parse(json) as object[]).map((x) => ({ ...x, at: antes })));
+    db.prepare('UPDATE cloudflare_copias SET borrados_json = ?, creados_json = ?, created_at = ? WHERE domain_id = ?').run(
+      viejo(fila.borrados_json),
+      viejo(fila.creados_json),
+      antes,
+      domainId,
+    );
+  };
+  const leer = async () =>
+    (
+      (await ctx.app.inject({ method: 'GET', url: `/api/domains/${domainId}/cloudflare/undo`, headers: { cookie: cliente.userCookie! } })).json() as {
+        copia: { borrados: { type: string; content: string }[]; expiresAt: number } | null;
+      }
+    ).copia;
+  try {
+    assert.equal((await aplicar(['MX:caduca.es'])).statusCode, 200);
+    envejecer(31);
+    assert.equal(await leer(), null, 'pasados 30 días ya no se ofrece');
+
+    // Un reemplazo nuevo no resucita el anterior: solo se deshace lo vigente.
+    assert.equal((await aplicar(['CNAME:autodiscover.caduca.es'])).statusCode, 200);
+    const copia = await leer();
+    assert.deepEqual(copia!.borrados.map((b) => `${b.type} ${b.content}`), ['CNAME autodiscover.outlook.com']);
+    assert.ok(copia!.expiresAt > Date.now() + 29 * 24 * 60 * 60 * 1000);
+
+    const deshacer = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/undo`,
+      headers: { cookie: cliente.userCookie! },
+    });
+    assert.equal(deshacer.statusCode, 200, deshacer.body);
+    const zona = cf.enZona(z.id);
+    assert.deepEqual(zona.filter((r) => r.type === 'MX').map((r) => r.content), ['mail.caduca.es'], 'el MX de aquí se queda');
+    assert.equal(zona.find((r) => r.name === 'autodiscover.caduca.es')!.content, 'autodiscover.outlook.com');
+
+    // Todo caducado: deshacer responde que no hay nada.
+    assert.equal((await aplicar(['CNAME:autodiscover.caduca.es'])).statusCode, 200);
+    envejecer(31);
+    const nada = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/undo`,
+      headers: { cookie: cliente.userCookie! },
+    });
+    assert.equal(nada.statusCode, 409);
+    assert.equal((nada.json() as { code: string }).code, 'cloudflare_nothing_to_undo');
+  } finally {
+    engine.getDnsRecords = original;
+  }
+});
+
+test('deshacer el cambio también retira los SRV que creó Mailway (se guardan solo con «data»)', async () => {
+  const cliente = await createClient(ctx, { withUser: true });
+  const z = cf.zona('srvundo.es');
+  cf.token(TOKEN_USUARIO, { zoneIds: [z.id] });
+  cf.registro(z.id, { type: 'MX', name: 'srvundo.es', content: 'aspmx.l.google.com', priority: 1 });
+  cf.registro(z.id, {
+    type: 'SRV',
+    name: '_imaps._tcp.srvundo.es',
+    content: '1 993 imap.otro.com',
+    priority: 0,
+    data: { priority: 0, weight: 1, port: 993, target: 'imap.otro.com' },
+  });
+  await conectar(cliente.userCookie!, TOKEN_USUARIO);
+  const { domainId } = await createDomain(ctx, cliente.clientId, 'srvundo.es');
+  const engine = getEngine();
+  const original = engine.getDnsRecords.bind(engine);
+  engine.getDnsRecords = async (dominio: string) => [
+    ...(await original(dominio)),
+    { type: 'SRV', name: `_imaps._tcp.${dominio}.`, content: `0 1 993 mail.${dominio}.` },
+  ];
+  try {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/apply`,
+      headers: { cookie: cliente.userCookie! },
+      payload: { replaceConflicts: true },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const srvTras = cf.enZona(z.id).filter((r) => r.type === 'SRV');
+    assert.deepEqual(srvTras.map((r) => r.content), ['1 993 mail.srvundo.es'], 'el SRV anterior se reemplazó');
+
+    const deshacer = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/domains/${domainId}/cloudflare/undo`,
+      headers: { cookie: cliente.userCookie! },
+    });
+    assert.equal(deshacer.statusCode, 200, deshacer.body);
+    const srv = cf.enZona(z.id).filter((r) => r.type === 'SRV');
+    assert.deepEqual(srv.map((r) => r.content), ['1 993 imap.otro.com'], 'solo queda el SRV anterior');
+    assert.deepEqual(cf.enZona(z.id).filter((r) => r.type === 'MX').map((r) => r.content), ['aspmx.l.google.com']);
+  } finally {
+    engine.getDnsRecords = original;
+  }
 });
 
 test('Email Routing: el error de bloqueo se atribuye a su registro y el resto se aplica', async () => {

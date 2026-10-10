@@ -779,7 +779,7 @@ async function avisarTitulares(motor: MailEngine, resultado: ResultadoTrasMigrar
         const remitente = await asegurarRemitenteConfiguracion({ id: domainId, domain }, motor);
         const clave = `aviso-motor:${domainId}`;
         transportes.add(clave);
-        const transporte = getTransport(clave, remitente.email, remitente.password, ajustes, mailHostname);
+        const transporte = getTransport(clave, { usuario: remitente.email, remitente: remitente.email }, remitente.password, ajustes, mailHostname);
         const correo = componerAvisoInvalidadas({
           email,
           domain,

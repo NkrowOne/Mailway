@@ -34,10 +34,15 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `clients` (planes, clientes, usuarios, `assertWithinLimit`),
     `invitaciones` (enlace de bienvenida del cliente), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
-    `mailboxes` (buzones, altas masivas, alias), `apppasswords`, `perfil`
+    `mailboxes` (buzones, altas masivas, alias), `direcciones` (usuario del
+    motor de cada buzón, cambios abiertos y su conciliador),
+    `domainmigrations` (cambio de dominio: plan, preparar, pasar, volver,
+    cancelar y dar de baja), `recepcion` (dominios con el correo en otro
+    proveedor y sus reglas en el motor), `apppasswords`, `perfil`
     (nombre visible y foto del buzón), `portal` (enlaces de configuración y
-    su reinicio, «Mi buzón», rutas `/api/webmail/*` de Roundcube),
-    `remitente` (cuenta oculta `configuration@<dominio>`, reservada) y
+    su reinicio, «Mi buzón», «Actualizar mis dispositivos», rutas
+    `/api/webmail/*` de Roundcube), `remitente` (cuenta oculta
+    `configuration@<dominio>`, reservada) y
     `envioconfiguracion` (correo «Configura tu correo» con el enlace de cada
     titular y marca de buzón configurado),
     `connection` (datos de conexión y generadores de autoconfiguración),
@@ -46,19 +51,26 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     `/v1/send`), `engineops` (ajustes recomendados, TLS y ACME del motor),
     `alerts`, `watchdog`, `dashboard`, `suspensiones` (corrección única, al
     arrancar o desde el vigilante, de lo que dejó la suspensión anterior:
-    buzones con `roles: []` y alias sin sus destinos). Correo web nuevo:
-    `webmailmotor` (si Bulwark está instalado y qué clientes lo usan; sin
-    dependencias de otros módulos, lo importan Traefik y los ajustes del
-    motor), `bulwark` (cliente de su API de administración: marca por
-    dominio, imágenes y política) y `correoweb` (elección por cliente, su
-    marca y la sincronización con Bulwark, que nunca bloquea una ruta).
+    buzones con `roles: []` y alias sin sus destinos), `nombreservidor` (lo
+    que arrastra cambiar el nombre del servidor), `ipservidor` (IP de salida
+    frente a la de Ajustes: aviso y «Usar esta IP»), `entorno` (identidad del
+    servidor que trae el entorno tras un cambio de dominio o de IP en el
+    instalador) y `demo` (propiedad simulada solo con `MAILWAY_DEMO=1`).
+    Correo web nuevo: `webmailmotor` (si Bulwark está instalado y qué
+    clientes lo usan; sin dependencias de otros módulos, lo importan Traefik
+    y los ajustes del motor), `bulwark` (cliente de su API de
+    administración: marca por dominio, imágenes y política) y `correoweb`
+    (elección por cliente, su marca y la sincronización con Bulwark, que
+    nunca bloquea una ruta).
   - `src/engine/`: interfaz `MailEngine` y drivers `stalwart` y `demo`;
     `apiconocida.ts` guarda la última versión del motor vista (las rutas de
-    Traefik la usan sin esperar al motor).
+    Traefik la usan sin esperar al motor) y `recepcion.ts`, las reglas de
+    Stalwart 0.15 para los dominios con el correo en otro proveedor.
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
-    sha512-crypt e imágenes (`imagenes.ts`: tipo y dimensiones por el
-    contenido).
+    sha512-crypt, imágenes (`imagenes.ts`: tipo y dimensiones por el
+    contenido), prueba del puerto 25 (`puerto25.ts`) y detección de la IP
+    pública (`ippublica.ts`).
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
@@ -66,6 +78,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
     del asistente que comparte viven en `modules/setup.ts`.
     `src/tools/avisar.ts`: aviso a la administración (incidencia en Avisos y
     canales) desde la terminal, que usa `mailway update --auto`.
+    `src/tools/identidad.ts`: Ajustes adopta la identidad del entorno tras un
+    cambio de dominio o de IP confirmado en el instalador (la comparación
+    con el entorno, en `modules/entorno.ts`).
 - `web/` — React + Vite + Tailwind. Panel en `src/pages/` (administración en
   `src/pages/admin/`; la ficha del cliente, con sus pestañas, en
   `ClienteDetalle.tsx` y `src/pages/admin/cliente/`), portal del titular en `src/pages/portal/`, kit de UI
@@ -130,7 +145,11 @@ prueba que lo reproduce.
   «puede» no cambian cuando se refieren a un tercero (el cliente, el buzón,
   el titular). Terminología fija: buzón, alias, clave de API, token de
   gestión, contraseña de aplicación, enlace de configuración, plan,
-  entregabilidad.
+  entregabilidad, cambio de dominio (pasar un cliente de dominio.es a
+  dominio2.es), dominio anterior (el origen de un cambio, que no cuenta en el
+  plan), actualizar dispositivos (el buzón pasa a entrar con su dirección
+  nueva) y usuario del motor (con el que entra un buzón; durante un cambio de
+  dominio puede no ser su dirección).
 - **Rutas**: `requireAuth` / `requireAdmin` / `requireClientAccess` según el
   recurso, y `requireSession` para lo que un token no debe poder hacer (crear
   tokens, cambiar la contraseña). `requireAdminSession` (administrador con
@@ -143,10 +162,21 @@ prueba que lo reproduce.
   secretos.
 - **Altas**: dentro de `withLock(clientLockKey(clientId), …)` (dominios:
   `'altas:dominios'`) y con `assertWithinLimit` dentro del cerrojo. Buzones y
-  alias exigen `assertDomainOwnership(domainId)`.
+  alias exigen `assertDomainOwnership(domainId)` y `assertAltasPermitidas`
+  (un dominio en un cambio de dominio no admite altas).
+- **Cerrojos** (`core/locks.ts`), siempre en este orden y nunca al revés
+  (`withLock` no es reentrante): `altas:dominios` → `altas:<cliente>`
+  (`clientLockKey`) → `cambio:<id>` (`cambioLockKey`) → `buzon:<id>`
+  (`buzonLockKey`) → `contrasenas-app:<id>`. Quien tiene uno solo pide los que
+  van después; lo que habla con el motor con el usuario de un buzón relee la
+  fila dentro de `buzon:<id>`.
 - **Motor**: las rutas nunca hablan con Stalwart directamente, siempre vía
   `getEngine()`, que averigua si el motor es 0.15 (API REST) o 0.16 (JMAP) y
-  usa su driver (`engine/stalwart.ts` o `engine/stalwart016.ts`). Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
+  usa su driver (`engine/stalwart.ts` o `engine/stalwart016.ts`). Lo que
+  identifica un buzón en el motor usa su usuario del motor
+  (`loginParaMotor(id)`, o `loginDe(fila)` para mostrarlo), nunca su
+  dirección, y los destinos internos de un alias van con `nombreEnMotor`.
+  Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y
   cuerpo `{ error }`; el driver los convierte en `HttpError` 502
   (`engine_not_found`, `engine_exists`, `engine_error`,
   `engine_unreachable`). Los ajustes de Stalwart (`POST /api/settings`)

@@ -322,10 +322,15 @@ class Pila:
             'MAILWAY_MAIL_HOST', 'MAILWAY_WEBMAIL_HOST', 'MAILWAY_PANEL_HOST', 'MAILWAY_IP', 'MAIL_HOSTNAME',
             'MAILWAY_MOTOR', 'MAILWAY_RETIRAR_VOLUMEN')}
         # La migración verifica también el certificado contra la CA de
-        # laboratorio y deja su carpeta de trabajo con la prueba.
+        # laboratorio y deja su carpeta de trabajo con la prueba. La IP de
+        # deploy/.env es de documentación (192.0.2.10): sin MAILWAY_IP, el
+        # instalador la compararía con la de salida del ejecutor y, sin
+        # terminal, se detendría. --comprobar se limita al motor, el webmail
+        # y el extractor: aquí no hay Traefik de verdad ni DNS público.
         self.entorno.update({'MAILWAY_ENV_FILE': str(self.env), 'MAILWAY_COMPOSE_EXTRA': str(self.extra),
                              'MAILWAY_ESPERA_DNS': '0', 'MAILWAY_TRAEFIK_PROVEEDOR': '0',
-                             'MAILWAY_TLS_CA_FILE': str(ca), 'MAILWAY_MIGRACION_DIR': str(self.migraciones)})
+                             'MAILWAY_TLS_CA_FILE': str(ca), 'MAILWAY_MIGRACION_DIR': str(self.migraciones),
+                             'MAILWAY_IP': valores['MAILWAY_PUBLIC_IP'], 'MAILWAY_COMPROBAR_SOLO_MOTOR': '1'})
 
     # -- preparación
 

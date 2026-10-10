@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { db, now } from '../core/db';
-import { clientLockKey, mailboxStateLockKey, withLock } from '../core/locks';
+import { buzonLockKey, clientLockKey, mailboxStateLockKey, withLock } from '../core/locks';
 import { generateMailboxPassword, randomId } from '../core/crypto';
 import { HttpError, badRequest, conflict, isUniqueViolation, notFound } from '../core/errors';
 import { getEngine } from '../engine';
@@ -17,7 +17,16 @@ import {
   getPlan,
 } from './clients';
 import { cambiarContrasenaBuzon, crearBuzonEnMotor, guardarHashBuzon } from './credenciales';
-import { assertDomainOwnership, getDomain, type DomainRecord } from './domains';
+import {
+  actualizarUsuario,
+  appsSkywayDe,
+  assertAltasPermitidas,
+  errorBuzonUsadoPorApp,
+  loginDe,
+  loginParaMotor,
+  nombreEnMotor,
+} from './direcciones';
+import { asegurarDominioEnMotor, assertDomainOwnership, getDomain, type DomainRecord } from './domains';
 import { exigirSinMantenimiento } from './mantenimiento';
 import { alCambiarContrasenaBuzon, enlaceConContrasena, olvidarBuzonConfigurado } from './portal';
 import { MENSAJE_DIRECCION_RESERVADA, assertDireccionNoReservada, esDireccionReservada } from './remitente';
@@ -47,6 +56,14 @@ export interface Mailbox {
   configuredAt: number | null;
   /** Entrega de la configuración al titular. */
   setup: EntregaConfiguracion;
+  /**
+   * Usuario con el que el buzón entra en el motor (IMAP, SMTP, webmail). Es
+   * la dirección salvo durante un cambio de dominio, hasta que se actualizan
+   * los dispositivos.
+   */
+  login: string;
+  /** true = «Pendiente de actualizar dispositivos» (el usuario no es la dirección). */
+  loginPending: boolean;
 }
 
 export interface EntregaConfiguracion {
@@ -78,6 +95,7 @@ interface MailboxRow {
   last_email_to: string | null;
   last_email_at: number | null;
   last_email_status: 'sent' | 'failed' | null;
+  usuario_motor: string | null;
 }
 
 // La foto solo aporta su fecha: la imagen se sirve aparte. La entrega de la
@@ -122,6 +140,8 @@ function toMailbox(row: MailboxRow): Mailbox {
           ? { to: row.last_email_to, at: row.last_email_at, status: row.last_email_status }
           : null,
     },
+    login: loginDe(row),
+    loginPending: row.usuario_motor !== null,
   };
 }
 
@@ -155,14 +175,18 @@ function refreshUsage(): Promise<void> {
     const usage = await getEngine().getMailboxUsage();
     const t = now();
     const rows = db
-      .prepare('SELECT m.id, m.local_part, d.domain FROM mailboxes m JOIN domains d ON d.id = m.domain_id')
-      .all() as { id: string; local_part: string; domain: string }[];
+      .prepare(
+        `SELECT m.id, m.local_part, m.usuario_motor, d.domain
+         FROM mailboxes m JOIN domains d ON d.id = m.domain_id`,
+      )
+      .all() as { id: string; local_part: string; usuario_motor: string | null; domain: string }[];
     const update = db.prepare('UPDATE mailboxes SET used_bytes = ?, usage_checked_at = ? WHERE id = ?');
     db.transaction(() => {
       for (const row of rows) {
-        // Un buzón ausente del mapa es «desconocido», no «vacío»: se deja
-        // el último valor conocido.
-        const bytes = usage.get(`${row.local_part}@${row.domain}`.toLowerCase());
+        // El motor da la ocupación por el usuario del buzón, que durante un
+        // cambio de dominio no es la dirección. Un buzón ausente del mapa es
+        // «desconocido», no «vacío»: se deja el último valor conocido.
+        const bytes = usage.get(loginDe(row).toLowerCase());
         if (bytes !== undefined) update.run(bytes, t, row.id);
       }
     })();
@@ -260,6 +284,17 @@ function mailboxExistsError(email: string): HttpError {
   return conflict(`El buzón ${email} ya existe.`, 'mailbox_exists');
 }
 
+/** Error de un dominio en un cambio de dominio que no admite altas, o null si las admite. */
+function altasBlockedError(domainId: string): HttpError | null {
+  try {
+    assertAltasPermitidas(domainId);
+    return null;
+  } catch (err) {
+    if (err instanceof HttpError && err.code === 'domain_migrating') return err;
+    throw err;
+  }
+}
+
 /** Motivo por el que no se puede crear nada en el dominio, o null si se puede. */
 function ownershipPendingMessage(domainId: string): string | null {
   try {
@@ -274,6 +309,21 @@ function ownershipPendingMessage(domainId: string): string | null {
 function mailboxExists(domainId: string, localPart: string): boolean {
   return Boolean(
     db.prepare('SELECT 1 FROM mailboxes WHERE domain_id = ? AND local_part = ?').get(domainId, localPart),
+  );
+}
+
+/**
+ * Un buzón pendiente de actualizar dispositivos ocupa en el motor el nombre de
+ * su dirección anterior: otro principal con ese nombre no se puede crear.
+ */
+function loginInUse(email: string): boolean {
+  return Boolean(db.prepare('SELECT 1 FROM mailboxes WHERE usuario_motor = ?').get(email));
+}
+
+function loginInUseError(email: string, what: 'buzón' | 'alias'): HttpError {
+  return conflict(
+    `Ya hay un buzón que entra con el usuario ${email}. Elige otro nombre para el ${what}.`,
+    'mailbox_exists',
   );
 }
 
@@ -360,10 +410,12 @@ async function createMailboxRecord(input: {
   viewerIsAdmin: boolean;
 }): Promise<{ mailbox: Mailbox; password: string }> {
   const { domain, localPart } = input;
+  assertAltasPermitidas(domain.id);
   assertWithinLimit(domain.clientId, 'mailboxes', 1, input.viewerIsAdmin);
   assertDomainOwnership(domain.id);
   const email = `${localPart}@${domain.domain}`;
   if (mailboxExists(domain.id, localPart)) throw mailboxExistsError(email);
+  if (loginInUse(email)) throw loginInUseError(email, 'buzón');
   if (aliasExists(domain.id, localPart)) {
     throw conflict(`Ya existe un alias ${email}. Elige otro nombre.`, 'alias_exists');
   }
@@ -373,6 +425,9 @@ async function createMailboxRecord(input: {
   const password = input.password || generateMailboxPassword();
 
   const engine = getEngine();
+  // El dominio solo existe en el motor desde su primer buzón o alias (con
+  // la propiedad ya comprobada): véase el alta de dominios.
+  await asegurarDominioEnMotor(domain.domain);
   // El hash se calcula una vez: lo recibe el motor y el panel guarda su copia.
   const passwordHash = await crearBuzonEnMotor(
     { email, password, displayName: input.displayName, quotaBytes: quotaMb * 1024 * 1024 },
@@ -393,6 +448,10 @@ async function createMailboxRecord(input: {
          VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
       ).run(id, domain.id, localPart, input.displayName, quotaMb, t, t);
       guardarHashBuzon(id, passwordHash, 'panel');
+      // La dirección deja de ser el usuario anterior de otro buzón (tras un
+      // cambio de dominio): si no, el complemento del webmail le trasladaría
+      // a ese otro buzón la fila de Roundcube de este.
+      db.prepare('UPDATE mailboxes SET login_anterior = NULL WHERE login_anterior = ? AND id <> ?').run(email, id);
     })();
   } catch (err) {
     // Otra petición ya registró esta dirección: el principal del motor es
@@ -459,6 +518,12 @@ function isInstanceMailbox(email: string): boolean {
  * - externos: direcciones de dominios que esta instancia no gestiona.
  * Una dirección de un dominio gestionado aquí que no es un buzón (otro alias,
  * una errata) se rechaza en lugar de salir a Internet como «externa».
+ *
+ * Solo cuenta como gestionado aquí un dominio con la propiedad comprobada:
+ * cualquiera puede dar de alta gmail.com (o el dominio de otro) sin probar
+ * nada, y eso no puede impedir a los demás clientes reenviar a esas
+ * direcciones. Mientras tanto el dominio tampoco existe en el motor, así que
+ * el correo sale a Internet, como cualquier destino externo.
  */
 function classifyDestinations(
   clientId: string,
@@ -471,9 +536,9 @@ function classifyDestinations(
   for (const dest of all) {
     if (dest === aliasEmail) throw badRequest('Un alias no puede reenviarse a sí mismo.', 'alias_loop');
     const { local, domain } = splitEmail(dest);
-    const domainRow = db.prepare('SELECT id, client_id FROM domains WHERE domain = ?').get(domain) as
-      | { id: string; client_id: string }
-      | undefined;
+    const domainRow = db
+      .prepare('SELECT id, client_id FROM domains WHERE domain = ? AND owner_verified_at IS NOT NULL')
+      .get(domain) as { id: string; client_id: string } | undefined;
     if (!domainRow) {
       external.push(dest);
       continue;
@@ -579,6 +644,8 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     // Sin propiedad comprobada no se crea ningún buzón; la revisión lo dice
     // en cada línea para que nadie prepare un lote que no se va a crear.
     const ownershipError = ownershipPendingMessage(domain.id);
+    // Lo mismo con un dominio en un cambio de dominio, que no admite altas.
+    const migrationError = altasBlockedError(domain.id);
 
     const seen = new Set<string>();
     const checked = body.entries.map((entry) => {
@@ -589,6 +656,8 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       if (!error && seen.has(localPart)) error = 'La dirección está repetida en la lista.';
       if (!error && mailboxExists(domain.id, localPart)) error = 'El buzón ya existe.';
       if (!error && aliasExists(domain.id, localPart)) error = 'Ya existe un alias con esa dirección.';
+      if (!error && loginInUse(email)) error = 'Ya hay un buzón que entra con ese usuario.';
+      if (!error && migrationError) error = `${domain.domain} está en un cambio de dominio.`;
       if (!error && ownershipError) error = 'Falta comprobar la propiedad del dominio.';
       seen.add(localPart);
       return { localPart, email, displayName: entry.displayName, error };
@@ -620,6 +689,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       };
     }
 
+    if (migrationError) throw migrationError;
     if (ownershipError) throw conflict(ownershipError, 'domain_ownership_pending');
     // Cada buzón del lote falla por separado: durante el mantenimiento del
     // motor fallarían todos, mejor un 503 claro antes de empezar.
@@ -706,7 +776,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
 
   app.patch('/api/mailboxes/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const { mailbox, domain } = requireMailboxAccess(req, id);
+    const { domain } = requireMailboxAccess(req, id);
     const body = z
       .object({
         displayName: displayNameSchema.optional(),
@@ -717,126 +787,195 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       })
       .parse(req.body ?? {});
 
-    const client = getClient(domain.clientId);
-    if (body.status === 'active' && client.suspended) {
-      throw conflict(
-        'El cliente está suspendido: sus buzones permanecen suspendidos hasta que se reactive el cliente.',
-        'client_suspended',
-      );
-    }
-    // Igual que al crear: la cuota nunca supera la del plan del cliente
-    // (antes un usuario de cliente podía subirla hasta 1 TB).
-    const plan = getPlan(client.planId);
-    const quotaMb = body.quotaMb !== undefined ? Math.min(body.quotaMb, plan.mailboxQuotaMb) : undefined;
-
-    const patch = {
-      displayName: body.displayName !== undefined && body.displayName !== mailbox.displayName ? body.displayName : undefined,
-      quotaBytes: quotaMb !== undefined && quotaMb !== mailbox.quotaMb ? quotaMb * 1024 * 1024 : undefined,
-      suspended: body.status !== undefined && body.status !== mailbox.status ? body.status === 'suspended' : undefined,
-    };
-    // Motor y panel cambian juntos, en fila con los demás cambios de estado
-    // del buzón (mailboxStateLockKey): la corrección de las suspensiones
-    // antiguas lee este estado y lo aplica en el motor.
-    await withLock(mailboxStateLockKey(id), async () => {
-      if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
-        await getEngine().updateMailbox(mailbox.email, patch);
+    // En fila con los demás cambios del buzón (su usuario del motor puede
+    // estar cambiando): la fila se relee dentro del cerrojo.
+    return withLock(buzonLockKey(id), async () => {
+      const mailbox = getMailbox(id);
+      const client = getClient(domain.clientId);
+      if (body.status === 'active' && client.suspended) {
+        throw conflict(
+          'El cliente está suspendido: sus buzones permanecen suspendidos hasta que se reactive el cliente.',
+          'client_suspended',
+        );
       }
-      db.prepare(
-        `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
-           quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
-         WHERE id = ?`,
-      ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
-    });
+      // Igual que al crear: la cuota nunca supera la del plan del cliente
+      // (antes un usuario de cliente podía subirla hasta 1 TB).
+      const plan = getPlan(client.planId);
+      const quotaMb = body.quotaMb !== undefined ? Math.min(body.quotaMb, plan.mailboxQuotaMb) : undefined;
 
-    const changes: Record<string, unknown> = {};
-    if (patch.displayName !== undefined) changes.displayName = patch.displayName;
-    if (patch.quotaBytes !== undefined) changes.quotaMb = quotaMb;
-    if (patch.suspended !== undefined) changes.status = body.status;
-    audit(req, 'mailbox.updated', { id, email: mailbox.email, ...changes }, domain.clientId);
-    return { mailbox: getMailbox(id) };
+      const patch = {
+        displayName: body.displayName !== undefined && body.displayName !== mailbox.displayName ? body.displayName : undefined,
+        quotaBytes: quotaMb !== undefined && quotaMb !== mailbox.quotaMb ? quotaMb * 1024 * 1024 : undefined,
+        suspended: body.status !== undefined && body.status !== mailbox.status ? body.status === 'suspended' : undefined,
+      };
+      // Motor y panel cambian juntos, en fila con los demás cambios de estado
+      // del buzón (mailboxStateLockKey): la corrección de las suspensiones
+      // antiguas lee este estado y lo aplica en el motor.
+      await withLock(mailboxStateLockKey(id), async () => {
+        if (patch.displayName !== undefined || patch.quotaBytes !== undefined || patch.suspended !== undefined) {
+          await getEngine().updateMailbox(loginParaMotor(id), patch);
+        }
+        db.prepare(
+          `UPDATE mailboxes SET display_name = COALESCE(?, display_name),
+             quota_mb = COALESCE(?, quota_mb), status = COALESCE(?, status)
+           WHERE id = ?`,
+        ).run(body.displayName ?? null, quotaMb ?? null, body.status ?? null, id);
+      });
+
+      const changes: Record<string, unknown> = {};
+      if (patch.displayName !== undefined) changes.displayName = patch.displayName;
+      if (patch.quotaBytes !== undefined) changes.quotaMb = quotaMb;
+      if (patch.suspended !== undefined) changes.status = body.status;
+      audit(req, 'mailbox.updated', { id, email: mailbox.email, ...changes }, domain.clientId);
+      return { mailbox: getMailbox(id) };
+    });
   });
 
   /** Restablece la contraseña: genera una nueva o aplica la indicada. */
   app.post('/api/mailboxes/:id/password', async (req) => {
     const { id } = req.params as { id: string };
-    const { mailbox, domain } = requireMailboxAccess(req, id);
+    const { domain } = requireMailboxAccess(req, id);
     const body = z.object({ password: passwordSchema.optional() }).parse(req.body ?? {});
     const password = body.password || generateMailboxPassword();
-    // El motor conserva las contraseñas de aplicación: solo cambia la principal
-    // (y la copia del panel con la que se comprueba).
-    await cambiarContrasenaBuzon(mailbox, password);
-    // La contraseña anterior deja de valer: se borra de los enlaces de
-    // configuración que la llevaban y se cierran las sesiones de «Mi buzón».
-    alCambiarContrasenaBuzon(id);
-    // Los dispositivos del titular dejan de entrar: vuelve a estar sin
-    // configurar hasta que use la contraseña nueva.
-    olvidarBuzonConfigurado(id);
-    audit(req, 'mailbox.password_reset', { id, email: mailbox.email, generated: !body.password }, domain.clientId);
-    return { password: body.password ? undefined : password, ok: true };
+    // En fila con el cambio de usuario del motor: la fila se relee dentro.
+    return withLock(buzonLockKey(id), async () => {
+      const mailbox = getMailbox(id);
+      // El motor conserva las contraseñas de aplicación: solo cambia la
+      // principal (y la copia del panel con la que se comprueba).
+      await cambiarContrasenaBuzon(mailbox, password);
+      // La contraseña anterior deja de valer: se borra de los enlaces de
+      // configuración que la llevaban y se cierran las sesiones de «Mi buzón».
+      alCambiarContrasenaBuzon(id);
+      // Los dispositivos del titular dejan de entrar: vuelve a estar sin
+      // configurar hasta que use la contraseña nueva.
+      olvidarBuzonConfigurado(id);
+      audit(req, 'mailbox.password_reset', { id, email: mailbox.email, generated: !body.password }, domain.clientId);
+      return { password: body.password ? undefined : password, ok: true };
+    });
   });
 
   app.delete('/api/mailboxes/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const { mailbox, domain } = requireMailboxAccess(req, id);
-    const keyCount = (
-      db
-        .prepare('SELECT COUNT(*) AS c FROM api_keys WHERE sender_mailbox_id = ? AND revoked_at IS NULL')
-        .get(id) as { c: number }
-    ).c;
-    if (keyCount > 0) {
-      throw conflict(
-        `Este buzón es el remitente de ${keyCount === 1 ? '1 clave' : `${keyCount} claves`} de API activas. Revoca esas claves antes de eliminarlo.`,
-        'mailbox_in_use',
-      );
-    }
-    // Igual con los formularios: borrarlo se los llevaría por delante sin aviso
-    // y la web seguiría mostrando un formulario que ya no entrega.
-    const formCount = (
-      db.prepare('SELECT COUNT(*) AS c FROM forms WHERE recipient_mailbox_id = ?').get(id) as { c: number }
-    ).c;
-    if (formCount > 0) {
-      throw conflict(
-        `Este buzón recibe ${formCount === 1 ? '1 formulario' : `${formCount} formularios`} de la web. Elimínalos en «Formularios» antes de eliminarlo.`,
-        'mailbox_in_use',
-      );
-    }
-
-    const engine = getEngine();
-    const email = mailbox.email.toLowerCase();
-    // Los alias que reenvían a este buzón se actualizan ANTES de borrarlo (en
-    // el motor, los miembros de una lista deben existir). Cada alias se
-    // guarda en la base justo después de cambiarlo en el motor, para que
-    // ambos coincidan aunque algo falle a mitad.
-    // Sin filtrar por cliente: versiones anteriores permitían destinos de
-    // otros clientes y esos alias también deben dejar de apuntar aquí.
-    const candidates = db
-      .prepare(`${ALIAS_SELECT} WHERE lower(a.destinations_json) LIKE ?`)
-      .all(`%${email}%`) as AliasRow[];
-    const aliasesUpdated: string[] = [];
-    const aliasesDeleted: string[] = [];
-    for (const alias of candidates) {
-      const destinations = parseDestinations(alias.destinations_json);
-      if (!destinations.some((d) => d.toLowerCase() === email)) continue;
-      const remaining = destinations.filter((d) => d.toLowerCase() !== email);
-      const aliasEmail = `${alias.local_part}@${alias.domain}`;
-      if (remaining.length === 0) {
-        // Un alias sin destinos no entrega a nadie: se elimina.
-        await engine.deleteAlias(aliasEmail);
-        db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
-        aliasesDeleted.push(aliasEmail);
-      } else {
-        const internal = remaining.filter((d) => d.toLowerCase() !== email && isInstanceMailbox(d));
-        const external = remaining.filter((d) => !internal.includes(d));
-        await engine.upsertAlias(aliasEmail, internal, external);
-        db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(remaining), alias.id);
-        aliasesUpdated.push(aliasEmail);
+    const { domain } = requireMailboxAccess(req, id);
+    // En fila con el cambio de usuario: si estuviera en curso, se espera y se
+    // borra el principal con el nombre que tenga al terminar.
+    return withLock(buzonLockKey(id), async () => {
+      // Releída dentro del cerrojo: otra petición pudo borrarlo o cambiarle el
+      // usuario mientras esta esperaba. Con un cambio de usuario a medias
+      // (409) no se toca nada, tampoco los alias.
+      const mailbox = getMailbox(id);
+      const login = loginParaMotor(id);
+      const keyCount = (
+        db
+          .prepare('SELECT COUNT(*) AS c FROM api_keys WHERE sender_mailbox_id = ? AND revoked_at IS NULL')
+          .get(id) as { c: number }
+      ).c;
+      if (keyCount > 0) {
+        throw conflict(
+          `Este buzón es el remitente de ${keyCount === 1 ? '1 clave' : `${keyCount} claves`} de API activas. Revoca esas claves antes de eliminarlo.`,
+          'mailbox_in_use',
+        );
       }
-    }
+      // Igual con los formularios: borrarlo se los llevaría por delante sin aviso
+      // y la web seguiría mostrando un formulario que ya no entrega.
+      const formCount = (
+        db.prepare('SELECT COUNT(*) AS c FROM forms WHERE recipient_mailbox_id = ?').get(id) as { c: number }
+      ).c;
+      if (formCount > 0) {
+        throw conflict(
+          `Este buzón recibe ${formCount === 1 ? '1 formulario' : `${formCount} formularios`} de la web. Elimínalos en «Formularios» antes de eliminarlo.`,
+          'mailbox_in_use',
+        );
+      }
 
-    await engine.deleteMailbox(mailbox.email);
-    db.prepare('DELETE FROM mailboxes WHERE id = ?').run(id);
-    audit(req, 'mailbox.deleted', { id, email: mailbox.email, aliasesUpdated, aliasesDeleted }, domain.clientId);
-    return { ok: true, aliasesUpdated, aliasesDeleted };
+      const engine = getEngine();
+      const email = mailbox.email.toLowerCase();
+      // Los alias que reenvían a este buzón se actualizan ANTES de borrarlo (en
+      // el motor, los miembros de una lista deben existir). Cada alias se
+      // guarda en la base justo después de cambiarlo en el motor, para que
+      // ambos coincidan aunque algo falle a mitad.
+      // Sin filtrar por cliente: versiones anteriores permitían destinos de
+      // otros clientes y esos alias también deben dejar de apuntar aquí.
+      const candidates = db
+        .prepare(`SELECT a.id FROM aliases a WHERE lower(a.destinations_json) LIKE ?`)
+        .all(`%${email}%`) as { id: string }[];
+      // Cada alias se relee justo antes de usarlo y otra vez antes de
+      // guardarlo: este cerrojo no excluye pasar ni volver de un cambio de
+      // dominio, que reescriben los destinos de los alias de toda la
+      // instancia mientras aquí se espera al motor. Guardar la lista leída al
+      // principio devolvería a un alias direcciones que ya no son las vigentes.
+      const leerAlias = (aliasId: string) =>
+        db.prepare(`${ALIAS_SELECT} WHERE a.id = ?`).get(aliasId) as AliasRow | undefined;
+      const sinEste = (alias: AliasRow) =>
+        parseDestinations(alias.destinations_json).filter((d) => d.toLowerCase() !== email);
+      const aliasesUpdated: string[] = [];
+      const aliasesDeleted: string[] = [];
+      for (const { id: aliasId } of candidates) {
+        const alias = leerAlias(aliasId);
+        if (!alias) continue;
+        const destinations = parseDestinations(alias.destinations_json);
+        if (!destinations.some((d) => d.toLowerCase() === email)) continue;
+        const remaining = sinEste(alias);
+        const aliasEmail = `${alias.local_part}@${alias.domain}`;
+        if (remaining.length === 0) {
+          // Un alias sin destinos no entrega a nadie: se elimina.
+          await engine.deleteAlias(aliasEmail);
+          db.prepare('DELETE FROM aliases WHERE id = ?').run(alias.id);
+          aliasesDeleted.push(aliasEmail);
+        } else {
+          const internal = remaining.filter((d) => isInstanceMailbox(d));
+          const external = remaining.filter((d) => !internal.includes(d));
+          // Los destinos internos van por usuario del motor, no por dirección.
+          await engine.upsertAlias(aliasEmail, internal.map(nombreEnMotor), external);
+          // En el motor ya está bien lo que cambiara mientras tanto; aquí solo
+          // se quita la dirección borrada.
+          const actual = leerAlias(alias.id);
+          if (actual) {
+            db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(
+              JSON.stringify(sinEste(actual)),
+              alias.id,
+            );
+          }
+          aliasesUpdated.push(aliasEmail);
+        }
+      }
+
+      await engine.deleteMailbox(login);
+      db.prepare('DELETE FROM mailboxes WHERE id = ?').run(id);
+      audit(req, 'mailbox.deleted', { id, email: mailbox.email, aliasesUpdated, aliasesDeleted }, domain.clientId);
+      return { ok: true, aliasesUpdated, aliasesDeleted };
+    });
+  });
+
+  /**
+   * «Actualizar ahora»: el buzón pasa a entrar con su dirección vigente. Sus
+   * dispositivos configurados con el usuario anterior dejan de conectar hasta
+   * que se actualicen; el correo y las contraseñas se conservan.
+   */
+  app.post('/api/mailboxes/:id/login-update', async (req) => {
+    const { id } = req.params as { id: string };
+    const { user, domain } = requireMailboxAccess(req, id);
+    z.object({}).parse(req.body ?? {});
+    // Ya al día: no hay nada que cambiar ni que comprobar (idempotente).
+    if (!getMailbox(id).loginPending) return { mailbox: getMailbox(id) };
+    // Una aplicación de Skyway envía con el usuario anterior: solo Skyway
+    // (con el token de gestión de la administración) puede cambiarlo, porque
+    // después actualiza sus variables y la vuelve a desplegar. Un token que
+    // se crea un usuario del cliente no lo es: con él la aplicación dejaría
+    // de enviar sin que nadie la actualizara.
+    const porIntegracion = req.authVia?.kind === 'token' && user.role === 'admin';
+    const apps = appsSkywayDe(id);
+    if (apps.length > 0 && !porIntegracion) throw errorBuzonUsadoPorApp(apps);
+    const cambio = await actualizarUsuario(id);
+    if (cambio) {
+      audit(
+        req,
+        'mailbox.login_updated',
+        { id, de: cambio.de, a: cambio.a, por: porIntegracion ? 'integracion' : 'panel' },
+        domain.clientId,
+      );
+    }
+    return { mailbox: getMailbox(id) };
   });
 
   /* --------------------------------- Alias -------------------------------- */
@@ -874,6 +1013,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const domain = getDomain(body.domainId);
     const user = requireClientAccess(req, domain.clientId);
     return withLock(clientLockKey(domain.clientId), async () => {
+    assertAltasPermitidas(domain.id);
     const localPart = normalizeLocalPart(body.localPart);
     // postmaster@ y abuse@ los exigen los estándares: no cuentan para el plan.
     if (esDireccionObligatoria(localPart)) assertClientActive(domain.clientId);
@@ -884,10 +1024,13 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     if (mailboxExists(domain.id, localPart)) {
       throw conflict(`Ya existe un buzón ${email}. Elige otro nombre para el alias.`, 'mailbox_exists');
     }
+    if (loginInUse(email)) throw loginInUseError(email, 'alias');
     if (aliasExists(domain.id, localPart)) throw aliasExistsError(email);
 
     const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
-    await getEngine().upsertAlias(email, internal, external);
+    await asegurarDominioEnMotor(domain.domain);
+    // Los destinos internos van por usuario del motor, no por dirección.
+    await getEngine().upsertAlias(email, internal.map(nombreEnMotor), external);
 
     const id = randomId('als');
     try {
@@ -910,26 +1053,34 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
 
   app.patch('/api/aliases/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const row = getAliasRow(id);
-    requireClientAccess(req, row.client_id);
+    const inicial = getAliasRow(id);
+    requireClientAccess(req, inicial.client_id);
     const body = z.object({ destinations: destinationsSchema }).parse(req.body ?? {});
-    const email = `${row.local_part}@${row.domain}`;
-    const { all, internal, external } = classifyDestinations(row.client_id, email, body.destinations);
-    await getEngine().upsertAlias(email, internal, external);
-    db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(all), id);
-    audit(req, 'alias.updated', { id, email, destinations: all.length, external: external.length }, row.client_id);
-    return { alias: toAlias(getAliasRow(id)) };
+    // Con el cerrojo del cliente: pasar o volver de un cambio de dominio
+    // renombra el alias y lo muda de dominio, y no deben cruzarse con esto.
+    return withLock(clientLockKey(inicial.client_id), async () => {
+      const row = getAliasRow(id);
+      const email = `${row.local_part}@${row.domain}`;
+      const { all, internal, external } = classifyDestinations(row.client_id, email, body.destinations);
+      await getEngine().upsertAlias(email, internal.map(nombreEnMotor), external);
+      db.prepare('UPDATE aliases SET destinations_json = ? WHERE id = ?').run(JSON.stringify(all), id);
+      audit(req, 'alias.updated', { id, email, destinations: all.length, external: external.length }, row.client_id);
+      return { alias: toAlias(getAliasRow(id)) };
+    });
   });
 
   app.delete('/api/aliases/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const row = getAliasRow(id);
-    requireClientAccess(req, row.client_id);
-    const email = `${row.local_part}@${row.domain}`;
-    await getEngine().deleteAlias(email);
-    db.prepare('DELETE FROM aliases WHERE id = ?').run(id);
-    audit(req, 'alias.deleted', { id, email }, row.client_id);
-    return { ok: true };
+    const inicial = getAliasRow(id);
+    requireClientAccess(req, inicial.client_id);
+    return withLock(clientLockKey(inicial.client_id), async () => {
+      const row = getAliasRow(id);
+      const email = `${row.local_part}@${row.domain}`;
+      await getEngine().deleteAlias(email);
+      db.prepare('DELETE FROM aliases WHERE id = ?').run(id);
+      audit(req, 'alias.deleted', { id, email }, row.client_id);
+      return { ok: true };
+    });
   });
 
   /* ------------------------ Direcciones obligatorias ----------------------- */
@@ -954,14 +1105,16 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     return withLock(clientLockKey(domain.clientId), async () => {
       assertClientActive(domain.clientId);
       assertDomainOwnership(domain.id);
+      assertAltasPermitidas(domain.id);
       const engine = getEngine();
+      await asegurarDominioEnMotor(domain.domain);
       for (const localPart of DIRECCIONES_OBLIGATORIAS) {
         if (mailboxExists(domain.id, localPart)) continue;
         const email = `${localPart}@${domain.domain}`;
         const { all, internal, external } = classifyDestinations(domain.clientId, email, body.destinations);
         // Motor primero y base después, alias a alias: si algo falla a mitad,
         // cada uno queda igual en los dos sitios y repetir lo completa.
-        await engine.upsertAlias(email, internal, external);
+        await engine.upsertAlias(email, internal.map(nombreEnMotor), external);
         const existing = db
           .prepare('SELECT id FROM aliases WHERE domain_id = ? AND local_part = ?')
           .get(domain.id, localPart) as { id: string } | undefined;

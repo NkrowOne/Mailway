@@ -4,7 +4,9 @@ import type { EngineDnsRecord } from '../engine/types';
 import { normalizarTxt, trocearTxt as trocear } from '../core/cloudflare';
 import { conflict } from '../core/errors';
 import { isInternalHost, normalizeHostname } from '../core/hostnames';
+import { db } from '../core/db';
 import { esDmarc, esSpf, politicaDmarc } from '../core/mailauth';
+import { getInstanceSettings } from './settings';
 
 /**
  * Registros DNS de correo: selección común y fichero de zona.
@@ -101,6 +103,22 @@ export function esRegistroWeb(record: EngineDnsRecord, domain: string): boolean 
   return name === d || name === `www.${d}`;
 }
 
+/**
+ * ¿Es el CNAME mail.<dominio> que propone el motor (hacia el nombre del
+ * servidor)? Mailway no lo usa: los datos de conexión, la autoconfiguración y
+ * el certificado del motor llevan siempre el nombre del servidor de Ajustes.
+ * Publicarlo, o reemplazar con él el mail.<dominio> de un hosting, haría que
+ * los dispositivos aún sin reconfigurar conectaran con este servidor antes de
+ * tiempo: aviso de certificado (no cubre ese nombre) y contraseña antigua
+ * rechazada, con fallos de autenticación que alimentan el bloqueo de IPs del
+ * motor. Además se perdería el nombre del servidor anterior, que hace falta
+ * para importar el correo.
+ */
+export function esCnameMailDelMotor(record: EngineDnsRecord, domain: string): boolean {
+  if (record.type.toUpperCase() !== 'CNAME') return false;
+  return sinPunto(record.name).toLowerCase() === `mail.${sinPunto(domain).toLowerCase()}`;
+}
+
 /** Registros de la web que el motor propuso y la selección deja fuera, sin duplicados. */
 export function registrosWebExcluidos(domain: string, records: EngineDnsRecord[]): EngineDnsRecord[] {
   const vistos = new Set<string>();
@@ -128,6 +146,8 @@ export function registrosWebExcluidos(domain: string, records: EngineDnsRecord[]
  *   `ua-auto-config` y `_ua-auto-config`, y `_validation-persist`);
  * - fuera los registros de la web del dominio raíz y de www (A, AAAA, CNAME,
  *   HTTPS y SVCB): publicar el correo nunca debe pisar la web del cliente;
+ * - fuera el CNAME mail.<dominio> (esCnameMailDelMotor): Mailway no lo usa y
+ *   pisaría el nombre del servidor de correo anterior;
  * - fuera los nombres ajenos al dominio (un importador los rechazaría y
  *   Cloudflare los crearía en otra zona);
  * - sin duplicados.
@@ -139,6 +159,7 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
     const type = record.type.toUpperCase();
     if (TIPOS_EXCLUIDOS.has(type)) continue;
     if (esRegistroWeb(record, domain)) continue;
+    if (esCnameMailDelMotor(record, domain)) continue;
     const name = sinPunto(record.name).toLowerCase();
     if (!dentroDelDominio(name, domain)) continue;
     if (ETIQUETAS_EXCLUIDAS.has(name.split('.')[0]!)) continue;
@@ -148,12 +169,82 @@ export function seleccionarRegistros(domain: string, records: EngineDnsRecord[])
       if (puerto === null || !PUERTOS_PUBLICADOS.has(puerto)) continue;
     }
     const limpio: EngineDnsRecord = { type, name, content: contenidoCanonico({ ...record, type }) };
+    limpio.content = propuestaDeMailway(limpio, domain, records);
     const clave = `${type}|${name}|${limpio.content.toLowerCase()}`;
     if (vistos.has(clave)) continue;
     vistos.add(clave);
     out.push(limpio);
   }
   return out;
+}
+
+/* --------------------------- SPF y DMARC propuestos ----------------------- */
+
+/**
+ * Nombre del servidor de correo para el SPF: el de Ajustes y, si falta, el
+ * destino MX que propone el motor (su nombre en ejecución).
+ */
+function nombreDelServidor(domain: string, records: EngineDnsRecord[]): string {
+  const deAjustes = normalizeHostname(getInstanceSettings().mailHostname);
+  if (deAjustes) return deAjustes;
+  const mx = records.find((r) => r.type.toUpperCase() === 'MX' && dentroDelDominio(r.name, domain));
+  return mx ? destinoMx(mx.content) : '';
+}
+
+/**
+ * Buzón o alias del dominio que puede recibir los informes DMARC (dmarc@ o
+ * postmaster@), o null. Sin destino no se piden informes: irían a una
+ * dirección que no existe.
+ */
+export function destinoInformesDmarc(domain: string): string | null {
+  const fila = db
+    .prepare(
+      `SELECT local_part FROM (
+         SELECT m.local_part FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE d.domain = ?
+         UNION SELECT a.local_part FROM aliases a JOIN domains d ON d.id = a.domain_id WHERE d.domain = ?
+       ) WHERE local_part IN ('dmarc', 'postmaster') ORDER BY local_part = 'dmarc' DESC LIMIT 1`,
+    )
+    .get(domain, domain) as { local_part: string } | undefined;
+  return fila ? `${fila.local_part}@${domain}` : null;
+}
+
+/** SPF que propone Mailway para un dominio que no tiene ninguno. */
+export function spfPropuesto(servidor: string): string {
+  return `v=spf1 a:${servidor} ~all`;
+}
+
+/** DMARC que propone Mailway para un dominio que no tiene ninguno. */
+export function dmarcPropuesto(informes: string | null): string {
+  return informes ? `v=DMARC1; p=none; rua=mailto:${informes}` : 'v=DMARC1; p=none';
+}
+
+/**
+ * Lo que propone Stalwart para el SPF y el DMARC del dominio sirve para un
+ * dominio que solo envía desde este servidor, pero no para uno que llega de
+ * otro proveedor:
+ * - SPF «v=spf1 mx ra=postmaster -all»: «mx» no autoriza a este servidor
+ *   mientras el MX siga en el otro proveedor (y autoriza los servidores de
+ *   ENTRADA de ese proveedor, no los de salida), y «-all» deja fuera a la web
+ *   o a cualquier herramienta que envíe hoy en nombre del dominio. Mailway
+ *   propone «v=spf1 a:<servidor> ~all»: autoriza a este servidor antes y
+ *   después del cambio de MX, por IPv4 e IPv6, con una sola consulta DNS.
+ * - DMARC «p=reject; rua=…; ruf=…» a postmaster@<dominio>, que no existe:
+ *   Mailway propone «p=none» (no rechaza correo legítimo mientras se revisa)
+ *   e informes solo si hay un buzón o alias dmarc@ o postmaster@ que los
+ *   reciba. La política se puede endurecer después.
+ * Lo que ya está publicado no se toca: la comprobación acepta cualquier SPF
+ * que autorice a este servidor y cualquier DMARC con una política válida.
+ */
+function propuestaDeMailway(record: EngineDnsRecord, domain: string, records: EngineDnsRecord[]): string {
+  if (record.type !== 'TXT') return record.content;
+  const name = sinPunto(record.name).toLowerCase();
+  const raiz = sinPunto(domain).toLowerCase();
+  if (name === raiz && esSpf(record.content)) {
+    const servidor = nombreDelServidor(domain, records);
+    return servidor ? spfPropuesto(servidor) : record.content;
+  }
+  if (name === `_dmarc.${raiz}` && esDmarc(record.content)) return dmarcPropuesto(destinoInformesDmarc(raiz));
+  return record.content;
 }
 
 /* ---------------------------- MX del servidor ------------------------------ */
@@ -382,6 +473,19 @@ export function generarZona(opts: OpcionesZona): string {
     );
   }
 
+  // Lo mismo con mail.<dominio>: el motor lo propone, pero no se usa.
+  if (opts.records.some((r) => esCnameMailDelMotor(r, opts.domain))) {
+    cabecera.push(
+      ';  mail.' + opts.domain + ' NO SE INCLUYE',
+      ';    Los programas de correo se configuran con el nombre del servidor que',
+      ';    indican los datos de conexión, y su certificado solo cubre ese nombre.',
+      ';    Si mail.' + opts.domain + ' apunta hoy al proveedor anterior, mantenlo así',
+      ';    hasta terminar la importación del correo y la reconfiguración de los',
+      ';    dispositivos.',
+      ';',
+    );
+  }
+
   cabecera.push(
     ';  IMPORTACIÓN EN CLOUDFLARE',
     ';    DNS  →  Records  →  Import and Export  →  Import DNS records',
@@ -427,6 +531,18 @@ export function nombreFichero(domain: string, nivel: NivelZona): string {
 
 /* ---------------------- Conflicto con otro proveedor ---------------------- */
 
+/**
+ * Aviso de una política MTA-STS del proveedor anterior (RFC 8461 §5.1): un
+ * remitente con la política en caché no entrega en un MX que no figura en
+ * ella hasta que caduca «max_age» o cambia el «id».
+ */
+export function avisoMtaSts(domain: string, txt: string): string {
+  return (
+    `El dominio publica una política MTA-STS (${txt}). Antes de cambiar el MX, añade el MX nuevo a la política publicada en https://mta-sts.${domain}/.well-known/mta-sts.txt (o pasa a «mode: none»), cambia el «id» del registro _mta-sts y espera el tiempo de su «max_age»: ` +
+    'los servidores que la tengan en caché (Gmail, Microsoft) no entregarán en el MX nuevo hasta que caduque, y el correo se retrasará o se devolverá.'
+  );
+}
+
 export interface ConflictoCorreo {
   /** El dominio ya recibe correo en otro sitio. */
   hayOtroProveedor: boolean;
@@ -441,6 +557,10 @@ export interface ConflictoCorreo {
   mxInternos: string[];
   /** Explicación de `mxInternos`, lista para mostrar; null si no hay ninguno. */
   avisoServidor: string | null;
+  /** TXT _mta-sts del dominio (v=STSv1) si publica una política MTA-STS. */
+  politicaMtaSts: string | null;
+  /** Qué hacer con esa política antes del cambio; null si no hay o el MX ya es de aquí. */
+  avisoMtaSts: string | null;
 }
 
 /**
@@ -461,6 +581,10 @@ export function evaluarConflicto(input: {
   dmarc: string[] | null;
   mailHostname: string;
   mxEsperados?: string[] | null;
+  /** TXT de _mta-sts.<dominio> (null = no se pudo consultar). */
+  mtaSts?: string[] | null;
+  /** Dominio, para indicar dónde está la política MTA-STS. */
+  domain?: string;
 }): ConflictoCorreo {
   const propios = new Set(
     [input.mailHostname, ...(input.mxEsperados ?? [])].map(normalizeHostname).filter(Boolean),
@@ -500,6 +624,10 @@ export function evaluarConflicto(input: {
     aviso = partes.join(' ');
   }
 
+  const politicaMtaSts = (input.mtaSts ?? []).find((t) => /^v=stsv1(\s*;|$)/i.test(t.trim())) ?? null;
+  const conAvisoMtaSts = hayOtroProveedor && politicaMtaSts !== null;
+  if (conAvisoMtaSts && aviso) aviso += ` ${avisoMtaSts(input.domain ?? 'tu-dominio', politicaMtaSts!)}`;
+
   return {
     hayOtroProveedor,
     mxActuales,
@@ -508,5 +636,7 @@ export function evaluarConflicto(input: {
     aviso,
     mxInternos,
     avisoServidor: mxInternos.length > 0 ? avisoMxInterno(mxInternos) : null,
+    politicaMtaSts,
+    avisoMtaSts: conAvisoMtaSts ? avisoMtaSts(input.domain ?? 'tu-dominio', politicaMtaSts!) : null,
   };
 }

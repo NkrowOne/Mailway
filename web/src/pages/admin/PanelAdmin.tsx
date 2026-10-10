@@ -21,11 +21,15 @@ import { medicionCompleta, TEXTO_MEDICION_INCOMPLETA } from '../../lib/entregabi
 import { nombreMotor } from '../../lib/motor';
 import { autorAnotacion, detalleAnotacion, etiquetaAccion } from '../../lib/tokens';
 
-/** Atajos a las altas y conexiones más frecuentes, sin buscarlas en el índice. */
+/**
+ * Atajos a las altas y conexiones más frecuentes, sin buscarlas en el índice.
+ * Las altas llevan `?nuevo=1`: la vista abre su diálogo directamente, que es
+ * lo que promete el texto del botón.
+ */
 const accesosRapidos: { to: string; label: string }[] = [
-  { to: '/clientes', label: 'Alta de cliente' },
-  { to: '/dominios', label: 'Añadir dominio' },
-  { to: '/buzones', label: 'Crear buzón' },
+  { to: '/clientes?nuevo=1', label: 'Alta de cliente' },
+  { to: '/dominios?nuevo=1', label: 'Añadir dominio' },
+  { to: '/buzones?nuevo=1', label: 'Crear buzón' },
   { to: '/conexiones', label: 'Conexiones' },
   { to: '/planes', label: 'Planes' },
   { to: '/ajustes', label: 'Ajustes' },

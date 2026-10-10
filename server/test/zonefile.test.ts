@@ -104,8 +104,19 @@ test('la zona sale en formato BIND con nombres absolutos', () => {
   });
   assert.match(zona, /^\$TTL 3600$/m);
   assert.match(zona, /^panaderialaura\.com\.\t3600\tIN\tMX\t10 mail\.nkrow\.com\.$/m);
-  assert.match(zona, /^panaderialaura\.com\.\t3600\tIN\tTXT\t"v=spf1 mx -all"$/m);
-  assert.match(zona, /^_dmarc\.panaderialaura\.com\.\t3600\tIN\tTXT\t"v=DMARC1; p=quarantine;"$/m);
+  // Mailway propone su SPF y su DMARC, no los del motor (T3/T15).
+  assert.match(zona, /^panaderialaura\.com\.\t3600\tIN\tTXT\t"v=spf1 a:mail\.nkrow\.com ~all"$/m);
+  assert.match(zona, /^_dmarc\.panaderialaura\.com\.\t3600\tIN\tTXT\t"v=DMARC1; p=none"$/m);
+});
+
+test('el SPF propuesto autoriza al servidor por su nombre y el DMARC empieza en p=none, sin informes a una dirección que no existe', () => {
+  const sel = seleccionarRegistros(dominio, [
+    { type: 'MX', name: `${dominio}.`, content: '10 mail.nkrow.com.' },
+    { type: 'TXT', name: `${dominio}.`, content: 'v=spf1 mx ra=postmaster -all' },
+    { type: 'TXT', name: `_dmarc.${dominio}.`, content: `v=DMARC1; p=reject; rua=mailto:postmaster@${dominio}; ruf=mailto:postmaster@${dominio}` },
+  ]);
+  assert.equal(sel.find((r) => r.name === dominio && r.type === 'TXT')!.content, 'v=spf1 a:mail.nkrow.com ~all');
+  assert.equal(sel.find((r) => r.name === `_dmarc.${dominio}`)!.content, 'v=DMARC1; p=none');
 });
 
 test('la cabecera avisa de la nube naranja, que es el fallo que rompe el correo', () => {
@@ -310,7 +321,8 @@ test('la selección nunca incluye A, AAAA, CNAME, HTTPS ni SVCB del dominio raí
   // El correo del dominio raíz (MX, SPF) y los demás nombres siguen.
   assert.ok(sel.some((r) => r.type === 'MX' && r.name === dominio));
   assert.ok(sel.some((r) => r.type === 'TXT' && r.name === dominio));
-  assert.ok(sel.some((r) => r.type === 'CNAME' && r.name === `mail.${dominio}`));
+  // mail.<dominio> tampoco (T7): Mailway no lo usa y pisaría el del proveedor anterior.
+  assert.ok(!sel.some((r) => r.type === 'CNAME' && r.name === `mail.${dominio}`));
   assert.ok(sel.some((r) => r.type === 'A' && r.name === `servidor.${dominio}`));
   assert.equal(registrosWebExcluidos(dominio, conWeb).length, 5);
 });
@@ -327,10 +339,23 @@ test('el fichero de zona dice al principio qué registros de la web ha dejado fu
   const cuerpo = lineas.filter((l) => l && !l.startsWith(';') && !l.startsWith('$'));
   assert.ok(!cuerpo.some((l) => l.startsWith(`${dominio}.\t`) && /\t(A|AAAA|CNAME|HTTPS|SVCB)\t/.test(l)));
   assert.ok(!cuerpo.some((l) => l.startsWith(`www.${dominio}.\t`)));
-  assert.ok(cuerpo.some((l) => l.startsWith(`mail.${dominio}.\t`)), 'mail.<dominio> no es la web');
+  assert.ok(!cuerpo.some((l) => l.startsWith(`mail.${dominio}.\t`)), 'mail.<dominio> no se publica');
+  assert.ok(zona.includes(`mail.${dominio} NO SE INCLUYE`), 'y la cabecera explica por qué');
 
   const sinWeb = generarZona({ domain: dominio, records: registros, nivel: 'completo' });
   assert.ok(!sinWeb.includes('REGISTROS DE LA WEB EXCLUIDOS'), 'sin nada excluido no hay aviso');
+});
+
+test('el CNAME mail.<dominio> que propone el motor no se publica ni reemplaza el del hosting', () => {
+  const propuestos: EngineDnsRecord[] = [
+    { type: 'MX', name: `${dominio}.`, content: '10 mail.nkrow.com.' },
+    { type: 'CNAME', name: `mail.${dominio}.`, content: 'mail.nkrow.com.' },
+    { type: 'CNAME', name: `autoconfig.${dominio}.`, content: 'mail.nkrow.com.' },
+  ];
+  const sel = seleccionarRegistros(dominio, propuestos);
+  assert.deepEqual(sel.map((r) => r.name).sort(), [`autoconfig.${dominio}`, dominio]);
+  const zona = generarZona({ domain: dominio, records: propuestos, nivel: 'recomendados' });
+  assert.match(zona, /mantenlo así/);
 });
 
 /* ------------------------ MX del motor e interno --------------------------- */

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db, now } from '../core/db';
 import { decryptSecret, encryptSecret, randomId } from '../core/crypto';
-import { badRequest, conflict, forbidden, notFound } from '../core/errors';
+import { HttpError, badRequest, conflict, forbidden, notFound } from '../core/errors';
 import {
   CloudflareClient,
   CloudflareError,
@@ -13,12 +13,14 @@ import {
   normalizarTxt,
   pistaToken,
   trocearTxt,
+  type CfDatosRegistro,
   type CfLote,
   type CfRegistro,
   type CfRegistroNuevo,
   type CfZona,
 } from '../core/cloudflare';
-import { diagnosticoSpf, esDmarc, esSpf, politicaDmarc, type ContextoSpf } from '../core/mailauth';
+import { contarConsultasSpf, esDmarc, esSpf, fusionExcedeConsultas, fusionarSpf, MAX_CONSULTAS_SPF, politicaDmarc } from '../core/mailauth';
+import { lookupTxt } from '../core/dns';
 import { getEngine } from '../engine';
 import type { EngineDnsRecord } from '../engine/types';
 import { audit } from './audit';
@@ -28,7 +30,7 @@ import { instanceAutoconfigBase } from './connection';
 import { getDomain, marcarPropiedadComprobada, refreshDomainDns, type DomainRecord } from './domains';
 import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import { getClientDomain, refreshClientDomain, type ClientDomain } from './whitelabel';
-import { esObligatorio, exigirMxPublico, filtrarPorNivel, registrosDelDominio } from './zonefile';
+import { avisoMtaSts, esObligatorio, exigirMxPublico, filtrarPorNivel, registrosDelDominio } from './zonefile';
 
 /**
  * Integración con Cloudflare: el DNS de correo de un dominio en un clic.
@@ -322,6 +324,12 @@ export interface CambioPlan {
   current?: string;
   reason: string;
   required: boolean;
+  /**
+   * Forma parte del cambio de proveedor: el MX que hoy lleva el correo a otro
+   * sitio y lo que solo debe crearse a la vez que él (el SPF y el DMARC de un
+   * dominio que no los tenía). «Hacer el cambio» reemplaza justo estos.
+   */
+  alCambiar?: boolean;
 }
 
 interface Operaciones {
@@ -336,6 +344,8 @@ export interface CambioInterno extends CambioPlan {
   operaciones: Operaciones | null;
   /** Operaciones para sustituir lo existente si se confirma el reemplazo. */
   reemplazo: Operaciones | null;
+  /** Lo que hay ahora en la zona con este nombre: la copia para deshacer un reemplazo sale de aquí. */
+  aqui: CfRegistro[];
 }
 
 /** Registro deseado, ya en la forma en que se compara con Cloudflare. */
@@ -466,27 +476,8 @@ function mismoSrv(r: CfRegistro, d: Deseado): boolean {
   );
 }
 
-/**
- * Añade al SPF actual los mecanismos que faltan (normalmente «mx») justo
- * antes del primer «all», sin tocar el resto: los include de otros servicios
- * y el calificador final (~all, -all) son decisiones del titular. Usa la
- * misma lectura que la comprobación DNS (diagnosticoSpf): un «mx» escrito
- * detrás de «all» no cuenta, porque ningún receptor llega a leerlo.
- * Devuelve null si no falta nada.
- */
-export function fusionarSpf(
-  actual: string,
-  deseado: string,
-  ctx: ContextoSpf = {},
-): { valor: string; anadidos: string[] } | null {
-  const { faltan } = diagnosticoSpf(actual, deseado, ctx);
-  if (faltan.length === 0) return null;
-  const tokens = actual.trim().split(/\s+/);
-  const indice = tokens.findIndex((t, i) => i > 0 && /^[-~?+]?all$/i.test(t));
-  if (indice === -1) tokens.push(...faltan);
-  else tokens.splice(indice, 0, ...faltan);
-  return { valor: tokens.join(' '), anadidos: faltan };
-}
+/** La fusión del SPF vive en core/mailauth.ts: la usan también la ficha y la comprobación. */
+export { fusionarSpf };
 
 const MOTIVO_PROXY =
   'Está en modo proxy (nube naranja): se cambiará a «Solo DNS», ya que el proxy de Cloudflare impide la conexión de los programas de correo.';
@@ -516,7 +507,43 @@ export function planificar(
     lista.push(r);
     porNombre.set(r.name, lista);
   }
-  return deseados.map((d) => planificarUno(d, porNombre.get(d.name) || [], ctx));
+  const cambios = deseados.map((d) => planificarUno(d, porNombre.get(d.name) || [], ctx));
+  return aplazarHastaElCambio(cambios, ctx);
+}
+
+/**
+ * Mientras el MX lleve el correo a otro proveedor, ni el alta ni «Aplicar»
+ * crean el SPF ni el DMARC de un dominio que no los tenía: un SPF nuevo
+ * dejaría sin autorizar a los servidores que envían hoy en nombre del dominio
+ * (el proveedor actual, la web en otro hosting, Mailchimp…) y un DMARC nuevo
+ * cambiaría la política de un correo que todavía no pasa por aquí. Pasan a
+ * ser parte del cambio: conflictos que se aplican al reemplazar el MX. Lo que
+ * solo añade (fusionar el SPF existente) sí se aplica antes.
+ */
+function aplazarHastaElCambio(cambios: CambioInterno[], ctx: ContextoPlan): CambioInterno[] {
+  const mxDelCambio = cambios.find((c) => c.type === 'MX' && c.action === 'conflict' && c.name === ctx.dominio);
+  if (!mxDelCambio) return cambios;
+  const proveedor = mxDelCambio.current ?? 'otro proveedor';
+  return cambios.map((c) => {
+    if (c === mxDelCambio) return { ...c, alCambiar: true };
+    if (c.action !== 'create' || c.type !== 'TXT' || !c.operaciones) return c;
+    const esSpfDelDominio = c.name === ctx.dominio && esSpf(c.content);
+    const esDmarcDelDominio = c.name === `_dmarc.${ctx.dominio}` && esDmarc(c.content);
+    if (!esSpfDelDominio && !esDmarcDelDominio) return c;
+    return {
+      ...c,
+      action: 'conflict',
+      alCambiar: true,
+      current: undefined,
+      reason: esSpfDelDominio
+        ? `El correo del dominio se recibe hoy en otro proveedor (${proveedor}). El SPF se creará al hacer el cambio, junto con el MX: crearlo ahora dejaría sin autorizar a los servidores que envían hoy en nombre del dominio.`
+        : `El correo del dominio se recibe hoy en otro proveedor (${proveedor}). El DMARC se creará al hacer el cambio, junto con el MX, con la política p=none: así no se rechaza correo legítimo mientras se revisan los informes.`,
+      operaciones: null,
+      // Si el MX no se puede reemplazar desde aquí (Email Routing), tampoco
+      // esto: crearlo sin el cambio de MX sería justo lo que se evita.
+      reemplazo: mxDelCambio.reemplazo ? c.operaciones : null,
+    };
+  });
 }
 
 /**
@@ -525,8 +552,26 @@ export function planificar(
  */
 export interface ContextoPlan {
   apex: string;
+  /** Dominio de correo (el vértice de la zona solo si coinciden). */
+  dominio?: string;
   publicIp?: string;
   comentario?: string;
+  /** Nombre del servidor de correo (Ajustes): «a:<servidor>» lo autoriza en el SPF. */
+  servidor?: string;
+  /**
+   * Consultas DNS que gasta hoy el SPF del dominio siguiendo sus include
+   * (null = no se pudieron contar): la fusión no puede pasar de 10.
+   */
+  consultasSpf?: number | null;
+  /** TXT de la política MTA-STS que publica hoy el dominio, si hay alguna. */
+  politicaMtaSts?: string | null;
+  /** ¿Apunta ya el MX del dominio a este servidor? Con él, «mx» en el SPF autoriza a este servidor. */
+  mxPropio?: boolean | null;
+}
+
+/** Mecanismos que autorizan a este servidor en el SPF propuesto («a:<servidor>» o «mx»). */
+function mecanismosAutorizantes(spf: string): string {
+  return spf.trim().split(/\s+/).slice(1).filter((t) => !/^[-~?+]?all$/i.test(t) && !t.includes('=')).join(' ') || 'mx';
 }
 
 function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): CambioInterno {
@@ -545,6 +590,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
     reason,
     operaciones: { ...vacias(), posts: [cuerpoRegistro(d, comentario)] },
     reemplazo: null,
+    aqui,
   });
   const conservar = (reason: string, actual?: CfRegistro[]): CambioInterno => ({
     ...base,
@@ -553,6 +599,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
     ...(actual?.length ? { current: actual.map(describir).join(' · ') } : {}),
     operaciones: null,
     reemplazo: null,
+    aqui,
   });
   const enConflicto = (reason: string, actual: CfRegistro[], reemplazo: Operaciones | null): CambioInterno => ({
     ...base,
@@ -562,6 +609,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
     operaciones: null,
     // Un registro bloqueado por Cloudflare no se puede reemplazar por la API.
     reemplazo: actual.some((r) => r.bloqueado) ? null : reemplazo,
+    aqui,
   });
   const borrarYCrear = (aBorrar: CfRegistro[]): Operaciones => ({
     ...vacias(),
@@ -589,6 +637,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
             current: describir(propio),
             operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: true }] },
             reemplazo: null,
+            aqui,
           };
         }
         if (!propio.proxied) return conservar('Ya existe con el valor correcto.', [propio]);
@@ -600,6 +649,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           current: describir(propio),
           operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: false }] },
           reemplazo: null,
+          aqui,
         };
       }
       if (aqui.length === 0) return crear();
@@ -624,6 +674,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           current: aIp.map(describir).join(' · '),
           operaciones: { ...vacias(), patches: sinProxy.map((r) => ({ id: r.id, proxied: true })) },
           reemplazo: null,
+          aqui,
         };
       }
       if (aEquivalentes && aIp.every((r) => !r.proxied)) {
@@ -676,6 +727,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
       const hosts = porDelante.map((r) => sinPunto(r.content)).join(', ');
       const routing = ajenos.some((r) => esHostEmailRouting(r.content));
       let reason = `El dominio recibe hoy el correo en ${hosts}. Si se reemplazan estos MX, el correo dejará de llegar a ese proveedor.`;
+      if (ctx.politicaMtaSts) reason += ` ${avisoMtaSts(ctx.dominio ?? d.name, ctx.politicaMtaSts)}`;
       if (routing) {
         reason +=
           ' Pertenecen a Cloudflare Email Routing: desactívalo en el panel de Cloudflare (Email → Email Routing → Settings) antes de aplicar.';
@@ -699,20 +751,39 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           }
           return crear();
         }
+        const autorizar = mecanismosAutorizantes(d.content);
         if (spfs.length > 1) {
           // Nunca se corrige solo: decidir qué mecanismos sobran es del titular.
           return enConflicto(
-            `Hay ${spfs.length} registros SPF con este nombre y solo puede existir uno: los servidores receptores los invalidan todos. Combínalos manualmente en un único registro v=spf1 que incluya «mx».`,
+            `Hay ${spfs.length} registros SPF con este nombre y solo puede existir uno: los servidores receptores los invalidan todos. Combínalos manualmente en un único registro v=spf1 que incluya «${autorizar}».`,
             spfs,
             null,
           );
         }
         const actual = spfs[0]!;
-        const fusion = fusionarSpf(txtDe(actual), d.content, { nombre: d.name, ipServidor: ctx.publicIp });
+        const fusion = fusionarSpf(txtDe(actual), d.content, {
+          nombre: d.name,
+          ipServidor: ctx.publicIp,
+          servidor: ctx.servidor,
+          mxPropio: ctx.mxPropio,
+        });
         if (!fusion) {
           return conservar('El SPF actual ya autoriza a los servidores de correo del dominio.', [actual]);
         }
         if (actual.bloqueado) return enConflicto(MOTIVO_EMAIL_ROUTING, [actual], null);
+        // Más de 10 consultas DNS y el SPF entero deja de valer (permerror):
+        // se rompería el envío de todos los remitentes del dominio.
+        const limite = fusionExcedeConsultas(txtDe(actual), fusion.consultasNuevas, ctx.consultasSpf ?? null);
+        if (limite.excede) {
+          const ip = ctx.publicIp ? ` o «ip4:${ctx.publicIp}» (no gasta consultas; añade también «ip6:» si el servidor envía por IPv6)` : '';
+          return enConflicto(
+            limite.exacto
+              ? `El SPF actual ya gasta ${limite.total - fusion.consultasNuevas} consultas DNS siguiendo sus include; con «${fusion.anadidos.join(' ')}» pasaría de ${MAX_CONSULTAS_SPF} y los receptores lo darían por no válido (permerror) para todos los remitentes del dominio. Retira los include que ya no se usen o autoriza este servidor con «${fusion.anadidos.join(' ')}»${ip} cuando haya margen.`
+              : `El SPF actual tiene muchos mecanismos que gastan consultas DNS y no se han podido contar las de sus include: con «${fusion.anadidos.join(' ')}» podría pasar de ${MAX_CONSULTAS_SPF} y los receptores lo darían por no válido (permerror) para todos los remitentes del dominio. Revísalo y añade «${fusion.anadidos.join(' ')}»${ip} manualmente si hay margen.`,
+            [actual],
+            null,
+          );
+        }
         return {
           ...base,
           content: fusion.valor,
@@ -722,6 +793,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           // Solo cambia el contenido: el TTL y el comentario son del titular.
           operaciones: { ...vacias(), patches: [{ id: actual.id, content: trocearTxt(fusion.valor) }] },
           reemplazo: null,
+          aqui,
         };
       }
 
@@ -769,6 +841,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
             current: describir(txts[0]!),
             operaciones: { ...vacias(), puts: [{ id: txts[0]!.id, ...cuerpoRegistro(d, comentario) }] },
             reemplazo: null,
+            aqui,
           };
         }
         return enConflicto('Ya existe otra clave DKIM con este selector.', txts, borrarYCrear(txts));
@@ -796,6 +869,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           current: describir(mismos[0]!),
           operaciones: { ...vacias(), puts: [{ id: mismos[0]!.id, ...cuerpoRegistro(d, comentario) }] },
           reemplazo: null,
+          aqui,
         };
       }
       return enConflicto('Ya existe un registro del mismo tipo con otro valor.', mismos, borrarYCrear(mismos));
@@ -821,6 +895,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
             puts: [{ id: srvs[0]!.id, ...cuerpoRegistro(d, comentario) }],
           },
           reemplazo: null,
+          aqui,
         };
       }
       return enConflicto('Ya existe un registro SRV que apunta a otro servidor.', srvs, borrarYCrear(srvs));
@@ -848,6 +923,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
             current: describir(propio),
             operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: true }] },
             reemplazo: null,
+            aqui,
           };
         }
         if (!propio.proxied) return conservar('Ya existe con el valor correcto.', [propio]);
@@ -864,6 +940,7 @@ function planificarUno(d: Deseado, aqui: CfRegistro[], ctx: ContextoPlan): Cambi
           current: describir(propio),
           operaciones: { ...vacias(), patches: [{ id: propio.id, proxied: false }] },
           reemplazo: null,
+          aqui,
         };
       }
       if (mismos.length === 0) return crear();
@@ -886,9 +963,11 @@ export function resumenDe(cambios: CambioPlan[]): Record<AccionPlan, number> {
 }
 
 /** Quita las operaciones internas antes de devolver el plan por la API. */
-function publico(c: CambioInterno & { zone?: string }): CambioPlan & { zone?: string } {
-  const { operaciones: _o, reemplazo: _r, ...resto } = c;
-  return resto;
+function publico(c: CambioInterno & { zone?: string }): CambioPlan & { zone?: string; reemplazable?: boolean } {
+  const { operaciones: _o, reemplazo: _r, aqui: _a, ...resto } = c;
+  // Un conflicto que no se puede reemplazar (dos SPF, Email Routing, un SPF
+  // que pasaría de 10 consultas) no se ofrece para elegir.
+  return c.action === 'conflict' ? { ...resto, reemplazable: c.reemplazo !== null } : resto;
 }
 
 /* --------------------------------- Aplicar -------------------------------- */
@@ -953,6 +1032,21 @@ async function aplicarCambio(cliente: CloudflareClient, zoneId: string, ops: Ope
   }
 }
 
+/** Clave de un cambio para elegir qué conflictos se reemplazan («MX:ejemplo.es»). */
+export function claveCambio(c: { type: string; name: string }): string {
+  return `${c.type.toUpperCase()}:${sinPunto(c.name)}`;
+}
+
+/**
+ * ¿Se reemplaza este conflicto? Todos con `replaceConflicts` (compatibilidad:
+ * así lo pide Skyway) o los que se eligen uno a uno en `reemplazar`. Así se
+ * puede hacer el cambio de MX sin arrastrar el autodiscover o el mail.<dominio>
+ * que convenga conservar mientras dura el traslado.
+ */
+function seReemplaza(c: CambioInterno, opts: { replaceConflicts: boolean; reemplazar?: string[] }): boolean {
+  return opts.replaceConflicts || Boolean(opts.reemplazar?.includes(claveCambio(c)));
+}
+
 /**
  * Aplica un plan en un único lote. Si Cloudflare rechaza el lote por un
  * registro concreto (validación, un registro que ya existe, Email Routing…),
@@ -968,10 +1062,18 @@ export async function ejecutarPlan(
   cliente: CloudflareClient,
   zoneId: string,
   cambios: CambioInterno[],
-  opts: { replaceConflicts: boolean; soloCrear?: boolean },
+  opts: { replaceConflicts: boolean; reemplazar?: string[]; soloCrear?: boolean },
 ): Promise<ResultadoAplicacion> {
   const skipped: ResultadoAplicacion['skipped'] = [];
   const aplicar: { cambio: CambioInterno; accion: string; ops: Operaciones }[] = [];
+  // El SPF y el DMARC aplazados (aplazarHastaElCambio) solo se crean junto con
+  // el MX del cambio: elegidos solos, con el MX aún en el otro proveedor,
+  // serían justo lo que se aplaza.
+  const mxDelCambio = cambios.find((c) => c.alCambiar && c.type === 'MX');
+  const conElMx = (c: CambioInterno) => c.alCambiar === true && c.type !== 'MX';
+  const mxSeReemplaza = Boolean(
+    mxDelCambio && mxDelCambio.action === 'conflict' && mxDelCambio.reemplazo && !opts.soloCrear && seReemplaza(mxDelCambio, opts),
+  );
   for (const cambio of cambios) {
     if (opts.soloCrear && cambio.action === 'update') {
       // Alta automática: solo se crea lo que falta. Fusionar el SPF, quitar
@@ -987,14 +1089,16 @@ export async function ejecutarPlan(
     if ((cambio.action === 'create' || cambio.action === 'update') && cambio.operaciones) {
       aplicar.push({ cambio, accion: cambio.action, ops: cambio.operaciones });
     } else if (cambio.action === 'conflict') {
-      if (opts.replaceConflicts && !opts.soloCrear && cambio.reemplazo) {
+      if (seReemplaza(cambio, opts) && !opts.soloCrear && cambio.reemplazo && (!conElMx(cambio) || mxSeReemplaza)) {
         aplicar.push({ cambio, accion: 'replace', ops: cambio.reemplazo });
       } else {
         skipped.push({
           type: cambio.type,
           name: cambio.name,
           reason: cambio.reemplazo
-            ? 'Conflicto sin confirmar: no se ha modificado.'
+            ? cambio.alCambiar
+              ? `Pendiente del cambio de proveedor: no se ha modificado. ${cambio.reason}`
+              : 'Conflicto sin confirmar: no se ha modificado.'
             : `No se puede reemplazar automáticamente. ${cambio.reason}`,
         });
       }
@@ -1013,11 +1117,19 @@ export async function ejecutarPlan(
   // Un lote por cambio. Los borrados compartidos (un CNAME que estorba a dos
   // cambios) solo van en el primer lote que lo consigue: repetirlos en el
   // siguiente haría fallar ese lote entero por «el registro ya no existe».
+  //
+  // El MX del cambio va primero: si falla, el SPF y el DMARC que dependen de
+  // él no se crean (quedarían publicados con el MX en el otro proveedor).
   const fallidos = new Map<CambioInterno, string>();
   const borrados = new Set<string>();
   let alguno = false;
-  for (let i = 0; i < aplicar.length; i++) {
-    const a = aplicar[i]!;
+  const enOrden = [...aplicar].sort((a, b) => Number(b.cambio === mxDelCambio) - Number(a.cambio === mxDelCambio));
+  for (let i = 0; i < enOrden.length; i++) {
+    const a = enOrden[i]!;
+    if (conElMx(a.cambio) && mxDelCambio && fallidos.has(mxDelCambio)) {
+      fallidos.set(a.cambio, 'No se ha creado porque no se ha podido reemplazar el MX: se crea junto con él.');
+      continue;
+    }
     const ops: Operaciones = { ...a.ops, deletes: a.ops.deletes.filter((id) => !borrados.has(id)) };
     try {
       await aplicarCambio(cliente, zoneId, ops);
@@ -1029,7 +1141,7 @@ export async function ejecutarPlan(
         // aplicado, se informa de lo hecho y lo pendiente queda como error:
         // cada lote es atómico, así que la zona no ha quedado a medias.
         if (!alguno) throw err;
-        for (const pendiente of aplicar.slice(i)) fallidos.set(pendiente.cambio, err.message);
+        for (const pendiente of enOrden.slice(i)) fallidos.set(pendiente.cambio, err.message);
         break;
       }
       fallidos.set(a.cambio, mensajeDe(err));
@@ -1154,16 +1266,39 @@ async function planDeDominio(
   // asociada, el cliente nunca la usa (resolverZona).
   if (resolucion.cuenta.client_id !== null) guardarAsociacion(domain.id, resolucion);
   const deseados = await deseadosDeDominio(domain.domain, includeRecommended);
-  const existentes = await existentesPara(
-    resolucion.cliente,
-    resolucion.zona.id,
-    deseados.map((d) => d.name),
-  );
-  const { publicIp } = getInstanceSettings();
+  const nombreMtaSts = `_mta-sts.${domain.domain}`;
+  const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, [
+    ...deseados.map((d) => d.name),
+    // Solo para saber si el proveedor anterior publica una política MTA-STS.
+    nombreMtaSts,
+  ]);
+  const { publicIp, mailHostname } = getInstanceSettings();
+  const comentario = comentarioPropio();
+  const dominio = sinPunto(domain.domain);
+  const mxDeseados = new Set(deseados.filter((d) => d.type === 'MX').map((d) => d.content));
+  const mxApex = existentes.filter((r) => r.type === 'MX' && r.name === dominio);
+  const spfActual = existentes.find((r) => r.type === 'TXT' && r.name === dominio && esSpf(txtDe(r)));
+  const politicaMtaSts =
+    existentes
+      .filter((r) => r.type === 'TXT' && r.name === nombreMtaSts && !esPropio(r, comentario))
+      .map(txtDe)
+      .find((t) => /^v=stsv1(\s*;|$)/i.test(t.trim())) ?? null;
+  // Las consultas DNS del SPF actual, siguiendo sus include (acotado a 11):
+  // la fusión no puede pasar de 10 o el SPF entero deja de valer.
+  const consultasSpf = spfActual ? await contarConsultasSpf(txtDe(spfActual), lookupTxt).catch(() => null) : null;
   // El vértice es el de la ZONA, no el dominio: con un dominio de correo que
   // es subdominio (envios.acme.es en la zona acme.es), un CNAME en su nombre
   // sí impide publicar el MX y el SPF, y debe salir como conflicto.
-  const changes = planificar(deseados, existentes, { apex: sinPunto(resolucion.zona.name), publicIp });
+  const changes = planificar(deseados, existentes, {
+    apex: sinPunto(resolucion.zona.name),
+    dominio,
+    publicIp,
+    comentario,
+    servidor: mailHostname ? sinPunto(mailHostname) : undefined,
+    consultasSpf,
+    politicaMtaSts,
+    mxPropio: mxApex.some((r) => mxDeseados.has(sinPunto(r.content))),
+  });
   return {
     available: true,
     account: { id: resolucion.cuenta.id, label: resolucion.cuenta.label },
@@ -1247,15 +1382,283 @@ export function moverReservaDominio(domain: string, clientId: string): void {
   db.prepare('UPDATE cloudflare_reservas SET client_id = ?, updated_at = ? WHERE domain = ?').run(clientId, now(), domain);
 }
 
+/* ------------------- Copia de lo reemplazado y deshacer -------------------- */
+
+/** Registro borrado al reemplazar un conflicto, con todo lo necesario para recrearlo. */
+interface RegistroCopiado {
+  type: string;
+  name: string;
+  content: string;
+  priority?: number;
+  data?: CfDatosRegistro;
+  ttl: number;
+  proxied: boolean;
+  comment: string | null;
+  /** Cuándo se reemplazó: cada reemplazo caduca por separado (VIGENCIA_COPIA_MS). */
+  at?: number;
+}
+
+/** Registro que Mailway creó en ese reemplazo (lo que deshacer retira). */
+interface RegistroCreado {
+  type: string;
+  name: string;
+  content: string;
+  priority?: number;
+  data?: CfDatosRegistro;
+  /** El mismo instante que lo que sustituyó: caducan juntos. */
+  at?: number;
+}
+
 /**
- * Aplica el DNS de correo de un dominio en Cloudflare. Devuelve null si
- * ninguna cuenta accesible contiene la zona (el alta con «autoDns» lo usa así).
- * `soloCrear` (el alta automática) crea lo que falta y no modifica nada de lo
- * que existe: ni fusiona el SPF, ni quita un proxy, ni actualiza un registro.
+ * Cuánto se puede deshacer un reemplazo: lo que dura un traslado (importar el
+ * correo y reconfigurar los dispositivos). Después, el proveedor anterior
+ * puede haber dado de baja la cuenta, y volver a su MX perdería el correo.
+ */
+export const VIGENCIA_COPIA_DIAS = 30;
+const VIGENCIA_COPIA_MS = VIGENCIA_COPIA_DIAS * 24 * 60 * 60 * 1000;
+
+interface CopiaRow {
+  domain_id: string;
+  account_id: string | null;
+  zone_id: string;
+  borrados_json: string;
+  creados_json: string;
+  created_at: number;
+}
+
+export interface CopiaPublica {
+  /** El reemplazo más reciente que se puede deshacer. */
+  createdAt: number;
+  /** Cuándo caduca el primero de ellos (deja de poder deshacerse). */
+  expiresAt: number;
+  /** Lo que había antes de los reemplazos y deshacer volvería a crear. */
+  borrados: { type: string; name: string; content: string; priority?: number; at: number }[];
+}
+
+/**
+ * La copia de un dominio, solo con los reemplazos que aún se pueden deshacer.
+ * Cada entrada caduca por separado, y lo borrado y lo creado en un mismo
+ * reemplazo caducan juntos: deshacer nunca retira el MX de este servidor sin
+ * devolver el anterior. Si ya no queda nada, la fila se borra.
+ */
+function leerCopia(domainId: string): { row: CopiaRow; borrados: RegistroCopiado[]; creados: RegistroCreado[] } | null {
+  const row = db.prepare('SELECT * FROM cloudflare_copias WHERE domain_id = ?').get(domainId) as CopiaRow | undefined;
+  if (!row) return null;
+  let borrados: RegistroCopiado[];
+  let creados: RegistroCreado[];
+  try {
+    borrados = JSON.parse(row.borrados_json) as RegistroCopiado[];
+    creados = JSON.parse(row.creados_json) as RegistroCreado[];
+  } catch {
+    return null;
+  }
+  const limite = now() - VIGENCIA_COPIA_MS;
+  const vigente = (x: { at?: number }) => (x.at ?? row.created_at) >= limite;
+  borrados = borrados.filter(vigente);
+  creados = creados.filter(vigente);
+  if (borrados.length === 0) {
+    db.prepare('DELETE FROM cloudflare_copias WHERE domain_id = ?').run(domainId);
+    return null;
+  }
+  return { row, borrados, creados };
+}
+
+export function copiaPublica(domainId: string): CopiaPublica | null {
+  const copia = leerCopia(domainId);
+  if (!copia) return null;
+  const instantes = copia.borrados.map((b) => b.at ?? copia.row.created_at);
+  return {
+    createdAt: Math.max(...instantes),
+    expiresAt: Math.min(...instantes) + VIGENCIA_COPIA_MS,
+    borrados: copia.borrados.map((b) => ({
+      type: b.type,
+      name: b.name,
+      content: b.type === 'TXT' ? normalizarTxt(b.content) : b.content,
+      ...(b.priority !== undefined ? { priority: b.priority } : {}),
+      at: b.at ?? copia.row.created_at,
+    })),
+  };
+}
+
+/**
+ * Clave con la que se reconoce un mismo registro en la copia y en la zona.
+ * Un SRV llega de tres formas: el que crea Mailway (solo «data», sin
+ * «content»), el que devuelve Cloudflare («peso puerto destino» con la
+ * prioridad aparte) y el del motor («prioridad peso puerto destino»); todos
+ * se reducen a la última. La prioridad solo cuenta en MX y SRV: en el resto
+ * Cloudflare la devuelve o no según el tipo y no distingue nada.
+ */
+function claveRegistro(r: {
+  type: string;
+  name: string;
+  content: string;
+  priority?: number;
+  data?: CfDatosRegistro;
+}): string {
+  let contenido: string;
+  let prioridad = '';
+  if (r.type === 'SRV') {
+    let d = r.data;
+    if (!d) {
+      const partes = r.content.trim().split(/\s+/);
+      d =
+        partes.length >= 4
+          ? { priority: Number(partes[0]), weight: Number(partes[1]), port: Number(partes[2]), target: partes[3] }
+          : { priority: r.priority, weight: Number(partes[0]), port: Number(partes[1]), target: partes[2] };
+    }
+    contenido = `${Number(d.priority ?? 0)} ${Number(d.weight ?? 0)} ${Number(d.port ?? 0)} ${sinPunto(d.target ?? '')}`;
+  } else {
+    contenido = r.type === 'TXT' ? normalizarTxt(r.content) : sinPunto(r.content);
+    if (r.type === 'MX') prioridad = String(r.priority ?? '');
+  }
+  return `${r.type}|${sinPunto(r.name)}|${contenido.toLowerCase()}|${prioridad}`;
+}
+
+/**
+ * Guarda lo que borró un reemplazo antes de que se olvide: tras el corte,
+ * nadie recuerda qué MX tenía el proveedor anterior. Se acumula con lo de
+ * reemplazos anteriores de la misma zona (así, reemplazar después el
+ * autodiscover no hace olvidar el MX) hasta que se deshace o caduca; cada
+ * entrada lleva su fecha y caduca a los VIGENCIA_COPIA_DIAS.
+ */
+function guardarCopia(domainId: string, r: Resolucion, cambios: CambioInterno[], resultado: ResultadoAplicacion): void {
+  const ahora = now();
+  const reemplazados = resultado.applied
+    .filter((a) => a.action === 'replace')
+    .map((a) => cambios.find((c) => c.type === a.type && c.name === a.name && c.reemplazo))
+    .filter((c): c is CambioInterno => Boolean(c));
+  if (reemplazados.length === 0) return;
+  const borrados: RegistroCopiado[] = reemplazados.flatMap((c) =>
+    c.aqui
+      .filter((x) => c.reemplazo!.deletes.includes(x.id))
+      .map((x) => ({
+        type: x.type,
+        name: x.name,
+        content: x.content,
+        ...(x.priority !== undefined ? { priority: x.priority } : {}),
+        ...(x.data ? { data: x.data } : {}),
+        ttl: x.ttl,
+        proxied: x.proxied,
+        comment: x.comment,
+        at: ahora,
+      })),
+  );
+  const creados: RegistroCreado[] = reemplazados.flatMap((c) =>
+    c.reemplazo!.posts.map((p) => ({
+      type: p.type,
+      name: p.name,
+      content: p.content ?? '',
+      ...(p.priority !== undefined ? { priority: p.priority } : {}),
+      ...(p.data ? { data: p.data } : {}),
+      at: ahora,
+    })),
+  );
+  const previa = leerCopia(domainId);
+  const misma = previa && previa.row.zone_id === r.zona.id;
+  // Lo anterior conserva su fecha (sin ella, la de la fila); si un registro
+  // se repite, cuenta la del reemplazo más reciente.
+  const unir = <T extends { type: string; name: string; content: string; priority?: number; at?: number }>(a: T[], b: T[]): T[] => {
+    const porClave = new Map<string, T>();
+    for (const x of [...a.map((y) => ({ ...y, at: y.at ?? previa!.row.created_at })), ...b]) porClave.set(claveRegistro(x), x);
+    return [...porClave.values()];
+  };
+  db.prepare(
+    `INSERT INTO cloudflare_copias (domain_id, account_id, zone_id, borrados_json, creados_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(domain_id) DO UPDATE SET account_id = excluded.account_id, zone_id = excluded.zone_id,
+       borrados_json = excluded.borrados_json, creados_json = excluded.creados_json, created_at = excluded.created_at`,
+  ).run(
+    domainId,
+    r.cuenta.id,
+    r.zona.id,
+    JSON.stringify(misma ? unir(previa.borrados, borrados) : borrados),
+    JSON.stringify(misma ? unir(previa.creados, creados) : creados),
+    ahora,
+  );
+}
+
+export interface ResultadoDeshacer {
+  restaurados: { type: string; name: string }[];
+  retirados: { type: string; name: string }[];
+  domain: DomainRecord;
+}
+
+/**
+ * Deshace el cambio: vuelve a crear lo que borraron los reemplazos aún
+ * vigentes (con su proxy, su TTL y su comentario) y retira los registros que
+ * Mailway creó en su lugar, todo en un único lote. Solo se retira un registro
+ * de esta instancia con el mismo contenido: lo que haya cambiado después no
+ * se toca.
+ */
+export async function deshacerCambioDns(domainId: string, permitirInstancia: boolean): Promise<ResultadoDeshacer> {
+  const domain = getDomain(domainId);
+  const copia = leerCopia(domainId);
+  if (!copia) {
+    throw conflict(
+      `No hay ningún cambio en Cloudflare que deshacer para este dominio (la copia de cada reemplazo se guarda ${VIGENCIA_COPIA_DIAS} días).`,
+      'cloudflare_nothing_to_undo',
+    );
+  }
+  const { resolucion, motivo } = await resolverZona(domain.domain, {
+    clientId: domain.clientId,
+    storedAccountId: domain.cloudflare?.accountId ?? null,
+    permitirInstancia,
+  });
+  if (!resolucion) throw badRequest(motivo, 'cloudflare_unavailable');
+  if (resolucion.zona.id !== copia.row.zone_id) {
+    throw conflict(
+      'La zona de Cloudflare del dominio ya no es la del cambio guardado: no se puede deshacer automáticamente.',
+      'cloudflare_zone_changed',
+    );
+  }
+  const comentario = comentarioPropio();
+  const nombres = [...new Set([...copia.borrados, ...copia.creados].map((r) => r.name))];
+  const existentes = await existentesPara(resolucion.cliente, resolucion.zona.id, nombres);
+  const deCreados = new Set(copia.creados.map((c) => claveRegistro(c)));
+  const aRetirar = existentes.filter((e) => esPropio(e, comentario) && deCreados.has(claveRegistro(e)));
+  const presentes = new Set(existentes.map((e) => claveRegistro(e)));
+  const aRestaurar = copia.borrados.filter((b) => !presentes.has(claveRegistro(b)));
+  const lote: CfLote = {
+    deletes: aRetirar.map((e) => ({ id: e.id })),
+    posts: aRestaurar.map((b) => ({
+      type: b.type,
+      name: b.name,
+      ...(b.data ? { data: b.data } : { content: b.content }),
+      ...(b.priority !== undefined ? { priority: b.priority } : {}),
+      ttl: b.ttl,
+      proxied: b.proxied,
+      comment: b.comment ?? '',
+    })),
+  };
+  // Un único lote: el MX anterior vuelve a la vez que se va el de este
+  // servidor, sin un momento en que la zona se quede sin ninguno.
+  if ((lote.deletes?.length ?? 0) + (lote.posts?.length ?? 0) > 0) await resolucion.cliente.batch(resolucion.zona.id, lote);
+  db.prepare('DELETE FROM cloudflare_copias WHERE domain_id = ?').run(domainId);
+  const fresco = await refreshDomainDns(domainId).catch(() => getDomain(domainId));
+  return {
+    restaurados: aRestaurar.map((b) => ({ type: b.type, name: b.name })),
+    retirados: aRetirar.map((e) => ({ type: e.type, name: e.name })),
+    domain: fresco,
+  };
+}
+
+/**
+ * Aplica el DNS de correo de un dominio en Cloudflare. Devuelve
+ * `{ unavailable }` si ninguna cuenta accesible contiene la zona (el alta con
+ * «autoDns» lo usa así). `soloCrear` (el alta automática) crea lo que falta y
+ * no modifica nada de lo que existe: ni fusiona el SPF, ni quita un proxy, ni
+ * actualiza un registro.
  */
 export async function aplicarDnsDominio(
   domainId: string,
-  opts: { replaceConflicts: boolean; includeRecommended: boolean; permitirInstancia: boolean; soloCrear?: boolean },
+  opts: {
+    replaceConflicts: boolean;
+    /** Conflictos que se reemplazan uno a uno («MX:ejemplo.es»), además de replaceConflicts. */
+    reemplazar?: string[];
+    includeRecommended: boolean;
+    permitirInstancia: boolean;
+    soloCrear?: boolean;
+  },
 ): Promise<ResultadoDominio | { unavailable: string }> {
   const domain = getDomain(domainId);
   // Quien llama decide expresamente si se pueden usar las cuentas de la
@@ -1266,8 +1669,10 @@ export async function aplicarDnsDominio(
   const r = plan.resolucion;
   const resultado = await ejecutarPlan(r.cliente, r.zona.id, plan.changes, {
     replaceConflicts: opts.replaceConflicts,
+    reemplazar: opts.reemplazar,
     soloCrear: opts.soloCrear,
   });
+  guardarCopia(domainId, r, plan.changes, resultado);
   guardarAsociacion(domainId, r);
   if (r.cuenta.client_id === null && resultado.applied.length > 0) reservarDominio(domain.domain, domain.clientId, r);
   if (resultado.applied.length > 0) {
@@ -1722,6 +2127,26 @@ export async function conectarCuentaCloudflare(opts: {
   return { cuenta: toCuenta(cuentaRow(id)!, cache), creada: true, sustituida: false };
 }
 
+/* ------------------------- DNS de un dominio propio ------------------------ */
+
+/**
+ * Lo mismo que aplicarDnsMarcaBlanca para quien no trabaja en una ruta (el
+ * cambio de dominio, que crea el webmail con la marca del cliente en el
+ * dominio nuevo): en vez de lanzar `400 cloudflare_unavailable` cuando
+ * ninguna cuenta accesible contiene la zona, devuelve `{ unavailable }`.
+ */
+export async function aplicarDnsDominioPropio(
+  id: string,
+  opts: { replaceConflicts: boolean; soloCrear: boolean; permitirInstancia: boolean },
+): Promise<(ResultadoAplicacion & { domain: ClientDomain; zone: string }) | { unavailable: string }> {
+  try {
+    return await aplicarDnsMarcaBlanca(id, opts);
+  } catch (err) {
+    if (err instanceof HttpError && err.code === 'cloudflare_unavailable') return { unavailable: err.message };
+    throw err;
+  }
+}
+
 /* ---------------------------------- Rutas --------------------------------- */
 
 const booleano = (campo: string) =>
@@ -1730,6 +2155,13 @@ const booleano = (campo: string) =>
 const aplicarSchema = z
   .object({
     replaceConflicts: booleano('replaceConflicts'),
+    /** Conflictos que se reemplazan, uno a uno: «TIPO:nombre» (p. ej. «MX:ejemplo.es»). */
+    replace: z
+      .array(z.string({ invalid_type_error: 'Cada elemento de «replace» debe ser «TIPO:nombre».' }).max(300), {
+        invalid_type_error: 'El campo «replace» debe ser una lista.',
+      })
+      .max(100, 'Se pueden indicar como máximo 100 registros en «replace».')
+      .optional(),
     includeRecommended: booleano('includeRecommended'),
   })
   .nullish();
@@ -1846,6 +2278,8 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       ...(plan.zone ? { zone: plan.zone } : {}),
       changes,
       summary: resumenDe(changes),
+      // Lo que borraron los reemplazos aún vigentes y «Deshacer el cambio» recrearía.
+      copia: copiaPublica(id),
     };
   });
 
@@ -1857,10 +2291,15 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
     const body = aplicarSchema.parse(req.body) || {};
     const resultado = await aplicarDnsDominio(id, {
       replaceConflicts: body.replaceConflicts === true,
+      reemplazar: body.replace?.map((k) => {
+        const [tipo, ...resto] = k.split(':');
+        return claveCambio({ type: tipo ?? '', name: resto.join(':') });
+      }),
       includeRecommended: body.includeRecommended !== false,
       permitirInstancia: permiteInstancia(user, req.query),
     });
     if ('unavailable' in resultado) throw badRequest(resultado.unavailable, 'cloudflare_unavailable');
+    const reemplazados = resultado.applied.filter((a) => a.action === 'replace').map((a) => `${a.type} ${a.name}`);
     audit(req, 'cloudflare.dns_applied', {
       domainId: id,
       domain: domain.domain,
@@ -1868,8 +2307,36 @@ export function registerCloudflareRoutes(app: FastifyInstance): void {
       applied: resultado.applied.length,
       errors: resultado.errors.length,
       replaceConflicts: body.replaceConflicts === true,
+      ...(reemplazados.length > 0 ? { replaced: reemplazados } : {}),
     }, domain.clientId);
     return { applied: resultado.applied, errors: resultado.errors, skipped: resultado.skipped, domain: resultado.domain };
+  });
+
+  /** Lo que borraron los reemplazos aún vigentes (sin consultar Cloudflare): para ofrecer deshacerlos. */
+  app.get('/api/domains/:id/cloudflare/undo', async (req) => {
+    const { id } = req.params as { id: string };
+    const domain = getDomain(id);
+    requireClientAccess(req, domain.clientId);
+    return { copia: copiaPublica(id) };
+  });
+
+  /**
+   * Deshace el cambio: recrea lo que borraron los reemplazos vigentes y retira
+   * lo que Mailway creó en su lugar (admite `?soloCliente=1`, como aplicar).
+   */
+  app.post('/api/domains/:id/cloudflare/undo', async (req) => {
+    const user = requireAuth(req);
+    const { id } = req.params as { id: string };
+    const domain = getDomain(id);
+    requireClientAccess(req, domain.clientId);
+    const r = await deshacerCambioDns(id, permiteInstancia(user, req.query));
+    audit(req, 'cloudflare.dns_undone', {
+      domainId: id,
+      domain: domain.domain,
+      restored: r.restaurados.map((x) => `${x.type} ${x.name}`),
+      removed: r.retirados.map((x) => `${x.type} ${x.name}`),
+    }, domain.clientId);
+    return r;
   });
 
   /** Marca blanca: apunta el dominio propio del cliente a este servidor (admite `?soloCliente=1`). */

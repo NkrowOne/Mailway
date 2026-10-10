@@ -4,7 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { config } from '../src/config';
 import { db } from '../src/core/db';
-import { getEngineSettings, setInstanceSettings } from '../src/modules/settings';
+import { getEngineSettings, getInstanceSettings, setInstanceSettings } from '../src/modules/settings';
 import { cookieFrom, getTestApp } from './helpers';
 import { fakeStalwart } from './stalwart-falso';
 
@@ -353,6 +353,51 @@ test('la identidad solo admite un nombre de servidor válido y URL http(s)', asy
     });
     assert.equal(res.statusCode, 400, JSON.stringify(payload));
   }
+});
+
+test('con Stalwart, el nombre del servidor de correo no se puede dejar vacío', async () => {
+  const app = await getTestApp();
+  const previo = config.mailHostnameDefault;
+  config.mailHostnameDefault = '';
+  try {
+    for (const [method, url] of [
+      ['PUT', '/api/settings/instance'],
+      ['POST', '/api/setup/instance'],
+    ] as const) {
+      const res = await app.inject({ method, url, headers: { cookie: adminCookie }, payload: { mailHostname: '' } });
+      assert.equal(res.statusCode, 400, `${url}: ${res.body}`);
+      assert.equal((res.json() as { code: string }).code, 'mail_hostname_required');
+    }
+    // Sin el campo, el resto de la identidad se sigue pudiendo cambiar.
+    const marca = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/instance',
+      headers: { cookie: adminCookie },
+      payload: { brandName: 'Correo Ejemplo' },
+    });
+    assert.equal(marca.statusCode, 200, marca.body);
+    // Con el nombre en el entorno (MAILWAY_MAIL_HOSTNAME), vacío significa «el del entorno».
+    config.mailHostnameDefault = 'mail.entorno.test';
+    const conEntorno = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/instance',
+      headers: { cookie: adminCookie },
+      payload: { mailHostname: '' },
+    });
+    assert.equal(conEntorno.statusCode, 200, conEntorno.body);
+    assert.equal(getInstanceSettings().mailHostname, 'mail.entorno.test');
+  } finally {
+    config.mailHostnameDefault = previo;
+    setInstanceSettings({ mailHostname: 'correo.mailway.test' });
+  }
+});
+
+test('el estado dice qué motor hay y si la identidad ya se guardó', async () => {
+  const app = await getTestApp();
+  const res = await app.inject({ method: 'GET', url: '/api/setup/status', headers: { cookie: adminCookie } });
+  const body = res.json() as { engineKind: string | null; instanceSaved: boolean };
+  assert.equal(body.engineKind, 'stalwart');
+  assert.equal(body.instanceSaved, true);
 });
 
 test('con la puesta en marcha completa, el estado público solo trae la marca', async () => {

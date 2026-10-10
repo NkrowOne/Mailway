@@ -529,6 +529,12 @@ class Volumen:
         self.host = host
         self.privado = base / PRIVADO
         self.enlace = base / host
+        # Entradas de otro nombre que el motor aún usa (certificate.mailway
+        # apunta a ellas tras cambiar MAIL_HOSTNAME, hasta que el instalador
+        # lo traslada): no se purgan ni se poda la versión a la que apuntan.
+        # None = no se sabe qué usa el motor (su API no responde): no se toca
+        # ningún enlace, que solo pueden ser pares de este servicio.
+        self.proteger: Optional[set] = set()
         self.gid = gid
         # Inyectable en las pruebas: sin ser root no se puede dar un grupo cualquiera.
         self._cambiar_grupo = cambiar_grupo or _cambiar_grupo
@@ -693,7 +699,27 @@ class Volumen:
     def volver(self, version: str) -> None:
         self._apuntar(version)
 
+    def _protegida(self, entrada: Path) -> bool:
+        if self.proteger is None:
+            return entrada.is_symlink()
+        return entrada.name in self.proteger
+
+    def versiones_protegidas(self) -> set:
+        """Versiones a las que apuntan los enlaces que el motor aún puede usar."""
+        versiones = set()
+        if not self.base.is_dir():
+            return versiones
+        for entrada in self.base.iterdir():
+            if entrada.name == self.host or not entrada.is_symlink() or not self._protegida(entrada):
+                continue
+            destino = os.readlink(entrada)
+            nombre = destino.rsplit('/', 1)[-1]
+            if destino == f'{PRIVADO}/{nombre}' and VERSION.fullmatch(nombre):
+                versiones.add(nombre)
+        return versiones
+
     def podar(self, conservar: set) -> None:
+        conservar = set(conservar) | self.versiones_protegidas()
         for entrada in self.privado.iterdir():
             if entrada.name not in conservar and not entrada.name.startswith('.tmp-'):
                 _retirar(entrada)
@@ -710,7 +736,7 @@ class Volumen:
         if not self.base.is_dir():
             return retirados, desconocidos
         for entrada in sorted(self.base.iterdir()):
-            if entrada.name in (PRIVADO, self.host, 'lost+found'):
+            if entrada.name in (PRIVADO, self.host, 'lost+found') or self._protegida(entrada):
                 continue
             if self._parece_volcado(entrada):
                 _retirar(entrada)
@@ -750,6 +776,24 @@ class AjustesMotor:
     referencia: bool        # certificate.mailway apunta a los ficheros de este servicio
     referencia_otra: bool   # certificate.mailway existe, pero apunta a otros ficheros
     acme: bool              # el motor emite su propio certificado para MAIL_HOSTNAME
+    # Entrada del volumen a la que apunta certificate.mailway si es la de OTRO
+    # nombre con la misma estructura (<ruta del motor>/<nombre>/cert.pem y
+    # key.pem): la del nombre anterior tras cambiar MAIL_HOSTNAME.
+    referido: Optional[str] = None
+
+
+def _entrada_referida(cert: object, clave: object, ruta_motor: str) -> Optional[str]:
+    """Nombre de la entrada del volumen que usan certificate.mailway.cert y private-key, si es una sola."""
+    if not isinstance(cert, str) or not isinstance(clave, str):
+        return None
+    patron = re.compile(r'%\{file:' + re.escape(ruta_motor.rstrip('/')) + r'/([^/{}%]+)/(cert|key)\.pem\}%')
+    en_cert, en_clave = patron.fullmatch(cert.strip()), patron.fullmatch(clave.strip())
+    if not en_cert or not en_clave or en_cert.group(2) != 'cert' or en_clave.group(2) != 'key':
+        return None
+    nombre = en_cert.group(1)
+    if nombre != en_clave.group(1) or nombre in (PRIVADO, '.', '..') or nombre.startswith('.'):
+        return None
+    return nombre
 
 
 def _texto_corto(valor: object, limite: int = 160) -> str:
@@ -874,7 +918,9 @@ class Motor(_ClienteMotor):
         # Los ajustes de ACME guardan secretos (p. ej. el token de Cloudflare):
         # solo se mira qué dominios cubren y no se conservan ni se registran.
         acme = acme_cubre(datos, host)
-        return AjustesMotor(referencia=referencia, referencia_otra=cert is not None and not referencia, acme=acme)
+        referido = None if referencia else _entrada_referida(cert, clave, ruta_motor)
+        return AjustesMotor(referencia=referencia, referencia_otra=cert is not None and not referencia, acme=acme,
+                            referido=referido)
 
     def recargar(self) -> list:
         """GET /api/reload/certificate. Devuelve los errores del certificado propio."""
@@ -1334,9 +1380,24 @@ class Extractor:
         puertos = ' y '.join(str(p) for p in self.cfg.puertos)
         api, problema = self._detectar(ahora)
         ajustes = None
+        # Con 0.16 el certificado va registrado en el motor (no por fichero):
+        # nada del volumen tiene que conservarse para él.
+        self.volumen.proteger = set()
         if api == MOTOR_015:
             ajustes, problema = self._consultar_motor(ahora)
-            if ajustes and ajustes.acme and not ajustes.referencia:
+            # Tras cambiar MAIL_HOSTNAME, el motor sigue con el par del nombre
+            # anterior hasta que el instalador lo traslada al nuevo: si se
+            # purgara, su siguiente recarga o arranque fallaría sin certificado.
+            if ajustes is None:
+                self.volumen.proteger = None
+            else:
+                self.volumen.proteger = {ajustes.referido} if ajustes.referido and ajustes.referido != host else set()
+            # Con el ACME del motor no hay nada que hacer, salvo que
+            # certificate.mailway siga en el par de otro nombre (el anterior a
+            # cambiar MAIL_HOSTNAME): ese par ya no lo renueva nadie, y el
+            # instalador lo traslada al del nombre actual en cuanto este
+            # servicio lo deja en el volumen.
+            if ajustes and ajustes.acme and not ajustes.referencia and not ajustes.referido:
                 self._purgar()
                 self._fijar(True, 'acme', 'El motor obtiene su propio certificado por ACME: este servicio no tiene '
                                           'nada que hacer.')
@@ -1403,6 +1464,12 @@ class Extractor:
                          'retíralos en la web del motor (Settings › TLS › Certificates).')
         else:
             if not ajustes.referencia:
+                if ajustes.referido:
+                    self._fijar(False, 'sin_referencia',
+                                f'El motor aún usa el certificado de {ajustes.referido} (certificate.mailway), que se '
+                                f'conserva. deploy/instalar.sh --actualizar lo pasa al de {host}; a mano, sigue la '
+                                'sección 5.2 de docs/DESPLIEGUE-SKYWAY.md.', mejor)
+                    return
                 falta = ('certificate.mailway apunta a otros ficheros' if ajustes.referencia_otra
                          else 'falta certificate.mailway')
                 self._fijar(False, 'sin_referencia',

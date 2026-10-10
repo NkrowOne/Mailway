@@ -7,6 +7,7 @@ import { sha512Crypt, verifySha512Crypt } from '../core/sha512crypt';
 import { engineConfigured, getEngine } from '../engine';
 import type { EngineApi, MailEngine } from '../engine/types';
 import { runLimited } from './clients';
+import { loginParaMotor } from './direcciones';
 import { mantenimientoActivo } from './mantenimiento';
 
 /**
@@ -159,7 +160,9 @@ export async function cambiarContrasenaBuzon(
 ): Promise<void> {
   await withLock(`credenciales:${buzon.id}`, async () => {
     const passwordHash = cifrarContrasena(password);
-    await engine.setMailboxPassword(buzon.email, passwordHash);
+    // Por el usuario del motor (durante un cambio de dominio, el anterior):
+    // la copia va por el id del buzón y no depende de su dirección.
+    await engine.setMailboxPassword(loginParaMotor(buzon.id), passwordHash);
     guardarHashBuzon(buzon.id, passwordHash, 'panel');
   });
 }
@@ -182,6 +185,8 @@ export type ResultadoComprobacion = 'principal' | 'aplicacion' | 'incorrecta' | 
 interface FilaBuzon {
   id: string;
   email: string;
+  /** Usuario del motor: la dirección salvo durante un cambio de dominio. */
+  login: string;
   status: 'active' | 'suspended';
   client_suspended: number;
 }
@@ -189,7 +194,9 @@ interface FilaBuzon {
 function datosBuzon(mailboxId: string): FilaBuzon | null {
   const fila = db
     .prepare(
-      `SELECT m.id, m.local_part || '@' || d.domain AS email, m.status, c.suspended AS client_suspended
+      `SELECT m.id, m.local_part || '@' || d.domain AS email,
+         COALESCE(m.usuario_motor, m.local_part || '@' || d.domain) AS login,
+         m.status, c.suspended AS client_suspended
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id JOIN clients c ON c.id = d.client_id
        WHERE m.id = ?`,
     )
@@ -262,7 +269,7 @@ export async function comprobarContrasenaBuzon(
   let delMotor: string | null = null;
   try {
     const motor = engine ?? (engineConfigured() ? getEngine() : null);
-    const leidas = motor ? await motor.readMailboxCredentials(buzon.email) : null;
+    const leidas = motor ? await motor.readMailboxCredentials(buzon.login) : null;
     delMotor = leidas?.passwordHash ?? null;
   } catch (err) {
     // El motor dice que no existe: no puede entrar con ninguna contraseña.
@@ -306,6 +313,7 @@ export interface ResultadoCaptura {
 interface FilaCaptura {
   id: string;
   email: string;
+  login: string;
   password_hash_enc: string | null;
   updated_at: number | null;
 }
@@ -323,7 +331,9 @@ export async function capturarCredenciales(
   const engine = opciones.engine ?? getEngine();
   const filas = db
     .prepare(
-      `SELECT m.id, m.local_part || '@' || d.domain AS email, c.password_hash_enc, c.updated_at
+      `SELECT m.id, m.local_part || '@' || d.domain AS email,
+         COALESCE(m.usuario_motor, m.local_part || '@' || d.domain) AS login,
+         c.password_hash_enc, c.updated_at
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id
        LEFT JOIN credenciales_buzon c ON c.mailbox_id = m.id
        ORDER BY d.domain, m.local_part`,
@@ -341,7 +351,8 @@ export async function capturarCredenciales(
     const copia = fila.password_hash_enc !== null ? descifrarCopia(fila as FilaCopia) : null;
     let hash: string | null;
     try {
-      hash = (await engine.readMailboxCredentials(fila.email))?.passwordHash ?? null;
+      // Por el usuario del motor: es el nombre del principal en 0.15.
+      hash = (await engine.readMailboxCredentials(fila.login))?.passwordHash ?? null;
     } catch {
       hash = null;
     }
