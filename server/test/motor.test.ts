@@ -10,8 +10,8 @@ import { DemoEngine } from '../src/engine/demo';
 import type { CreatedAppPassword, EngineApi, MailEngine } from '../src/engine/types';
 import { listAlerts } from '../src/modules/alerts';
 import { listAudit } from '../src/modules/audit';
-import { MAX_ACTIVE_APP_PASSWORDS } from '../src/modules/apppasswords';
-import { componerAvisoInvalidadas, trasMigrarMotor } from '../src/modules/cambiomotor';
+import { MAX_ACTIVE_APP_PASSWORDS, createAppPassword } from '../src/modules/apppasswords';
+import { capturarParaMigrar, componerAvisoInvalidadas, estadoCambioMotor, trasMigrarMotor } from '../src/modules/cambiomotor';
 import { comprobarContrasenaBuzon, leerHashBuzon } from '../src/modules/credenciales';
 import { estadoMantenimiento } from '../src/modules/mantenimiento';
 import { setEngineSettings, setInstanceSettings, setSetting } from '../src/modules/settings';
@@ -358,14 +358,60 @@ test('el motor impone el secreto: contraseñas de aplicación, claves de API y f
   }
 });
 
+test('no se migra el motor con un cambio de dominio sin terminar ni con buzones con el usuario anterior', async () => {
+  const e = await escenario('Bloqueo por cambio de dominio');
+  // Un motor que no debe llegar a consultarse: el bloqueo va antes.
+  const intocable = {
+    detectApi: async () => {
+      throw new Error('no debía consultarse el motor');
+    },
+  } as unknown as MailEngine;
+  const sinBloqueo = await estadoCambioMotor(intocable);
+  assert.equal(sinBloqueo.bloqueo, null);
+
+  // Un buzón que sigue con el usuario del dominio anterior.
+  db.prepare('UPDATE mailboxes SET usuario_motor = ? WHERE id = ?').run(`ana@antes-${e.domain}`, e.mailboxId);
+  try {
+    const estado = await estadoCambioMotor(intocable);
+    assert.match(estado.bloqueo ?? '', /un buzón sigue con el usuario del dominio anterior/);
+    assert.ok(estado.bloqueo!.includes(e.email), estado.bloqueo!);
+    const captura = await capturarParaMigrar(intocable);
+    assert.equal(captura.ok, false);
+    assert.equal(captura.error, estado.bloqueo);
+    assert.deepEqual(captura.fallidos, []);
+    // Por la herramienta del instalador: el estado lo dice y capturar se niega.
+    const porHerramienta = await motor('estado');
+    assert.equal(porHerramienta.json.bloqueo, estado.bloqueo);
+  } finally {
+    db.prepare('UPDATE mailboxes SET usuario_motor = NULL WHERE id = ?').run(e.mailboxId);
+  }
+
+  // Un cambio de dominio abierto (aunque ya se haya pasado).
+  const t = Date.now();
+  db.prepare(
+    `INSERT INTO domain_migrations (id, client_id, from_domain_id, to_domain_id, from_domain, to_domain, estado, created_at, updated_at)
+     VALUES ('dmg_bloqueo', ?, ?, NULL, ?, 'destino-bloqueo.test', 'pasado', ?, ?)`,
+  ).run(e.clientId, e.domainId, e.domain, t, t);
+  try {
+    const estado = await estadoCambioMotor(intocable);
+    assert.ok((estado.bloqueo ?? '').includes(`hay un cambio de dominio sin terminar (${e.domain} → destino-bloqueo.test)`), estado.bloqueo ?? '');
+    assert.equal((await capturarParaMigrar(intocable)).ok, false);
+    // Terminado (dado de baja o cancelado) ya no bloquea.
+    db.prepare("UPDATE domain_migrations SET estado = 'dado_de_baja' WHERE id = 'dmg_bloqueo'").run();
+    assert.equal((await estadoCambioMotor(intocable)).bloqueo, null);
+  } finally {
+    db.prepare("DELETE FROM domain_migrations WHERE id = 'dmg_bloqueo'").run();
+  }
+});
+
 test('tras-migrar: renueva las credenciales internas, invalida las de dispositivos y Skyway, avisa y es idempotente', async () => {
   db.prepare("DELETE FROM alerts WHERE type = 'engine_app_passwords_invalidated'").run();
   const e = await escenario('Tras migrar');
   // Antes de migrar (motor de demostración, que hace de 0.15).
   const movil = await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'Móvil de Ana' });
-  const skyway = await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'skyway:web' });
+  // Las «skyway:…» solo las crea Skyway (con su token), no la sesión del panel.
+  await createAppPassword(e.mailboxId, 'skyway:web', null);
   assert.equal(movil.statusCode, 200);
-  assert.equal(skyway.statusCode, 200);
   const clave = await como('POST', '/api/apikeys', { clientId: e.clientId, name: 'OTP', senderMailboxId: e.mailboxId });
   const form = await ctx.app.inject({
     method: 'POST',
@@ -478,8 +524,8 @@ test('tras-migrar avisa por correo a cada titular una sola vez, sin las de Skywa
   const e = await escenario('Aviso por correo');
   const otro = await createMailbox(ctx, e.domainId, 'solo-skyway');
   await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'Móvil <Ana>' });
-  await como('POST', `/api/mailboxes/${e.mailboxId}/app-passwords`, { name: 'skyway:api' });
-  await como('POST', `/api/mailboxes/${otro.mailboxId}/app-passwords`, { name: 'skyway:web' });
+  await createAppPassword(e.mailboxId, 'skyway:api', null);
+  await createAppPassword(otro.mailboxId, 'skyway:web', null);
   db.prepare(
     'UPDATE app_passwords SET invalidated_at = ? WHERE revoked_at IS NULL AND invalidated_at IS NULL AND mailbox_id IN (?, ?)',
   ).run(Date.now(), e.mailboxId, otro.mailboxId);

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type InstanceSettings } from '../../lib/api';
+import { api, ApiError, type EstadoIpPublica, type InstanceSettings } from '../../lib/api';
 import { formatDate, plural } from '../../lib/format';
 import {
   etiquetaHost,
@@ -16,6 +16,7 @@ import {
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
 import { nombreMotor, type EngineApi } from '../../lib/motor';
 import { HojaWebmailAutomaticoGeneral } from '../../components/WebmailAutomatico';
+import { DialogoCambioNombre } from '../../components/CambioNombreServidor';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
 import { AvisoError, Hoja, Marca, MarcaFondo, Membrete, Cargando, Muestra } from '../../ui/kit';
@@ -138,16 +139,38 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
     setForm({ ...initial, panelUrl: initial.panelUrl || propuesta });
   }, [initial, propuesta, modificado]);
 
+  const [confirmarNombre, setConfirmarNombre] = useState(false);
   const save = useMutation({
     mutationFn: () => api.put('/api/settings/instance', form),
     onSuccess: () => {
       setError('');
       setModificado(false);
+      setConfirmarNombre(false);
       toast('ok', 'Se han guardado los ajustes del servidor.');
       onSaved();
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'No se han podido guardar los ajustes.'),
+    onError: (err) => {
+      setConfirmarNombre(false);
+      setError(err instanceof ApiError ? err.message : 'No se han podido guardar los ajustes.');
+    },
   });
+
+  // IP con la que el servidor sale ahora a Internet: si la guardada se ha
+  // quedado atrás (mudanza, IP nueva del proveedor), se propone usarla. La
+  // decide el servidor con la misma regla que el aviso del vigilante: solo si
+  // el nombre del servidor de correo ya no apunta a la IP guardada, para no
+  // insistir en cada visita a un servidor con varias IP o detrás de NAT.
+  const ipPublica = useQuery({
+    queryKey: ['ip-publica', initial.publicIp, initial.mailHostname],
+    queryFn: () => api.get<EstadoIpPublica>('/api/settings/public-ip'),
+    staleTime: 60 * 60_000,
+    retry: false,
+  });
+  const estadoIp = ipPublica.data;
+  const ipNueva = estadoIp?.detectada || '';
+  const proponerIp = Boolean(
+    estadoIp?.proponer && estadoIp.guardada === initial.publicIp.trim() && form.publicIp.trim() !== ipNueva,
+  );
 
   const detectar = useMutation({
     mutationFn: () => api.get<{ ip: string }>('/api/setup/detect-ip'),
@@ -163,10 +186,22 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
     onError: () => toast('error', 'No se ha podido detectar la IP pública. Introdúcela manualmente.'),
   });
 
+  const normalizar = (h: string) => h.trim().toLowerCase().replace(/\.$/, '');
+  const nombreCambia =
+    Boolean(normalizar(initial.mailHostname)) &&
+    Boolean(normalizar(form.mailHostname)) &&
+    normalizar(form.mailHostname) !== normalizar(initial.mailHostname);
+
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.brandName.trim()) {
       setError('Indica el nombre del servicio.');
+      return;
+    }
+    // Cambiar el nombre del servidor arrastra el MX de todos los dominios, el
+    // PTR, el certificado y Traefik: se enseña antes de guardarlo.
+    if (nombreCambia) {
+      setConfirmarNombre(true);
       return;
     }
     save.mutate();
@@ -205,7 +240,11 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           value={form.mailHostname}
           onChange={set('mailHostname')}
           placeholder="mail.tuempresa.com"
-          help="Figura en los datos de conexión de los buzones y en los registros DNS de los dominios."
+          help={
+            nombreCambia
+              ? 'Al guardar se muestra lo que cambia: el MX de los dominios, el registro A y el PTR del nombre nuevo, el certificado y la orden del instalador.'
+              : 'Figura en los datos de conexión de los buzones y en los registros DNS de los dominios.'
+          }
         />
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
@@ -228,6 +267,37 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
             Detectar
           </Button>
         </div>
+        {proponerIp && (
+          <Aviso>
+            <p>
+              El servidor sale ahora a Internet con la IP <span className="valor">{ipNueva}</span>
+              {estadoIp?.mailHostname && estadoIp.registroA && estadoIp.registroA.length > 0 ? (
+                <>
+                  {' '}y <span className="valor">{estadoIp.mailHostname}</span> apunta a{' '}
+                  <span className="valor">{estadoIp.registroA.join(', ')}</span>
+                </>
+              ) : null}
+              , pero aquí figura <span className="valor">{initial.publicIp}</span>. Si ha cambiado de IP,
+              actualízala: con la anterior, Entregabilidad comprueba el PTR y las listas negras de otra máquina.
+              {estadoIp?.mailHostname
+                ? ''
+                : ' Si el servidor tiene varias IP y sale por otra a propósito, no es necesario cambiar nada.'}
+            </p>
+            <Button
+              type="button"
+              variant="perfil"
+              className="mt-2"
+              onClick={() => {
+                setError('');
+                setModificado(true);
+                setForm((f) => ({ ...f, publicIp: ipNueva }));
+                toast('ok', `IP ${ipNueva} propuesta. Guarda los cambios para aplicarla.`);
+              }}
+            >
+              Usar esta IP
+            </Button>
+          </Aviso>
+        )}
         <Input
           label="URL general del webmail"
           mono
@@ -242,6 +312,14 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           Guardar cambios
         </Button>
       </form>
+      <DialogoCambioNombre
+        open={confirmarNombre}
+        nombre={normalizar(form.mailHostname)}
+        accion="guardar"
+        confirmando={save.isPending}
+        onConfirmar={() => save.mutate()}
+        onClose={() => setConfirmarNombre(false)}
+      />
     </Hoja>
   );
 }

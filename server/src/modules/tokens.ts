@@ -183,6 +183,34 @@ export function activeAdminTokensNamed(name: string): ManagementTokenInfo[] {
   return rows.map((row) => toInfo(row, null));
 }
 
+/** Caducidad del token (null: sin caducidad o inexistente). */
+export function caducidadDelToken(id: string): number | null {
+  const row = db.prepare('SELECT expires_at FROM management_tokens WHERE id = ?').get(id) as
+    | { expires_at: number | null }
+    | undefined;
+  return row?.expires_at ?? null;
+}
+
+/**
+ * Tokens que el vigilante debe anunciar antes de que la integración que los
+ * usa empiece a recibir 401: no revocados, con caducidad y usados alguna vez
+ * (uno que nadie usa no rompe nada). Incluye los caducados hace poco.
+ */
+export function tokensConCaducidadCercana(
+  ahora: number,
+  antelacionMs: number,
+  margenCaducadoMs: number,
+): ManagementTokenInfo[] {
+  const rows = db
+    .prepare(
+      `${SELECT_TOKENS}
+       WHERE t.revoked_at IS NULL AND t.expires_at IS NOT NULL AND t.last_used_at IS NOT NULL
+         AND t.expires_at <= ? AND t.expires_at > ?`,
+    )
+    .all(ahora + antelacionMs, ahora - margenCaducadoMs) as TokenRow[];
+  return rows.map((row) => toInfo(row, null));
+}
+
 const createSchema = z.object({
   name: z
     .string({ required_error: 'Indica un nombre para el token.' })

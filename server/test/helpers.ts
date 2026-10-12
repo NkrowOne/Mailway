@@ -1,8 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
 import { db } from '../src/core/db';
+import { HttpError } from '../src/core/errors';
 import { verifySha512Crypt } from '../src/core/sha512crypt';
 import { getEngine } from '../src/engine';
+import { DemoEngine } from '../src/engine/demo';
+import type { MailEngine } from '../src/engine/types';
+import type { CambioDominioVista } from '../src/modules/domainmigrations';
 
 /**
  * Utilidades comunes para probar las rutas reales con `app.inject()`.
@@ -162,8 +166,65 @@ export async function createMailbox(
  * comprueba con verificarContrasenaBuzon (modules/credenciales.ts).
  */
 export async function motorAcepta(email: string, password: string): Promise<boolean> {
-  const credenciales = await getEngine().readMailboxCredentials(email);
+  return aceptaEnMotor(getEngine(), email, password);
+}
+
+/**
+ * Lo mismo con un motor concreto (el driver contra un Stalwart falso o un
+ * motor de demostración propio de la prueba). `login`: el usuario del motor,
+ * que tras un cambio de dominio puede no ser la dirección del buzón.
+ */
+export async function aceptaEnMotor(engine: MailEngine, login: string, password: string): Promise<boolean> {
+  // Un usuario que el motor no tiene no entra (el driver lo dice con engine_not_found).
+  const credenciales = await engine.readMailboxCredentials(login).catch((err: unknown) => {
+    if (err instanceof HttpError && err.code === 'engine_not_found') return null;
+    throw err;
+  });
   if (!credenciales || credenciales.suspended) return false;
   if (credenciales.passwordHash && verifySha512Crypt(password, credenciales.passwordHash)) return true;
   return credenciales.appPasswords.some((app) => app.hash.startsWith('$6$') && verifySha512Crypt(password, app.hash));
+}
+
+/* ----------------------------- Cambio de dominio ---------------------------- */
+
+/** El motor de demostración de las pruebas, con sus ganchos (entregar, fallarProxima…). */
+export function motorDemo(): DemoEngine {
+  // Sin el guardián del mantenimiento: las pruebas necesitan el motor tal cual.
+  const engine = getEngine({ saltarMantenimiento: true });
+  if (!(engine instanceof DemoEngine)) throw new Error('Las pruebas esperan el motor de demostración.');
+  return engine;
+}
+
+/**
+ * Da por bueno el DNS de un dominio (estado «active») y su propiedad, como si
+ * la medición los hubiera comprobado. Sin red, las mediciones siguientes no
+ * lo degradan: «no se pudo consultar» conserva el estado anterior.
+ */
+export function marcarDnsActivo(domainId: string): void {
+  const t = Date.now();
+  db.prepare(
+    `UPDATE domains SET status = 'active', owner_verified_at = COALESCE(owner_verified_at, ?),
+       verified_at = COALESCE(verified_at, ?)
+     WHERE id = ?`,
+  ).run(t, t, domainId);
+}
+
+/**
+ * Crea un cambio de dominio por la ruta real. Por defecto con la sesión del
+ * administrador y sin DNS automático; `headers` permite usar un token o la
+ * sesión de un usuario del cliente.
+ */
+export async function crearCambioDeDominio(
+  ctx: TestContext,
+  fromDomainId: string,
+  toDomain: string,
+  opts: { headers?: Record<string, string>; query?: string; payload?: Record<string, unknown> } = {},
+): Promise<{ statusCode: number; vista: CambioDominioVista; body: string }> {
+  const res = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/domain-migrations${opts.query ? `?${opts.query}` : ''}`,
+    headers: opts.headers ?? { cookie: ctx.adminCookie },
+    payload: { fromDomainId, toDomain, autoDns: false, ...opts.payload },
+  });
+  return { statusCode: res.statusCode, vista: res.json() as CambioDominioVista, body: res.body };
 }

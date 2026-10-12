@@ -1,10 +1,11 @@
 import { db, now } from '../core/db';
 import { HttpError } from '../core/errors';
-import { mailboxStateLockKey, withLock } from '../core/locks';
+import { buzonLockKey, mailboxStateLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import type { MailEngine } from '../engine/types';
 import { auditSystem } from './audit';
 import { runLimited } from './clients';
+import { loginParaMotor, nombreEnMotor } from './direcciones';
 import { destinosDe, esBuzonDeLaInstancia } from './domains';
 import { mantenimientoActivo } from './mantenimiento';
 import { getEngineSettings, getSetting, setJsonSetting } from './settings';
@@ -171,7 +172,13 @@ async function fijarDestinos(engine: MailEngine, email: string, json: string): P
   const destinos = destinosDe(json);
   if (destinos.length === 0) return false;
   const internos = destinos.filter(esBuzonDeLaInstancia);
-  await engine.upsertAlias(email, internos, destinos.filter((d) => !internos.includes(d)));
+  // Los miembros van por el usuario del motor de cada buzón, que durante un
+  // cambio de dominio puede no ser su dirección (como en mailboxes.ts).
+  await engine.upsertAlias(
+    email,
+    internos.map(nombreEnMotor),
+    destinos.filter((d) => !internos.includes(d)),
+  );
   return true;
 }
 
@@ -254,12 +261,17 @@ async function intentar(): Promise<ResultadoReparacion> {
     await runLimited(suspendidos, SIMULTANEAS, (buzon) =>
       contar(
         () =>
-          withLock(mailboxStateLockKey(buzon.id), async () => {
-            // Ya dentro de la fila: un buzón reactivado o borrado entretanto no se toca.
-            if (!sigueSuspendidoStmt.get(buzon.id)) return false;
-            await engine.updateMailbox(buzon.email, { suspended: true });
-            return true;
-          }),
+          // Mismo orden de filas que el resto del panel: la del usuario del
+          // buzón (un cambio de dominio lo puede renombrar) y dentro la de su
+          // estado.
+          withLock(buzonLockKey(buzon.id), () =>
+            withLock(mailboxStateLockKey(buzon.id), async () => {
+              // Ya dentro de la fila: un buzón reactivado o borrado entretanto no se toca.
+              if (!sigueSuspendidoStmt.get(buzon.id)) return false;
+              await engine.updateMailbox(loginParaMotor(buzon.id), { suspended: true });
+              return true;
+            }),
+          ),
         'buzones',
       ),
     );

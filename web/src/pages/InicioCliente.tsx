@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type ClientDashboard } from '../lib/api';
 import { plural } from '../lib/format';
+import { dominiosQueCuentan } from '../lib/cambioDominio';
 import { lecturaDominio } from '../lib/cloudflare';
 import { pesoVeredicto } from '../lib/dominios';
 import { useDireccionPanel, useUsuario } from '../components/gestion/consultas';
@@ -265,7 +266,8 @@ export default function InicioCliente() {
 
         <Hoja title="Uso de tu plan" meta="Recursos disponibles">
           <div className="flex flex-col gap-4">
-            <Escala label="Dominios" usado={usage.domains} maximo={plan.maxDomains} />
+            {/* El dominio anterior de un cambio abierto no cuenta en el plan. */}
+            <Escala label="Dominios" usado={dominiosQueCuentan(usage.domains, domains)} maximo={plan.maxDomains} />
             <Escala label="Buzones" usado={usage.mailboxes} maximo={plan.maxMailboxes} />
             <Escala label="Alias" usado={usage.aliases} maximo={plan.maxAliases} />
             <div className="border-t border-regla pt-3">

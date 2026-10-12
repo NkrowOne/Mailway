@@ -506,3 +506,22 @@ test('estado de la autoconfiguración: solo administradores, con los registros d
   assert.equal(refresh.statusCode, 200);
   assert.equal((refresh.json() as { summary: { checked: number } }).summary.checked, 8);
 });
+
+/* --------------------------------- CAA (T16) ------------------------------- */
+
+test('un host de autoconfiguración con un CAA que no autoriza a Let\'s Encrypt no se publica', async (t) => {
+  const { instalarDnsFalso } = await import('./dns-falso');
+  const { checkAutoconfigHost } = await import('../src/modules/autoconfig');
+  const zona = {
+    cname: { 'autoconfig.cliente-a.test': [MAIL_HOST] },
+    caa: {} as Record<string, { critical: number; issue?: string }[]>,
+  };
+  instalarDnsFalso(t, zona);
+  assert.equal((await checkAutoconfigHost('autoconfig.cliente-a.test')).state, 'ok', 'sin CAA, cualquier autoridad puede emitir');
+  zona.caa['cliente-a.test'] = [{ critical: 0, issue: 'sectigo.com' }, { critical: 0, iodef: 'mailto:x@y.test' } as never];
+  const bloqueado = await checkAutoconfigHost('autoconfig.cliente-a.test');
+  assert.equal(bloqueado.state, 'pending');
+  assert.match(bloqueado.detail, /0 issue "letsencrypt\.org"/);
+  zona.caa['cliente-a.test'] = [{ critical: 0, issuewild: 'sectigo.com' } as never];
+  assert.equal((await checkAutoconfigHost('autoconfig.cliente-a.test')).state, 'ok', 'sin «issue», solo limita los comodines');
+});

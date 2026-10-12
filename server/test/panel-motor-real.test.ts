@@ -13,7 +13,16 @@ import { capturarParaMigrar, estadoCambioMotor } from '../src/modules/cambiomoto
 import { leerHashBuzon } from '../src/modules/credenciales';
 import { forgetApiKey, forgetTransport, parseSmtpCredentials } from '../src/modules/transactional';
 import { runWatchdogOnce } from '../src/modules/watchdog';
-import { adminContext, createClient, createDomain, createMailbox, type TestContext } from './helpers';
+import { instalarDnsFalso } from './dns-falso';
+import {
+  adminContext,
+  crearCambioDeDominio,
+  createClient,
+  createDomain,
+  createMailbox,
+  marcarDnsActivo,
+  type TestContext,
+} from './helpers';
 import { ClienteCorreo } from './protocolos-correo';
 
 /*
@@ -576,6 +585,64 @@ describe(`Panel contra un motor real (${API || 'sin motor'})`, { skip: omitir },
       esperarOk(await miBuzon(beto.email, beto.password), 'Mi buzón tras restablecer');
       assert.equal(await correo.imapLogin(beto.email, beto.password), 'ok');
     }
+  });
+
+  test('cambio de dominio de punta a punta: pre-recepción, pasar, actualizar el usuario y baja', { timeout: 240_000 }, async (t) => {
+    const VIEJO = `cdv-${sufijo}.test`;
+    const NUEVO = `cdn-${sufijo}.test`;
+    const cliente = await createClient(ctx, { name: `Cambio e2e ${sufijo}` });
+    esperarOk(await admin('PATCH', `/api/clients/${cliente.clientId}`, { planId: 'plan_agencia' }), 'plan con dos dominios');
+    const viejo = await createDomain(ctx, cliente.clientId, VIEJO);
+    dominiosCreados.push(viejo.domainId);
+    const eva = await createMailbox(ctx, viejo.domainId, 'eva');
+    esperarOk(await admin('POST', '/api/aliases', { domainId: viejo.domainId, localPart: 'info', destinations: [eva.email] }), 'alias');
+    const evaN = `eva@${NUEVO}`;
+
+    // Preparar: el dominio nuevo pasa a existir y cada dirección recibe también la nueva.
+    const creado = await crearCambioDeDominio(ctx, viejo.domainId, NUEVO);
+    assert.equal(creado.statusCode, 201, creado.body);
+    const toId = creado.vista.hacia.domainId!;
+    dominiosCreados.push(toId);
+    marcarDnsActivo(toId);
+    const listo = esperarOk(await admin('POST', `/api/domain-migrations/${creado.vista.id}/check`, {}), 'comprobar');
+    assert.equal(listo.estado, 'listo', JSON.stringify(listo.compuertas));
+    assert.ok((await getEngine().listDirectory()).domains.includes(NUEVO), 'el dominio nuevo existe en el motor');
+    const antes = `Antes de pasar ${sufijo}`;
+    await correo.smtpEntregar({ de: REMITENTE_EXTERNO, para: evaN, asunto: antes });
+    assert.equal(await hasta(() => correo.imapBuscar(eva.email, eva.password, antes), (n) => n > 0, 60_000), 1);
+
+    // Pasar: el buzón y el alias ya son de NUEVO; Eva sigue entrando con su usuario.
+    const pasado = esperarOk(await admin('POST', `/api/domain-migrations/${creado.vista.id}/switch`, {}), 'pasar');
+    assert.equal(pasado.estado, 'pasado');
+    assert.equal(await correo.imapLogin(eva.email, eva.password), 'ok');
+    const alAlias = `Al alias nuevo ${sufijo}`;
+    await correo.smtpEntregar({ de: REMITENTE_EXTERNO, para: `info@${NUEVO}`, asunto: alAlias });
+    assert.equal(await hasta(() => correo.imapBuscar(eva.email, eva.password, alAlias), (n) => n > 0, 60_000), 1);
+
+    // Actualizar el usuario: entra con la dirección nueva, con el mismo correo y contraseña.
+    esperarOk(await admin('POST', `/api/mailboxes/${eva.mailboxId}/login-update`, {}), 'actualizar el usuario');
+    assert.equal(await correo.imapLogin(evaN, eva.password), 'ok');
+    assert.equal(await correo.imapBuscar(evaN, eva.password, antes), 1, 'el correo sigue en el buzón');
+    esperarOk(await miBuzon(evaN, eva.password), 'Mi buzón con la dirección nueva');
+
+    // Baja: con el MX de VIEJO ya en otro proveedor.
+    instalarDnsFalso(t, {
+      mx: { [VIEJO]: [{ priority: 10, exchange: 'mx.otro-proveedor.test' }] },
+      a: { 'mx.otro-proveedor.test': ['198.51.100.7'] },
+    });
+    const baja = esperarOk(
+      await admin('POST', `/api/domain-migrations/${creado.vista.id}/retire`, { confirm: VIEJO }),
+      'dar de baja',
+    );
+    assert.equal(baja.estado, 'dado_de_baja');
+    const directorio = await getEngine().listDirectory();
+    assert.ok(!directorio.domains.includes(VIEJO), 'el dominio anterior sigue en el motor');
+    assert.equal((await getEngine().getPrincipal(evaN))?.emails.join(','), evaN);
+    assert.equal((await getEngine().getPrincipal(`info@${NUEVO}`))?.emails.join(','), `info@${NUEVO}`);
+    assert.equal(await correo.imapLogin(evaN, eva.password), 'ok');
+
+    esperarOk(await admin('DELETE', `/api/domains/${toId}?confirm=${NUEVO}`), 'borrar el dominio nuevo');
+    esperarOk(await admin('DELETE', `/api/clients/${cliente.clientId}`), 'borrar el cliente');
   });
 
   test('borrados: alias, buzón y dominio (con lo que aún tenga) desaparecen del motor', { timeout: 120_000 }, async () => {

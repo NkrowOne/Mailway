@@ -93,6 +93,64 @@ export interface ConfiguracionTraefik extends WhitelabelSetup {
 
 export const MAX_DOMINIOS_PROPIOS = 5;
 
+/** Dominio de correo con su nombre en ASCII y, si lo tiene, en Unicode (ñ, acentos). */
+export interface DominioPadre {
+  domain: string;
+  domainUnicode?: string;
+}
+
+export interface SubdominioInterpretado {
+  /** Lo que va delante del dominio de correo (webmail, correo.web…). */
+  prefijo: string;
+  /** Dominio de correo escrito al final del texto, si lo había. */
+  padre: string | null;
+  error: string | null;
+}
+
+/**
+ * Lee el campo «Subdominio» del alta de un dominio propio. El resto del panel
+ * enseña a escribir nombres completos, así que es esperable recibir
+ * «webmail.panaderiasol.es» en lugar de «webmail»: si el texto termina en un
+ * dominio de correo comprobado, se separa y se elige ese dominio. Con puntos
+ * y sin terminar en ninguno («webmail.otrodominio.com»), concatenarlo daría
+ * un nombre que nadie va a crear en el DNS (webmail.otrodominio.com.panaderiasol.es).
+ */
+export function interpretarSubdominio(
+  texto: string,
+  verificados: DominioPadre[],
+  pendientes: DominioPadre[] = [],
+): SubdominioInterpretado {
+  const t = texto
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/\.+$/, '');
+  if (!t.includes('.')) return { prefijo: t, padre: null, error: null };
+  const nombres = (d: DominioPadre) => [d.domain, d.domainUnicode].filter((n): n is string => Boolean(n));
+  const terminaEn = (d: DominioPadre) => nombres(d).find((n) => t === n || t.endsWith(`.${n}`)) ?? null;
+  const soloSubdominio = 'Escribe solo el subdominio (por ejemplo, webmail): el dominio de correo se elige en la lista.';
+  // El más largo primero, por si hay a la vez un dominio y un subdominio suyo.
+  const candidatos = verificados
+    .map((d) => ({ d, nombre: terminaEn(d) }))
+    .filter((c): c is { d: DominioPadre; nombre: string } => c.nombre !== null)
+    .sort((a, b) => b.nombre.length - a.nombre.length);
+  const elegido = candidatos[0];
+  if (elegido) {
+    if (t === elegido.nombre) return { prefijo: '', padre: elegido.d.domain, error: soloSubdominio };
+    return { prefijo: t.slice(0, -(elegido.nombre.length + 1)), padre: elegido.d.domain, error: null };
+  }
+  const pendiente = pendientes.find((d) => terminaEn(d) !== null);
+  if (pendiente) {
+    return {
+      prefijo: t,
+      padre: null,
+      error: `${pendiente.domainUnicode || pendiente.domain} todavía no tiene la propiedad comprobada: compruébala en «Dominios» antes de usarlo.`,
+    };
+  }
+  return { prefijo: t, padre: null, error: soloSubdominio };
+}
+
 /** Cuenta de Cloudflare conectada (la gestiona el área de Cloudflare). */
 export interface CuentaCloudflare {
   id: string;

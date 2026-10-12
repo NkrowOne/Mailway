@@ -148,7 +148,7 @@ test('cambiar la contraseña desde el panel actualiza el motor y la copia local'
 test('captura perezosa: sin copia local, la comprobación lee el hash de 0.15 y lo guarda', async () => {
   const b = await buzonNuevo();
   db.prepare('DELETE FROM credenciales_buzon WHERE mailbox_id = ?').run(b.mailboxId);
-  motorFalso.principals.set(b.email, { type: 'individual', secrets: [sha512Crypt(b.password)], roles: ['user'] });
+  motorFalso.crearPrincipal({ name: b.email, type: 'individual', secrets: [sha512Crypt(b.password)], roles: ['user'] });
   const motor = new MotorStalwart(ajustes015);
 
   assert.equal(await comprobarContrasenaBuzon(b.mailboxId, 'no-es-la-clave', motor), 'incorrecta');
@@ -163,7 +163,7 @@ test('captura perezosa: sin copia local, la comprobación lee el hash de 0.15 y 
 
   // Cambiada fuera del panel (el autoservicio de Stalwart 0.15): un fallo
   // con la copia vuelve a leer el motor y la refresca.
-  motorFalso.principals.get(b.email)!.secrets = [sha512Crypt('cambiada-en-el-motor')];
+  motorFalso.principal(b.email)!.secrets = [sha512Crypt('cambiada-en-el-motor')];
   assert.equal(await comprobarContrasenaBuzon(b.mailboxId, 'cambiada-en-el-motor', motor), 'principal');
   assert.equal(await comprobarContrasenaBuzon(b.mailboxId, b.password, motor), 'incorrecta');
   // Nunca se le ha pedido al motor que autentique la contraseña de nadie.
@@ -176,7 +176,7 @@ test('captura perezosa: buzón que no está en el motor, sin hash $6$ o motor ca
   const motor = new MotorStalwart(ajustes015);
   assert.equal(await comprobarContrasenaBuzon(b.mailboxId, b.password, motor), 'incorrecta', 'no existe en el motor');
 
-  motorFalso.principals.set(b.email, { type: 'individual', secrets: ['{PLAIN}otro-formato'], roles: ['user'] });
+  motorFalso.crearPrincipal({ name: b.email, type: 'individual', secrets: ['{PLAIN}otro-formato'], roles: ['user'] });
   assert.equal(await comprobarContrasenaBuzon(b.mailboxId, b.password, motor), 'sin_copia');
 
   const caido = new MotorStalwart({ ...ajustes015, url: 'http://127.0.0.1:9' });
@@ -186,7 +186,7 @@ test('captura perezosa: buzón que no está en el motor, sin hash $6$ o motor ca
 test('portal: un buzón anterior a la copia entra con el motor 0.15 configurado y su copia queda guardada', async () => {
   const b = await buzonNuevo();
   db.prepare('DELETE FROM credenciales_buzon WHERE mailbox_id = ?').run(b.mailboxId);
-  motorFalso.principals.set(b.email, { type: 'individual', secrets: [sha512Crypt(b.password)], roles: ['user'] });
+  motorFalso.crearPrincipal({ name: b.email, type: 'individual', secrets: [sha512Crypt(b.password)], roles: ['user'] });
   config.demoMode = false;
   setEngineSettings(ajustes015);
   try {
@@ -211,9 +211,9 @@ test('captura en bloque: copia lo que falta, refresca lo distinto y lista lo que
   const c = await buzonNuevo();
   db.prepare('DELETE FROM credenciales_buzon WHERE mailbox_id IN (?, ?)').run(a.mailboxId, b.mailboxId);
   motorFalso.principals.clear();
-  motorFalso.principals.set(a.email, { type: 'individual', secrets: [sha512Crypt(a.password)], roles: ['user'] });
+  motorFalso.crearPrincipal({ name: a.email, type: 'individual', secrets: [sha512Crypt(a.password)], roles: ['user'] });
   // c tiene copia, pero el motor tiene otra contraseña (cambiada fuera del panel).
-  motorFalso.principals.set(c.email, { type: 'individual', secrets: [sha512Crypt('otra-de-c')], roles: [] });
+  motorFalso.crearPrincipal({ name: c.email, type: 'individual', secrets: [sha512Crypt('otra-de-c')], roles: [] });
   const motor = new MotorStalwart(ajustes015);
 
   const total = (db.prepare('SELECT COUNT(*) AS n FROM mailboxes').get() as { n: number }).n;

@@ -34,7 +34,14 @@ const NOMBRES: Record<Dispositivo, string> = {
 const ORDEN: Dispositivo[] = ['iphone', 'mac', 'android', 'outlook', 'thunderbird', 'otros'];
 
 export interface GuiasDispositivoProps {
+  /** La dirección del buzón: la que se escribe en los asistentes (Thunderbird, Outlook). */
   email: string;
+  /**
+   * Usuario con el que autentican los dispositivos, si no es la dirección:
+   * tras un cambio de dominio, el anterior hasta actualizarlo. Solo lo usan
+   * los datos manuales; la autoconfiguración ya lo resuelve desde la dirección.
+   */
+  usuario?: string;
   conexion: DatosConexion;
   /** Enlace directo al perfil de Apple (el iPhone debe abrirlo en Safari). */
   appleProfileUrl: string;
@@ -261,7 +268,12 @@ function GuiaAndroid(props: GuiasDispositivoProps) {
         Estas aplicaciones no detectan la configuración automáticamente. Añade una cuenta de tipo <Ui>Otra</Ui> o{' '}
         <Ui>IMAP</Ui> (en Gmail: Ajustes → Añadir cuenta → Otra → <Ui>Personal (IMAP)</Ui>) y copia estos datos:
       </p>
-      <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
+      <DatosManuales
+        email={props.email}
+        usuario={props.usuario}
+        conexion={props.conexion}
+        notaContrasena={props.notaContrasena}
+      />
     </>
   );
 }
@@ -289,7 +301,12 @@ function GuiaOutlook(props: GuiasDispositivoProps) {
           Completa los servidores con los datos siguientes y pulsa <Ui>Continuar</Ui>.
         </Paso>
       </Pasos>
-      <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
+      <DatosManuales
+        email={props.email}
+        usuario={props.usuario}
+        conexion={props.conexion}
+        notaContrasena={props.notaContrasena}
+      />
       <Nota>
         El nuevo Outlook y la aplicación de Outlook para móviles acceden al buzón a través de los servidores de
         Microsoft. Se recomienda utilizar una contraseña de aplicación exclusiva para Outlook, que puede crearse en «Mi
@@ -329,15 +346,25 @@ function GuiaOtros(props: GuiasDispositivoProps) {
   return (
     <>
       <p className="max-w-[70ch] text-base text-tinta-2">
-        Para cualquier otro programa, configura una cuenta IMAP con estos datos. El usuario es siempre la dirección de
-        correo completa.
+        Para cualquier otro programa, configura una cuenta IMAP con estos datos.
+        {!usuarioDistinto(props.email, props.usuario) && ' El usuario es siempre la dirección de correo completa.'}
       </p>
-      <DatosManuales email={props.email} conexion={props.conexion} notaContrasena={props.notaContrasena} />
+      <DatosManuales
+        email={props.email}
+        usuario={props.usuario}
+        conexion={props.conexion}
+        notaContrasena={props.notaContrasena}
+      />
     </>
   );
 }
 
 /* ---------------------------- Datos manuales ------------------------------- */
+
+/** El usuario de los dispositivos no es la dirección (cambio de dominio sin actualizar). */
+function usuarioDistinto(email: string, usuario: string | undefined): boolean {
+  return usuario !== undefined && usuario !== '' && usuario.toLowerCase() !== email.toLowerCase();
+}
 
 /**
  * Ficha de datos para la configuración manual. Cada valor que hay que teclear
@@ -346,34 +373,53 @@ function GuiaOtros(props: GuiasDispositivoProps) {
  */
 export function DatosManuales({
   email,
+  usuario,
   conexion,
   notaContrasena,
   compacto = false,
 }: {
   email: string;
+  /** Usuario de los dispositivos si no es la dirección (ver `GuiasDispositivoProps.usuario`). */
+  usuario?: string;
   conexion: DatosConexion;
   notaContrasena?: ReactNode;
   /** En un contenedor estrecho (diálogo) el rótulo va siempre encima del valor. */
   compacto?: boolean;
 }) {
   const fila = { compacto };
+  // Sin nombre del servidor en Ajustes, una fila con solo el puerto parece un
+  // dato completo: se dice que falta y quién lo configura.
+  const sinServidor =
+    'Sin configurar: falta el nombre del servidor de correo en la configuración del servicio (Ajustes → Identidad del servidor).';
   return (
     <div className="border border-regla bg-hoja-2">
-      <FilaDato {...fila} rotulo="Usuario" valor={email} copiar={email} nota="La dirección de correo completa." />
+      {usuarioDistinto(email, usuario) ? (
+        // Stalwart solo autentica por el usuario: con la dirección nueva, la
+        // configuración manual fallaría hasta actualizar los dispositivos.
+        <FilaDato
+          {...fila}
+          rotulo="Usuario"
+          valor={usuario}
+          copiar={usuario}
+          nota={`El usuario anterior al cambio de dirección: se usa hasta actualizar los dispositivos. La dirección es ${email}.`}
+        />
+      ) : (
+        <FilaDato {...fila} rotulo="Usuario" valor={email} copiar={email} nota="La dirección de correo completa." />
+      )}
       <FilaDato {...fila} rotulo="Contraseña" nota={notaContrasena ?? 'La contraseña del buzón.'} />
       <FilaDato
         {...fila}
         rotulo="Servidor de entrada (IMAP)"
-        valor={conexion.imap.host}
-        copiar={conexion.imap.host}
-        nota={`Puerto ${conexion.imap.port} · Seguridad ${conexion.imap.security}`}
+        valor={conexion.imap.host || undefined}
+        copiar={conexion.imap.host || undefined}
+        nota={`${conexion.imap.host ? '' : `${sinServidor} `}Puerto ${conexion.imap.port} · Seguridad ${conexion.imap.security}`}
       />
       <FilaDato
         {...fila}
         rotulo="Servidor de salida (SMTP)"
-        valor={conexion.smtp.host}
-        copiar={conexion.smtp.host}
-        nota={`Puerto ${conexion.smtp.port} · Seguridad ${conexion.smtp.security} · Requiere autenticación con el mismo usuario y contraseña`}
+        valor={conexion.smtp.host || undefined}
+        copiar={conexion.smtp.host || undefined}
+        nota={`${conexion.smtp.host ? '' : `${sinServidor} `}Puerto ${conexion.smtp.port} · Seguridad ${conexion.smtp.security} · Requiere autenticación con el mismo usuario y contraseña`}
       />
       <FilaDato
         {...fila}

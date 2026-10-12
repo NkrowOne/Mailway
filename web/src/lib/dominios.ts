@@ -26,4 +26,24 @@ export interface ConflictoDominio {
   mxInternos?: string[];
   /** Explicación de `mxInternos`; con ella no se puede exportar la zona ni aplicar en Cloudflare. */
   avisoServidor?: string | null;
+  /** Qué hacer con la política MTA-STS del proveedor actual antes de cambiar el MX. */
+  avisoMtaSts?: string | null;
+}
+
+/**
+ * Dominio sin «www.» para sugerirlo en el alta: quien pega la URL de la web
+ * casi siempre quiere el correo en empresa.com, no en www.empresa.com. Admite
+ * lo mismo que el servidor (URL completa, mayúsculas, punto final). null si
+ * no empieza por «www.» o si quitarlo no deja un dominio (www.es).
+ */
+export function sugerenciaSinWww(texto: string): string | null {
+  const limpio = texto
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z]+:\/\//, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/\.$/, '');
+  if (!limpio.startsWith('www.')) return null;
+  const resto = limpio.slice(4);
+  return /^[^.\s]+(\.[^.\s]+)+$/.test(resto) ? resto : null;
 }

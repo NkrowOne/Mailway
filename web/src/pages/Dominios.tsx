@@ -15,8 +15,10 @@ import {
   type EstadoAltaDominio,
   type RespuestaAltaDominio,
 } from '../lib/cloudflare';
+import { sugerenciaSinWww } from '../lib/dominios';
+import { dominiosQueCuentan, etiquetaMigracion } from '../lib/cambioDominio';
 import { formatDate, plural } from '../lib/format';
-import { useClientes, useUsuario } from '../components/gestion/consultas';
+import { useAltaDesdeEnlace, useClientes, useUsuario } from '../components/gestion/consultas';
 import { BandaAviso } from '../components/cloudflare/comun';
 import { CabeceraVista, rutaCliente } from '../components/gestion/comun';
 import { Button } from '../ui/Button';
@@ -50,6 +52,8 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
   const [clientId, setClientId] = useState('');
   const [autoDns, setAutoDns] = useState(true);
   const [error, setError] = useState('');
+  // El servidor pregunta antes de dar de alta www.<dominio> (domain_www).
+  const [avisoWww, setAvisoWww] = useState<{ mensaje: string; sugerido: string | null } | null>(null);
 
   const domains = useQuery({
     queryKey: ['domains'],
@@ -74,6 +78,14 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
     : todas;
   const hayCloudflare = utilizables.length > 0;
 
+  // El dominio anterior de un cambio de dominio abierto no cuenta en el plan
+  // (el uso del cliente sí lo incluye): se descuenta como hace el servidor.
+  const usadosEnPlan = (cliente: { id: string; usage: { domains: number } }) =>
+    dominiosQueCuentan(
+      cliente.usage.domains,
+      (domains.data?.domains ?? []).filter((d) => d.clientId === cliente.id),
+    );
+
   // Límite del plan: un cliente (o el administrador en la ficha de uno) lo
   // ve antes de rellenar nada; en la lista de todos, al elegir el cliente en
   // el formulario.
@@ -82,20 +94,20 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
     : !isAdmin
       ? [...clientes.values()][0]
       : undefined;
-  const limiteContexto = clienteContexto
-    ? clienteContexto.usage.domains >= clienteContexto.plan.maxDomains
-    : false;
+  const usadosContexto = clienteContexto ? usadosEnPlan(clienteContexto) : 0;
+  const limiteContexto = clienteContexto ? usadosContexto >= clienteContexto.plan.maxDomains : false;
   const altaVetada = limiteContexto || Boolean(clienteContexto?.suspended);
   const verCliente = isAdmin && !clienteFijo;
   const elegido = isAdmin && clientId ? clientes.get(clientId) : undefined;
-  const limiteElegido = elegido ? elegido.usage.domains >= elegido.plan.maxDomains : false;
+  const limiteElegido = elegido ? usadosEnPlan(elegido) >= elegido.plan.maxDomains : false;
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (confirmWww: boolean) =>
       api.post<RespuestaAltaDominio>('/api/domains', {
         domain: domainName,
         clientId: isAdmin ? clientId : undefined,
         ...(hayCloudflare && autoDns ? { autoDns: true } : {}),
+        ...(confirmWww ? { confirmWww: true } : {}),
       }),
     onSuccess: async (data) => {
       await invalidarTrasAltaOBaja(queryClient, data.domain.clientId);
@@ -110,7 +122,13 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
       };
       navigate(`/dominios/${data.domain.id}`, { state: { alta } });
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta.'),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'domain_www') {
+        setAvisoWww({ mensaje: err.message, sugerido: sugerenciaSinWww(domainName) });
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta.');
+    },
   });
 
   function abrir() {
@@ -119,6 +137,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
     setClientId(clienteFijo ?? '');
     setAutoDns(true);
     setError('');
+    setAvisoWww(null);
     create.reset();
     setOpen(true);
   }
@@ -126,8 +145,15 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
   function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
-    create.mutate();
+    setAvisoWww(null);
+    create.mutate(false);
   }
+
+  // «Añadir dominio» del resumen: con el plan lleno o la cuenta suspendida el
+  // botón está desactivado, y el atajo tampoco abre el alta.
+  useAltaDesdeEnlace(() => {
+    if (!altaVetada) abrir();
+  }, !domains.isPending);
 
   const list = (domains.data?.domains ?? [])
     .filter((d) => !clienteFijo || d.clientId === clienteFijo)
@@ -138,7 +164,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
   const recuento =
     !domains.isPending && (clienteContexto || list.length > 0)
       ? clienteContexto
-        ? `${clienteContexto.usage.domains} de ${clienteContexto.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
+        ? `${usadosContexto} de ${clienteContexto.plan.maxDomains} dominios del plan · ${activos} de ${list.length} activos`
         : `${activos} de ${list.length} activos`
       : null;
 
@@ -253,6 +279,11 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
                     {visible !== domain.domain && (
                       <span className="valor block break-all text-sm text-tinta-3">{domain.domain}</span>
                     )}
+                    {domain.migracion && (
+                      <span className="block text-sm text-tinta-2 [overflow-wrap:anywhere]">
+                        {etiquetaMigracion(domain.migracion, isAdmin)}
+                      </span>
+                    )}
                   </span>
 
                   {verCliente && (
@@ -326,6 +357,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
             onChange={(e) => {
               setDomainName(e.target.value);
               setError('');
+              setAvisoWww(null);
             }}
             placeholder="miempresa.com"
             autoComplete="off"
@@ -350,11 +382,35 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
                 faltan: lo que ya existe (también un SPF que habría que completar) no se
-                modifica y podrás revisarlo y aplicarlo en la ficha del dominio.
+                modifica y podrás revisarlo y aplicarlo en la ficha del dominio. Si el correo del
+                dominio llega hoy a otro proveedor, tampoco se crean el SPF ni el DMARC: se crean
+                junto con el MX cuando hagas el cambio desde la ficha.
               </p>
             </div>
           )}
 
+          {avisoWww && (
+            <BandaAviso titulo="Revisa el dominio">
+              <p>{avisoWww.mensaje}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {avisoWww.sugerido && (
+                  <Button
+                    type="button"
+                    variant="perfil"
+                    onClick={() => {
+                      setDomainName(avisoWww.sugerido!);
+                      setAvisoWww(null);
+                    }}
+                  >
+                    Usar {avisoWww.sugerido}
+                  </Button>
+                )}
+                <Button type="button" variant="plano" busy={create.isPending} onClick={() => create.mutate(true)}>
+                  Mantener el subdominio www
+                </Button>
+              </div>
+            </BandaAviso>
+          )}
           {error && <AvisoError>{error}</AvisoError>}
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="plano" onClick={() => setOpen(false)}>

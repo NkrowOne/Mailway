@@ -14,24 +14,27 @@ import {
   type RespuestasJmap,
 } from './jmap';
 import { analizarZonaBind } from './zonabind';
-import type {
-  AcmeInput,
-  CreatedAppPassword,
-  CreateMailboxInput,
-  EngineAcmeStatus,
-  EngineApi,
-  EngineDirectory,
-  EngineDnsRecord,
-  EngineHealth,
-  EngineReloadResult,
-  EngineSettings,
-  EngineSettingsStatus,
-  MailboxCredentials,
-  MailEngine,
-  QueueSummary,
-  RecommendedInput,
-  SettingsStatusInput,
-  UpdateMailboxPatch,
+import {
+  fusionarDirecciones,
+  type AcmeInput,
+  type CreatedAppPassword,
+  type CreateMailboxInput,
+  type EngineAcmeStatus,
+  type EngineApi,
+  type EngineDirectory,
+  type EngineDnsRecord,
+  type EngineHealth,
+  type EnginePrincipal,
+  type EngineReloadResult,
+  type EngineSettings,
+  type EngineSettingsStatus,
+  type MailboxCredentials,
+  type MailEngine,
+  type QueueSummary,
+  type RecommendedInput,
+  type RemoteDomainsResult,
+  type SettingsStatusInput,
+  type UpdateMailboxPatch,
 } from './types';
 
 /**
@@ -44,7 +47,18 @@ import type {
  *   de recuperación y tiene todos los permisos, incluido `impersonate`.
  * - Los nombres de cuenta y de lista son la parte local; el dominio va aparte
  *   (`domainId`). Las direcciones completas solo existen al leer
- *   (`emailAddress`).
+ *   (`emailAddress`). Las demás direcciones van en `aliases` (parte local y
+ *   `domainId`). `name`, `domainId` y `aliases` se pueden cambiar en una sola
+ *   actualización, que conserva el id (y con él el correo y las
+ *   credenciales); el índice único de direcciones solo choca con OTRO objeto.
+ * - Se entra con cualquier dirección de la cuenta: la autenticación busca la
+ *   cuenta por la dirección (también sus alias) y solo exige el permiso
+ *   `authenticateWithAlias` si la parte local no coincide con el nombre. Un
+ *   cambio de dominio conserva la parte local, así que el usuario viejo sigue
+ *   entrando mientras su dirección sea un alias de la cuenta
+ *   (crates/common/src/auth/authentication.rs, v0.16.25).
+ * - Los destinos de una lista son direcciones (no ids): al quitar una
+ *   dirección de un buzón, las listas que la tenían pasan a la nueva.
  * - Un hash `$6$` se guarda tal cual como contraseña principal: el motor no lo
  *   vuelve a cifrar ni le pasa el control de fortaleza.
  * - Las contraseñas de aplicación las genera el motor (`app_…`) y solo se ven
@@ -206,12 +220,19 @@ interface Credencial {
   '@type'?: string;
   credentialId?: string;
 }
+interface AliasJmap {
+  enabled?: boolean;
+  name?: string;
+  domainId?: string;
+  description?: string | null;
+}
 interface CuentaJmap {
   id: string;
   '@type'?: string;
   emailAddress?: string;
   usedDiskQuota?: number;
   credentials?: Record<string, Credencial>;
+  aliases?: Record<string, AliasJmap>;
 }
 interface DominioJmap {
   id: string;
@@ -226,6 +247,22 @@ interface ListaJmap {
   name?: string;
   domainId?: string;
   emailAddress?: string;
+  aliases?: Record<string, AliasJmap>;
+  recipients?: Record<string, boolean>;
+}
+
+/** Cuenta o lista leída para el cambio de dominio. */
+interface PrincipalJmap {
+  objeto: 'Account' | 'MailingList';
+  id: string;
+  /** '@type' de la cuenta (User, Group…) o 'MailingList'. */
+  clase: string;
+  /** Dirección principal (nombre@dominio): el «nombre» del contrato. */
+  direccion: string;
+  /** La principal y después las de sus alias activos, sin repetir. */
+  direcciones: string[];
+  /** Alias desactivados: se conservan tal cual al reescribir los demás. */
+  desactivados: AliasJmap[];
 }
 interface FirmaDkim {
   id: string;
@@ -858,6 +895,22 @@ export class Stalwart016Engine implements MailEngine {
           'engine_exists',
         );
       }
+      // Solo se adopta un huérfano limpio: la cuenta se llama así y no tiene
+      // otras direcciones. Tras un cambio de dominio, la cuenta de un buzón
+      // que aún entra con su usuario viejo tiene esta dirección como alias;
+      // adoptarla al dar de alta otra vez la dirección entregaría a otra
+      // persona el buzón con todo su correo.
+      const [cuenta] = await this.lista<CuentaJmap>('Account', {
+        ids: [existente.id],
+        properties: ['emailAddress', 'aliases'],
+      });
+      const otras = Object.values(cuenta?.aliases ?? {}).length > 0;
+      if (cuenta?.emailAddress?.toLowerCase() !== email || otras) {
+        throw upstream(
+          'El servidor de correo ya tiene un usuario con ese nombre y otras direcciones: no se adopta.',
+          'engine_exists',
+        );
+      }
       // Buzón huérfano en el motor (existía allí pero no en el panel): se
       // adopta y se deja exactamente como lo pide el panel. Sustituir la lista
       // de credenciales entera deja solo la contraseña nueva: las contraseñas
@@ -1437,6 +1490,11 @@ export class Stalwart016Engine implements MailEngine {
     );
   }
 
+  /** En 0.16 el certificado lo pone el extractor de Traefik: no hay ACME propio. */
+  async getAcmeToken(): Promise<string | null> {
+    return null;
+  }
+
   async reloadCertificates(): Promise<void> {
     const res = await this.uno<ResultadoSet>('x:Action/set', {
       create: { r: { '@type': 'ReloadTlsCertificates' } },
@@ -1528,4 +1586,235 @@ export class Stalwart016Engine implements MailEngine {
     if (altas.length === 0) return { pending, oldestSeconds: null };
     return { pending, oldestSeconds: Math.max(0, Math.round((Date.now() - Math.min(...altas)) / 1000)) };
   }
+
+  /* --------------------------- Recepción externa ---------------------------- */
+
+  /**
+   * Las reglas de entrega de los dominios con el correo en otro proveedor
+   * (engine/recepcion.ts) son expresiones de Stalwart 0.15. En 0.16 la
+   * entrega se configura con otros objetos y no se ha comprobado aún contra
+   * un motor real: no se toca nada y el panel avisa (modules/recepcion.ts).
+   */
+  async syncRemoteDomains(_domains: string[], _opts: { reload?: boolean } = {}): Promise<RemoteDomainsResult> {
+    return { changed: false, customized: false, unsupported: true, errors: [], warnings: [] };
+  }
+
+  /* ----------------------------- Cambio de dominio ---------------------------- */
+
+  /** Nombre de un dominio por su id (la caché primero). null si ya no existe. */
+  private async nombreDeDominio(id: string): Promise<string | null> {
+    for (const [nombre, enCache] of this.dominios) if (enCache === id) return nombre;
+    const [dominio] = await this.lista<DominioJmap>('Domain', { ids: [id], properties: ['name'] });
+    if (!dominio?.name) return null;
+    const nombre = normalizarDominio(dominio.name);
+    this.dominios.set(nombre, id);
+    return nombre;
+  }
+
+  /** Direcciones de los alias activos y los desactivados, tal cual. */
+  private async leerAlias(
+    aliases: Record<string, AliasJmap> | undefined,
+  ): Promise<{ direcciones: string[]; desactivados: AliasJmap[] }> {
+    const direcciones: string[] = [];
+    const desactivados: AliasJmap[] = [];
+    // Las listas de JMAP llegan como objeto con índices («0», «1»…): en orden.
+    const entradas = Object.entries(aliases ?? {}).sort(([a], [b]) => Number(a) - Number(b));
+    for (const [, alias] of entradas) {
+      if (alias.enabled === false) {
+        desactivados.push(alias);
+        continue;
+      }
+      if (!alias.name || !alias.domainId) continue;
+      const dominio = await this.nombreDeDominio(alias.domainId);
+      if (dominio) direcciones.push(`${alias.name.toLowerCase()}@${dominio}`);
+    }
+    return { direcciones, desactivados };
+  }
+
+  /**
+   * Cuenta o lista cuya dirección PRINCIPAL es `nombre` (como el nombre de un
+   * principal en 0.15: una dirección que solo es alias no cuenta).
+   */
+  private async principalPorNombre(nombre: string): Promise<PrincipalJmap | null> {
+    const { email } = partirDireccion(nombre);
+    for (let intento = 0; intento < 2; intento++) {
+      const cuentaId = await this.buscarCuenta(email, intento === 0);
+      if (!cuentaId) break;
+      const [cuenta] = await this.lista<CuentaJmap>('Account', {
+        ids: [cuentaId],
+        properties: ['@type', 'emailAddress', 'aliases'],
+      });
+      if (!cuenta || cuenta.emailAddress?.toLowerCase() !== email) {
+        // Id de la caché obsoleto (borrada o renombrada fuera de aquí).
+        this.cuentas.delete(email);
+        continue;
+      }
+      const { direcciones, desactivados } = await this.leerAlias(cuenta.aliases);
+      return {
+        objeto: 'Account',
+        id: cuentaId,
+        clase: cuenta['@type'] ?? 'User',
+        direccion: email,
+        direcciones: [...new Set([email, ...direcciones])],
+        desactivados,
+      };
+    }
+    for (let intento = 0; intento < 2; intento++) {
+      const listaId = await this.buscarLista(email, true);
+      if (!listaId) return null;
+      const [lista] = await this.lista<ListaJmap>('MailingList', {
+        ids: [listaId],
+        properties: ['emailAddress', 'aliases'],
+      });
+      if (!lista || lista.emailAddress?.toLowerCase() !== email) {
+        this.listas.delete(email);
+        continue;
+      }
+      const { direcciones, desactivados } = await this.leerAlias(lista.aliases);
+      return {
+        objeto: 'MailingList',
+        id: listaId,
+        clase: 'MailingList',
+        direccion: email,
+        direcciones: [...new Set([email, ...direcciones])],
+        desactivados,
+      };
+    }
+    return null;
+  }
+
+  private static vista(p: PrincipalJmap): EnginePrincipal {
+    const type = p.objeto === 'MailingList' ? 'list' : p.clase === 'Group' ? 'group' : 'individual';
+    return { id: p.id, type, name: p.direccion, emails: [...p.direcciones] };
+  }
+
+  async getPrincipal(name: string): Promise<EnginePrincipal | null> {
+    const p = await this.principalPorNombre(name);
+    return p ? Stalwart016Engine.vista(p) : null;
+  }
+
+  /**
+   * `aliases` completos para estas direcciones (sin la principal) más los
+   * alias desactivados que ya tenía. Cada dominio tiene que existir en el
+   * motor: si no, engine_not_found, como en 0.15.
+   */
+  private async aliasPara(direcciones: string[], desactivados: AliasJmap[]): Promise<Record<string, AliasJmap>> {
+    const aliases: Record<string, AliasJmap> = {};
+    let n = 0;
+    for (const direccion of direcciones) {
+      const { local, dominio } = partirDireccion(direccion);
+      const domainId = await this.dominioObligatorio(dominio);
+      aliases[String(n++)] = { enabled: true, name: local, domainId };
+    }
+    for (const alias of desactivados) aliases[String(n++)] = alias;
+    return aliases;
+  }
+
+  /** Escribe en la cuenta o lista y traduce el error (un duplicado es engine_exists). */
+  private async actualizarPrincipal(p: PrincipalJmap, cambio: Argumentos): Promise<void> {
+    const res = await this.uno<ResultadoSet>(`x:${p.objeto}/set`, { update: { [p.id]: cambio } });
+    const que = p.objeto === 'Account' ? `el buzón ${p.direccion}` : `el alias ${p.direccion}`;
+    comprobarActualizado(res, p.id, que);
+  }
+
+  /**
+   * Las listas que tenían como destino alguna de las direcciones `quitadas`
+   * pasan a `nueva`. En 0.15 los miembros van por id y no hace falta; en 0.16
+   * son direcciones, y una que ya no existe rebotaría (o, sin su dominio en
+   * el motor, saldría hacia su MX).
+   */
+  private async redirigirDestinos(quitadas: string[], nueva: string): Promise<void> {
+    const viejas = new Set(quitadas.map((d) => d.trim().toLowerCase()));
+    if (viejas.size === 0) return;
+    const listas = await this.listarTodos<ListaJmap>('MailingList', ['recipients']);
+    for (const lista of listas) {
+      const destinos = Object.entries(lista.recipients ?? {})
+        .filter(([, si]) => si)
+        .map(([d]) => d.toLowerCase());
+      if (!destinos.some((d) => viejas.has(d))) continue;
+      const recipients: Record<string, boolean> = {};
+      for (const destino of destinos) recipients[viejas.has(destino) ? nueva : destino] = true;
+      const res = await this.uno<ResultadoSet>('x:MailingList/set', { update: { [lista.id]: { recipients } } });
+      comprobarActualizado(res, lista.id, `el alias ${lista.id}`);
+    }
+  }
+
+  async setAddresses(name: string, ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]> {
+    const p = await this.principalPorNombre(name);
+    if (!p) throw errorDeObjeto({ type: 'notFound' }, `«${name.trim().toLowerCase()}»`);
+    const fusion = fusionarDirecciones(p.direcciones, ops);
+    // La principal es el nombre de la cuenta: no se quita ni se mueve aquí.
+    if (!fusion.includes(p.direccion)) {
+      throw upstream(
+        `El motor de correo no puede quitar ${p.direccion}: es el nombre de esa cuenta. Hay que cambiarle antes el nombre.`,
+        'engine_error',
+      );
+    }
+    const final = [p.direccion, ...fusion.filter((d) => d !== p.direccion)];
+    const iguales = final.length === p.direcciones.length && final.every((d, i) => d === p.direcciones[i]);
+    if (iguales) return final;
+    await this.actualizarPrincipal(p, { aliases: await this.aliasPara(final.slice(1), p.desactivados) });
+    await this.redirigirDestinos(
+      p.direcciones.filter((d) => !final.includes(d)),
+      p.direccion,
+    );
+    return final;
+  }
+
+  async renamePrincipal(from: string, to: string, opts: { expectEmail: string; emails?: string[] }): Promise<void> {
+    const destino = partirDireccion(to);
+    const p = await this.principalPorNombre(from);
+    if (!p) {
+      // Un reintento de un renombrado que ya se hizo: no hay nada que hacer.
+      const otro = await this.principalPorNombre(destino.email);
+      if (!otro) throw errorDeObjeto({ type: 'notFound' }, `«${from.trim().toLowerCase()}»`);
+      if (otro.direcciones.includes(opts.expectEmail.trim().toLowerCase())) return;
+      throw upstream(`El servidor de correo ya tiene otro buzón o alias con el nombre «${to}».`, 'engine_exists');
+    }
+    // Sin direcciones, se conservan todas (la principal anterior pasa a ser
+    // un alias, así que sus dispositivos siguen entrando con ella).
+    const lista = opts.emails ? fusionarDirecciones(opts.emails, {}) : p.direcciones;
+    const final = [destino.email, ...lista.filter((d) => d !== destino.email)];
+    const dominioId = await this.dominioObligatorio(destino.dominio);
+    // Nombre, dominio y alias en UNA actualización: el motor la aplica entera
+    // o no aplica nada, y el id (correo, credenciales) no cambia.
+    await this.actualizarPrincipal(p, {
+      name: destino.local,
+      domainId: dominioId,
+      aliases: await this.aliasPara(final.slice(1), p.desactivados),
+    });
+    const cache = p.objeto === 'Account' ? this.cuentas : this.listas;
+    cache.delete(p.direccion);
+    cache.set(destino.email, p.id);
+    await this.redirigirDestinos(
+      p.direcciones.filter((d) => !final.includes(d)),
+      destino.email,
+    );
+  }
+
+  /**
+   * En 0.16 cada cambio de una cuenta o lista invalida la caché de
+   * direcciones del motor (también la de «no existe»): no hay nada que
+   * recargar.
+   */
+  async reloadDirectory(): Promise<void> {}
+
+  async removeDkim(domain: string): Promise<string[]> {
+    const nombre = normalizarDominio(domain);
+    const id = await this.buscarDominio(nombre, false);
+    if (!id) return [];
+    // En manual: con la gestión automática, la tarea DKIM del motor volvería
+    // a crear las claves que se borran.
+    const manual = await this.uno<ResultadoSet>('x:Domain/set', {
+      update: { [id]: { dkimManagement: { '@type': 'Manual' } } },
+    });
+    comprobarActualizado(manual, id, `el dominio ${nombre}`);
+    const consulta = await this.uno<ConIds>('x:DkimSignature/query', { filter: { domainId: id } });
+    const ids = [...(consulta.ids ?? [])].sort();
+    if (ids.length === 0) return [];
+    const res = await this.uno<ResultadoSet>('x:DkimSignature/set', { destroy: ids });
+    for (const firma of ids) comprobarBorrado(res, firma, `la firma DKIM ${firma} de ${nombre}`);
+    return ids;
+  }
+
 }

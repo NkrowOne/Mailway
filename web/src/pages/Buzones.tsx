@@ -28,9 +28,17 @@ import {
   SelectorDominio,
   type MotivoBloqueoDominio,
 } from '../components/gestion/comun';
-import { useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
+import { useAltaDesdeEnlace, useClientes, useUsuario, type FichaCliente } from '../components/gestion/consultas';
 import { esPropiedadPendiente } from '../lib/dominios';
+import { propiedadPendiente } from '../lib/cloudflare';
 import { FichaBuzon, type VistaFicha } from '../components/gestion/FichaBuzon';
+import { LineaUsuarioPendiente } from '../components/cambio-dominio/ActualizarUsuario';
+import { motivoAltaBloqueada } from '../lib/cambioDominio';
+
+/** Nombre legible del dominio (con «ñ» o acentos si los tiene). */
+function nombreDominio(d: DomainRecord): string {
+  return d.domainUnicode || d.domain;
+}
 
 interface FichaAbierta {
   id: string;
@@ -139,9 +147,10 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
     const cliente = verCliente ? clientes.get(d.clientId)?.name : undefined;
     return cliente ? `${d.domain} · ${cliente}` : d.domain;
   };
-  // Un dominio de un cliente suspendido o sin plazas no admite buzones: se
-  // dice en el selector, no al enviar el formulario.
-  const motivoBloqueo: MotivoBloqueoDominio = (d) => bloqueoCliente(clientes.get(d.clientId));
+  // Un dominio de un cliente suspendido o sin plazas, o en un cambio de
+  // dominio, no admite buzones: se dice en el selector, no al enviar el formulario.
+  const motivoBloqueo: MotivoBloqueoDominio = (d) =>
+    motivoAltaBloqueada(d.migracion) ?? bloqueoCliente(clientes.get(d.clientId));
 
   const fichaMailbox = ficha ? (all.find((m) => m.id === ficha.id) ?? ficha.mailbox) : null;
   const fichaCliente = fichaMailbox?.clientId ? clientes.get(fichaMailbox.clientId) : undefined;
@@ -157,7 +166,12 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
     : false;
   // Crear está vetado con el plan lleno o la cuenta suspendida: el botón lo
   // dice antes de rellenar el formulario, no el servidor al enviarlo.
-  const altaBloqueada = domainList.length === 0 || limiteAlcanzado || Boolean(clienteContexto?.suspended);
+  // Sin ningún dominio con la propiedad comprobada no se puede crear nada: el
+  // siguiente paso es la ficha del dominio, no un diálogo sin dominios.
+  const pendientesPropiedad = domainList.filter(propiedadPendiente);
+  const todosPendientes = domainList.length > 0 && pendientesPropiedad.length === domainList.length;
+  const altaBloqueada =
+    domainList.length === 0 || todosPendientes || limiteAlcanzado || Boolean(clienteContexto?.suspended);
   const hayFiltros = Boolean(q || (filtroCliente && !clienteFijo) || filtroDominio);
   const cargando = mailboxes.isPending || domains.isPending;
   const recuento =
@@ -169,6 +183,10 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
       </>
     ) : null;
   const irADominios = clienteFijo ? rutaCliente(clienteFijo, 'dominios') : '/dominios';
+  // «Crear buzón» del resumen abre el alta, salvo que no se pueda crear.
+  useAltaDesdeEnlace(() => {
+    if (!altaBloqueada) setCreateOpen(true);
+  }, !cargando);
 
   return (
     <>
@@ -255,6 +273,28 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
             {clienteFijo
               ? 'Da de alta un dominio del cliente en «Dominios»; después podrás crear buzones como nombre@sudominio.com.'
               : 'Da de alta un dominio en «Dominios»; después podrás crear buzones como nombre@tudominio.com.'}
+          </Vacio>
+        </Hoja>
+      ) : all.length === 0 && todosPendientes ? (
+        <Hoja flush>
+          <Vacio
+            icono={Inbox}
+            title={
+              pendientesPropiedad.length === 1
+                ? `Comprueba la propiedad de ${nombreDominio(pendientesPropiedad[0]!)}`
+                : 'Comprueba la propiedad de los dominios'
+            }
+            action={
+              <Link to={`/dominios/${pendientesPropiedad[0]!.id}`} className={estiloBoton('perfil')}>
+                {pendientesPropiedad.length === 1
+                  ? 'Comprobar la propiedad'
+                  : `Comprobar ${nombreDominio(pendientesPropiedad[0]!)}`}
+              </Link>
+            }
+          >
+            {pendientesPropiedad.length === 1
+              ? 'Antes de crear buzones es necesario comprobar la propiedad del dominio: basta con que su registro MX apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.'
+              : `Antes de crear buzones es necesario comprobar la propiedad de los dominios (${pendientesPropiedad.length} pendientes): basta con que el registro MX de cada uno apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.`}
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
@@ -455,6 +495,9 @@ function FilaBuzon({
           {mailbox.email}
         </button>
         <p className="text-sm text-tinta-3">{mailbox.displayName || 'Sin nombre visible'}</p>
+        {mailbox.loginPending && (
+          <LineaUsuarioPendiente login={mailbox.login} onActualizar={() => onAbrir('usuario')} className="mt-0.5" />
+        )}
       </div>
 
       {verCliente && (

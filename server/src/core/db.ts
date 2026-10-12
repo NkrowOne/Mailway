@@ -10,8 +10,28 @@ db.pragma('busy_timeout = 5000');
 /**
  * Migraciones incrementales: cada entrada se ejecuta una sola vez, en orden.
  * Nunca se edita una migración ya publicada; se añade una nueva.
+ *
+ * `sql` se ejecuta tal cual. Las que deben tolerar un esquema que ya tiene
+ * parte de lo que añaden usan `aplicar` (código dentro de la misma
+ * transacción): SQLite no admite `ADD COLUMN IF NOT EXISTS`.
  */
-const migrations: { id: string; sql: string }[] = [
+interface Migracion {
+  id: string;
+  sql?: string;
+  aplicar?: (base: Database.Database) => void;
+}
+
+/** ¿Tiene ya la tabla esa columna? */
+function tieneColumna(base: Database.Database, tabla: string, columna: string): boolean {
+  return (base.prepare(`PRAGMA table_info(${tabla})`).all() as { name: string }[]).some((c) => c.name === columna);
+}
+
+/** Añade la columna solo si falta (`definicion` sin el nombre: «INTEGER NOT NULL DEFAULT 0»). */
+function anadirColumna(base: Database.Database, tabla: string, columna: string, definicion: string): void {
+  if (!tieneColumna(base, tabla, columna)) base.exec(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+}
+
+const migrations: Migracion[] = [
   {
     id: '001-esquema-inicial',
     sql: `
@@ -624,30 +644,151 @@ const migrations: { id: string; sql: string }[] = [
       );
     `,
   },
+  {
+    // Esquema de la recepción en otro proveedor y de las copias de Cloudflare
+    // (rama «cambio de dominio», que lo publicó como
+    // `009-recepcion-externa-y-copias-dns` antes de la 1.4). Un servidor que
+    // llegó a ejecutar esa rama ya lo tiene: por eso cada parte comprueba lo
+    // que existe en vez de crearlo sin mirar.
+    id: '016-recepcion-externa-y-copias-dns',
+    aplicar: (base) => {
+      // 1 = la última medición definitiva del MX público dice que el correo
+      // del dominio llega a otro servidor (traslado en preparación, o solo el
+      // envío en Mailway). Mientras sea así, el motor entrega por ese MX lo
+      // que se envía desde aquí a sus direcciones en vez de en local: si no,
+      // los mensajes de otros clientes, de la web o de la API rebotarían o se
+      // quedarían en buzones nuevos que nadie lee todavía.
+      anadirColumna(base, 'domains', 'recepcion_externa', 'INTEGER NOT NULL DEFAULT 0');
+
+      // Copia de los registros que Mailway borró en Cloudflare al reemplazar
+      // conflictos (el cambio de MX), para poder deshacer el cambio: tras el
+      // corte, nadie recuerda qué MX tenía el proveedor anterior. Una fila por
+      // dominio que acumula los reemplazos; cada entrada lleva su fecha y
+      // caduca por separado.
+      base.exec(`
+        CREATE TABLE IF NOT EXISTS cloudflare_copias (
+          domain_id TEXT PRIMARY KEY REFERENCES domains(id) ON DELETE CASCADE,
+          account_id TEXT,
+          zone_id TEXT NOT NULL,
+          borrados_json TEXT NOT NULL,
+          creados_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    // Cambio de dominio de un cliente (dominio.es → dominio2.es). La rama que
+    // lo trajo lo publicó como `011-cambio-de-dominio`: igual que la anterior,
+    // tolera un esquema que ya lo tenga.
+    id: '017-cambio-de-dominio',
+    aplicar: (base) => {
+      // Un dominio solo puede estar en UN cambio abierto, como origen o como
+      // destino (los dos índices; el cruce origen↔destino y el encadenado se
+      // comprueban en código).
+      base.exec(`
+        CREATE TABLE IF NOT EXISTS domain_migrations (
+          id TEXT PRIMARY KEY,
+          client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+          from_domain_id TEXT REFERENCES domains(id) ON DELETE SET NULL,
+          to_domain_id TEXT REFERENCES domains(id) ON DELETE SET NULL,
+          from_domain TEXT NOT NULL,
+          to_domain TEXT NOT NULL,
+          estado TEXT NOT NULL CHECK (estado IN ('preparando', 'listo', 'pasando', 'pasado', 'volviendo',
+            'dando_de_baja', 'dado_de_baja', 'cancelada')),
+          paso TEXT NOT NULL DEFAULT '',
+          error TEXT,
+          origen TEXT NOT NULL DEFAULT 'panel' CHECK (origen IN ('panel', 'skyway')),
+          -- 'skyway:project:<id>'
+          referencia_externa TEXT,
+          -- 1 = el destino lo dio de alta este cambio (cancelar lo elimina).
+          creo_destino INTEGER NOT NULL DEFAULT 0,
+          -- Dominio propio (client_domains) que creó este cambio: el webmail nuevo.
+          creo_webmail_id TEXT,
+          -- permiteInstancia() de quien lo creó: Cloudflare en segundo plano.
+          permitir_instancia INTEGER NOT NULL DEFAULT 0,
+          -- A/AAAA/CNAME creados en Cloudflare (Skyway los reserva).
+          nombres_cloudflare_json TEXT NOT NULL DEFAULT '[]',
+          -- Pre-recepción hecha y directorio recargado.
+          direcciones_at INTEGER,
+          created_by TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          listo_at INTEGER,
+          pasado_at INTEGER,
+          terminado_at INTEGER
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_from_abierto ON domain_migrations(from_domain)
+          WHERE estado NOT IN ('dado_de_baja', 'cancelada');
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_to_abierto ON domain_migrations(to_domain)
+          WHERE estado NOT IN ('dado_de_baja', 'cancelada');
+        CREATE INDEX IF NOT EXISTS idx_dm_cliente ON domain_migrations(client_id);
+
+        -- Buzones y alias que se mudan: los del origen al crear el cambio
+        -- (desde ese momento el origen no admite altas). Volver devuelve
+        -- exactamente estos, y la pre-recepción no tiene que perseguir altas
+        -- nuevas.
+        CREATE TABLE IF NOT EXISTS domain_migration_items (
+          migration_id TEXT NOT NULL REFERENCES domain_migrations(id) ON DELETE CASCADE,
+          tipo TEXT NOT NULL CHECK (tipo IN ('buzon', 'alias')),
+          item_id TEXT NOT NULL,
+          local_part TEXT NOT NULL,
+          PRIMARY KEY (migration_id, tipo, item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dmi_item ON domain_migration_items(item_id);
+      `);
+
+      // Usuario del motor cuando NO coincide con la dirección (pendiente de
+      // actualizar dispositivos): Stalwart solo autentica por el nombre del
+      // principal (0.15) o por la dirección de la cuenta (0.16), así que el
+      // móvil sigue entrando con el usuario viejo mientras el correo ya va a
+      // la dirección nueva. Invariante: NULL o distinto de local_part@dominio.
+      anadirColumna(base, 'mailboxes', 'usuario_motor', 'TEXT');
+      // Cambio de usuario en curso (para terminarlo o deshacerlo tras una caída).
+      anadirColumna(base, 'mailboxes', 'usuario_cambiando_a', 'TEXT');
+      // Último usuario anterior: el complemento del webmail traslada su fila.
+      anadirColumna(base, 'mailboxes', 'login_anterior', 'TEXT');
+      // Dirección con la que nació el perfil de Apple: instalarlo de nuevo
+      // sustituye al anterior en vez de duplicar la cuenta.
+      anadirColumna(base, 'mailboxes', 'semilla_perfil', 'TEXT');
+      base.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mailboxes_usuario_motor ON mailboxes(usuario_motor)
+          WHERE usuario_motor IS NOT NULL;
+      `);
+    },
+  },
 ];
 
-function runMigrations(): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+/**
+ * Aplica sobre `base` las migraciones que le faltan, cada una en su
+ * transacción. Con `hasta`, se detiene después de esa (las pruebas preparan
+ * así una base como la de una versión anterior).
+ */
+export function ejecutarMigraciones(base: Database.Database, opciones: { hasta?: string } = {}): void {
+  base.exec(`CREATE TABLE IF NOT EXISTS _migrations (
     id TEXT PRIMARY KEY,
     applied_at INTEGER NOT NULL
   )`);
   const applied = new Set(
-    (db.prepare('SELECT id FROM _migrations').all() as { id: string }[]).map((r) => r.id),
+    (base.prepare('SELECT id FROM _migrations').all() as { id: string }[]).map((r) => r.id),
   );
   for (const migration of migrations) {
-    if (applied.has(migration.id)) continue;
-    const apply = db.transaction(() => {
-      db.exec(migration.sql);
-      db.prepare('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)').run(
-        migration.id,
-        Date.now(),
-      );
-    });
-    apply();
+    if (!applied.has(migration.id)) {
+      const apply = base.transaction(() => {
+        if (migration.sql) base.exec(migration.sql);
+        migration.aplicar?.(base);
+        base.prepare('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)').run(
+          migration.id,
+          Date.now(),
+        );
+      });
+      apply();
+    }
+    if (opciones.hasta === migration.id) return;
   }
 }
 
-runMigrations();
+ejecutarMigraciones(db);
 
 export function now(): number {
   return Date.now();

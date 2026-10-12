@@ -11,6 +11,7 @@ import type {
   EngineDirectory,
   EngineDnsRecord,
   EngineHealth,
+  EnginePrincipal,
   EngineReloadResult,
   EngineSettings,
   EngineSettingsStatus,
@@ -18,6 +19,7 @@ import type {
   MailEngine,
   QueueSummary,
   RecommendedInput,
+  RemoteDomainsResult,
   SettingsStatusInput,
   UpdateMailboxPatch,
 } from './types';
@@ -255,8 +257,8 @@ export class MotorStalwart implements MailEngine {
   deleteAlias(alias: string): Promise<void> {
     return this.llamar((d) => d.deleteAlias(alias));
   }
-  readMailboxCredentials(email: string): Promise<MailboxCredentials | null> {
-    return this.llamar((d) => d.readMailboxCredentials(email));
+  readMailboxCredentials(login: string): Promise<MailboxCredentials | null> {
+    return this.llamar((d) => d.readMailboxCredentials(login));
   }
   listDirectory(): Promise<EngineDirectory> {
     return this.llamar((d) => d.listDirectory());
@@ -276,6 +278,9 @@ export class MotorStalwart implements MailEngine {
   getRunningHostname(): Promise<string | null> {
     return this.llamar((d) => d.getRunningHostname());
   }
+  getAcmeToken(): Promise<string | null> {
+    return this.llamar((d) => d.getAcmeToken());
+  }
   reloadCertificates(): Promise<void> {
     return this.llamar((d) => d.reloadCertificates());
   }
@@ -287,5 +292,23 @@ export class MotorStalwart implements MailEngine {
   }
   getQueueSummary(): Promise<QueueSummary> {
     return this.llamar((d) => d.getQueueSummary());
+  }
+  syncRemoteDomains(domains: string[], opts?: { reload?: boolean }): Promise<RemoteDomainsResult> {
+    return this.llamar((d) => d.syncRemoteDomains(domains, opts));
+  }
+  getPrincipal(name: string): Promise<EnginePrincipal | null> {
+    return this.llamar((d) => d.getPrincipal(name));
+  }
+  setAddresses(name: string, ops: { add?: string[]; remove?: string[]; primary?: string }): Promise<string[]> {
+    return this.llamar((d) => d.setAddresses(name, ops));
+  }
+  renamePrincipal(from: string, to: string, opts: { expectEmail: string; emails?: string[] }): Promise<void> {
+    return this.llamar((d) => d.renamePrincipal(from, to, opts));
+  }
+  reloadDirectory(): Promise<void> {
+    return this.llamar((d) => d.reloadDirectory());
+  }
+  removeDkim(domain: string): Promise<string[]> {
+    return this.llamar((d) => d.removeDkim(domain));
   }
 }
