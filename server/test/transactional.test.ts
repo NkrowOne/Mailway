@@ -430,15 +430,16 @@ test('los transportes se reutilizan, se rehacen al cambiar los ajustes y se cier
   });
   const ajustes = { smtpHost: 'mailway-mail', smtpPort: 465, smtpSecure: true };
   const t0 = 50_000_000;
+  const cred = (direccion: string) => ({ usuario: direccion, remitente: direccion });
 
-  const a = getTransport('key_tr_1', 'noreply@ejemplo.com', 'secreto', ajustes, 'mail.ejemplo.com', t0);
-  const b = getTransport('key_tr_1', 'noreply@ejemplo.com', 'secreto', ajustes, 'mail.ejemplo.com', t0 + 1);
+  const a = getTransport('key_tr_1', cred('noreply@ejemplo.com'), 'secreto', ajustes, 'mail.ejemplo.com', t0);
+  const b = getTransport('key_tr_1', cred('noreply@ejemplo.com'), 'secreto', ajustes, 'mail.ejemplo.com', t0 + 1);
   assert.equal(a, b, 'misma clave y ajustes: mismo pool');
   assert.equal(creados.length, 1);
   assert.deepEqual(creados[0]!.options.tls, { servername: 'mail.ejemplo.com' });
 
   // Cambian los ajustes del motor: el pool anterior se cierra.
-  getTransport('key_tr_1', 'noreply@ejemplo.com', 'secreto', { ...ajustes, smtpPort: 587, smtpSecure: false }, 'mail.ejemplo.com', t0 + 2);
+  getTransport('key_tr_1', cred('noreply@ejemplo.com'), 'secreto', { ...ajustes, smtpPort: 587, smtpSecure: false }, 'mail.ejemplo.com', t0 + 2);
   assert.equal(creados.length, 2);
   assert.equal(creados[0]!.cerrado, true);
 
@@ -447,14 +448,14 @@ test('los transportes se reutilizan, se rehacen al cambiar los ajustes y se cier
   assert.equal(transportCount(), 0);
 
   // Un pool sin uso durante más de diez minutos se cierra al crear otro.
-  getTransport('key_tr_2', 'a@ejemplo.com', 's', ajustes, 'mail.ejemplo.com', t0);
-  getTransport('key_tr_3', 'b@ejemplo.com', 's', ajustes, 'mail.ejemplo.com', t0 + 11 * 60_000);
+  getTransport('key_tr_2', cred('a@ejemplo.com'), 's', ajustes, 'mail.ejemplo.com', t0);
+  getTransport('key_tr_3', cred('b@ejemplo.com'), 's', ajustes, 'mail.ejemplo.com', t0 + 11 * 60_000);
   assert.equal(creados[2]!.cerrado, true);
   assert.equal(transportCount(), 1);
 
   // Nunca hay más de 100 pools abiertos: se cierra el usado hace más tiempo.
   for (let i = 0; i < 150; i += 1) {
-    getTransport(`key_lru_${i}`, `u${i}@ejemplo.com`, 's', ajustes, 'mail.ejemplo.com', t0 + 11 * 60_000 + i);
+    getTransport(`key_lru_${i}`, cred(`u${i}@ejemplo.com`), 's', ajustes, 'mail.ejemplo.com', t0 + 11 * 60_000 + i);
   }
   assert.ok(transportCount() <= 100);
   assert.equal(creados.filter((c) => !c.cerrado).length, transportCount());

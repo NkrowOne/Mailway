@@ -12,6 +12,7 @@ import { getConnectionSettings, publicBaseUrl } from './connection';
 import { listDomains } from './domains';
 import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
+import { caducidadDelToken } from './tokens';
 import { getTraefikToken, webmailAutomaticoCliente, webmailAutomaticoGlobal, webmailsDelCliente } from './whitelabel';
 
 /**
@@ -143,6 +144,10 @@ interface SummaryMailbox {
   domain: string;
   localPart: string;
   email: string;
+  /** Usuario con el que autentica en el motor (en un cambio de dominio, el anterior hasta actualizar). */
+  login: string;
+  /** Pendiente de actualizar dispositivos: login distinto de la dirección. */
+  loginPending: boolean;
   displayName: string;
   quotaMb: number;
   status: 'active' | 'suspended';
@@ -196,6 +201,8 @@ async function summaryMailboxes(clientId: string): Promise<SummaryMailbox[]> {
     domain: m.domain,
     localPart: m.localPart,
     email: m.email,
+    login: m.login,
+    loginPending: m.loginPending,
     displayName: m.displayName,
     quotaMb: m.quotaMb,
     status: m.status,
@@ -344,7 +351,13 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         // funcionar porque el motor ha cambiado de versión: Skyway detecta
         // así las de sus servicios y las vuelve a crear.
         appPasswordInvalidation: true,
+        // Cambio de dominio de un cliente (POST /api/domain-migrations…):
+        // Skyway solo ofrece el del correo si lo ve.
+        domainMigrations: true,
       },
+      // Caducidad del token con el que se pregunta (null: sin caducidad o con
+      // sesión): Skyway la muestra para renovarlo antes de recibir un 401.
+      tokenExpiresAt: req.authVia?.kind === 'token' ? caducidadDelToken(req.authVia.tokenId) : null,
       // El token de Traefik es un secreto de instancia: solo para administradores.
       traefik:
         user.role === 'admin' ? { configPath: '/api/traefik/config', token: getTraefikToken() } : null,

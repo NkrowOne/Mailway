@@ -13,6 +13,7 @@ import { registerClientRoutes } from './modules/clients';
 import { registerDashboardRoutes } from './modules/dashboard';
 import { registerDeliverabilityRoutes } from './modules/deliverability';
 import { registerDomainRoutes } from './modules/domains';
+import { registerDomainMigrationRoutes } from './modules/domainmigrations';
 import { registerMailboxRoutes } from './modules/mailboxes';
 import { registerSetupRoutes } from './modules/setup';
 import { registerApiKeyRoutes, registerSendRoutes } from './modules/transactional';
@@ -30,6 +31,9 @@ import { registerEngineOpsRoutes } from './modules/engineops';
 import { registerFormRoutes } from './modules/forms';
 import { registerSetupEmailRoutes } from './modules/envioconfiguracion';
 import { registerCorreoWebRoutes } from './modules/correoweb';
+import { registerDemoRoutes } from './modules/demo';
+import { registerNombreServidorRoutes } from './modules/nombreservidor';
+import { registerIpServidorRoutes } from './modules/ipservidor';
 
 const MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -161,6 +165,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerAuthRoutes(app);
   registerClientRoutes(app);
   registerDomainRoutes(app);
+  registerDomainMigrationRoutes(app);
   registerMailboxRoutes(app);
   registerApiKeyRoutes(app);
   registerSendRoutes(app);
@@ -181,6 +186,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerFormRoutes(app);
   registerSetupEmailRoutes(app);
   registerCorreoWebRoutes(app);
+  registerDemoRoutes(app);
+  registerNombreServidorRoutes(app);
+  registerIpServidorRoutes(app);
 
   // Producción: sirve la web compilada (SPA) desde el mismo proceso.
   const webDist = options.webDist ?? path.resolve(__dirname, '../../web/dist');

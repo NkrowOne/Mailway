@@ -9,6 +9,7 @@ import { getEngine } from '../engine';
 import { audit } from './audit';
 import { assertClientActive } from './clients';
 import { cifrarContrasena, esDeOtroMotor } from './credenciales';
+import { loginParaMotor } from './direcciones';
 import { getMailbox, requireMailboxAccess } from './mailboxes';
 import { bloquesContrasenaAplicacion, getConnectionSettings, type BloqueVariables } from './connection';
 
@@ -184,8 +185,10 @@ async function createAppPasswordNow(
     );
   }
   const engine = getEngine();
+  // Con el usuario del motor, que durante un cambio de dominio no es la dirección.
+  const login = loginParaMotor(mailboxId);
   // El motor puede imponer su propio secreto: vale el que devuelve.
-  const { secret, ref } = await engine.addAppPassword(mailbox.email, engineLabel(name), newAppPassword());
+  const { secret, ref } = await engine.addAppPassword(login, engineLabel(name), newAppPassword());
   const api = await engine.detectApi().catch(() => null);
   const id = randomId('app');
   try {
@@ -195,7 +198,7 @@ async function createAppPasswordNow(
     ).run(id, mailboxId, name, ref, cifrarContrasena(secret), api, createdBy, now());
   } catch (err) {
     // Sin registro en el panel no se podría revocar: se retira del motor.
-    await engine.removeAppPassword(mailbox.email, ref).catch(() => undefined);
+    await engine.removeAppPassword(login, ref).catch(() => undefined);
     throw err;
   }
   const row = db.prepare('SELECT * FROM app_passwords WHERE id = ?').get(id) as AppPasswordRow;
@@ -214,6 +217,8 @@ export function variablesContrasenaAplicacion(
   const mailbox = getMailbox(appPassword.mailboxId);
   return bloquesContrasenaAplicacion({
     email: mailbox.email,
+    // SMTP_USER es el usuario del motor; el remitente sigue siendo la dirección.
+    usuario: mailbox.login,
     password,
     name: appPassword.name,
     settings: getConnectionSettings(mailbox.domain, mailbox.clientId),
@@ -235,7 +240,7 @@ export async function revokeAppPassword(mailboxId: string, appId: string): Promi
   if (row.invalidated_at === null) {
     const engine = getEngine();
     if (!esDeOtroMotor(row.engine_api, await engine.detectApi())) {
-      await engine.removeAppPassword(getMailbox(mailboxId).email, row.stored_secret);
+      await engine.removeAppPassword(loginParaMotor(mailboxId), row.stored_secret);
     }
   }
   db.prepare('UPDATE app_passwords SET revoked_at = ? WHERE id = ?').run(now(), appId);
@@ -261,6 +266,17 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const { user, mailbox, domain } = requireMailboxAccess(req, id);
     const body = createSchema.parse(req.body ?? {});
+    // Skyway marca sus contraseñas con «skyway:» y de ese prefijo dependen el
+    // 409 mailbox_used_by_app y la baja del dominio anterior en un cambio de
+    // dominio: una creada a mano desde el panel con ese nombre bloquearía las
+    // dos. Las integraciones (con token) sí pueden usarlo; el portal del
+    // titular ya lo reserva.
+    if (req.authVia?.kind !== 'token' && body.name.toLowerCase().startsWith('skyway:')) {
+      throw badRequest(
+        'Los nombres que empiezan por «skyway:» están reservados para las aplicaciones de Skyway. Elige otro nombre.',
+        'app_password_name_reserved',
+      );
+    }
     const result = await createAppPassword(id, body.name, user.id);
     audit(req, 'mailbox.app_password_created', {
       mailboxId: id,

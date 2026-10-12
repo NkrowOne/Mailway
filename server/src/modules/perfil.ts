@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { db, now } from '../core/db';
 import { badRequest, notFound } from '../core/errors';
 import { tipoDeImagen } from '../core/imagenes';
+import { buzonLockKey, withLock } from '../core/locks';
 import { getEngine } from '../engine';
 import { audit } from './audit';
+import { loginParaMotor } from './direcciones';
 import { requireMailboxAccess } from './mailboxes';
 
 /**
@@ -121,9 +123,13 @@ export async function cambiarNombreVisible(
   nombre: string,
 ): Promise<boolean> {
   if (nombre === mailbox.displayName) return false;
+  // En la fila del usuario del buzón y por ese usuario (durante un cambio de
+  // dominio puede no ser su dirección; un renombrado a medias responde 409).
   // Primero el motor: si no responde, la base sigue diciendo lo mismo que él.
-  await getEngine().updateMailbox(mailbox.email, { displayName: nombre });
-  db.prepare('UPDATE mailboxes SET display_name = ? WHERE id = ?').run(nombre, mailbox.id);
+  await withLock(buzonLockKey(mailbox.id), async () => {
+    await getEngine().updateMailbox(loginParaMotor(mailbox.id), { displayName: nombre });
+    db.prepare('UPDATE mailboxes SET display_name = ? WHERE id = ?').run(nombre, mailbox.id);
+  });
   return true;
 }
 

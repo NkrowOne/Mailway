@@ -909,3 +909,108 @@ describe('Stalwart 0.16 real: driver JMAP', { skip: omitir }, () => {
     await motor.deleteDomain(DOMINIO);
   });
 });
+
+/* --------------------------- Cambio de dominio --------------------------- */
+
+describe('Stalwart 0.16 real: cambio de dominio', { skip: omitir }, () => {
+  const motor = new Stalwart016Engine(ajustes());
+  const VIEJO = `m016v-${sufijo}.test`;
+  const NUEVO = `m016n-${sufijo}.test`;
+  const anaV = `ana@${VIEJO}`;
+  const anaN = `ana@${NUEVO}`;
+  const infoV = `info@${VIEJO}`;
+  const infoN = `info@${NUEVO}`;
+  const equipo = `equipo@${NUEVO}`;
+  const clave1 = `Cambio-${sufijo}-Uno`;
+  const clave2 = `Cambio-${sufijo}-Dos`;
+  const deFuera = `remitente@externo-${sufijo}.invalid`;
+  let app = '';
+
+  test('pre-recepción: las dos direcciones entregan en el mismo buzón y el usuario anterior envía como la nueva', async () => {
+    for (const d of [VIEJO, NUEVO]) {
+      await motor.createDomain(d);
+      await motor.ensureDkim(d, '');
+    }
+    await motor.createMailbox({ email: anaV, passwordHash: sha512Crypt(clave1) });
+    app = (await motor.addAppPassword(anaV, 'mw-cambio', 'x')).secret;
+    await motor.upsertAlias(infoV, [anaV]);
+    // Un alias de otro dominio cuyo destino es la dirección anterior de Ana.
+    await motor.upsertAlias(equipo, [anaV]);
+
+    assert.deepEqual(await motor.setAddresses(anaV, { add: [anaN] }), [anaV, anaN]);
+    assert.deepEqual(await motor.setAddresses(infoV, { add: [infoN] }), [infoV, infoN]);
+    await motor.reloadDirectory();
+    assert.deepEqual((await motor.getPrincipal(anaV))?.emails, [anaV, anaN]);
+    assert.equal(await motor.getPrincipal(anaN), null, 'una dirección que solo es alias no es el nombre de nadie');
+
+    for (const [para, asunto] of [
+      [anaN, `A la nueva ${sufijo}`],
+      [infoN, `Al alias nuevo ${sufijo}`],
+    ] as const) {
+      await smtpEnviar({ de: deFuera, para, asunto });
+      assert.equal(await hasta(() => imapBuscar(anaV, clave1, asunto), (n) => n > 0), 1, para);
+    }
+    // Con el usuario anterior ya se envía como la dirección nueva.
+    await smtpEnviar({ de: anaN, para: anaV, asunto: `Como la nueva ${sufijo}`, auth: { usuario: anaV, clave: clave1 } });
+  });
+
+  test('renombrar: una sola escritura que conserva correo y contraseñas; el usuario anterior sigue entrando', async () => {
+    const id = (await idCuenta(anaV))!;
+    await motor.renamePrincipal(anaV, anaN, { expectEmail: anaN });
+    assert.equal(await idCuenta(anaN), id, 'el id (y con él el correo) no cambia');
+    assert.equal(await motor.getPrincipal(anaV), null);
+    assert.deepEqual((await motor.getPrincipal(anaN))?.emails, [anaN, anaV]);
+    assert.equal(await imapLogin(anaN, clave1), 'ok');
+    assert.equal(await imapLogin(anaN, app), 'ok', 'la contraseña de aplicación sigue');
+    // La anterior es un alias con la misma parte local: sus dispositivos siguen entrando.
+    assert.equal(await imapLogin(anaV, clave1), 'ok');
+    assert.equal(await imapBuscar(anaN, clave1, `A la nueva ${sufijo}`), 1, 'el correo sigue en el buzón');
+    // Reintento de un renombrado ya hecho: nada que hacer.
+    await motor.renamePrincipal(anaV, anaN, { expectEmail: anaN });
+
+    // El alias, con sus dos direcciones.
+    await motor.renamePrincipal(infoV, infoN, { expectEmail: infoV, emails: [infoN, infoV] });
+    assert.deepEqual((await motor.getPrincipal(infoN))?.emails, [infoN, infoV]);
+
+    // Cambiar la contraseña por el usuario nuevo conserva la de aplicación.
+    await motor.setMailboxPassword(anaN, sha512Crypt(clave2));
+    assert.equal(await imapLogin(anaN, clave2), 'ok');
+    assert.equal(await imapLogin(anaN, clave1), 'rechazado');
+    assert.equal(await imapLogin(anaN, app), 'ok');
+  });
+
+  test('baja: se quitan las direcciones anteriores, los destinos pasan a la nueva y el dominio se va con su DKIM', async () => {
+    assert.deepEqual(await motor.setAddresses(anaN, { remove: [anaV] }), [anaN]);
+    assert.deepEqual(await motor.setAddresses(infoN, { remove: [infoV] }), [infoN]);
+    await motor.reloadDirectory();
+    const [lista] = await leer<any>('MailingList', await idsDe('MailingList', { text: 'equipo' }), ['recipients', 'emailAddress']);
+    assert.equal(lista.emailAddress, equipo);
+    assert.deepEqual(Object.keys(lista.recipients), [anaN], 'el destino anterior ya no existiría');
+    assert.equal(await imapLogin(anaV, clave2), 'rechazado');
+
+    const asunto = `Al equipo ${sufijo}`;
+    await smtpEnviar({ de: deFuera, para: equipo, asunto });
+    assert.equal(await hasta(() => imapBuscar(anaN, clave2, asunto), (n) => n > 0), 1);
+
+    // Como la baja del panel: el dominio (sin nada que lo use) y sus firmas.
+    const idViejo = (await idDominio(VIEJO))!;
+    await motor.deleteDomain(VIEJO);
+    assert.deepEqual(await motor.removeDkim(VIEJO), []);
+    assert.equal(await idDominio(VIEJO), undefined);
+    assert.deepEqual(await idsDe('DkimSignature', { domainId: idViejo }), []);
+
+    // removeDkim de un dominio que sigue: pasa a manual y borra solo sus firmas.
+    const idNuevo = (await idDominio(NUEVO))!;
+    const firmas = await idsDe('DkimSignature', { domainId: idNuevo });
+    assert.deepEqual(await motor.removeDkim(NUEVO), [...firmas].sort());
+    const [dominio] = await leer<any>('Domain', [idNuevo], ['dkimManagement']);
+    assert.equal(dominio.dkimManagement['@type'], 'Manual');
+    assert.deepEqual(await idsDe('DkimSignature', { domainId: idNuevo }), []);
+
+    // Limpieza.
+    await motor.deleteAlias(equipo);
+    await motor.deleteAlias(infoN);
+    await motor.deleteMailbox(anaN);
+    await motor.deleteDomain(NUEVO);
+  });
+});

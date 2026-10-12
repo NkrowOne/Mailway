@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { config } from '../config';
 import { db } from '../core/db';
 import { notFound } from '../core/errors';
+import { loginDe } from './direcciones';
 import { getInstanceSettings, getJsonSetting } from './settings';
 
 /**
@@ -156,6 +157,7 @@ export function instanceAutoconfigBase(mailHostname = getInstanceSettings().mail
 
 export interface ConnectionInfo {
   email: string;
+  /** Usuario del motor: la dirección salvo durante un cambio de dominio, hasta actualizar los dispositivos. */
   username: string;
   imap: ServerEndpoint;
   smtp: ServerEndpoint;
@@ -182,10 +184,12 @@ export interface ConnectionInfo {
 export function buildConnectionInfo(mailboxId: string, req?: FastifyRequest): ConnectionInfo {
   const row = db
     .prepare(
-      `SELECT m.id, m.local_part, d.domain, d.client_id
+      `SELECT m.id, m.local_part, m.usuario_motor, d.domain, d.client_id
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.id = ?`,
     )
-    .get(mailboxId) as { id: string; local_part: string; domain: string; client_id: string } | undefined;
+    .get(mailboxId) as
+    | { id: string; local_part: string; usuario_motor: string | null; domain: string; client_id: string }
+    | undefined;
   if (!row) throw notFound('Buzón no encontrado.');
   const email = `${row.local_part}@${row.domain}`;
   const settings = getConnectionSettings(row.domain, row.client_id);
@@ -204,7 +208,7 @@ export function buildConnectionInfo(mailboxId: string, req?: FastifyRequest): Co
 
   return {
     email,
-    username: email,
+    username: loginDe(row),
     imap: settings.imap,
     smtp: settings.smtp,
     smtpAlt: settings.smtpAlt,
@@ -262,13 +266,16 @@ export function stableUuid(seed: string): string {
 /**
  * Documento clientConfig v1.1 de Thunderbird. Se sirve para el dominio del
  * correo; %EMAILADDRESS% lo sustituye el propio cliente por la dirección.
+ * Con `usuario` (una dirección en un cambio de dominio cuyo usuario del motor
+ * todavía es el anterior), ese usuario va escrito en lugar del comodín.
  */
 export function thunderbirdAutoconfigXml(
   domain: string,
   settings: ConnectionSettings,
-  opts: { placeholderDomain?: boolean } = {},
+  opts: { placeholderDomain?: boolean; usuario?: string } = {},
 ): string {
   const d = xmlEscape(domain);
+  const username = opts.usuario ? xmlEscape(opts.usuario) : '%EMAILADDRESS%';
   // Thunderbird para Android llega por el MX (autoconfig.<dominio de la
   // instancia>) sin ?emailaddress: %EMAILDOMAIN% hace que el documento valga
   // para cualquier dominio de cliente. El Thunderbird de escritorio ignora la
@@ -287,21 +294,21 @@ export function thunderbirdAutoconfigXml(
       <hostname>${imapHost}</hostname>
       <port>${settings.imap.port}</port>
       <socketType>SSL</socketType>
-      <username>%EMAILADDRESS%</username>
+      <username>${username}</username>
       <authentication>password-cleartext</authentication>
     </incomingServer>
     <outgoingServer type="smtp">
       <hostname>${smtpHost}</hostname>
       <port>${settings.smtp.port}</port>
       <socketType>SSL</socketType>
-      <username>%EMAILADDRESS%</username>
+      <username>${username}</username>
       <authentication>password-cleartext</authentication>
     </outgoingServer>
     <outgoingServer type="smtp">
       <hostname>${xmlEscape(settings.smtpAlt.host)}</hostname>
       <port>${settings.smtpAlt.port}</port>
       <socketType>STARTTLS</socketType>
-      <username>%EMAILADDRESS%</username>
+      <username>${username}</username>
       <authentication>password-cleartext</authentication>
     </outgoingServer>
   </emailProvider>
@@ -323,8 +330,9 @@ export function autodiscoverRequestEmail(body: string): string | null {
  * Ojo al servirla: Thunderbird envía aquí la contraseña real por Basic auth;
  * la ruta nunca debe responder 401 ni registrar la cabecera Authorization.
  */
-export function autodiscoverXml(email: string, settings: ConnectionSettings): string {
+export function autodiscoverXml(email: string, settings: ConnectionSettings, usuario = email): string {
   const e = xmlEscape(email);
+  const login = xmlEscape(usuario);
   return `<?xml version="1.0" encoding="utf-8"?>
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
   <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
@@ -339,7 +347,7 @@ export function autodiscoverXml(email: string, settings: ConnectionSettings): st
         <Server>${xmlEscape(settings.imap.host)}</Server>
         <Port>${settings.imap.port}</Port>
         <DomainRequired>off</DomainRequired>
-        <LoginName>${e}</LoginName>
+        <LoginName>${login}</LoginName>
         <SPA>off</SPA>
         <SSL>on</SSL>
         <AuthRequired>on</AuthRequired>
@@ -349,7 +357,7 @@ export function autodiscoverXml(email: string, settings: ConnectionSettings): st
         <Server>${xmlEscape(settings.smtp.host)}</Server>
         <Port>${settings.smtp.port}</Port>
         <DomainRequired>off</DomainRequired>
-        <LoginName>${e}</LoginName>
+        <LoginName>${login}</LoginName>
         <SPA>off</SPA>
         <SSL>on</SSL>
         <AuthRequired>on</AuthRequired>
@@ -381,6 +389,14 @@ export function autodiscoverErrorXml(): string {
 
 export interface MobileconfigOptions {
   email: string;
+  /** Usuario del motor (entrada y salida); si se omite, la dirección. */
+  usuario?: string;
+  /**
+   * Dirección con la que nació el perfil (mailboxes.semilla_perfil): sus
+   * identificadores salen de ella, así que instalar el perfil tras un cambio
+   * de dominio sustituye al anterior en vez de duplicar la cuenta.
+   */
+  semilla?: string;
   displayName?: string;
   settings: ConnectionSettings;
   /**
@@ -398,12 +414,14 @@ export interface MobileconfigOptions {
 export function mobileconfigPlist(opts: MobileconfigOptions): string {
   const { email, settings } = opts;
   const e = xmlEscape(email);
+  const usuario = xmlEscape(opts.usuario ?? email);
   const brand = xmlEscape(settings.brandName);
   const name = xmlEscape(opts.displayName || email);
   const reverse = (settings.imap.host || 'mailway.local').split('.').reverse().join('.');
   const idBase = xmlEscape(`${reverse}.mailway`);
-  const accountUuid = stableUuid(`mobileconfig-cuenta:${email}`);
-  const profileUuid = stableUuid(`mobileconfig-perfil:${email}`);
+  const semilla = opts.semilla ?? email;
+  const accountUuid = stableUuid(`mobileconfig-cuenta:${semilla}`);
+  const profileUuid = stableUuid(`mobileconfig-perfil:${semilla}`);
   const passwordEntries = opts.password
     ? `
       <key>IncomingPassword</key>
@@ -433,7 +451,7 @@ export function mobileconfigPlist(opts: MobileconfigOptions): string {
       <key>IncomingMailServerUseSSL</key>
       <true/>
       <key>IncomingMailServerUsername</key>
-      <string>${e}</string>${passwordEntries}
+      <string>${usuario}</string>${passwordEntries}
       <key>OutgoingMailServerAuthentication</key>
       <string>EmailAuthPassword</string>
       <key>OutgoingMailServerHostName</key>
@@ -443,7 +461,7 @@ export function mobileconfigPlist(opts: MobileconfigOptions): string {
       <key>OutgoingMailServerUseSSL</key>
       <true/>
       <key>OutgoingMailServerUsername</key>
-      <string>${e}</string>
+      <string>${usuario}</string>
       <key>OutgoingPasswordSameAsIncomingPassword</key>
       <true/>
       <key>PayloadDescription</key>
@@ -505,14 +523,17 @@ export const AUTODISCOVER_CONTENT_TYPE = 'text/xml; charset=utf-8';
  * «Exportar para el móvil» del Thunderbird de escritorio): el titular lo
  * escanea desde Incorporación → Importar ajustes. Seguridad 3 = TLS implícito,
  * autenticación 1 = contraseña normal. La contraseña va vacía: la pide la app.
+ * `usuario` es el del motor (en el servidor de entrada y en el de salida); el
+ * nombre de la cuenta y la identidad siguen siendo la dirección.
  */
 export function thunderbirdAndroidQrPayload(
   email: string,
   displayName: string,
   settings: ConnectionSettings,
+  usuario = email,
 ): string {
-  const incoming = [0, settings.imap.host, settings.imap.port, 3, 1, email, email, ''];
-  const outgoing = [[0, settings.smtp.host, settings.smtp.port, 3, 1, email, ''], [email, displayName || email]];
+  const incoming = [0, settings.imap.host, settings.imap.port, 3, 1, usuario, email, ''];
+  const outgoing = [[0, settings.smtp.host, settings.smtp.port, 3, 1, usuario, ''], [email, displayName || email]];
   return JSON.stringify([1, [1, 1], incoming, [outgoing]]);
 }
 
@@ -674,11 +695,14 @@ export function bloquesClaveApi(input: {
 
 export function bloquesContrasenaAplicacion(input: {
   email: string;
+  /** Usuario del motor (SMTP_USER); si se omite, la dirección. El remitente siempre es `email`. */
+  usuario?: string;
   password: string;
   name: string;
   settings: ConnectionSettings;
 }): BloqueVariables[] {
   const { email, password } = input;
+  const usuario = input.usuario ?? email;
   // El envío autenticado de las aplicaciones va por el 587 con STARTTLS, como
   // en Skyway: es el puerto que menos redes de servidores bloquean.
   const { host, port } = input.settings.smtpAlt;
@@ -688,7 +712,7 @@ export function bloquesContrasenaAplicacion(input: {
     `SMTP_HOST=${valorEnv(host)}`,
     `SMTP_PORT=${port}`,
     'SMTP_SECURE=false',
-    `SMTP_USER=${valorEnv(email)}`,
+    `SMTP_USER=${valorEnv(usuario)}`,
     `SMTP_PASS=${valorEnv(password)}`,
     `SMTP_FROM=${valorEnv(email)}`,
   ].join('\n');
@@ -718,7 +742,7 @@ export function bloquesContrasenaAplicacion(input: {
     'MAIL_MAILER=smtp',
     `MAIL_HOST=${valorEnv(host)}`,
     `MAIL_PORT=${port}`,
-    `MAIL_USERNAME=${valorEnv(email)}`,
+    `MAIL_USERNAME=${valorEnv(usuario)}`,
     `MAIL_PASSWORD=${valorEnv(password)}`,
     '# Laravel 10 o anterior: STARTTLS en el puerto 587.',
     'MAIL_ENCRYPTION=tls',
@@ -741,7 +765,7 @@ export function bloquesContrasenaAplicacion(input: {
     '# SMTP_SECURE=false: STARTTLS en el 587; true: TLS directo en el 465.',
     'EMAIL_USE_SSL = os.environ.get("SMTP_SECURE", "false") == "true"',
     'EMAIL_USE_TLS = not EMAIL_USE_SSL',
-    `EMAIL_HOST_USER = os.environ.get("SMTP_USER", ${cadena(email)})`,
+    `EMAIL_HOST_USER = os.environ.get("SMTP_USER", ${cadena(usuario)})`,
     'EMAIL_HOST_PASSWORD = os.environ["SMTP_PASS"]',
     `DEFAULT_FROM_EMAIL = os.environ.get("SMTP_FROM", ${cadena(email)})`,
     '',

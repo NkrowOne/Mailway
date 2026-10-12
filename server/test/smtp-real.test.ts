@@ -30,7 +30,7 @@ function transporteHacia(puerto: number, clave = CLAVE) {
   // Se cierra con forgetTransport: el pool no puede quedar abierto al acabar la prueba.
   return getTransport(
     `key_real_${puerto}`,
-    USUARIO,
+    { usuario: USUARIO, remitente: USUARIO },
     clave,
     { smtpHost: '127.0.0.1', smtpPort: puerto, smtpSecure: false },
     'mail.ejemplo.com',

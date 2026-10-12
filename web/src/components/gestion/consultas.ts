@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   api,
   type Client,
@@ -116,4 +117,24 @@ export function useDireccionPanel(opciones: { clientId?: string | null; user?: U
   const configurada = info.data?.panelUrl;
   if (configurada) return sinBarraFinal(configurada);
   return typeof window !== 'undefined' ? window.location.origin : '';
+}
+
+/**
+ * Los accesos rápidos del resumen («Alta de cliente», «Añadir dominio»,
+ * «Crear buzón») enlazan a la vista con `?nuevo=1`: la vista abre su alta y
+ * quita el parámetro, para que recargar o volver atrás no la reabra. Con
+ * `listo` a false se espera a tener los datos que deciden si se puede crear.
+ */
+export function useAltaDesdeEnlace(abrir: () => void, listo = true): void {
+  const [params, setParams] = useSearchParams();
+  const pedido = params.get('nuevo') === '1';
+  const abrirRef = useRef(abrir);
+  abrirRef.current = abrir;
+  useEffect(() => {
+    if (!pedido || !listo) return;
+    const siguiente = new URLSearchParams(params);
+    siguiente.delete('nuevo');
+    setParams(siguiente, { replace: true });
+    abrirRef.current();
+  }, [pedido, listo, params, setParams]);
 }

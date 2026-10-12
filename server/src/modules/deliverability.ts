@@ -11,10 +11,21 @@ import {
   type DnsblResult,
 } from '../core/dns';
 import { canonicalIpv6, isInternalHost, normalizeHostname } from '../core/hostnames';
-import { diagnosticoSpf, esDmarc, esSpf, politicaDmarc, spfCubre } from '../core/mailauth';
+import { comprobarPuerto25 } from '../core/puerto25';
+import {
+  contarConsultasSpf,
+  diagnosticoSpf,
+  esDmarc,
+  esSpf,
+  fusionExcedeConsultas,
+  fusionarSpf,
+  MAX_CONSULTAS_SPF,
+  politicaDmarc,
+  spfCubre,
+} from '../core/mailauth';
 import type { EngineDnsRecord } from '../engine/types';
 import { requireAdmin } from './auth';
-import { getInstanceSettings } from './settings';
+import { getEngineSettings, getInstanceSettings } from './settings';
 import { avisoMxInterno, destinoMx, esObligatorio, seleccionarRegistros } from './zonefile';
 
 /* ----------------------- Comprobación DNS de dominio ---------------------- */
@@ -40,6 +51,12 @@ export interface DnsCheck {
    * bueno. Solo aparece cuando es true.
    */
   engineMissing?: true;
+  /**
+   * Valor con el que SUSTITUIR el registro que ya existe (el SPF actual con
+   * lo que le falta añadido delante de «all»). Copiar `expected` en su lugar
+   * borraría los include de Google, del hosting o de Mailchimp.
+   */
+  suggested?: string;
 }
 
 function normalizeValue(value: string): string {
@@ -103,7 +120,7 @@ function classifyRecord(record: EngineDnsRecord, domain: string): {
       id: `dmarc:${name}`,
       label: 'DMARC (política contra la suplantación)',
       required,
-      help: 'Indica a los servidores receptores qué hacer con los mensajes que no superan SPF o DKIM. Gmail y Yahoo lo exigen desde 2024.',
+      help: 'Indica a los servidores receptores qué hacer con los mensajes que no superan SPF o DKIM. Gmail y Yahoo lo exigen desde 2024. Empieza con p=none, que no rechaza nada; cuando los informes confirmen que todo el correo legítimo supera SPF o DKIM, endurece la política a quarantine o reject.',
     };
   }
   if (record.type === 'SRV') {
@@ -192,6 +209,10 @@ async function aEquivalente(name: string, destino: string): Promise<string[] | n
 interface ContextoComprobacion {
   /** IPv4 pública del servidor: un SPF con «ip4:» que la contenga lo autoriza. */
   publicIp: string;
+  /** Nombre del servidor de correo: «a:<nombre>» lo autoriza. */
+  servidor: string;
+  /** ¿Apunta el MX del dominio aquí? Sin eso, «mx» en el SPF no autoriza a este servidor. */
+  mxPropio: boolean | null;
 }
 
 async function checkRecord(
@@ -261,7 +282,7 @@ async function checkRecord(
         found: foundText,
         status: 'mismatch',
         help: isSpf
-          ? `Hay ${relevant.length} registros SPF en este nombre y solo puede existir uno: los servidores receptores los descartan todos. Combínalos en un único registro v=spf1 que incluya «mx».`
+          ? `Hay ${relevant.length} registros SPF en este nombre y solo puede existir uno: los servidores receptores los descartan todos. Combínalos en un único registro v=spf1 que incluya «${record.content.trim().split(/\s+/).slice(1).filter((t) => !/^[-~?+]?all$/i.test(t) && !t.includes('=')).join(' ') || 'mx'}».`
           : `Hay ${relevant.length} registros DMARC en este nombre y solo puede existir uno: los servidores receptores no aplican ninguno. Conserva una única política y elimina el resto.`,
       };
     }
@@ -271,22 +292,45 @@ async function checkRecord(
       return { ...base, found: foundText, status: ok ? 'ok' : 'mismatch' };
     }
     if (isSpf) {
-      const contexto = { nombre: name, ipServidor: ctx.publicIp };
+      const contexto = { nombre: name, ipServidor: ctx.publicIp, servidor: ctx.servidor, mxPropio: ctx.mxPropio };
       if (normalizeValue(actual) === normalizeValue(record.content) || spfCubre(actual, record.content, contexto)) {
         return { ...base, found: foundText, status: 'ok' };
       }
       const { faltan, detrasDeAll } = diagnosticoSpf(actual, record.content, contexto);
       const lista = (detrasDeAll.length > 0 ? detrasDeAll : faltan).map((m) => `«${m}»`).join(', ');
+      if (detrasDeAll.length > 0 || !lista) {
+        return {
+          ...base,
+          found: foundText,
+          status: 'mismatch',
+          help: lista
+            ? `El SPF incluye ${lista}, pero detrás de «all»: los receptores dejan de leer en «all», así que no autoriza a este servidor. Colócalo delante de «all».`
+            : base.help,
+        };
+      }
+      // Con un SPF que ya existe, lo que se copia es el SPF actual con lo que
+      // falta añadido: pegar el del servidor en su lugar dejaría sin
+      // autorizar al resto de remitentes del dominio.
+      const fusion = fusionarSpf(actual, record.content, contexto);
+      const consultas = fusion ? await contarConsultasSpf(actual, lookupTxt).catch(() => null) : null;
+      const limite = fusion ? fusionExcedeConsultas(actual, fusion.consultasNuevas, consultas) : null;
+      const mxAjeno = ctx.mxPropio === false && /(^|\s)\+?mx(\s|$)/i.test(actual)
+        ? ' «mx» no basta mientras el MX del dominio apunte a otro proveedor.'
+        : '';
+      if (fusion && limite && !limite.excede) {
+        return {
+          ...base,
+          found: foundText,
+          status: 'mismatch',
+          suggested: fusion.valor,
+          help: `El SPF actual no autoriza a este servidor de correo.${mxAjeno} Sustitúyelo por el valor indicado, que añade ${lista} delante de «all» y conserva el resto de mecanismos: un dominio solo puede tener un SPF.`,
+        };
+      }
       return {
         ...base,
         found: foundText,
         status: 'mismatch',
-        help:
-          detrasDeAll.length > 0
-            ? `El SPF incluye ${lista}, pero detrás de «all»: los receptores dejan de leer en «all», así que no autoriza a este servidor. Colócalo delante de «all».`
-            : lista
-              ? `El SPF actual no autoriza a este servidor de correo. Añade ${lista} delante de «all» y conserva el resto de mecanismos.`
-              : base.help,
+        help: `El SPF actual no autoriza a este servidor de correo.${mxAjeno} Habría que añadir ${lista} delante de «all», pero el SPF ya gasta demasiadas consultas DNS: con más de ${MAX_CONSULTAS_SPF}, los receptores lo dan por no válido para todos los remitentes del dominio. Retira los include que ya no se usen${ctx.publicIp ? ` o autoriza este servidor con «ip4:${ctx.publicIp}», que no gasta consultas (añade también «ip6:» si el servidor envía por IPv6)` : ''}.`,
       };
     }
     if (isDmarc) {
@@ -455,9 +499,21 @@ export interface DomainDnsReport {
 export async function checkDomainDns(
   domain: string,
   engineRecords: EngineDnsRecord[],
+  opts: { mx?: { priority: number; exchange: string }[] | null } = {},
 ): Promise<DomainDnsReport> {
   const seleccion = seleccionarRegistros(domain, engineRecords);
-  const ctx: ContextoComprobacion = { publicIp: getInstanceSettings().publicIp.trim() };
+  const { publicIp, mailHostname } = getInstanceSettings();
+  const mx = opts.mx !== undefined ? opts.mx : await lookupMx(domain);
+  const propios = new Set(
+    [mailHostname, ...seleccion.filter((r) => r.type === 'MX').map((r) => destinoMx(r.content))]
+      .map(normalizeHostname)
+      .filter(Boolean),
+  );
+  const ctx: ContextoComprobacion = {
+    publicIp: publicIp.trim(),
+    servidor: normalizeHostname(mailHostname),
+    mxPropio: mx === null ? null : mx.some((r) => propios.has(normalizeHostname(r.exchange))),
+  };
   const checks = await Promise.all(seleccion.map((r) => checkRecord(r, domain, ctx)));
   checks.push(...pendientesEnElMotor(domain, seleccion));
   // Orden: obligatorios primero, luego por etiqueta, estable para la UI.
@@ -533,6 +589,12 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   const instance = getInstanceSettings();
   const { mailHostname, publicIp } = instance;
   const recommendations: Recommendation[] = [];
+  // En paralelo con el DNS: si el puerto está bloqueado, la prueba agota su
+  // espera. Solo con Stalwart: el motor de demostración no entrega nada, y en
+  // un equipo con el 25 bloqueado por el proveedor de Internet restaría 30
+  // puntos sin motivo.
+  const puerto25Medido =
+    getEngineSettings()?.kind === 'stalwart' ? comprobarPuerto25() : Promise.resolve(null);
 
   let hostnameIps: string[] = [];
   let hostnameResolves: boolean | null = null;
@@ -628,11 +690,21 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
       });
     }
   }
-  recommendations.push({
-    severity: 'info',
-    title: 'Comprueba que el proveedor permite el puerto 25 de salida',
-    detail: 'Muchos proveedores (OVH, Hetzner, AWS…) bloquean el puerto 25 por defecto y es necesario solicitar su apertura. Sin él no es posible entregar correo a otros servidores.',
-  });
+  // Se mide, no se recomienda a ciegas: un aviso fijo se aprende a ignorar.
+  const puerto25 = await puerto25Medido;
+  if (puerto25?.estado === 'bloqueado') {
+    recommendations.push({
+      severity: 'critical',
+      title: 'El puerto 25 de salida está bloqueado',
+      detail: `${puerto25.detalle} Sin él no es posible entregar correo a otros servidores: los mensajes se quedan en la cola. Muchos proveedores (OVH, Hetzner, AWS…) lo bloquean por defecto; solicita su apertura al proveedor del servidor.`,
+    });
+  } else if (puerto25?.estado === 'desconocido') {
+    recommendations.push({
+      severity: 'info',
+      title: 'No se ha podido comprobar el puerto 25 de salida',
+      detail: `${puerto25.detalle} Muchos proveedores (OVH, Hetzner, AWS…) lo bloquean por defecto y es necesario solicitar su apertura. Sin él no es posible entregar correo a otros servidores.`,
+    });
+  }
   recommendations.push({
     severity: 'info',
     title: 'Aumenta el volumen de envío de forma progresiva',
@@ -644,6 +716,7 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
   if (hostnameResolves === false) score -= 20;
   if (ptrOk === false) score -= 25;
   if (dnsbl.some((d) => d.status === 'listed')) score -= 30;
+  if (puerto25?.estado === 'bloqueado') score -= 30;
   score = Math.max(0, Math.min(100, score));
 
   return {

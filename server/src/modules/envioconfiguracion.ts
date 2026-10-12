@@ -425,7 +425,8 @@ export function registerSetupEmailRoutes(app: FastifyInstance): void {
         try {
           const transport = getTransport(
             `config:${titular.domainId}`,
-            remitente.email,
+            // La cuenta remitente no es un buzón: entra con su dirección.
+            { usuario: remitente.email, remitente: remitente.email },
             remitente.password,
             engineSettings,
             mailHostname,

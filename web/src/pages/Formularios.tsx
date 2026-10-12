@@ -58,6 +58,41 @@ function listaOrigenes(texto: string): string[] {
     .filter(Boolean);
 }
 
+/** Origen de una línea tal como lo guarda el servidor (https://host[:puerto]), o null. */
+function origenDe(linea: string): string | null {
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(linea) ? linea : `https://${linea}`);
+    return url.protocol === 'https:' && url.hostname.includes('.') ? `https://${url.host.toLowerCase()}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Variante con o sin www de las webs de la lista que todavía no figura en
+ * ella. El navegador envía el origen exacto y el servidor no amplía la lista
+ * por su cuenta: una web que redirige a www rechazaría todos los envíos.
+ * Sin lista de sufijos públicos, solo se propone www para un dominio de dos
+ * etiquetas (panaderiasol.es); quitarlo, siempre que empiece por www.
+ */
+function variantesWww(lineas: string[]): string[] {
+  const origenes = lineas.map(origenDe).filter((o): o is string => o !== null);
+  const presentes = new Set(origenes);
+  const propuestas: string[] = [];
+  for (const origen of origenes) {
+    const host = origen.slice('https://'.length);
+    const otro = host.startsWith('www.')
+      ? host.slice(4)
+      : host.split(':')[0]!.split('.').length === 2
+        ? `www.${host}`
+        : null;
+    if (!otro) continue;
+    const variante = `https://${otro}`;
+    if (!presentes.has(variante) && !propuestas.includes(variante)) propuestas.push(variante);
+  }
+  return propuestas;
+}
+
 /**
  * `clienteFijo`: la misma vista en la pestaña «Formularios» de la ficha de un
  * cliente: sus formularios y sus buzones, y el formulario nuevo ya a su nombre.
@@ -436,14 +471,31 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
               ))}
             </Select>
           )}
-          <Textarea
-            label="Webs permitidas"
-            rows={3}
-            value={borrador.origins}
-            onChange={(e) => cambiar({ origins: e.target.value })}
-            placeholder={'https://www.tu-dominio.com\nhttps://tu-dominio.com'}
-            help="Una dirección por línea, con https://. Solo se aceptan envíos desde estas webs; con www y sin www son dos webs distintas."
-          />
+          <div className="flex flex-col gap-1.5">
+            <Textarea
+              label="Webs permitidas"
+              rows={3}
+              value={borrador.origins}
+              onChange={(e) => cambiar({ origins: e.target.value })}
+              placeholder={'https://www.tu-dominio.com\nhttps://tu-dominio.com'}
+              help="Una dirección por línea, con https://. Solo se aceptan envíos desde estas webs; con www y sin www son dos webs distintas."
+            />
+            {variantesWww(listaOrigenes(borrador.origins)).map((variante) => (
+              <p key={variante} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-tinta-2">
+                <span>
+                  ¿Añadir también <span className="valor break-all text-tinta">{variante}</span>? Si la web
+                  redirige a esa dirección, sin ella se rechazan los envíos.
+                </span>
+                <Button
+                  type="button"
+                  variant="plano"
+                  onClick={() => cambiar({ origins: `${borrador.origins.trimEnd()}\n${variante}` })}
+                >
+                  Añadir
+                </Button>
+              </p>
+            ))}
+          </div>
           <Input
             label="Asunto de los mensajes"
             maxLength={150}

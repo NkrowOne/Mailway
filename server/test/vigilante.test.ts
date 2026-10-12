@@ -51,3 +51,17 @@ test('el webmail solo está bien con HTTP 2xx o 3xx', async (t) => {
   await checkWebmail();
   assert.match(avisoWebmail()?.message ?? '', /No hay respuesta desde https:\/\/webmail\.mailway\.test/);
 });
+
+test('el remedio del webmail caído vale en las dos instalaciones y desde cualquier carpeta', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 502 }));
+  await checkWebmail();
+  const aviso = avisoWebmail();
+  assert.ok(aviso);
+  // docker-compose.mail.yml exige la red de Skyway: en la instalación autónoma
+  // fallaba, y la ruta relativa dependía de la carpeta actual.
+  assert.doesNotMatch(aviso.remedy, /docker-compose\.mail\.yml/);
+  assert.match(aviso.remedy, /docker logs mailway-webmail/);
+  assert.match(aviso.remedy, /en la carpeta de Mailway/);
+  assert.match(aviso.remedy, /deploy\/instalar\.sh --comprobar/);
+  assert.match(aviso.remedy, /deploy\/instalar\.sh --actualizar/);
+});

@@ -742,6 +742,27 @@ comprobar "quita el mantenimiento" contiene "$REGISTRO" "motor.js mantenimiento 
 comprobar "no para la 0.15" no_contiene "$REGISTRO" "docker stop"
 comprobar "dice que no ha cambiado nada" contiene "$SALIDA" "No se ha cambiado nada del motor: sigue Stalwart 0.15."
 
+echo "# Un cambio de dominio sin terminar: se niega antes de empezar, sin tocar nada"
+preparar_migracion
+BLOQUEO='No se puede cambiar de versión el motor mientras hay un cambio de dominio sin terminar (viejo.test → nuevo.test): termínalo dando de baja el dominio anterior, o cancélalo.'
+printf '{"ok":true,"api":"rest015","mantenimiento":{"activo":false,"hasta":null},"buzones":{"total":3,"conHash":3,"sinHash":0},"contrasenasAplicacion":{"porApi":{},"invalidadas":0},"bloqueo":"%s"}\n' "$BLOQUEO" >"$E/panel/estado"
+migrar
+comprobar "falla" igual "$CODIGO" 1
+comprobar "dice el motivo" contiene "$SALIDA" "$BLOQUEO"
+comprobar "sin entrar en mantenimiento" no_contiene "$REGISTRO" "motor.js mantenimiento on"
+comprobar "sin copiar contraseñas" no_contiene "$REGISTRO" "motor.js capturar"
+comprobar "no para la 0.15" no_contiene "$REGISTRO" "docker stop"
+comprobar "deploy/.env intacto" env_intacto
+
+echo "# La copia la detiene el panel sin buzones fallidos: dice su motivo"
+preparar_migracion
+printf '{"ok":false,"error":"%s","capturados":0,"yaEstaban":0,"fallidos":[]}\n' "$BLOQUEO" >"$E/panel/capturar"
+migrar
+comprobar "falla" igual "$CODIGO" 1
+comprobar "dice el motivo del panel" contiene "$SALIDA" "$BLOQUEO"
+comprobar "quita el mantenimiento" contiene "$REGISTRO" "motor.js mantenimiento off"
+comprobar "no para la 0.15" no_contiene "$REGISTRO" "docker stop"
+
 echo "# stalwart-cli apply falla (0.15 parada): vuelve sola a la 0.15"
 preparar_migracion
 echo 'run --rm -i --network mailway-internal -e STALWART_URL=*' >"$E/fallar"

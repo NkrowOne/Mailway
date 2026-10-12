@@ -98,6 +98,67 @@ export async function lookupSrv(
   }
 }
 
+export interface CaaRecord {
+  critical: number;
+  issue?: string;
+  issuewild?: string;
+  iodef?: string;
+}
+
+/** Registros CAA del nombre (qué autoridades pueden emitir sus certificados). */
+export async function lookupCaa(name: string): Promise<CaaRecord[] | null> {
+  if (dnsOffline()) return null;
+  try {
+    return (await publicResolver().resolveCaa(name)) as CaaRecord[];
+  } catch (err) {
+    return isNoData(err) ? [] : null;
+  }
+}
+
+/** Autoridad con la que Traefik (y el ACME del motor) piden los certificados. */
+const LETS_ENCRYPT = 'letsencrypt.org';
+
+export interface VeredictoCaa {
+  /** ¿Puede Let's Encrypt emitir un certificado para el nombre? */
+  permite: boolean;
+  /** Nombre donde está el CAA que manda (el propio o un dominio padre), si hay. */
+  nombre: string | null;
+  /** Valores «issue» de ese CAA, para mostrarlos. */
+  emisores: string[];
+}
+
+/**
+ * ¿Permite el CAA que Let's Encrypt emita el certificado de `host`? Manda el
+ * primer conjunto CAA que se encuentra subiendo desde el nombre hacia la raíz
+ * (RFC 8659 §3); sin CAA en toda la cadena, o sin ninguna propiedad «issue»
+ * en él, cualquier autoridad puede emitir. Un hosting anterior suele dejar
+ * «0 issue "sectigo.com"» en el dominio: entonces Let's Encrypt se niega y
+ * Traefik sirve su certificado por defecto. null si alguna consulta falla:
+ * un corte de red no es un «no».
+ */
+export async function caaPermiteLetsEncrypt(host: string): Promise<VeredictoCaa | null> {
+  const etiquetas = host.trim().toLowerCase().replace(/\.$/, '').split('.').filter(Boolean);
+  for (let i = 0; i < etiquetas.length; i++) {
+    const nombre = etiquetas.slice(i).join('.');
+    const caa = await lookupCaa(nombre);
+    if (caa === null) return null;
+    if (caa.length === 0) continue;
+    const emisores = caa.filter((r) => typeof r.issue === 'string').map((r) => r.issue!.trim());
+    if (emisores.length === 0) return { permite: true, nombre, emisores };
+    const permite = emisores.some((v) => v.split(';')[0]!.trim().toLowerCase() === LETS_ENCRYPT);
+    return { permite, nombre, emisores };
+  }
+  return { permite: true, nombre: null, emisores: [] };
+}
+
+/** Explicación común (autoconfiguración y marca blanca) de un CAA que no autoriza a Let's Encrypt. */
+export function avisoCaa(host: string, v: VeredictoCaa): string {
+  return (
+    `El DNS de ${host} apunta a este servidor, pero el registro CAA de ${v.nombre} (${v.emisores.map((e) => `issue "${e}"`).join(', ')}) no autoriza a Let's Encrypt a emitir su certificado: ` +
+    `sin él, los programas de correo y los navegadores recibirían un certificado que no es de ese nombre. Añade en ${v.nombre} el registro CAA «0 issue "letsencrypt.org"» (sin quitar los que necesites).`
+  );
+}
+
 /** PTR inverso de una IP (imprescindible para enviar por el puerto 25). */
 export async function lookupPtr(ip: string): Promise<string[] | null> {
   if (dnsOffline()) return null;

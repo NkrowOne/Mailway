@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, type Client, type DnsCheck, type User } from '../lib/api';
+import { api, ApiError, type Client, type DnsCheck, type SetupStatus, type User } from '../lib/api';
 import {
   invalidarTrasAltaOBaja,
   lecturaDominio,
@@ -15,11 +15,14 @@ import type { ConflictoDominio } from '../lib/dominios';
 import { BloqueCloudflare } from '../components/cloudflare/BloqueCloudflare';
 import {
   BloquePropiedad,
+  BloqueRecepcionExterna,
   esEndurecimiento,
   porVeredicto,
   RegistroMedido,
 } from '../components/dominio/RegistrosDominio';
 import { EnlaceVolver, rutaCliente } from '../components/gestion/comun';
+import { ANCLA_CAMBIO, HojaCambioDominio } from '../components/cambio-dominio/HojaCambioDominio';
+import { etiquetaMigracion, type CambioDominioVista } from '../lib/cambioDominio';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import {
@@ -63,8 +66,17 @@ function useConflicto(domainId: string) {
   });
 }
 
+/**
+ * Cada dominio monta su ficha desde cero (`key`): al pasar de la ficha de un
+ * dominio a la de otro (al terminar un cambio de dominio, por ejemplo) no se
+ * arrastran diálogos abiertos ni el estado que llega al navegar.
+ */
 export default function DominioDetalle() {
   const { id = '' } = useParams();
+  return <FichaDominio key={id} id={id} />;
+}
+
+function FichaDominio({ id }: { id: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -75,6 +87,11 @@ export default function DominioDetalle() {
   // Resultado del alta con DNS automático (llega desde Dominios al navegar).
   const [alta] = useState<EstadoAltaDominio | null>(
     () => (location.state as { alta?: EstadoAltaDominio } | null)?.alta ?? null,
+  );
+  // Cambio de dominio recién dado de baja desde la ficha del dominio
+  // anterior, que ya no existe: aquí se muestra su paso «Terminado».
+  const [cambioTerminado] = useState<CambioDominioVista | null>(
+    () => (location.state as { cambioTerminado?: CambioDominioVista } | null)?.cambioTerminado ?? null,
   );
   // Se consume una sola vez: al recargar la página no debe repetirse el
   // resultado del alta ni volver a empezar la comprobación.
@@ -102,8 +119,26 @@ export default function DominioDetalle() {
 
   const conflicto = useConflicto(id);
 
+  // En una instancia de demostración no hay DNS que medir: la propiedad se
+  // puede simular para recorrer buzones, alias y el portal.
+  const instancia = useQuery({
+    queryKey: ['setup'],
+    queryFn: () => api.get<SetupStatus>('/api/setup/status'),
+  });
+  const simular = useMutation({
+    mutationFn: () => api.post<{ domain: DominioCorreo }>(`/api/demo/domains/${id}/ownership`),
+    onSuccess: async (data) => {
+      queryClient.setQueryData(['domain', id], data);
+      await queryClient.invalidateQueries({ queryKey: ['domains'] });
+      toast('ok', 'Propiedad simulada: ya puedes crear buzones y alias en este dominio de demostración.');
+    },
+    onError: (err) =>
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido simular la propiedad.'),
+  });
+
   const verify = useMutation({
-    mutationFn: (_origen: OrigenMedicion) => api.post<{ domain: DominioCorreo }>(`/api/domains/${id}/verify`),
+    mutationFn: (_origen: OrigenMedicion) =>
+      api.post<{ domain: DominioCorreo; ownershipCheck?: boolean | null }>(`/api/domains/${id}/verify`),
     onSuccess: async (data, origen) => {
       const antes = queryClient.getQueryData<{ domain: DominioCorreo }>(['domain', id])?.domain;
       queryClient.setQueryData(['domain', id], data);
@@ -117,6 +152,8 @@ export default function DominioDetalle() {
       const propiedadNueva = antes ? propiedadPendiente(antes) && !propiedadPendiente(d) : false;
       // El aviso dice qué ha pasado: un DNS que no se pudo leer no es una
       // medición completada, y la propiedad recién comprobada se anuncia.
+      // «No se pudo consultar el DNS» va antes que «no se encuentra el TXT»:
+      // si no, quien ya lo creó bien lo revisaría o lo volvería a crear.
       if (report.allRequiredOk) {
         toast('ok', 'Dominio verificado. Ya puede enviar y recibir correo.');
       } else if (propiedadNueva) {
@@ -124,7 +161,12 @@ export default function DominioDetalle() {
           'ok',
           'Propiedad del dominio comprobada: ya puedes crear buzones y alias. Para enviar y recibir correo, completa los registros obligatorios.',
         );
-      } else if (origen === 'propiedad' && propiedadPendiente(d)) {
+      } else if (origen === 'propiedad' && propiedadPendiente(d) && data.ownershipCheck === null) {
+        toast(
+          'error',
+          'No se ha podido consultar el DNS para comprobar la propiedad del dominio. Vuelve a verificar en unos minutos.',
+        );
+      } else if (origen === 'propiedad' && propiedadPendiente(d) && data.ownershipCheck === false) {
         toast(
           'error',
           'Todavía no se encuentra el registro TXT de verificación ni un MX que apunte a este servidor. Si acabas de crearlo, espera unos minutos y vuelve a verificar.',
@@ -262,6 +304,7 @@ export default function DominioDetalle() {
   const visible = nombreVisible(record);
   const conPropiedad = record.ownershipVerifiedAt !== undefined;
   const pendientePropiedad = propiedadPendiente(record);
+  const migracion = record.migracion ?? null;
   // MX interno que anuncia el motor: ni el fichero de zona ni Cloudflare.
   const avisoServidor = conflicto.data?.avisoServidor ?? null;
   const accionDe = (check: DnsCheck): ReactNode =>
@@ -301,6 +344,21 @@ export default function DominioDetalle() {
             <span className="text-tinta-3">Última comprobación: {formatDate(record.lastCheckedAt)}</span>
             {visible !== record.domain && (
               <span className="valor break-all text-tinta-3">{record.domain}</span>
+            )}
+            {migracion && (
+              // El asistente está al final de la ficha: desde aquí se llega sin desplazarse a ciegas.
+              <span className="basis-full text-tinta-2 [overflow-wrap:anywhere]">
+                {etiquetaMigracion(migracion, isAdmin)} ·{' '}
+                <button
+                  type="button"
+                  className="text-petroleo underline decoration-1 underline-offset-2 hover:text-tinta"
+                  onClick={() =>
+                    document.getElementById(ANCLA_CAMBIO)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                >
+                  Ver el cambio de dominio
+                </button>
+              </span>
             )}
           </span>
         }
@@ -367,11 +425,27 @@ export default function DominioDetalle() {
           </div>
         )}
 
+        {record.recepcionExterna && (
+          <BloqueRecepcionExterna dominio={visible} mx={conflicto.data?.mxActuales ?? []} />
+        )}
+
+        {conflicto.data?.avisoMtaSts && (
+          <div role="alert" className="rounded-lg border border-[rgb(var(--vigilar)/0.4)] bg-vigilar-fondo px-4 py-3">
+            <p className="rotulo text-vigilar">Política MTA-STS del proveedor actual</p>
+            <p className="mt-1 max-w-[75ch] text-base text-tinta">{conflicto.data.avisoMtaSts}</p>
+          </div>
+        )}
+
         {pendientePropiedad && record.ownershipRecord && (
           <BloquePropiedad
             registro={record.ownershipRecord}
             midiendo={verify.isPending}
             onVerificar={() => verify.mutate('propiedad')}
+            demo={
+              instancia.data?.demoMode
+                ? { simulando: simular.isPending, onSimular: () => simular.mutate() }
+                : undefined
+            }
           />
         )}
 
@@ -441,15 +515,19 @@ export default function DominioDetalle() {
           </>
         )}
 
+        <HojaCambioDominio dominio={record} isAdmin={isAdmin} terminado={cambioTerminado} />
+
         {/* La acción destructiva, lejos de la principal y sobre papel: en el
             membrete, el carmín sobre petróleo apenas se leía. */}
         <Hoja title="Eliminar el dominio" flush>
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
             <p className="min-w-0 max-w-[75ch] flex-1 basis-60 text-sm text-tinta-3">
-              Se eliminan el dominio, sus buzones con su correo y sus alias. Los registros DNS no se
-              modifican.
+              {migracion
+                ? // El servidor lo rechaza (domain_migrating): se dice antes de pulsar.
+                  `${visible} está en un cambio de dominio. Gestiónalo desde el asistente.`
+                : 'Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca blanca que cuelgan de él. Los registros DNS no se modifican.'}
             </p>
-            <Button variant="peligro" onClick={abrirEliminar}>
+            <Button variant="peligro" onClick={abrirEliminar} disabled={Boolean(migracion)}>
               Eliminar el dominio
             </Button>
           </div>
@@ -461,9 +539,10 @@ export default function DominioDetalle() {
           <p className="text-base text-tinta-2">
             Se eliminarán el dominio, <strong className="text-tinta">todos sus buzones con su
             correo</strong> y sus alias, tanto de Mailway como del servidor de correo. Las claves de
-            API que envían desde estos buzones dejarán de funcionar, y los alias de otros dominios
-            que reenvían a ellos dejarán de hacerlo. Esta acción no se puede deshacer. Los registros
-            DNS no se modifican.
+            API que envían desde estos buzones dejarán de funcionar, los alias de otros dominios
+            que reenvían a ellos dejarán de hacerlo y los dominios de marca blanca que cuelgan de él
+            (por ejemplo, webmail.{visible}) dejarán de publicarse. Esta acción no se puede deshacer.
+            Los registros DNS no se modifican.
           </p>
           <Input
             label={`Escribe ${visible} para confirmar`}
