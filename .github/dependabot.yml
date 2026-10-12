@@ -75,14 +75,20 @@ updates:
       day: monday
       time: '04:00'
       timezone: Europe/Madrid
+    # Dependabot nombra las imágenes de ghcr.io sin el registro
+    # («bulwarkmail/webmail»): con solo el nombre completo, ni el grupo ni la
+    # exclusión de «parches-compose» ni el ignore la reconocían, y llegó la
+    # 1.14 en un PR suelto. Van las dos formas.
     groups:
       bulwark:
-        patterns: ['ghcr.io/bulwarkmail/*']
+        patterns: ['bulwarkmail/*', 'ghcr.io/bulwarkmail/*']
         update-types: [patch]
       parches-compose:
-        exclude-patterns: ['ghcr.io/bulwarkmail/*']
+        exclude-patterns: ['bulwarkmail/*', 'ghcr.io/bulwarkmail/*']
         update-types: [patch]
     ignore:
+      - dependency-name: 'bulwarkmail/webmail'
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
       - dependency-name: 'ghcr.io/bulwarkmail/webmail'
         update-types: ['version-update:semver-minor', 'version-update:semver-major']
       - dependency-name: '*'
