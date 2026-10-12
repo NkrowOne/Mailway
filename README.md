@@ -131,7 +131,7 @@ npm run typecheck && npm run lint && npm test && npm run build
 
 ## Arquitectura
 
-- **Panel**: Node 20+ / TypeScript / Fastify, estado en SQLite (`/data`), web
+- **Panel**: Node 22+ / TypeScript / Fastify, estado en SQLite (`/data`), web
   React + Vite + Tailwind servida por el mismo proceso en el puerto 4100.
   Habla con el motor por su API de gestión: REST con la 0.15 y JMAP con la
   0.16 (la averigua sola).

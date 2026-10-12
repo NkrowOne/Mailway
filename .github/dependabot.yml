@@ -43,12 +43,18 @@ updates:
     #   sus textos por defecto, que llegan a las respuestas de la API (también
     #   /v1/send). Se migrará por módulos con «zod/v4», que ya trae la 3.25.
     # - vite 8 compila con Rolldown y necesita @vitejs/plugin-react 6: se sube
-    #   junto con el plugin, a mano.
+    #   junto con el plugin, a mano. El plugin 6 solo funciona con vite 8.
+    # - @types/node sigue a la versión de Node con la que corre el panel (22):
+    #   los tipos de una versión posterior dejan usar lo que Node 22 no tiene.
     ignore:
       - dependency-name: zod
         update-types: ['version-update:semver-major']
       - dependency-name: vite
         versions: ['>=8.0.0']
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['>=6.0.0']
+      - dependency-name: '@types/node'
+        versions: ['>=23.0.0']
 
   # Imagen base del panel (Dockerfile): Node con versión exacta.
   - package-ecosystem: docker
