@@ -26,7 +26,7 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
 
 ## Estructura
 
-- `server/` — Node 20+/TypeScript/Fastify. `src/app.ts` construye la app
+- `server/` — Node 22+/TypeScript/Fastify. `src/app.ts` construye la app
   (`buildApp()`: CSRF, sesión/token, rutas, manejador de errores);
   `src/index.ts` la pone a escuchar y arranca el vigilante.
   - `src/modules/`: un módulo por área. `auth` (sesiones, tokens `mwt_`,
