@@ -307,7 +307,7 @@ services:
   # «sudo mailway bulwark on|off»; desactivarlo conserva volúmenes y secretos.
   # --------------------------------------------------------------------------
   mailway-bulwark:
-    image: ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed
+    image: ghcr.io/bulwarkmail/webmail:1.14.1@sha256:2009d63601635a3cf265a83062cc85f591a89adcd8b39a3f4931762ff3b8e235
     container_name: mailway-bulwark
     restart: unless-stopped
     profiles: ['bulwark']
