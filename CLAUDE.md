@@ -233,7 +233,11 @@ prueba que lo reproduce.
   compose, nunca `1.7.x` ni `22-alpine`). Dependabot (`.github/dependabot.yml`)
   propone las nuevas y `parches-automaticos.yml` fusiona solo los parches
   cuando todo ha pasado. Stalwart solo recibe parches dentro de su serie;
-  cambiar de serie es una migración (`mailway migrar-motor`).
+  cambiar de serie es una migración (`mailway migrar-motor`). **Congeladas**
+  (no se suben salvo por algo crítico, como un fallo de seguridad grave que
+  solo arregla la versión nueva): TypeScript 6/7, React 19, Tailwind 4, zod 4
+  y vite 8 con `@vitejs/plugin-react` 6. El motivo de cada una está en
+  `.github/dependabot.yml`.
 
 ## Seguridad (imprescindible)
 
