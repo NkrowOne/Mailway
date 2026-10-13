@@ -93,7 +93,11 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   `mailway update -y` del servidor: `git pull` y `instalar.sh --actualizar`;
   `update --auto`, con comprobación antes y después y vuelta atrás,
   `auto-update on|off|status`, su temporizador de systemd, y
-  `bulwark on|off|status`, el correo web beta), pruebas de los
+  `bulwark on|off|status`, el correo web beta, y `copias`, que pasa a
+  `skyway copias`), `copias.sh` (la parte de Mailway de las copias externas
+  de Skyway: `inventario` de lo que hay que copiar y cómo, `parar`,
+  `arrancar`, `reaplicar` y `mantenimiento on|off`, que avisa al panel
+  mientras la copia para el motor), pruebas de los
   scripts con dobles (`prueba-*.sh`), compose del motor y el
   webmail (`docker-compose.mail.yml`) y autónomo
   (`docker-compose.standalone.yml`), el motor de cada serie
@@ -222,6 +226,14 @@ prueba que lo reproduce.
   con el icono de la vista) y error (`AvisoError`) en cada vista; tablas
   regladas con flex, nunca `<table>`; enlaces con aspecto de botón mediante
   `estiloBoton`; sin desplazamiento horizontal en móvil.
+- **Copias de seguridad**: todo volumen o fichero nuevo con estado se
+  declara en `deploy/copias.sh`: los volúmenes en `regla_volumen` (rol,
+  consistencia —`parar`, `pausar` o `en-caliente`— y los contenedores que lo
+  usan; o ignorado, con su motivo) y los ficheros fuera de los volúmenes y de
+  git en `ficheros_con_estado`. `deploy/prueba-copias.sh` lo exige: falla si un
+  volumen de los compose (o de `deploy/motor/*`) no tiene su regla. De
+  `deploy/.env`, el inventario solo saca su ruta y nombres de volúmenes:
+  nunca un secreto.
 - **Migraciones**: se añaden al final de `core/db.ts` (`018-…`); nunca se
   edita una publicada. Las que deben tolerar un esquema que ya tenga parte de
   lo que añaden (016 y 017, que la rama del cambio de dominio publicó con

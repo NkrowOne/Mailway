@@ -19,6 +19,9 @@ name: Pila de correo
 #     Stalwart 0.15 (deploy/prueba-cambio-dominio.py), con el driver y el
 #     panel contra los dos motores (pruebas *-real del servidor) y el
 #     complemento mailway_cuentas con la imagen real de Roundcube.
+# En «estatica», sin contenedores, las pruebas de los scripts con dobles
+# (deploy/prueba-*.sh), entre ellas la de las copias externas: ningún volumen
+# de los compose sin su regla en deploy/copias.sh.
 
 on:
   push:
@@ -126,6 +129,13 @@ jobs:
 
       - name: Motor de correo en el instalador (0.15 y 0.16; migración y vuelta atrás simuladas)
         run: bash deploy/prueba-motor016.sh
+
+      # Lo que las copias externas de Skyway copian de Mailway (deploy/copias.sh)
+      # y la cobertura: falla si un volumen de los compose no tiene su regla.
+      # Con el «docker compose» del runner contrasta además la lista de
+      # volúmenes con «docker compose config».
+      - name: Copias externas (inventario de deploy/copias.sh, volúmenes sin regla, parar, arrancar y reaplicar; docker simulado)
+        run: bash deploy/prueba-copias.sh
 
       - name: Compose con un entorno ficticio (cada motor, con y sin los perfiles tls y bulwark)
         run: |

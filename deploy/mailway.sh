@@ -14,11 +14,19 @@
 #   mailway probar-acceso       # abre un buzón desde el webmail (instalar.sh --probar-acceso)
 #   mailway migrar-motor        # Stalwart 0.15 → 0.16, con vuelta atrás (instalar.sh --migrar-motor)
 #   mailway bulwark on|off|status  # correo web «beta» por cliente (instalar.sh --activar-bulwark…)
+#   mailway copias [orden]      # copias externas: las hace Skyway (sudo skyway copias [orden])
 #   mailway version
 #
 # «update» = «git pull» + «instalar.sh --actualizar»: el panel junto a Skyway
 # se actualiza solo, pero el motor, el webmail y su tema viven en esta
 # carpeta y solo cambian al reaplicar.
+#
+# Copia previa: con las copias externas de Skyway configuradas, «update» y
+# «update --auto» copian el correo justo antes de aplicar una versión nueva
+# (skyway copias copia --motivo antes-de-actualizar --alcance correo; lo que
+# se copia lo declara deploy/copias.sh). Sin versión nueva no se copia nada.
+# Si la copia falla, la automática avisa y sigue (no puede frenar los parches
+# de seguridad); a mano se pregunta si seguir (con -y, se sigue).
 #
 # «update --auto» es la que lanza el temporizador. Sin versión nueva no toca
 # nada: ningún contenedor se reinicia cada noche. Con ella, comprueba que el
@@ -66,6 +74,9 @@ SALUD_INTERVALO=15
 # Intentos automáticos de una misma versión que falla: el segundo cubre un
 # fallo pasajero (una descarga cortada); después, solo con otra o a mano.
 MAX_INTENTOS=2
+# La orden de Skyway, que hace las copias externas («skyway copias»). La
+# variable solo existe para las pruebas (deploy/prueba-actualizacion.sh).
+SKYWAY="${MAILWAY_SKYWAY:-skyway}"
 
 MODO_AUTO=0
 # Resultado de la última comprobación (ver comprobar_salud).
@@ -133,8 +144,18 @@ Uso: mailway <orden> [opciones]
                              volúmenes y sus secretos se conservan.
   bulwark status             Si está activo, sus contenedores y lo que recibe el
                              panel. No cambia nada.
+  copias [orden]             Copias de seguridad externas (S3, cifradas): las hace
+                             Skyway, y esto es «sudo skyway copias [orden]»
+                             (configurar, estado, copia, restaurar correo, kit…).
+                             Sin Skyway, la sección 13.4 de
+                             docs/DESPLIEGUE-SKYWAY.md explica la copia a mano.
   version                    Versión instalada y carpeta de Mailway.
   ayuda                      Muestra esta ayuda.
+
+Con las copias externas de Skyway configuradas, «update» y «update --auto»
+copian el correo justo antes de aplicar una versión nueva (motivo
+antes-de-actualizar). Si la copia falla, la automática avisa y sigue; a mano
+se pregunta si seguir (con -y, se sigue).
 
 Ni «update» ni «update --auto» cambian de motor: con Stalwart 0.15 (fin de
 su soporte de seguridad: 1 de diciembre de 2026) avisan de cómo migrar. Ni
@@ -446,6 +467,49 @@ volver_atras() {
 
 # ------------------------------------------------------------- actualizar --
 
+# Copia externa del correo con Skyway justo antes de aplicar una versión
+# nueva: si después algo sale mal y la vuelta atrás no basta, el correo de
+# este momento está en las copias. Solo con las de Skyway configuradas
+# («skyway copias configuradas» termina con 0); si no, o sin Skyway, una
+# línea y se sigue. Si la copia falla, la automática avisa en el panel y
+# sigue: no puede frenar los parches de seguridad. A mano, con -y se sigue
+# con un aviso y sin -y se pregunta (hay terminal: actualizar ya lo exige).
+# Skyway no hereda la cerradura de la actualización (descriptor 9): la copia
+# no la necesita y nada suyo debe poder retenerla.
+#   copia_previa <sin preguntar: 0|1> <versión nueva> <commit nuevo>
+# Devuelve 1 solo si quien actualiza a mano decide no seguir.
+copia_previa() {
+  local si=$1 version=$2 commit=$3 codigo=0 respuesta=""
+  if ! command -v "$SKYWAY" >/dev/null 2>&1; then
+    info "Sin copia previa: las copias externas las hace Skyway, que no está instalado en este servidor."
+    return 0
+  fi
+  if ! "$SKYWAY" copias configuradas </dev/null >/dev/null 2>&1 9>&-; then
+    info "Sin copia previa: las copias externas de Skyway no están configuradas (sudo skyway copias configurar)."
+    return 0
+  fi
+  info "Copia previa del correo con las copias externas de Skyway…"
+  "$SKYWAY" copias copia --motivo antes-de-actualizar --alcance correo </dev/null 9>&- || codigo=$?
+  if [ "$codigo" = 0 ]; then
+    ok "Copia previa hecha: el correo de antes de actualizar está en las copias de Skyway."
+    return 0
+  fi
+  if [ "$MODO_AUTO" = 1 ]; then
+    aviso "La copia previa ha fallado (código $codigo): se aplica la versión nueva sin ella."
+    notificar aviso "actualizacion:copia-previa:$(corto "$commit")" "Actualización automática sin copia previa" \
+      "La copia externa del correo previa a la versión ${version:-nueva} de Mailway ($(corto "$commit")) ha fallado (código $codigo). La actualización sigue sin ella para no frenar los parches de seguridad; su resultado llega en otro aviso." \
+      "Revisa las copias con «sudo skyway copias estado» y el registro de esta ejecución con «sudo mailway auto-update status»."
+    return 0
+  fi
+  if [ "$si" = 1 ]; then
+    aviso "La copia previa ha fallado (código $codigo): se aplica la versión nueva sin ella (-y)."
+    return 0
+  fi
+  read -r -p "La copia previa ha fallado (código $codigo). ¿Aplicar la versión nueva sin ella? [s/N] " respuesta || true
+  case "$respuesta" in s|S|si|SI|sí|Sí|y|Y) return 0 ;; esac
+  return 1
+}
+
 # Detiene la actualización sin haber cambiado nada. En la automática, además,
 # lo avisa en el panel: si no, nadie sabría que las actualizaciones han
 # dejado de aplicarse.
@@ -568,6 +632,9 @@ actualizar() {
   local anterior
   anterior=$(git_mw rev-parse HEAD)
   if [ "$nuevos" != 0 ]; then
+    # Antes de tocar el código: la copia lleva también el de ahora.
+    copia_previa "$si" "${siguiente:-}" "$(git_mw rev-parse "$upstream^{commit}")" ||
+      fallo "No se ha cambiado nada: sin la copia previa no se aplica la versión nueva. Revisa las copias (sudo skyway copias estado) y vuelve a intentarlo."
     git_mw merge --ff-only --quiet "$upstream" \
       || fallo "La copia de $RAIZ se ha separado de GitHub y no se puede avanzar sin mezclar. Revísala con «git -C $RAIZ status»."
     ok "Código actualizado a la versión $(version_en HEAD)."
@@ -630,6 +697,10 @@ Detalle: $SALUD_DETALLE" \
       "Corrige lo que indique «sudo mailway comprobar»; la próxima ejecución lo intentará de nuevo."
     exit 1
   fi
+
+  # Con el servidor sano y antes de tocar nada. Al retomar una actualización
+  # interrumpida no se repite: se hizo (o se intentó) al empezarla.
+  if [ "$reanudar" = 0 ]; then copia_previa 1 "$version_objetivo" "$objetivo"; fi
 
   guardar_estado FECHA="$(date -Iseconds)" RESULTADO=en-curso ANTERIOR="$anterior" OBJETIVO="$objetivo" \
     VERSION_ANTERIOR="$version_anterior" VERSION_OBJETIVO="$version_objetivo"
@@ -872,6 +943,15 @@ main() {
         1:status | 1:estado | 0:) exec bash "$RAIZ/deploy/instalar.sh" --estado-bulwark ;;
         *) fallo "Uso: mailway bulwark on | off | status" ;;
       esac
+      ;;
+    copias)
+      # Las copias externas (S3, cifradas, con restauración por partes y el
+      # kit) las hace Skyway con todo el servidor; Mailway solo declara qué
+      # copiar de él (deploy/copias.sh).
+      command -v "$SKYWAY" >/dev/null 2>&1 ||
+        fallo "Las copias externas las hace Skyway («sudo skyway copias») y Skyway no está instalado en este servidor. Para copiar Mailway sin Skyway, sigue la sección 13.4 de docs/DESPLIEGUE-SKYWAY.md."
+      como_root copias "$@"
+      exec "$SKYWAY" copias "$@"
       ;;
     instalar-comando)
       como_root instalar-comando

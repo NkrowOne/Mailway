@@ -28,7 +28,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-VERSION_INSTALADOR="1.6.0"
+VERSION_INSTALADOR="1.7.0"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$RAIZ/deploy"
 ENV_FILE="${MAILWAY_ENV_FILE:-$DEPLOY_DIR/.env}"
@@ -4145,8 +4145,16 @@ resumen() {
     info "(que lo verifica) y los programas de correo mostrarán errores de certificado."
     printf '\n'
   fi
-  info "Copia de seguridad del correo (detiene el motor unos segundos: copiar su base de datos en marcha"
-  info "puede dejarla incoherente):"
+  if [ "$CON_SKYWAY" = 1 ]; then
+    # Las copias externas de Skyway copian todo lo que declara deploy/copias.sh.
+    info "Copias de seguridad: Skyway copia todo el servidor, también el correo, cifrado y en un S3 externo:"
+    info "  sudo skyway copias configurar   (sección 13.4 de docs/DESPLIEGUE-SKYWAY.md)"
+    info "Sin ellas, copia del correo a mano (detiene el motor unos segundos: copiar su base de datos en marcha"
+    info "puede dejarla incoherente):"
+  else
+    info "Copia de seguridad del correo (sección 13.4 de docs/DESPLIEGUE-SKYWAY.md; detiene el motor unos segundos:"
+    info "copiar su base de datos en marcha puede dejarla incoherente):"
+  fi
   info "  $copia"
   if bulwark_activo || docker volume inspect mailway-bulwark-admin >/dev/null 2>&1; then
     # Ajustes de los usuarios (cifrados con BULWARK_SESSION_SECRET, que está

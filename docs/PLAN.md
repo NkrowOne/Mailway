@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.6.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.7.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -384,7 +384,10 @@ Detalle en [SEGURIDAD.md](SEGURIDAD.md).
     (Avisos y sus canales). Junto a Skyway, el panel lo sigue desplegando
     Skyway desde GitHub y no se vuelve atrás desde aquí. Nunca cambia de
     motor: con la 0.15 recuerda su fin de soporte (1 de diciembre de 2026) y
-    cómo migrar.
+    cómo migrar. Con las copias externas de Skyway configuradas, antes de
+    aplicar una versión nueva copia el correo (lo que se copia de Mailway lo
+    declara `deploy/copias.sh`, y su prueba exige una regla para cada volumen
+    de los compose); si esa copia falla, avisa y sigue.
 
 ### 3.9 Stalwart 0.16
 
