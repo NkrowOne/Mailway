@@ -372,7 +372,9 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   su nombre (`via: token:<nombre>`).
 - `deploy/.env` contiene todos los secretos del despliegue: permisos 600 y
   copia de seguridad cifrada. Con Bulwark, también sus dos secretos (sección
-  7, «Bulwark»).
+  7, «Bulwark»). Las copias externas de Skyway lo guardan cifrado con el
+  resto, y el inventario que les da `deploy/copias.sh` solo lo nombra: nunca
+  muestra ningún valor suyo.
 
 ## 7. El motor de correo
 
@@ -548,8 +550,8 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   DKIM) sigue intacto tras migrar, como vuelta atrás, hasta
   `mailway retirar-motor-anterior` (que exige escribir su nombre). Los
   volúmenes de intentos que volvieron atrás también conservan datos: se
-  listan, no se borran solos. Inclúyelos en la política de copias y de
-  borrado.
+  listan, no se borran solos. Las copias externas los incluyen mientras
+  existen (`deploy/copias.sh`); bórralos cuando ya no hagan falta.
 - **Certificado con la 0.16.** El motor corre como el usuario 2000: el
   extractor escribe la clave privada con ese grupo y permisos 0640 (carpetas
   0750), para lo que conserva solo la capacidad `CHOWN`.
@@ -885,5 +887,7 @@ seguridad:
 - Activa la actualización automática (`sudo mailway auto-update on`): los
   parches de seguridad llegan probados y, si algo falla al aplicarlos, el
   servidor vuelve solo a la versión anterior.
-- Guarda cifradas las copias de `/data`, del volumen del motor y de
-  `deploy/.env`.
+- Activa las copias externas de Skyway (`sudo skyway copias`), que guardan
+  cifrado todo lo de Mailway, y guarda su contraseña fuera del servidor; sin
+  Skyway, guarda cifradas las copias de `/data`, de los volúmenes del motor y
+  de `deploy/.env` (sección 13.4 de DESPLIEGUE-SKYWAY.md).

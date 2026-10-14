@@ -21,7 +21,15 @@
 #     soporte sin cambiar nunca de motor, y «migrar-motor», «revertir-motor» y
 #     «retirar-motor-anterior» pasan al instalador solo -y;
 #   - «bulwark on|off|status» llama a --activar-bulwark, --desactivar-bulwark
-#     y --estado-bulwark, y rechaza cualquier otra cosa.
+#     y --estado-bulwark, y rechaza cualquier otra cosa;
+#   - la copia previa con las copias externas de Skyway («skyway copias»,
+#     simulado): justo antes de aplicar una versión nueva (nunca sin ella ni
+#     al retomar una interrumpida), con el código aún en la anterior y sin la
+#     cerradura de la actualización; sin Skyway o sin copias configuradas,
+#     una línea y se sigue; si falla, la automática avisa en el panel y
+#     aplica igual, a mano con -y se sigue y sin -y se pregunta;
+#   - «copias» pasa a «skyway copias» con sus argumentos y, sin Skyway, lo
+#     explica.
 #
 #   bash deploy/prueba-actualizacion.sh     # código 1 si alguna comprobación falla
 #
@@ -158,6 +166,33 @@ case "$1" in
 esac
 INSTALAR
 
+# skyway (fuera del PATH: solo lo usan los escenarios con PRUEBA_SKYWAY=1):
+# anota cada llamada con la versión del código del servidor en ese momento y
+# si hereda la cerradura de la actualización (descriptor 9). Las copias están
+# configuradas salvo con PRUEBA_SKYWAY_CONFIGURADAS=0, y la copia previa falla
+# con PRUEBA_SKYWAY_COPIA_FALLA=1.
+cat >"$TMP/skyway" <<'SKYWAY'
+#!/usr/bin/env bash
+version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$PRUEBA_SERVIDOR/package.json")
+if { true >&9; } 2>/dev/null; then cerradura=si; else cerradura=no; fi
+echo "skyway $* (código $version) cerradura=$cerradura" >>"$PRUEBA_REGISTRO"
+case "$*" in
+  "copias configuradas") [ "${PRUEBA_SKYWAY_CONFIGURADAS:-1}" = 1 ] ;;
+  "copias copia --motivo antes-de-actualizar --alcance correo")
+    if [ "${PRUEBA_SKYWAY_COPIA_FALLA:-0}" = 1 ]; then
+      echo "✗ No se ha podido conectar con el bucket." >&2
+      exit 1
+    fi
+    echo "✓ Copia 20261013-030102 terminada (correo)."
+    ;;
+  copias | "copias "*) echo "Copias externas de Skyway: $*" ;;
+  *)
+    echo "skyway no simulado: $*" >>"$PRUEBA_IMPREVISTOS"
+    exit 1
+    ;;
+esac
+SKYWAY
+
 cat >"$BIN/systemctl" <<'SYSTEMCTL'
 #!/usr/bin/env bash
 echo "systemctl $*" >>"$PRUEBA_REGISTRO"
@@ -187,8 +222,11 @@ cat >"$BIN/id" <<ID
 if [ "\${1:-}" = -u ]; then echo "\${PRUEBA_UID:-0}"; else exec "$ID_REAL" "\$@"; fi
 ID
 
-chmod +x "$BIN"/* "$TMP/instalar-simulado.sh"
+chmod +x "$BIN"/* "$TMP/instalar-simulado.sh" "$TMP/skyway"
 export PATH="$BIN:$PATH"
+# Sin Skyway salvo en los escenarios que lo piden: ni el de este equipo, si
+# lo hay (MAILWAY_SKYWAY lo lee mailway.sh solo para las pruebas).
+export MAILWAY_SKYWAY="$TMP/sin-skyway/skyway"
 
 # --------------------------------------------------------------- escenarios --
 
@@ -211,7 +249,7 @@ nuevo_escenario() {
   sed '$d' "$AQUI/mailway.sh" >"$ESC/servidor/deploy/mailway.sh"
   printf "MAILWAY_INSTALACION='skyway'\nMAILWAY_PANEL_INTERNAL_URL='http://skyway-mailway-panel:4100'\n" \
     >"$ESC/servidor/deploy/.env"
-  export PRUEBA_APLICADA="$ESC/aplicada" PRUEBA_CONTADOR="$ESC/contador"
+  export PRUEBA_APLICADA="$ESC/aplicada" PRUEBA_CONTADOR="$ESC/contador" PRUEBA_SERVIDOR="$ESC/servidor"
   echo 1.3.0 >"$PRUEBA_APLICADA"
   rm -rf "$TMP/systemd"
   V130=$(git -C "$ESC/servidor" rev-parse HEAD)
@@ -236,6 +274,7 @@ ejecutar_mailway() {
       shift
     done
     MAILWAY_SYSTEMD_DIR="$TMP/systemd"
+    if [ "${PRUEBA_SKYWAY:-0}" = 1 ]; then export MAILWAY_SKYWAY="$TMP/skyway"; fi
     # shellcheck source=/dev/null
     source "$ESC/servidor/deploy/mailway.sh"
     # PRUEBA_HOY: la fecha del aviso del fin de soporte de Stalwart 0.15. La
@@ -557,6 +596,115 @@ comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
 ejecutar_mailway bulwark on -y
 comprobar "más de una opción: termina con 1" igual "$CODIGO" 1
 comprobar "sin llamar al instalador" no_contiene "$REGISTRO" "instalar "
+
+echo "# Copia previa con las copias externas de Skyway: antes de aplicar, con el código aún en la versión anterior"
+nuevo_escenario
+V131=$(publicar 1.3.1)
+ejecutar_mailway PRUEBA_SKYWAY=1 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "pregunta si hay copias configuradas" contiene "$REGISTRO" "skyway copias configuradas"
+comprobar "copia el correo con su motivo y el código de antes" contiene "$REGISTRO" "skyway copias copia --motivo antes-de-actualizar --alcance correo (código 1.3.0)"
+comprobar "después de la comprobación previa" despues_de "$REGISTRO" "instalar --comprobar 1.3.0" "skyway copias copia"
+comprobar "y antes de aplicar" despues_de "$REGISTRO" "skyway copias copia" "instalar --actualizar 1.3.1"
+comprobar "una sola vez" igual "$(cuenta "$REGISTRO" "skyway copias copia")" 1
+if command -v flock >/dev/null 2>&1; then
+  comprobar "sin heredar la cerradura de la actualización" contiene "$REGISTRO" "--alcance correo (código 1.3.0) cerradura=no"
+fi
+comprobar "lo dice" contiene "$SALIDA" "Copia previa hecha"
+comprobar "y la actualización sigue como siempre" igual "$(estado RESULTADO)" actualizada
+
+echo "# Sin versión nueva no hay copia previa"
+nuevo_escenario
+ejecutar_mailway PRUEBA_SKYWAY=1 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "no llama a Skyway" no_contiene "$REGISTRO" "skyway "
+
+echo "# Sin Skyway o sin sus copias configuradas: una línea y se aplica igual"
+nuevo_escenario
+publicar 1.3.1 >/dev/null
+ejecutar_mailway update --auto
+comprobar "sin Skyway: termina con 0" igual "$CODIGO" 0
+comprobar "lo dice en una línea" igual "$(cuenta "$SALIDA" "Sin copia previa")" 1
+comprobar "que nombra a Skyway" contiene "$SALIDA" "las copias externas las hace Skyway, que no está instalado en este servidor"
+comprobar "y aplica" contiene "$REGISTRO" "instalar --actualizar 1.3.1"
+nuevo_escenario
+publicar 1.3.1 >/dev/null
+ejecutar_mailway PRUEBA_SKYWAY=1 PRUEBA_SKYWAY_CONFIGURADAS=0 update --auto
+comprobar "sin copias configuradas: termina con 0" igual "$CODIGO" 0
+comprobar "lo pregunta" contiene "$REGISTRO" "skyway copias configuradas"
+comprobar "no intenta copiar" no_contiene "$REGISTRO" "skyway copias copia"
+comprobar "lo dice" contiene "$SALIDA" "no están configuradas (sudo skyway copias configurar)"
+comprobar "y aplica" contiene "$REGISTRO" "instalar --actualizar 1.3.1"
+
+echo "# La copia previa falla en la automática: avisa en el panel y aplica igual"
+nuevo_escenario
+V131=$(publicar 1.3.1)
+ejecutar_mailway PRUEBA_SKYWAY=1 PRUEBA_SKYWAY_COPIA_FALLA=1 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "avisa en el panel" contiene "$REGISTRO" "avisar.js --nivel aviso --clave actualizacion:copia-previa:${V131:0:8} --titulo Actualización automática sin copia previa"
+comprobar "con el motivo" contiene "$REGISTRO" "ha fallado (código 1). La actualización sigue sin ella"
+comprobar "aplica igual, después del aviso" despues_de "$REGISTRO" "actualizacion:copia-previa" "instalar --actualizar 1.3.1"
+comprobar "y queda actualizada" igual "$(estado RESULTADO)" actualizada
+
+echo "# Una actualización interrumpida se retoma sin repetir la copia previa"
+nuevo_escenario
+V131=$(publicar 1.3.1)
+git -C "$ESC/servidor" pull -q --ff-only
+printf 'RESULTADO=en-curso\nANTERIOR=%s\nOBJETIVO=%s\n' "$V130" "$V131" >"$ESC/servidor/deploy/.actualizacion"
+ejecutar_mailway PRUEBA_SKYWAY=1 update --auto
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "la aplica" contiene "$REGISTRO" "instalar --actualizar 1.3.1"
+comprobar "sin copia" no_contiene "$REGISTRO" "skyway "
+
+echo "# A mano (update -y): copia previa antes de traer el código; si falla, se sigue con un aviso"
+nuevo_escenario
+publicar 1.3.1 >/dev/null
+ejecutar_mailway PRUEBA_SKYWAY=1 update -y
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "copia con el código de antes" contiene "$REGISTRO" "skyway copias copia --motivo antes-de-actualizar --alcance correo (código 1.3.0)"
+comprobar "y aplica después" despues_de "$REGISTRO" "skyway copias copia" "instalar --actualizar 1.3.1"
+nuevo_escenario
+publicar 1.3.1 >/dev/null
+ejecutar_mailway PRUEBA_SKYWAY=1 PRUEBA_SKYWAY_COPIA_FALLA=1 update -y
+comprobar "si falla: termina con 0" igual "$CODIGO" 0
+comprobar "lo avisa" contiene "$SALIDA" "La copia previa ha fallado (código 1): se aplica la versión nueva sin ella (-y)."
+comprobar "y aplica" contiene "$REGISTRO" "instalar --actualizar 1.3.1"
+comprobar "sin aviso en el panel (es a mano)" no_contiene "$REGISTRO" "copia-previa"
+
+echo "# A mano sin -y, si la copia previa falla se pregunta (por defecto, no seguir)"
+nuevo_escenario
+# copia_previa con la respuesta $1 (quien actualiza a mano tiene terminal:
+# actualizar lo exige antes de llegar aquí).
+copia_previa_a_mano() {
+  : >"$REGISTRO"
+  (
+    export PRUEBA_SKYWAY_COPIA_FALLA=1 MAILWAY_SKYWAY="$TMP/skyway"
+    # shellcheck source=/dev/null
+    source "$ESC/servidor/deploy/mailway.sh"
+    copia_previa 0 1.3.1 "$V130" <<<"$1"
+  ) >"$SALIDA" 2>&1
+  CODIGO=$?
+}
+copia_previa_a_mano ""
+comprobar "sin respuesta: no se sigue" igual "$CODIGO" 1
+comprobar "tras intentarlo" contiene "$REGISTRO" "skyway copias copia"
+copia_previa_a_mano n
+comprobar "con «n»: no se sigue" igual "$CODIGO" 1
+copia_previa_a_mano s
+comprobar "con «s»: se sigue" igual "$CODIGO" 0
+comprobar "(actualizar se detiene sin cambiar nada si no se sigue)" contiene "$AQUI/mailway.sh" 'fallo "No se ha cambiado nada: sin la copia previa no se aplica la versión nueva.'
+
+echo "# mailway copias: «skyway copias» con todos sus argumentos; sin Skyway, lo explica"
+nuevo_escenario
+ejecutar_mailway PRUEBA_SKYWAY=1 copias restaurar correo --fecha 2026-10-12
+comprobar "termina con 0" igual "$CODIGO" 0
+comprobar "pasa a skyway copias" contiene "$REGISTRO" "skyway copias restaurar correo --fecha 2026-10-12 (código"
+ejecutar_mailway PRUEBA_SKYWAY=1 copias
+comprobar "sin orden, el menú de Skyway" contiene "$REGISTRO" "skyway copias (código"
+ejecutar_mailway copias estado
+comprobar "sin Skyway: termina con 1" igual "$CODIGO" 1
+comprobar "lo explica" contiene "$SALIDA" "Skyway no está instalado en este servidor. Para copiar Mailway sin Skyway, sigue la sección 13.4 de docs/DESPLIEGUE-SKYWAY.md."
+comprobar "sin llamar a nada" no_contiene "$REGISTRO" "skyway "
 
 echo "# Ningún doble ha recibido una llamada que no esperaba"
 comprobar "ninguna llamada sin simular" igual "$(cat "$IMPREVISTOS")" ""

@@ -16,3 +16,7 @@ __pycache__/
 # revertir-motor, retirar-motor-anterior). Los ficheros con secretos se
 # borran al terminar; los registros se quedan para consultarlos.
 .migracion-motor/
+
+# Marca de «copias.sh mantenimiento on»: el modo mantenimiento del panel lo
+# activó la copia (ver deploy/copias.sh).
+.copias-mantenimiento

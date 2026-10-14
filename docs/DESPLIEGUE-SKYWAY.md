@@ -1101,9 +1101,11 @@ abrir el 587 (sección 2.3, paso 10).
   vez con `sudo bash /ruta/a/Mailway/deploy/mailway.sh update -y`. Se niega a
   seguir si hay cambios hechos a mano en ficheros del repositorio (no cuenta
   `deploy/.env`) o si ya hay otra actualización en curso. Al avanzar, muestra
-  la versión anterior y la orden para volver a ella. `mailway comprobar` y
-  `mailway probar-acceso` son `--comprobar` y `--probar-acceso` del
-  instalador.
+  la versión anterior y la orden para volver a ella. Con las copias externas
+  de Skyway configuradas (sección 13.4), antes de traer el código copia el
+  correo; si esa copia falla, pregunta si seguir (con `-y`, sigue).
+  `mailway comprobar` y `mailway probar-acceso` son `--comprobar` y
+  `--probar-acceso` del instalador.
   O a mano: `docker compose --env-file deploy/.env -f
   deploy/docker-compose.mail.yml pull && docker compose --env-file deploy/.env
   -f deploy/docker-compose.mail.yml up -d`. Los volúmenes no se tocan.
@@ -1161,7 +1163,10 @@ ejecuta `mailway update --auto`:
    motor, IMAP y SMTP con TLS desde el webmail, por la red interna exenta
    del bloqueo automático) más `/api/health` del panel y, junto a Skyway, su
    Traefik. Si ya fallaba, no aplica nada y avisa.
-3. Guarda la versión anterior (el commit) en `deploy/.actualizacion`, avanza
+3. Con las copias externas de Skyway configuradas (sección 13.4), copia el
+   correo (motivo `antes-de-actualizar`); si esa copia falla, lo avisa en el
+   panel y sigue, porque no puede frenar los parches de seguridad. Guarda la
+   versión anterior (el commit) en `deploy/.actualizacion`, avanza
    la copia (solo avance rápido) y aplica con `instalar.sh --actualizar`.
    Los secretos que el resumen del instalador enseña a quien instala a mano
    (token de puesta en marcha, contraseña de una cuenta nueva) se tapan en el
@@ -1836,8 +1841,11 @@ puntos y anota la fecha de la prueba:
   dominio.
 - [ ] Hay al menos un canal de avisos configurado y el aviso de prueba llega
   (sección 10).
-- [ ] Se ha ensayado la restauración de los volúmenes del motor y del panel:
-  una copia que nunca se ha restaurado no se considera verificada.
+- [ ] Las copias externas están activas (`sudo skyway copias estado`; sin
+  Skyway, la copia a mano de la sección 13.4) y se ha ensayado una
+  restauración de los volúmenes del motor y del panel, por ejemplo con
+  `restaurar.sh` en un servidor de pruebas: una copia que nunca se ha
+  restaurado no se considera verificada.
 - [ ] Se han acordado el calentamiento de la IP y límites bajos para el primer
   cliente; no se inicia un envío masivo desde una IP nueva.
 
@@ -1851,38 +1859,10 @@ comprobar, trata la instalación como preproducción.
 
 ## 13. Operación y copias de seguridad
 
-- **Datos que respaldar**:
-  - volumen `/data` del panel (SQLite y clave maestra; en Skyway, el volumen
-    del servicio, que se puede programar desde Skyway);
-  - los volúmenes del motor, con todo el correo y su configuración: con
-    Stalwart 0.16, `mailway-stalwart-etc` y `mailway-stalwart-data` (en una
-    instalación migrada, los de `MAILWAY_STALWART_ETC_VOLUME` y
-    `MAILWAY_STALWART_DATA_VOLUME` de `deploy/.env`); con la 0.15,
-    `mailway-mail-data` (o el de `MAILWAY_MAIL_VOLUME`, en una instalación
-    que viene de la 0.x);
-  - volumen `mailway-webmail-db` (ajustes de los usuarios del webmail);
-  - con Bulwark (sección 11.1), sus volúmenes `mailway-bulwark-ajustes`,
-    `mailway-bulwark-admin` y `mailway-bulwark-estado` (los ajustes de los
-    usuarios solo se leen con el `BULWARK_SESSION_SECRET` de `deploy/.env`);
-  - `deploy/.env` (secretos; guárdalo cifrado).
-  ```bash
-  # Se detiene el motor unos segundos: copiar su base de datos en marcha
-  # puede dejarla incoherente. Stalwart 0.16 (con los nombres de deploy/.env
-  # si la instalación se migró):
-  docker stop mailway-mail
-  docker run --rm -v mailway-stalwart-etc:/origen/etc:ro -v mailway-stalwart-data:/origen/datos:ro \
-    -v /root/copias:/destino alpine tar czf /destino/mailway-correo-$(date +%F).tar.gz -C /origen .
-  docker start mailway-mail
-  # Stalwart 0.15: -v mailway-mail-data:/origen:ro en lugar de los dos volúmenes.
-
-  # Bulwark (se detiene unos segundos):
-  docker stop mailway-bulwark
-  docker run --rm -v mailway-bulwark-ajustes:/origen/ajustes:ro -v mailway-bulwark-admin:/origen/admin:ro \
-    -v mailway-bulwark-estado:/origen/estado:ro -v /root/copias:/destino \
-    alpine tar czf /destino/mailway-bulwark-$(date +%F).tar.gz -C /origen .
-  docker start mailway-bulwark
-  ```
-  El resumen del instalador muestra la orden exacta para cada servidor.
+- **Copias de seguridad**: junto a Skyway, `sudo skyway copias` copia todo
+  el servidor, también el correo, cifrado y fuera de él, y lo restaura todo o
+  por partes (sección 13.4). Sin Skyway, la misma sección explica la copia a
+  mano.
 - **Registros del motor**: `docker logs -f mailway-mail` (con la 0.16, todo
   su registro de eventos; con la 0.15, además, `docker exec mailway-mail ls
   /opt/stalwart/logs`).
@@ -2014,6 +1994,153 @@ antes lo que arrastra:
   (con `MAILWAY_DOMINIO=<dominio>` delante si el nombre nuevo cuelga de otro
   dominio base que el `MAIL_HOSTNAME` actual, lo que traslada también el
   webmail y el panel).
+
+### 13.4 Copias de seguridad
+
+Junto a Skyway, las copias de Mailway las hace Skyway con las suyas: `sudo
+skyway copias` copia todo el servidor (Skyway, sus proyectos y Mailway) en un
+almacenamiento S3 externo (Backblaze B2 u otro compatible), cada noche y
+cifrado (sin su contraseña nadie puede leerlo), y lo restaura todo o por partes,
+eligiendo la fecha, aunque Skyway o Mailway no funcionen. Qué hay que copiar
+de Mailway lo declara Mailway en `deploy/copias.sh`: cuando una versión nueva
+añade un volumen, entra en las copias sin hacer nada (la CI de Mailway no
+deja publicar un volumen sin su regla).
+
+```bash
+sudo skyway copias configurar               # S3 y contraseña de las copias; comprueba el bucket
+sudo skyway copias activar                  # copia diaria
+sudo skyway copias estado                   # última copia, la próxima y sus avisos
+sudo skyway copias copia --alcance correo   # una copia del correo ahora
+sudo mailway copias estado                  # lo mismo desde «mailway»: pasa a «skyway copias»
+```
+
+Guarda la contraseña de las copias y los datos de recuperación (`sudo skyway
+copias datos-recuperacion`) fuera del servidor: sin ellos, una copia cifrada
+no se puede leer.
+
+**Qué se copia de Mailway.** `sudo bash deploy/copias.sh inventario` lo
+muestra (una línea JSON, sin secretos):
+
+| Qué | Volumen o fichero | Cómo se copia |
+|---|---|---|
+| Correo, cuentas y ajustes del motor (también las claves DKIM) | Stalwart 0.16: `mailway-stalwart-data` y `mailway-stalwart-etc` (en una instalación migrada, los de `MAILWAY_STALWART_*_VOLUME` de `deploy/.env`); 0.15: `mailway-mail-data` (o el de `MAILWAY_MAIL_VOLUME`) | con el motor parado unos segundos |
+| La vuelta atrás de una migración del motor | el volumen de la 0.15 que se conserva al pasar a la 0.16 (hasta `mailway retirar-motor-anterior`) y los de la 0.16 de un intento que volvió atrás o de una migración revertida | en caliente: no los usa ningún motor |
+| Webmail: contactos, identidades, firmas y preferencias | `mailway-webmail-db` (SQLite de Roundcube) | con el webmail en pausa |
+| Bulwark (sección 11.1), también desactivado | `mailway-bulwark-ajustes`, `mailway-bulwark-admin` y `mailway-bulwark-estado` | con Bulwark en pausa (desactivado, en caliente) |
+| Panel (instalación autónoma) | `mailway-panel-data` (o el de `MAILWAY_PANEL_VOLUME`) | con el panel en pausa |
+| Certificados del Traefik propio (instalación autónoma) | `mailway-letsencrypt` | con Traefik en pausa |
+| Configuración y código | `deploy/.env` (con los secretos) y la copia de git de Mailway | — |
+
+No se copian `mailway-mail-certs` (lo rehace el extractor desde el acme.json
+de Traefik) ni, junto a Skyway, el volumen de certificados de su Traefik, que
+Skyway copia como suyo. Junto a Skyway, el panel de Mailway es un servicio de
+Skyway: Skyway reconoce su contenedor (`panel.contenedor` del inventario) y
+copia sus datos (`/data`, con su base de datos y su clave maestra) con el
+correo, en pausa, y también en las copias de solo el correo.
+
+**El motor se detiene unos segundos y no se pierde correo.** Cada volumen se
+copia dos veces seguidas: la primera en caliente y la segunda, que solo lee
+lo que ha cambiado desde la primera, con sus contenedores en pausa (`docker
+pause`: las bases SQLite quedan quietas) o, en el caso del motor, parados: su
+base de datos (RocksDB) solo se copia íntegra con ella cerrada. Como la
+segunda pasada es corta, el motor solo está parado unos segundos, y en ese
+tiempo no se pierde correo: los servidores que envían reintentan la entrega
+durante horas o días cuando el puerto 25 no responde (el mensaje llega unos
+minutos más tarde), el motor guarda su cola de salida en su base de datos y
+la retoma al arrancar, y los programas de correo y el webmail vuelven a
+conectar solos (un envío que coincida con la parada da un error y se repite).
+
+**Copia previa a las actualizaciones.** Con las copias configuradas, `mailway
+update` y la actualización automática copian el correo justo antes de
+aplicar una versión nueva (motivo `antes-de-actualizar`; sección 8.1). Si esa
+copia falla, la automática lo avisa en el panel y aplica la versión
+igualmente, para no frenar los parches de seguridad; a mano se pregunta si
+seguir.
+
+**Restaurar solo el correo**, en el mismo servidor:
+
+```bash
+sudo skyway copias lista                                # copias disponibles
+sudo skyway copias restaurar correo --fecha 2026-10-12  # o --ejecucion <id>
+```
+
+Detiene la pila de correo (`deploy/copias.sh parar`), devuelve sus volúmenes
+y `deploy/.env` a los de la copia y la vuelve a levantar. Con una copia de
+antes de un cambio de motor (o de sus volúmenes), los contenedores ya no
+corresponden a ese `deploy/.env`: `deploy/copias.sh arrancar` no arranca un
+motor sobre otros datos (termina con 3) y la configuración se aplica con
+`sudo bash deploy/copias.sh reaplicar` (Skyway lo hace solo al restaurar).
+Junto a Skyway, los datos del panel vuelven con el correo, del mismo momento:
+el panel (los clientes, dominios y buzones que conoce) y el motor quedan
+coherentes. Mientras la copia tiene el motor parado, el panel pasa unos
+segundos a modo mantenimiento (`deploy/copias.sh mantenimiento on|off`) para
+que su vigilante no avise de una caída.
+
+**Restaurar en otro servidor** (el anterior no arranca, una mudanza): en un
+servidor nuevo, sin nada instalado, con `restaurar.sh` (está en cada kit y en
+`scripts/copias/` del repositorio de Skyway):
+
+```bash
+sudo bash restaurar.sh                  # pide los datos de recuperación y la copia
+sudo bash restaurar.sh --kit kit.zip    # o desde un kit descargado
+```
+
+Restaura Skyway, sus proyectos y Mailway (su código, `deploy/.env` y sus
+volúmenes) y aplica la configuración de Mailway con `deploy/copias.sh
+reaplicar --ip <IP nueva>`, que es `instalar.sh --actualizar` con la IP del
+servidor nuevo (el panel la adopta). Después:
+
+- **El nombre del servidor de correo no cambia**: `MAIL_HOSTNAME` (p. ej.
+  `mail.miempresa.com`) tiene que seguir siendo el mismo, porque a él apuntan
+  los MX de los dominios de todos los clientes y los programas de correo
+  configurados. Lo que cambia es su registro A, que pasa a la IP nueva, igual
+  que los de `webmail.` y `panel.` (con Cloudflare, Skyway puede pasar en
+  bloque a la IP nueva los registros A que apuntaban a la anterior).
+- **El PTR (DNS inverso) de la IP nueva** debe devolver `MAIL_HOSTNAME`: se
+  pide en el panel del proveedor del servidor (sección 12.1). Revisa también
+  el SPF de los dominios que incluyan la IP anterior de forma explícita y
+  calienta la IP nueva si no tiene historial (sección 12).
+- **Las claves DKIM viajan en el volumen del motor**: las firmas de los
+  dominios son las mismas y sus registros DNS no cambian.
+
+**El kit.** `sudo skyway copias kit correo [--fecha AAAA-MM-DD]` (o `kit
+todo`) prepara un ZIP para guardar fuera del servidor (también se pide y se
+descarga desde el panel de Skyway): lleva la copia cifrada, `restaurar.sh` y
+lo necesario para descodificarla en un ordenador (`descodificar.sh` en Linux
+y macOS, `descodificar.bat` en Windows) con la contraseña de las copias.
+Descodificado, deja cada volumen legible en
+`descodificado/volumenes/<volumen>/`: la base del webmail es un fichero
+SQLite que se abre con cualquier visor; los datos del motor son su base de
+datos (RocksDB), no mensajes sueltos: para consultar ese correo hay que
+restaurarlo en un motor, por ejemplo con `restaurar.sh --kit` en un servidor
+de pruebas.
+
+**Sin Skyway** (instalación autónoma) no hay `skyway copias`: copia a mano los
+volúmenes del inventario, con la pila parada unos segundos para que todo
+quede coherente, y `deploy/.env` (guárdalo cifrado: lleva los secretos). Las
+dos primeras órdenes necesitan `jq`.
+
+```bash
+cd /ruta/a/Mailway
+sudo bash deploy/copias.sh inventario | jq -r '.volumenes[] | "\(.nombre)  \(.descripcion)"'
+VOLUMENES=$(sudo bash deploy/copias.sh inventario | jq -r '.volumenes[].nombre')
+sudo bash deploy/copias.sh parar
+for v in $VOLUMENES; do
+  sudo docker run --rm -v "$v:/origen:ro" -v /root/copias:/destino alpine \
+    tar czf "/destino/$v-$(date +%F).tar.gz" -C /origen .
+done
+sudo bash deploy/copias.sh arrancar
+sudo install -m 600 deploy/.env "/root/copias/mailway-env-$(date +%F)"
+```
+
+Para restaurar, con la pila parada (`deploy/copias.sh parar`), vuelca cada
+fichero en su volumen vacío (`sudo docker run --rm -v <volumen>:/destino -v
+/root/copias:/origen alpine tar xzf /origen/<fichero> -C /destino`) y
+levántala con `deploy/copias.sh arrancar`. En otro servidor, vuelca primero
+los volúmenes igual y, con el código de Mailway en la misma versión y
+`deploy/.env` en su sitio, crea los contenedores con `sudo bash
+deploy/copias.sh reaplicar --ip <IP nueva>`. Lleva las copias fuera del
+servidor y ensaya la restauración.
 
 ---
 
@@ -2177,8 +2304,21 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    otra actualización en curso no se toca nada; una interrumpida se retoma;
    `auto-update on/off/status` escribe y retira las unidades de systemd;
    `mailway bulwark on/off/status` llama a la opción del instalador que
-   corresponde; y, con la 0.15, `update` avisa de su fin de soporte sin
-   migrar nunca.
+   corresponde; con la 0.15, `update` avisa de su fin de soporte sin
+   migrar nunca; y la copia previa con las copias de Skyway (simulado) se
+   hace justo antes de aplicar una versión nueva, sin Skyway o sin copias
+   configuradas se sigue, y si falla la automática avisa y aplica igual.
+   `deploy/prueba-copias.sh` prueba `deploy/copias.sh` con `docker` y el
+   instalador simulados: el inventario con cada configuración (0.15, 0.16
+   nueva y migrada con la 0.15 conservada, vuelta a la 0.15, Bulwark,
+   instalación autónoma y anterior a la 1.0, con y sin Docker), siempre una
+   línea de JSON con los campos acordados con Skyway y sin ningún secreto;
+   `parar` y `arrancar` con el compose y los perfiles del instalador (sin
+   arrancar un motor que no corresponde a `deploy/.env`) y `reaplicar`. Y la
+   **cobertura**: todo volumen de los compose (y de `deploy/motor/*`) debe
+   tener su regla en `deploy/copias.sh`; si no, la prueba dice cuál y qué
+   hacer, y con `docker compose config` comprueba que no se le escapa
+   ninguno.
    El aviso al panel (`tools/avisar.js`) se prueba en
    `server/test/avisar.test.ts`.
 2. **El panel contra los motores reales**: el driver de Stalwart 0.16
