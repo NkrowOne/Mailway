@@ -1999,8 +1999,8 @@ antes lo que arrastra:
 
 Junto a Skyway, las copias de Mailway las hace Skyway con las suyas: `sudo
 skyway copias` copia todo el servidor (Skyway, sus proyectos y Mailway) en un
-almacenamiento S3 externo (Cubbit u otro compatible), cada noche y cifrado
-con una contraseña que solo tienes tú, y lo restaura todo o por partes,
+almacenamiento S3 externo (Backblaze B2 u otro compatible), cada noche y
+cifrado (sin su contraseña nadie puede leerlo), y lo restaura todo o por partes,
 eligiendo la fecha, aunque Skyway o Mailway no funcionen. Qué hay que copiar
 de Mailway lo declara Mailway en `deploy/copias.sh`: cuando una versión nueva
 añade un volumen, entra en las copias sin hacer nada (la CI de Mailway no
