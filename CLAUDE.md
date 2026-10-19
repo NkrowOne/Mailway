@@ -235,9 +235,10 @@ prueba que lo reproduce.
   cuando todo ha pasado. Stalwart solo recibe parches dentro de su serie;
   cambiar de serie es una migración (`mailway migrar-motor`). **Congeladas**
   (no se suben salvo por algo crítico, como un fallo de seguridad grave que
-  solo arregla la versión nueva): TypeScript 6/7, React 19, Tailwind 4, zod 4
-  y vite 8 con `@vitejs/plugin-react` 6. El motivo de cada una está en
-  `.github/dependabot.yml`.
+  solo arregla la versión nueva): todas las versiones mayores de npm, que
+  Dependabot ya no propone. Las que más pesan, con su motivo en
+  `.github/dependabot.yml`: TypeScript 6/7, React 19, Tailwind 4, zod 4 y
+  vite 7/8 con `@vitejs/plugin-react` 5/6.
 
 ## Seguridad (imprescindible)
 
