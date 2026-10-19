@@ -224,7 +224,7 @@ services:
   # OPCIONAL (perfil `proxy`): Traefik propio con Let's Encrypt en 80/443.
   # --------------------------------------------------------------------------
   mailway-proxy:
-    image: traefik:v3.7.14
+    image: traefik:v3.7.15
     container_name: mailway-proxy
     restart: unless-stopped
     profiles: ['proxy']
