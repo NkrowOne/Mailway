@@ -678,8 +678,12 @@ comprobar "pasos en orden" en_orden "$REGISTRO" \
 comprobar "el motor de recuperación arranca en modo recuperación" contiene "$REGISTRO" "-e STALWART_RECOVERY_ADMIN -e STALWART_RECOVERY_MODE=1"
 comprobar "el ayudante corre con el usuario de la orden (dueño de la carpeta de trabajo)" \
   contiene "$REGISTRO" "--security-opt no-new-privileges --user $(id -u):$(id -g) "
+# La imagen sale del compose de la 0.16, como en el instalador: escrita aquí,
+# cada parche de Stalwart que propone Dependabot rompía esta comprobación.
+IMAGEN_016_COMPOSE=$(imagen_compose "$AQUI/motor/stalwart-0.16/compose.yml" 'stalwartlabs/stalwart:')
+comprobar "la imagen de la 0.16 sale de su compose" test -n "$IMAGEN_016_COMPOSE"
 comprobar "los temporales, en la IP y con el alias del motor, sin publicar puertos" \
-  contiene "$REGISTRO" "--network mailway-internal --ip 10.203.53.10 --network-alias mailway-mail --label mailway.migracion=recuperacion stalwartlabs/stalwart:v0.16.25"
+  contiene "$REGISTRO" "--network mailway-internal --ip 10.203.53.10 --network-alias mailway-mail --label mailway.migracion=recuperacion $IMAGEN_016_COMPOSE"
 comprobar "y en la red de Traefik con el mismo alias" contiene "$REGISTRO" "docker network connect --alias mailway-mail skyway-edge mailway-mail-016-previo"
 comprobar "ningún temporal publica puertos" no_contiene <(grep 'docker run -d --name mailway-mail-016' "$REGISTRO") " -p "
 comprobar "el panel no toca el motor en modo recuperación" primera_tras_ultima "$REGISTRO" "motor.js provisionar" "mailway-mail-016-recuperacion"
