@@ -31,7 +31,7 @@
 
 services:
   mailway-mail:
-    image: stalwartlabs/stalwart:v0.16.25
+    image: stalwartlabs/stalwart:v0.16.26
     environment:
       # Administrador del motor para el panel, el instalador y el extractor
       # (usuario «admin»). Al contrario que en la 0.15, vale lo que diga
