@@ -497,6 +497,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     // pero no la actual: quien acaba de demostrar la contraseña sigue dentro.
     // requireSession garantiza que la cookie existe y es válida.
     revokeOtherSessions(user.id, req.cookies?.[COOKIE]);
+    // Un enlace para restablecerla que siguiera pendiente ya no tiene sentido.
+    db.prepare(
+      'UPDATE panel_password_resets SET revoked_at = ? WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL',
+    ).run(Date.now(), user.id);
     audit(req, 'auth.password_changed', {});
     return { ok: true };
   });

@@ -193,7 +193,7 @@ export function fechaLargaConfiguracion(t: number): string {
   return `${FORMATO_FECHA.format(t)} a las ${FORMATO_HORA.format(t)}`;
 }
 
-function escaparHtml(texto: string): string {
+export function escaparHtml(texto: string): string {
   return texto
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -203,7 +203,7 @@ function escaparHtml(texto: string): string {
 }
 
 /** Una sola línea: los nombres los escribe la gente y pueden traer saltos. */
-function enUnaLinea(texto: string): string {
+export function enUnaLinea(texto: string): string {
   return texto.replace(/\s+/g, ' ').trim();
 }
 

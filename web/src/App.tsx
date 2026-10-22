@@ -16,6 +16,8 @@ const PortalApp = lazy(() => import('./pages/portal/PortalApp'));
 // El enlace de bienvenida lo abre la empresa cliente antes de tener cuenta:
 // tampoco necesita el panel para crear su acceso.
 const Bienvenida = lazy(() => import('./pages/bienvenida/Bienvenida'));
+// Y el de restablecer la contraseña, quien no puede entrar en su panel.
+const Restablecer = lazy(() => import('./pages/bienvenida/Restablecer'));
 // El marco del panel (índice, iconos) tampoco lo necesita el titular del buzón.
 const AppShell = lazy(() => import('./shell/AppShell').then((m) => ({ default: m.AppShell })));
 const Login = lazy(() => import('./pages/Login'));
@@ -52,10 +54,11 @@ export function esRutaPortal(pathname: string): boolean {
 /**
  * El enlace de bienvenida de la empresa cliente también queda fuera: quien lo
  * abre aún no tiene usuario, y la puerta de acceso del panel lo mandaría a
- * iniciar sesión con una cuenta que todavía no existe.
+ * iniciar sesión con una cuenta que todavía no existe. Lo mismo el enlace
+ * para restablecer la contraseña: quien lo abre no puede iniciar sesión.
  */
 export function esRutaBienvenida(pathname: string): boolean {
-  return pathname.startsWith('/bienvenida/');
+  return pathname.startsWith('/bienvenida/') || pathname.startsWith('/restablecer/');
 }
 
 /** Mientras llega el código de una vista, el indicador de carga del sistema. */
@@ -91,6 +94,7 @@ export default function App() {
       <ConCarga pantalla>
         <Routes>
           <Route path="/bienvenida/:token" element={<Bienvenida />} />
+          <Route path="/restablecer/:token" element={<Restablecer />} />
         </Routes>
       </ConCarga>
     );

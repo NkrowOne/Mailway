@@ -32,7 +32,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   - `src/modules/`: un módulo por área. `auth` (sesiones, tokens `mwt_`,
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
     `clients` (planes, clientes, usuarios, `assertWithinLimit`),
-    `invitaciones` (enlace de bienvenida del cliente), `domains`
+    `invitaciones` (enlace de bienvenida del cliente), `restablecimientos`
+    (enlace por correo para restablecer la contraseña del panel de un usuario
+    de un cliente), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,
     `mailboxes` (buzones, altas masivas, alias), `direcciones` (usuario del
     motor de cada buzón, cambios abiertos y su conciliador),

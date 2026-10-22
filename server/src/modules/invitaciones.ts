@@ -85,7 +85,7 @@ function purgarInvitaciones(): void {
  * panel si lo tiene activo (la sesión que abre el enlace queda en ese
  * dominio, el mismo en el que seguirá entrando); si no, la del panel.
  */
-function baseDelCliente(req: FastifyRequest, clientId: string): string {
+export function baseDelCliente(req: FastifyRequest, clientId: string): string {
   const row = db
     .prepare(
       `SELECT hostname FROM client_domains
@@ -173,7 +173,7 @@ function correoOcupado(): HttpError {
 }
 
 /** Límite en memoria para las rutas públicas: protegen el servidor, no el token (256 bits). */
-function crearLimitador(max: number, ventanaMs: number): (clave: string) => boolean {
+export function crearLimitador(max: number, ventanaMs: number): (clave: string) => boolean {
   const cuentas = new Map<string, { desde: number; n: number }>();
   return (clave) => {
     const t = now();
