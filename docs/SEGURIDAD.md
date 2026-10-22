@@ -723,7 +723,7 @@ tokens de los canales.
 Los parches de seguridad llegan solos, pero solo después de probarse:
 
 - **Versiones exactas.** El `Dockerfile` y los compose fijan cada imagen con
-  su versión completa (p. ej. `node:22.23.3-alpine`,
+  su versión completa (p. ej. `node:22.23.4-alpine`,
   `roundcube/roundcubemail:1.7.4-apache`, Stalwart `v0.15.5`): un `pull` o
   una reconstrucción nunca traen una versión que no haya pasado la CI.
 - **Solo parches, y tras todas las comprobaciones.** Dependabot agrupa los
