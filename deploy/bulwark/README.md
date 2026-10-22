@@ -12,8 +12,8 @@ quien opera el servidor, el resumen está en la sección 11.1 de
 [docs/DESPLIEGUE-SKYWAY.md](../../docs/DESPLIEGUE-SKYWAY.md), y el modelo de
 seguridad en [docs/SEGURIDAD.md](../../docs/SEGURIDAD.md) (sección 7).
 
-- Versión fijada: **1.13.0**
-  (`ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed`).
+- Versión fijada: **1.17.1**
+  (`ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958`).
   En Docker Hub no hay imagen oficial: solo copias de terceros.
 - Necesita **Stalwart 0.16.6 o posterior** (ensayado con 0.16.25). Con el motor
   0.15.5 no funciona.
@@ -123,7 +123,7 @@ el instalador solo lo añade con Bulwark activo.
 
 | | `mailway-bulwark` | `mailway-bulwark-gw` |
 |---|---|---|
-| Imagen | `ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
+| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
 | Redes | `mailway-internal` (el motor, desde la subred exenta) y la de Traefik (la pasarela y el panel) | la de Traefik |
 | Puertos publicados | ninguno | ninguno |
 | Sistema de ficheros | solo lectura; tmpfs en `/tmp` y `/app/.next/cache` | solo lectura (usuario 101); tmpfs en `/tmp` |

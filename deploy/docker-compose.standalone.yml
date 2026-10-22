@@ -154,7 +154,7 @@ services:
       retries: 3
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.4-apache
+    image: roundcube/roundcubemail:1.7.5-apache
     container_name: mailway-webmail
     restart: unless-stopped
     ports:
@@ -307,7 +307,7 @@ services:
   # «sudo mailway bulwark on|off»; desactivarlo conserva volúmenes y secretos.
   # --------------------------------------------------------------------------
   mailway-bulwark:
-    image: ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed
+    image: ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958
     container_name: mailway-bulwark
     restart: unless-stopped
     profiles: ['bulwark']

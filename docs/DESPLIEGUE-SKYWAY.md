@@ -1112,7 +1112,7 @@ abrir el 587 (sección 2.3, paso 10).
   servidor, con un token temporal), y empareja de nuevo solo si Skyway no
   está ya conectado con el panel.
   Todas las imágenes van con su versión exacta (p. ej. Stalwart `v0.16.25`,
-  `roundcube/roundcubemail:1.7.4-apache`, `python:3.14.8-alpine`): `pull`
+  `roundcube/roundcubemail:1.7.5-apache`, `python:3.14.8-alpine`): `pull`
   nunca trae una versión que no se haya probado. Las versiones nuevas llegan
   con Dependabot (más abajo). Si no se pueden descargar las imágenes (límite
   de descargas de Docker Hub, sin conexión), el instalador lo avisa y lo deja

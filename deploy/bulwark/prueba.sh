@@ -52,7 +52,7 @@ CONSERVAR=0
 # exigen). La CI ensaya las de los compose (MWB_IMAGEN_*), las que se
 # despliegan: también en los PR de Dependabot que las suben.
 IMAGEN_STALWART=${MWB_IMAGEN_STALWART:-stalwartlabs/stalwart:v0.16.25@sha256:74e5a7d55303ba525d939c6bf97ed4e010df7521f52d80afc22a815b66bd53f3}
-IMAGEN_BULWARK=${MWB_IMAGEN_BULWARK:-ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed}
+IMAGEN_BULWARK=${MWB_IMAGEN_BULWARK:-ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958}
 IMAGEN_NGINX=${MWB_IMAGEN_NGINX:-nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}
 IMAGEN_TRAEFIK=${MWB_IMAGEN_TRAEFIK:-traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c}
 

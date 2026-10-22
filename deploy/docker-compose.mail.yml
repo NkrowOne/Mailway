@@ -58,7 +58,7 @@
 #   sudo bash deploy/instalar.sh --comprobar
 #   sudo bash deploy/instalar.sh --probar-acceso
 #
-# Todas las imágenes llevan su versión exacta (p. ej. 1.7.4-apache, no
+# Todas las imágenes llevan su versión exacta (p. ej. 1.7.5-apache, no
 # 1.7.x): una versión nueva solo llega como un PR de Dependabot que pasa la CI
 # y la pila real (stack.yml) antes de fusionarse, y «mailway update» la aplica
 # con comprobación y vuelta atrás. Así un «pull» nunca trae nada sin probar.
@@ -133,7 +133,7 @@ services:
       retries: 3
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.4-apache
+    image: roundcube/roundcubemail:1.7.5-apache
     container_name: mailway-webmail
     restart: unless-stopped
     depends_on:
@@ -295,7 +295,7 @@ services:
   # (/api/traefik/config) hacia http://mailway-bulwark-gw:8080.
   # --------------------------------------------------------------------------
   mailway-bulwark:
-    image: ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed
+    image: ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958
     container_name: mailway-bulwark
     restart: unless-stopped
     profiles: ['bulwark']
