@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api';
 import { formatDate, plural } from '../../../lib/format';
+import { fechaLarga } from '../../../lib/portal';
 import { esCorreoValido, mensajeDe, type ClientUser } from '../../../lib/gestion';
 import { Button } from '../../../ui/Button';
 import { Input } from '../../../ui/Field';
@@ -100,6 +101,50 @@ export default function UsuariosCliente({ contexto }: { contexto: ContextoClient
         />
       )}
     </>
+  );
+}
+
+/** Respuesta de POST /api/clients/:id/users/:userId/password-reset. */
+interface EnlaceRestablecer {
+  url: string;
+  email: string;
+  to: string;
+  expiresAt: number;
+  status: 'sent' | 'failed';
+  error?: string;
+}
+
+/** El motivo llega como continuación de frase («el cliente no tiene…»). */
+function mayuscula(texto: string): string {
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+/**
+ * Tras enviar el enlace. La URL se muestra también cuando el correo ha
+ * salido: si no le llega, se le puede enviar por otro medio sin generar otro.
+ */
+function ResultadoEnlace({ enlace }: { enlace: EnlaceRestablecer }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {enlace.status === 'sent' ? (
+        <p className="text-base text-tinta-2">
+          Se ha enviado a <span className="valor break-all text-tinta">{enlace.to}</span> el enlace para elegir una
+          contraseña nueva. Vale hasta el {fechaLarga(enlace.expiresAt)}.
+        </p>
+      ) : (
+        <BandaError>
+          {enlace.error ? `${mayuscula(enlace.error.replace(/[.\s]+$/, ''))}. ` : ''}Copia el enlace y envíaselo tú a{' '}
+          <span className="valor break-all">{enlace.to}</span>. Vale hasta el {fechaLarga(enlace.expiresAt)}.
+        </BandaError>
+      )}
+      <Muestra rotulo={enlace.status === 'sent' ? 'Enlace (por si no le llega el correo)' : 'Enlace'} copiar={enlace.url}>
+        <p className="codigo break-all text-sm text-tinta">{enlace.url}</p>
+      </Muestra>
+      <p className="text-sm text-tinta-3">
+        Es personal y sirve una sola vez. Entrará con <span className="valor break-all">{enlace.email}</span> y la
+        contraseña que elija.
+      </p>
+    </div>
   );
 }
 
@@ -256,6 +301,11 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
   const [dialogo, setDialogo] = useState<null | 'restablecer' | 'eliminar'>(null);
   const [nueva, setNueva] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // Restablecer: por defecto, enlace por correo para que elija la contraseña él.
+  const [modo, setModo] = useState<'enlace' | 'generar'>('enlace');
+  const [destino, setDestino] = useState<'propio' | 'otro'>('propio');
+  const [otroCorreo, setOtroCorreo] = useState('');
+  const [enviado, setEnviado] = useState<EnlaceRestablecer | null>(null);
 
   const toggle = useMutation({
     mutationFn: () => api.patch(`/api/clients/${clientId}/users/${user.id}`, { disabled: !user.disabled }),
@@ -278,6 +328,18 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
     onError: (err) => setError(mensajeDe(err, 'No se ha podido restablecer la contraseña.')),
   });
 
+  const enviarEnlace = useMutation({
+    mutationFn: () =>
+      api.post<{ reset: EnlaceRestablecer }>(`/api/clients/${clientId}/users/${user.id}/password-reset`, {
+        to: destino === 'otro' ? otroCorreo.trim() : undefined,
+      }),
+    onSuccess: (data) => {
+      setEnviado(data.reset);
+      setError('');
+    },
+    onError: (err) => setError(mensajeDe(err, 'No se ha podido enviar el enlace.')),
+  });
+
   const remove = useMutation({
     mutationFn: () => api.delete(`/api/clients/${clientId}/users/${user.id}`),
     onSuccess: async () => {
@@ -291,15 +353,34 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
   function cerrar() {
     setDialogo(null);
     setNueva(null);
+    setEnviado(null);
     setError('');
   }
 
   function abrir(cual: 'restablecer' | 'eliminar') {
     // Cada apertura empieza limpia: sin el error ni el estado de la anterior.
     setError('');
+    setModo('enlace');
+    setDestino('propio');
+    setOtroCorreo('');
     reset.reset();
+    enviarEnlace.reset();
     remove.reset();
     setDialogo(cual);
+  }
+
+  function restablecer(e: FormEvent) {
+    e.preventDefault();
+    if (modo === 'generar') {
+      reset.mutate();
+      return;
+    }
+    if (destino === 'otro' && !esCorreoValido(otroCorreo)) {
+      setError('Indica un correo válido al que enviar el enlace.');
+      return;
+    }
+    setError('');
+    enviarEnlace.mutate();
   }
 
   return (
@@ -330,12 +411,24 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
       <Dialogo
         open={dialogo === 'restablecer'}
         onClose={cerrar}
-        title={nueva ? 'Contraseña restablecida' : 'Restablecer contraseña del usuario'}
+        title={
+          nueva
+            ? 'Contraseña restablecida'
+            : enviado
+              ? enviado.status === 'sent'
+                ? 'Enlace enviado'
+                : 'No se ha podido enviar el correo'
+              : 'Restablecer contraseña del usuario'
+        }
         confirmarCierre={nueva ? CONFIRMAR_CONTRASENA : null}
         pie={
           nueva ? (
             <Button variant="principal" onClick={cerrar}>
               Ya he guardado la contraseña
+            </Button>
+          ) : enviado ? (
+            <Button variant="principal" onClick={cerrar}>
+              Cerrar
             </Button>
           ) : undefined
         }
@@ -344,22 +437,88 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
           <div className="flex flex-col gap-4">
             <CredencialUsuario clientId={clientId} email={user.email} password={nueva} />
           </div>
+        ) : enviado ? (
+          <ResultadoEnlace enlace={enviado} />
         ) : (
-          <div className="flex flex-col gap-4">
+          <form onSubmit={restablecer} noValidate className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              Se generará una contraseña nueva para <span className="valor break-all">{user.email}</span> y se
-              cerrarán sus sesiones abiertas. La contraseña se mostrará una sola vez.
+              Usuario del panel: <span className="valor break-all text-tinta">{user.email}</span>
+            </p>
+            <fieldset className="flex flex-col gap-2.5">
+              <legend className="rotulo mb-2">Cómo restablecerla</legend>
+              <Opcion
+                name={`restablecer-modo-${user.id}`}
+                checked={modo === 'enlace'}
+                onChange={() => {
+                  setError('');
+                  setModo('enlace');
+                }}
+                label="Enviar un enlace por correo"
+                help="Elige su contraseña nueva él mismo. El enlace vale 24 horas y sirve una sola vez."
+              />
+              <Opcion
+                name={`restablecer-modo-${user.id}`}
+                checked={modo === 'generar'}
+                onChange={() => {
+                  setError('');
+                  setModo('generar');
+                }}
+                label="Generar una contraseña ahora"
+                help="Se mostrará una sola vez y tendrás que entregársela tú."
+              />
+            </fieldset>
+            {modo === 'enlace' && (
+              <fieldset className="flex flex-col gap-2.5">
+                <legend className="rotulo mb-2">Enviar a</legend>
+                <Opcion
+                  name={`restablecer-destino-${user.id}`}
+                  checked={destino === 'propio'}
+                  onChange={() => {
+                    setError('');
+                    setDestino('propio');
+                  }}
+                  label={<span className="valor break-all">{user.email}</span>}
+                  help="Su correo de acceso al panel."
+                />
+                <Opcion
+                  name={`restablecer-destino-${user.id}`}
+                  checked={destino === 'otro'}
+                  onChange={() => {
+                    setError('');
+                    setDestino('otro');
+                  }}
+                  label="Otro correo"
+                  help="Útil si no puede leer el correo de su cuenta."
+                />
+                {destino === 'otro' && (
+                  <Input
+                    label="Correo de destino"
+                    type="email"
+                    autoComplete="off"
+                    value={otroCorreo}
+                    onChange={(e) => {
+                      setError('');
+                      setOtroCorreo(e.target.value);
+                    }}
+                  />
+                )}
+              </fieldset>
+            )}
+            <p className="text-sm text-tinta-3">
+              {modo === 'enlace'
+                ? 'Su contraseña actual sigue funcionando hasta que use el enlace; entonces se cerrarán sus sesiones abiertas.'
+                : 'Se cerrarán sus sesiones abiertas y la contraseña actual dejará de funcionar.'}
             </p>
             {error && <BandaError>{error}</BandaError>}
             <Botonera>
-              <Button variant="plano" onClick={cerrar}>
+              <Button type="button" variant="plano" onClick={cerrar}>
                 Cancelar
               </Button>
-              <Button variant="principal" busy={reset.isPending} onClick={() => reset.mutate()}>
-                Generar contraseña
+              <Button type="submit" variant="principal" busy={reset.isPending || enviarEnlace.isPending}>
+                {modo === 'enlace' ? 'Enviar enlace' : 'Generar contraseña'}
               </Button>
             </Botonera>
-          </div>
+          </form>
         )}
       </Dialogo>
 

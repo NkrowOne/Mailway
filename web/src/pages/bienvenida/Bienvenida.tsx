@@ -388,7 +388,7 @@ function Acogida({
  * Portada para los estados sin formulario: el logotipo y el nombre de la
  * instancia encima de una tarjeta centrada, como la de acceso.
  */
-function Portada({ marca, children }: { marca?: string; children: ReactNode }) {
+export function Portada({ marca, children }: { marca?: string; children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-mesa px-4 py-10">
       <main className="w-full max-w-[28rem] animate-aparecer">

@@ -757,6 +757,30 @@ const migrations: Migracion[] = [
       `);
     },
   },
+  {
+    id: '018-restablecer-acceso-al-panel',
+    sql: `
+      -- Enlace para elegir una contraseña nueva del panel, que la
+      -- administración envía a un usuario de un cliente que la ha olvidado.
+      -- Solo se guarda el hash del token: el enlace viaja en el correo (y la
+      -- administración lo ve una vez, para enviarlo ella si el correo falla).
+      CREATE TABLE panel_password_resets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        recipient TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('sent', 'failed')),
+        error TEXT NOT NULL DEFAULT '',
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX idx_panel_password_resets_user ON panel_password_resets(user_id, created_at);
+    `,
+  },
 ];
 
 /**

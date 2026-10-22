@@ -743,6 +743,10 @@ export function registerClientRoutes(app: FastifyInstance): void {
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), userId);
       // Una contraseña restablecida cierra las sesiones abiertas con la anterior.
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+      // Y deja sin efecto los enlaces para elegir otra que siguieran pendientes.
+      db.prepare(
+        'UPDATE panel_password_resets SET revoked_at = ? WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL',
+      ).run(now(), userId);
     }
     if (body.name !== undefined) {
       db.prepare('UPDATE users SET name = ? WHERE id = ?').run(body.name, userId);

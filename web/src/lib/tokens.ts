@@ -135,6 +135,9 @@ const ETIQUETAS: Record<string, string> = {
   'client.user_created': 'Usuario de panel creado',
   'client.user_updated': 'Usuario de panel actualizado',
   'client.user_deleted': 'Usuario de panel eliminado',
+  'client.user_password_reset_sent': 'Enlace para restablecer la contraseña del panel enviado',
+  'client.user_password_reset_failed': 'Enlace para restablecer la contraseña del panel creado (correo no enviado)',
+  'client.user_password_reset_used': 'Contraseña del panel restablecida con el enlace',
   // Dominios
   'domain.created': 'Dominio dado de alta',
   'domain.verified': 'Verificación de DNS',
