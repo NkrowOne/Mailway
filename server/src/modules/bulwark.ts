@@ -7,11 +7,12 @@ import { HttpError, badRequest } from '../core/errors';
  * API de administración.
  *
  * Este módulo no toca la base de datos ni la configuración del panel: recibe
- * los datos ya leídos y devuelve exactamente lo que Bulwark 1.13 espera. Así
+ * los datos ya leídos y devuelve exactamente lo que Bulwark 1.17 espera. Así
  * lo pueden usar el vigilante, las rutas y el ensayo con contenedores reales
  * (deploy/bulwark/prueba.sh) sin arrancar el panel.
  *
- * Contrato comprobado en el código de Bulwark 1.13.0 y contra su contenedor:
+ * Contrato comprobado en el código de Bulwark 1.13.0 y 1.17.1 y contra su
+ * contenedor:
  * - POST /api/admin/auth {password} → cookie admin_session (Max-Age 3600).
  *   Cada intento cuenta para su límite (5 por IP y 50 en total cada 15
  *   minutos), también los correctos: la sesión se reutiliza mientras dure.
@@ -19,7 +20,8 @@ import { HttpError, badRequest } from '../core/errors';
  * - PATCH /api/admin/config {domainBranding: […]} sustituye la lista entera;
  *   si Bulwark descarta alguna entrada, responde 400 y no guarda nada.
  * - GET /api/admin/policy (con la sesión, la política completa) y
- *   PUT /api/admin/policy con la política entera.
+ *   PUT /api/admin/policy con la política entera. Desde la 1.17 completa
+ *   themePolicy con sus valores por defecto (defaultColorMode, lockColorMode).
  * - POST /api/admin/branding (multipart: file, slot y host) guarda la imagen
  *   en <ADMIN_CONFIG_DIR>/branding (el volumen de administración) como
  *   domain__<host>__<slot><ext>, con la extensión del tipo declarado, borra
@@ -269,7 +271,13 @@ export interface PoliticaBulwark {
   restrictions: Record<string, unknown>;
   features: Record<string, boolean>;
   defaults: Record<string, unknown>;
-  themePolicy: { disabledBuiltinThemes: string[]; disabledThemes: string[]; defaultThemeId: string | null };
+  themePolicy: {
+    disabledBuiltinThemes: string[];
+    disabledThemes: string[];
+    defaultThemeId: string | null;
+    defaultColorMode: 'light' | 'dark' | 'system' | null;
+    lockColorMode: boolean;
+  };
   forceEnabledPlugins: string[];
   approvedPlugins: string[];
   forceEnabledThemes: string[];
@@ -342,13 +350,27 @@ export function politicaBulwark(opciones: OpcionesPoliticaBulwark = {}): Politic
       crossStarredViewEnabled: false,
       crossAllViewEnabled: false,
       unifiedCrossAccountEnabled: false,
+      // Copia cifrada de la lista de cuentas en el servidor de Bulwark (1.14) y,
+      // con la segunda, también las contraseñas de los buzones: no.
+      accountArchiveEnabled: false,
+      accountArchivePasswordsEnabled: false,
+      // Remitente libre en el redactor (1.15): el motor sigue exigiendo que la
+      // dirección sea del buzón o de sus alias. Como hasta ahora, sí.
+      customFromEnabled: true,
+      archiveActionEnabled: true,
     },
     // Los favicons de los remitentes los pide el servidor de Bulwark a cada
     // dominio que escribe. Bulwark 1.13 guarda «defaults» pero aún no los
     // aplica (comprobado en el ensayo), así que hoy los corta la pasarela
     // (/api/favicon); el valor queda para cuando los aplique.
     defaults: { senderFavicons: false },
-    themePolicy: { disabledBuiltinThemes: [], disabledThemes: [], defaultThemeId: null },
+    themePolicy: {
+      disabledBuiltinThemes: [],
+      disabledThemes: [],
+      defaultThemeId: null,
+      defaultColorMode: null,
+      lockColorMode: false,
+    },
     forceEnabledPlugins: [],
     approvedPlugins: [],
     forceEnabledThemes: [],
@@ -385,17 +407,21 @@ function jsonCanonico(valor: unknown): string {
 
 /**
  * ¿La política guardada en Bulwark es ya la deseada? Se compara todo lo que
- * Mailway fija; de los interruptores, solo los que Mailway conoce: los que
- * traiga una versión nueva de Bulwark se quedan con su valor por defecto.
+ * Mailway fija; de los interruptores y de la política de temas, solo las
+ * claves que Mailway conoce: Bulwark completa ambos con sus valores por
+ * defecto al guardar, y las claves que traiga una versión nueva harían que
+ * cada sincronización volviera a escribir la política.
  */
 export function politicaCoincide(guardada: unknown, deseada: PoliticaBulwark): boolean {
   if (!guardada || typeof guardada !== 'object') return false;
   const g = guardada as Record<string, unknown>;
-  const featuresGuardadas = (g.features && typeof g.features === 'object' ? g.features : {}) as Record<string, unknown>;
-  for (const [clave, valor] of Object.entries(deseada.features)) {
-    if (featuresGuardadas[clave] !== valor) return false;
-  }
-  const { features: _features, ...resto } = deseada;
+  const conocidas = (objeto: unknown, deseado: Record<string, unknown>): boolean => {
+    const o = (objeto && typeof objeto === 'object' ? objeto : {}) as Record<string, unknown>;
+    return Object.entries(deseado).every(([clave, valor]) => jsonCanonico(o[clave] ?? null) === jsonCanonico(valor));
+  };
+  if (!conocidas(g.features, deseada.features)) return false;
+  if (!conocidas(g.themePolicy, deseada.themePolicy)) return false;
+  const { features: _features, themePolicy: _themePolicy, ...resto } = deseada;
   for (const [clave, valor] of Object.entries(resto)) {
     if (jsonCanonico(g[clave] ?? null) !== jsonCanonico(valor)) return false;
   }

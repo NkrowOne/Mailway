@@ -16,9 +16,9 @@
 #     Cloudflare con CF-Connecting-IP, intentos de falsificarla);
 #   - bloqueo automático del motor: un cliente sin exención queda bloqueado;
 #     40 accesos fallidos a través de Bulwark no bloquean su IP (red exenta);
-#     cómo cuenta el motor los fallos por buzón;
-#   - el oráculo de contraseñas de /api/auth/stalwart-context y el límite de
-#     la pasarela que lo frena;
+#     el motor los cuenta por buzón con la IP de cada visitante;
+#   - el límite por IP de /api/auth/stalwart-context (antes, un oráculo de
+#     contraseñas) y el de la pasarela;
 #   - la cabecera Forwarded que Traefik deja pasar hasta el motor y el
 #     middleware que la retira;
 #   - CORS del motor para el origen del webmail;
@@ -52,7 +52,7 @@ CONSERVAR=0
 # exigen). La CI ensaya las de los compose (MWB_IMAGEN_*), las que se
 # despliegan: también en los PR de Dependabot que las suben.
 IMAGEN_STALWART=${MWB_IMAGEN_STALWART:-stalwartlabs/stalwart:v0.16.25@sha256:74e5a7d55303ba525d939c6bf97ed4e010df7521f52d80afc22a815b66bd53f3}
-IMAGEN_BULWARK=${MWB_IMAGEN_BULWARK:-ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed}
+IMAGEN_BULWARK=${MWB_IMAGEN_BULWARK:-ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958}
 IMAGEN_NGINX=${MWB_IMAGEN_NGINX:-nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}
 IMAGEN_TRAEFIK=${MWB_IMAGEN_TRAEFIK:-traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c}
 
@@ -670,6 +670,11 @@ EOF
 contiene 'control: una IP sin exención queda bloqueada al pasar el umbral' "$CONTROL" '429'
 
 # 40 accesos fallidos a través de Bulwark, de 8 visitantes tras Cloudflare.
+# Desde la 1.17, Bulwark manda al motor la IP del visitante en
+# X-Forwarded-For (lib/auth/client-address.ts) y el motor la cree: cuenta el
+# fallo para esa IP y para el buzón. ana ya pasó el umbral de su buzón con los
+# fallos de la sección anterior, así que cada IP nueva cae al primer fallo y
+# Bulwark contesta «inconclusive».
 RESULTADOS=$(cliente mwb-cf "$IP_CF_1" <<'EOF'
 for v in 31 32 33 34 35 36 37 38; do
   for i in 1 2 3 4 5; do
@@ -681,8 +686,10 @@ for v in 31 32 33 34 35 36 37 38; do
 done
 EOF
 )
-comprobar '40 fallos por Bulwark: 30 llegan al motor (presupuesto global de Bulwark) y 10 no' '30 10' \
-  "$(grep -c '^unauthorized$' <<<"$RESULTADOS") $(grep -c '^inconclusive$' <<<"$RESULTADOS")"
+NO_AUTORIZADOS=$(grep -c '^unauthorized$' <<<"$RESULTADOS")
+INCONCLUSOS=$(grep -c '^inconclusive$' <<<"$RESULTADOS")
+comprobar '40 fallos por Bulwark: el motor los cuenta por buzón y corta cada IP nueva (inconclusive)' 'sí' \
+  "$([ $((NO_AUTORIZADOS + INCONCLUSOS)) -eq 40 ] && [ "$NO_AUTORIZADOS" -lt 10 ] && echo sí || echo "no: $NO_AUTORIZADOS unauthorized, $INCONCLUSOS inconclusive")"
 
 bloqueadas() {
   jmap "{$USING,\"methodCalls\":[[\"x:BlockedIp/query\",{},\"a\"],[\"x:BlockedIp/get\",{\"#ids\":{\"resultOf\":\"a\",\"name\":\"x:BlockedIp/query\",\"path\":\"/ids\"}},\"b\"]]}" |
@@ -699,17 +706,26 @@ echo "CONTEXTO $(curl -sS --cacert /ca.pem -H 'content-type: application/json' h
   -d "{\"serverUrl\":\"https://mail.mwb.test\",\"username\":\"ana@cliente.test\",\"authHeader\":\"$AUTH\"}")"
 EOF
 )
-comprobar 'agotado su presupuesto global, Bulwark contesta «inconclusive» a todos (el navegador comprueba por su cuenta)' \
-  'VERIFICA {"result":"inconclusive"}' "$(grep '^VERIFICA' <<<"$SALIDA")"
+comprobar 'con el buzón por encima del umbral, la contraseña buena sigue entrando por Bulwark' \
+  'VERIFICA {"result":"ok"}' "$(grep '^VERIFICA' <<<"$SALIDA")"
 comprobar 'Bulwark sigue entrando en el motor con la contraseña buena' 'CONTEXTO {"ok":true}' "$(grep '^CONTEXTO' <<<"$SALIDA")"
 
-# El oráculo: /api/auth/stalwart-context comprueba la contraseña desde Bulwark
-# sin ningún límite. Directo a Bulwark (sin pasarela), 40 de 40 contestan.
+# /api/auth/stalwart-context comprueba la contraseña desde Bulwark. Hasta la
+# 1.13 lo hacía sin límite (un oráculo de contraseñas); desde la 1.17 aplica
+# el presupuesto de 5 fallos por IP de /api/auth/verify y contesta 429.
+# Directo a Bulwark (sin pasarela), como mucho 5 de 40 reciben un 401. Con
+# una IP de documentación en X-Forwarded-For (sin pasarela, Bulwark la cree):
+# Bulwark la manda al motor, que la bloquea a ella y no a la de este equipo,
+# por la que entra después el navegador.
 ORACULO=$(for i in $(seq 1 40); do
-  curl -sS -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' "http://127.0.0.1:$PUERTO_BULWARK/api/auth/stalwart-context" \
+  curl -sS -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' -H 'X-Forwarded-For: 198.51.100.77' \
+    "http://127.0.0.1:$PUERTO_BULWARK/api/auth/stalwart-context" \
     -d "{\"serverUrl\":\"https://mail.mwb.test\",\"username\":\"ana@cliente.test\",\"authHeader\":\"Basic $(printf 'ana@cliente.test:oraculo%s' "$i" | base64 -w0)\"}"
 done | sort | uniq -c | awk '{print $2 "x" $1}' | tr '\n' ' ')
-comprobar 'Bulwark 1.13 responde 401 a cada intento de /api/auth/stalwart-context, sin límite (oráculo)' '401x40 ' "$ORACULO"
+contiene 'Bulwark limita /api/auth/stalwart-context por IP: ya no es un oráculo (429)' "$ORACULO" '429x'
+# Un error del motor (502: Bulwark devuelve el intento) no gasta presupuesto.
+comprobar 'como mucho 5 de 40 contraseñas erróneas reciben respuesta (401)' 'sí' \
+  "$(awk -v RS=' ' -F x '$1 == "401" {n += $2} END {print (n <= 5 ? "sí" : "no: " n)}' <<<"$ORACULO")"
 no_contiene 'y el motor tampoco bloquea a Bulwark por ello' "$(bloqueadas)" "$IP_BULWARK"
 ORACULO=$(cliente mwb-calle "$C.54" <<'EOF'
 for i in $(seq 1 60); do
@@ -720,14 +736,14 @@ EOF
 )
 contiene 'por la pasarela, el límite por IP corta el oráculo (429)' "$ORACULO" '429x'
 
-# Fallos por buzón: el motor no cuenta los que llegan desde la red exenta
-# (ana lleva más de 70 sin que su contador se mueva), pero sí los directos.
+# Fallos por buzón: con la IP del visitante que manda Bulwark, el motor cuenta
+# los que llegan por Bulwark igual que los directos.
 directo() { # directo <ip>: un fallo de ana contra el motor por Traefik (camino del navegador)
   cliente mwb-calle "$1" <<'EOF'
 curl -sS -o /dev/null -w '%{http_code}' --cacert /ca.pem -u 'ana@cliente.test:mala-directa' https://mail.mwb.test/jmap/session 2>/dev/null || printf 'x'
 EOF
 }
-comprobar 'los fallos desde Bulwark no cuentan para el buzón: un fallo directo nuevo no bloquea' '401' "$(directo "$C.60")"
+comprobar 'los fallos por Bulwark cuentan para el buzón: un fallo directo desde una IP nueva cae al primero' '429' "$(directo "$C.60")"
 for ip in "$C.61" "$C.62" "$C.63"; do directo "$ip" >/dev/null; done
 for _ in 1 2 3 4 5 6; do directo "$C.64" >/dev/null; done
 comprobar 'los fallos directos sí cuentan por buzón: superado el umbral, una IP nueva cae al primer fallo' '429' "$(directo "$C.65")"

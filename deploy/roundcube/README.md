@@ -210,7 +210,7 @@ como lo haría un navegador:
 
 ```sh
 docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" \
-  roundcube/roundcubemail:1.7.4-apache php /opt/mailway-rc/pruebas/mailway_cuentas.php
+  roundcube/roundcubemail:1.7.5-apache php /opt/mailway-rc/pruebas/mailway_cuentas.php
 ```
 
 Para desactivarlo, retira `mailway_cuentas` de `ROUNDCUBEMAIL_PLUGINS` y

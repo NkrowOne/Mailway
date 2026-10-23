@@ -18,7 +18,7 @@ import { adminContext, createClient, createDomain, type TestContext } from './he
 
 /*
  * El correo web nuevo de extremo a extremo contra contenedores DE VERDAD:
- * Stalwart 0.16.25 y Bulwark 1.13.0 (la imagen fijada en
+ * Stalwart 0.16.25 y Bulwark 1.17.1 (la imagen fijada en
  * deploy/bulwark/README.md, con su configuración de referencia). Comprueba
  * que elegir Bulwark para el primer cliente abre el CORS del motor (y fija la
  * caducidad del bloqueo), que la sincronización del panel deja la marca, sus

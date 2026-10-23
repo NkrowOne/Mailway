@@ -12,8 +12,8 @@ quien opera el servidor, el resumen está en la sección 11.1 de
 [docs/DESPLIEGUE-SKYWAY.md](../../docs/DESPLIEGUE-SKYWAY.md), y el modelo de
 seguridad en [docs/SEGURIDAD.md](../../docs/SEGURIDAD.md) (sección 7).
 
-- Versión fijada: **1.13.0**
-  (`ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed`).
+- Versión fijada: **1.17.1**
+  (`ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958`).
   En Docker Hub no hay imagen oficial: solo copias de terceros.
 - Necesita **Stalwart 0.16.6 o posterior** (ensayado con 0.16.25). Con el motor
   0.15.5 no funciona.
@@ -123,7 +123,7 @@ el instalador solo lo añade con Bulwark activo.
 
 | | `mailway-bulwark` | `mailway-bulwark-gw` |
 |---|---|---|
-| Imagen | `ghcr.io/bulwarkmail/webmail:1.13.0@sha256:cc85f569396b6eb1d3f8cf41311b7512cf6b943fa28a8844a27edaeb2daae1ed` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
+| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
 | Redes | `mailway-internal` (el motor, desde la subred exenta) y la de Traefik (la pasarela y el panel) | la de Traefik |
 | Puertos publicados | ninguno | ninguno |
 | Sistema de ficheros | solo lectura; tmpfs en `/tmp` y `/app/.next/cache` | solo lectura (usuario 101); tmpfs en `/tmp` |
@@ -247,9 +247,10 @@ Lo que hace `nginx/nginx.conf`, comprobado en el ensayo:
 - **Límite en las comprobaciones de credenciales** (`POST`/`PUT` en
   `/api/auth/*`): 20 por minuto y ráfagas de 40 por IP real, 180 por minuto en
   toda la instancia. `/api/auth/stalwart-context` y `/api/auth/session`
-  comprueban la contraseña desde Bulwark (red exenta) sin ningún límite propio:
-  sin la pasarela son un oráculo de contraseñas (ensayo: 40 de 40 intentos
-  contestados). Las lecturas no gastan.
+  comprueban la contraseña desde Bulwark; hasta la 1.13 lo hacían sin límite
+  propio (un oráculo de contraseñas) y desde la 1.17 aplican el presupuesto
+  de 5 fallos por IP cada 15 minutos (ensayo: como mucho 5 de 40 reciben
+  respuesta). Las lecturas no gastan.
 - HSTS de un año (sin `includeSubDomains`: el dominio es del cliente), sin
   `X-Powered-By`, cuerpos de hasta 30 MB, tiempos de 60 a 120 s, búferes
   para la CSP de Bulwark y sus cookies.
@@ -341,12 +342,15 @@ pasarela del motor y la retirada de `Forwarded`:
   12 fallos sin bloqueo frente a bloqueo al pasar el umbral con el
   middleware). Stalwart 0.15.5 lee las cabeceras igual: afecta también a la
   instalación actual con Roundcube.
-- Los fallos desde la red exenta **no cuentan para el buzón**: Stalwart cuenta
-  los fallos por IP y por nombre de acceso, pero si la IP está exenta no cuenta
-  ninguno de los dos. Los fallos que llegan por Bulwark solo los limitan
-  Bulwark y la pasarela. Los del navegador (JMAP directo) sí cuentan, por IP y
-  por buzón: pasado el umbral de un buzón, cualquier IP nueva que falle con él
-  queda bloqueada al primer intento.
+- Los fallos que llegan por Bulwark **cuentan con la IP del visitante**: desde
+  la 1.17, Bulwark manda al motor la IP real en `X-Forwarded-For` y el motor
+  (con `useXForwarded`) la cree. Stalwart cuenta esos fallos para esa IP y
+  para el buzón, igual que los del navegador (JMAP directo); la IP de Bulwark
+  sigue exenta y nunca queda bloqueada para todos. Pasado el umbral de un
+  buzón, cualquier IP nueva que falle con él queda bloqueada al primer
+  intento, también a través de Bulwark (contesta «inconclusive» o 502); la
+  contraseña buena sigue entrando. Hasta la 1.13, los fallos por Bulwark no
+  contaban para el buzón: solo los limitaban Bulwark y la pasarela.
 - Bloqueo por fallos **con caducidad** (`Security.authBanPeriod`): por defecto
   es para siempre. Con Bulwark los usuarios entran desde su IP real (con
   Roundcube no) y una pestaña abierta tras cambiar la contraseña llegó en el
@@ -404,9 +408,9 @@ Comprobados en el ensayo salvo que se diga otra cosa:
    correo web abierto. Para hacerlo predeterminado falta que Bulwark deje de
    reintentar tras un 401 (petición a Bulwark).
 2. **Oráculo de contraseñas** en `/api/auth/stalwart-context` y
-   `/api/auth/session` (sin límite en Bulwark y desde la red exenta). Lo
-   frena la pasarela; conviene pedir a Bulwark que aplique a esas rutas el
-   presupuesto de `/api/auth/verify`.
+   `/api/auth/session`: **resuelto en la 1.17**, que aplica a esas rutas el
+   presupuesto de 5 fallos por IP de `/api/auth/verify` (429 al agotarlo). La
+   pasarela sigue siendo el límite general.
 3. **Presupuesto global de comprobaciones**: con 30 contraseñas erróneas cada
    15 minutos, cualquiera deja `/api/auth/verify` en «inconclusive» para todos;
    el acceso sigue funcionando (el navegador comprueba por su cuenta).
@@ -464,7 +468,8 @@ administración; la marca y la política aplicadas con el cliente del panel
 (dos veces, la segunda sin escribir) y visibles por nombre; el acceso con
 contraseña buena y mala y la lectura de la bandeja por JMAP con CORS; la IP
 real en todos los casos de la tabla; el bloqueo del motor (IP de control
-bloqueada, Bulwark no, cómo cuenta por buzón); el oráculo y su límite; la
+bloqueada, Bulwark no, cómo cuenta por buzón); el límite de
+`/api/auth/stalwart-context`; la
 cabecera `Forwarded`; límites y registros sin secretos. Con Playwright añade
 un Chromium real (acceso, bandeja, «Mi buzón», sin pestaña Seguridad, sin
 violaciones de la CSP ni peticiones a terceros) y, con

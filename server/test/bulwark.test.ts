@@ -202,6 +202,9 @@ test('politicaCoincide: compara lo que fija Mailway e ignora los interruptores q
   assert.equal(politicaCoincide({ ...guardada, defaultSidebarApps: [] }, deseada), false);
   assert.equal(politicaCoincide({ ...guardada, features: { ...guardada.features, filesEnabled: true } }, deseada), false);
   assert.equal(politicaCoincide({ ...guardada, defaults: {} }, deseada), false);
+  // Bulwark completa la política de temas al guardarla: una clave nueva no es un cambio.
+  assert.equal(politicaCoincide({ ...guardada, themePolicy: { ...guardada.themePolicy, temaDeLa118: 'x' } }, deseada), true);
+  assert.equal(politicaCoincide({ ...guardada, themePolicy: { ...guardada.themePolicy, lockColorMode: true } }, deseada), false);
   assert.equal(politicaCoincide(null, deseada), false);
 });
 
@@ -552,7 +555,7 @@ test('imágenes fijadas: README, entorno y ensayo usan las mismas', () => {
   const ensayo = leer('deploy/bulwark/prueba.sh');
   const readme = leer('deploy/bulwark/README.md');
   for (const imagen of [
-    /ghcr\.io\/bulwarkmail\/webmail:1\.13\.0@sha256:[0-9a-f]{64}/,
+    /ghcr\.io\/bulwarkmail\/webmail:1\.17\.1@sha256:[0-9a-f]{64}/,
     /nginx:1\.30\.5-alpine@sha256:[0-9a-f]{64}/,
   ]) {
     const enEnsayo = imagen.exec(ensayo)?.[0];
