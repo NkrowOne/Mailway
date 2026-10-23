@@ -1519,6 +1519,30 @@ comprobar "el PTR" contiene "$SALIDA" "DNS inverso (PTR) INCORRECTO: 203.0.113.7
 comprobar "el puerto 25, con qué hacer" contiene "$SALIDA" "Pide al proveedor del servidor que lo desbloquee"
 comprobar "cuenta cada incidencia" contiene "$SALIDA" "6 comprobaciones con incidencias"
 
+echo "# Comprobación final de la migración (INTERNET_SOLO_AVISOS=1): el DNS, el PTR y el 25 solo avisan"
+reiniciar_diagnostico
+FAKE_DNS=1
+FAKE_PTR_LEIDOS=vps-1.proveedor.test
+FAKE_P25=0
+diagnostico eval 'INTERNET_SOLO_AVISOS=1'
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "los dice igualmente" contiene "$SALIDA" "DNS inverso (PTR) INCORRECTO: 203.0.113.7 → vps-1.proveedor.test"
+comprobar "y que no impiden la migración" contiene "$SALIDA" "No impiden la migración: no dependen de la versión del motor."
+comprobar "el resultado cuenta los avisos" contiene "$SALIDA" "Quedan 5 avisos del DNS público, el PTR o el puerto 25 (arriba)"
+comprobar "sin «Todo correcto» a secas" no_contiene "$SALIDA" "Todo correcto. Quedan fuera"
+FAKE_TRAEFIK='["--entrypoints.web.address=:80"]'
+diagnostico eval 'INTERNET_SOLO_AVISOS=1'
+comprobar "Traefik sí cuenta" igual "$CODIGO" 1
+comprobar "y solo él" contiene "$SALIDA" "1 comprobación con incidencias"
+reiniciar_diagnostico
+FAKE_P25=0
+diagnostico eval 'INTERNET_SOLO_AVISOS=1'
+comprobar "un solo aviso, en singular" contiene "$SALIDA" "Queda 1 aviso del DNS público, el PTR o el puerto 25"
+reiniciar_diagnostico
+diagnostico eval 'INTERNET_SOLO_AVISOS=1'
+comprobar "sin avisos: «Todo correcto» de siempre" contiene "$SALIDA" "Todo correcto. Quedan fuera"
+comprobar "sin decir que no impiden nada" no_contiene "$SALIDA" "No impiden la migración"
+
 echo "# --comprobar sin respuesta de los resolutores: se dice, pero no es una incidencia"
 reiniciar_diagnostico
 FAKE_DNS=2

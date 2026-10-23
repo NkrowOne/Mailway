@@ -1431,7 +1431,10 @@ deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
    uno).
 7. **El motor definitivo**, con los puertos públicos (`MAILWAY_MOTOR` y los
    volúmenes nuevos quedan en `deploy/.env`), el webmail y el extractor, y la
-   comprobación de `--comprobar`.
+   comprobación de `--comprobar`. En ella, el DNS público, el PTR y el puerto
+   25 de salida solo avisan: no dependen de la versión del motor y volver
+   atrás por ellos no arreglaría nada (corrígelos después y repite `sudo
+   mailway comprobar`). El motor, el webmail, el panel y Traefik sí cuentan.
 8. **Tareas del panel**: renueva en la 0.16 la credencial interna de las
    claves de API y los formularios, marca las contraseñas de aplicación que
    dejan de valer, avisa a la administración y a cada titular afectado y sale
@@ -2218,7 +2221,11 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
    la misma contraseña, el suspendido no entra, el alias conserva su destino
    externo y las firmas DKIM son las mismas); `--revertir-motor`; otra
    migración; y `--retirar-motor-anterior`, tras el que una actualización no
-   vuelve a crear el volumen de la 0.15.
+   vuelve a crear el volumen de la 0.15. La migración y `--revertir-motor`
+   terminan con la comprobación completa de `--comprobar`, sin
+   `MAILWAY_COMPROBAR_SOLO_MOTOR`: el panel simulado responde en
+   `/api/health` y el Traefik simulado tiene los parámetros del de Skyway
+   0.34.
    El Skyway simulado no tiene el contenedor `skyway` ni panel desplegado:
    la prueba recorre el camino en el que el instalador no despliega el panel
    ni empareja, y comprueba que eso no interrumpe la instalación. El

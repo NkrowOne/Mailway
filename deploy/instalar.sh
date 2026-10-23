@@ -4288,6 +4288,13 @@ MIG_CERT_015=0
 # certificado de IMAP y SMTP: la 0.15 tampoco servía uno válido, y migrar no
 # lo empeora (lo dice igualmente).
 TOLERAR_CERTIFICADO=0
+# Con 1, la comprobación final de la migración muestra los fallos del DNS
+# público, del PTR y del puerto 25 de salida como avisos, sin contarlos como
+# incidencias: no dependen de la versión del motor (con la 0.15 eran los
+# mismos) y volver atrás por ellos pararía otra vez el correo sin arreglar
+# nada. El motor, el webmail, el panel y Traefik siguen contando. Ni
+# --comprobar ni --revertir-motor la usan: dicen lo de siempre.
+INTERNET_SOLO_AVISOS=0
 MIG_HORA_PARADA=""
 MIG_HORA_APERTURA=""
 PANEL_MOTOR=""
@@ -4296,22 +4303,14 @@ IMAGEN_016=""
 IMAGEN_CLI=""
 IMAGEN_PYTHON=""
 
-# Lo que necesitan las órdenes del motor, leído de deploy/.env sin preguntar.
+# Lo que necesitan las órdenes del motor, leído de deploy/.env sin preguntar:
+# lo común con el diagnóstico (cargar_datos_instalacion, que incluye todo lo
+# que usa la comprobación con la que terminan) y lo propio del cambio de motor.
 cargar_instalacion_motor() {
-  [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
-  tiene docker || fallo "Falta Docker."
-  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  cargar_datos_instalacion
   docker compose version >/dev/null 2>&1 || fallo "Falta Docker Compose v2 («docker compose»)."
-  case "$(leer_env MAILWAY_INSTALACION)" in
-    autonoma) CON_SKYWAY=0 ;;
-    '') if docker inspect --type container mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
-  esac
-  MAIL_HOSTNAME=$(leer_env MAIL_HOSTNAME)
-  host_valido "$MAIL_HOSTNAME" || fallo "MAIL_HOSTNAME no es válido en $ENV_FILE."
   STALWART_ADMIN_PASSWORD=$(leer_env STALWART_ADMIN_PASSWORD)
   [ -n "$STALWART_ADMIN_PASSWORD" ] || fallo "$ENV_FILE no guarda STALWART_ADMIN_PASSWORD, la contraseña del motor."
-  INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
-  INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
   MAIL_INTERNAL_IP=$(leer_env MAILWAY_MAIL_INTERNAL_IP)
   MAIL_INTERNAL_IP=${MAIL_INTERNAL_IP:-10.203.53.10}
   TRAEFIK_ACME_VOLUME=$(leer_env TRAEFIK_ACME_VOLUME)
@@ -4319,7 +4318,6 @@ cargar_instalacion_motor() {
   MAILWAY_STALWART_ETC_VOLUME=$(leer_env MAILWAY_STALWART_ETC_VOLUME)
   MAILWAY_STALWART_DATA_VOLUME=$(leer_env MAILWAY_STALWART_DATA_VOLUME)
   MAILWAY_MOTOR_MIGRADO=$(leer_env MAILWAY_MOTOR_MIGRADO)
-  MOTOR=$(motor_configurado)
   PANEL_MOTOR=$(contenedor_panel_conocido)
   if [ "$CON_SKYWAY" = 1 ]; then
     RED_BORDE=skyway-edge
@@ -4822,8 +4820,10 @@ definitivo_016() {
   esperar_sano mailway-mail-gw 60 || fallo "La pasarela del motor no arranca. Revisa: docker logs mailway-mail-gw"
   titulo "Comprobación final (la de sudo mailway comprobar)"
   if [ "$MIG_CERT_015" = 0 ]; then TOLERAR_CERTIFICADO=1; fi
+  INTERNET_SOLO_AVISOS=1
   comprobar_instalacion || fallo "La comprobación final no pasa (detalle arriba)."
   TOLERAR_CERTIFICADO=0
+  INTERNET_SOLO_AVISOS=0
 }
 
 # Vuelta atrás automática (desde al_salir, ante cualquier fallo con la 0.15
@@ -5057,18 +5057,24 @@ retirar_motor_anterior() {
 
 # ------------------------------------------------------------ diagnóstico --
 
-# Datos que necesita el diagnóstico, leídos de deploy/.env sin preguntar nada.
-preparar_diagnostico() {
+# Lo común al diagnóstico y a las órdenes del motor, leído de deploy/.env sin
+# preguntar nada: el modo de la instalación, los nombres, la IP pública, la
+# red interna, el motor y la dirección del panel. Es todo lo que usa
+# comprobar_instalacion (salvo la contraseña del motor, que cada uno lee a su
+# manera), y con ella terminan también --migrar-motor y --revertir-motor:
+# cuando solo la leía --comprobar, a la comprobación final de la migración le
+# faltaban PANEL_INTERNAL_URL y compañía, «set -u» la cortaba y la migración
+# volvía a la 0.15 aunque la 0.16 funcionara.
+cargar_datos_instalacion() {
   [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
   tiene docker || fallo "Falta Docker."
   docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
   case "$(leer_env MAILWAY_INSTALACION)" in
     autonoma) CON_SKYWAY=0 ;;
-    '') if docker inspect mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
+    '') if docker inspect --type container mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
   esac
   MAIL_HOSTNAME=$(leer_env MAIL_HOSTNAME)
   host_valido "$MAIL_HOSTNAME" || fallo "MAIL_HOSTNAME no es válido en $ENV_FILE."
-  STALWART_ADMIN_PASSWORD=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
   INTERNAL_SUBNET=$(leer_env MAILWAY_INTERNAL_SUBNET)
   INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.203.53.0/24}
   MOTOR=$(motor_configurado)
@@ -5078,6 +5084,13 @@ preparar_diagnostico() {
   PANEL_INTERNAL_URL=$(leer_env MAILWAY_PANEL_INTERNAL_URL)
   if [ "$CON_SKYWAY" = 0 ]; then PANEL_INTERNAL_URL=${PANEL_INTERNAL_URL:-http://mailway-panel:4100}; fi
   if ! coincide "$PANEL_INTERNAL_URL" '^http://[a-z0-9][a-z0-9_.-]*:[0-9]{1,5}$'; then PANEL_INTERNAL_URL=""; fi
+}
+
+# Datos que necesita el diagnóstico. La contraseña del motor del entorno, si
+# la hay, va antes que la de deploy/.env (por si este se perdió; ver --ayuda).
+preparar_diagnostico() {
+  cargar_datos_instalacion
+  STALWART_ADMIN_PASSWORD=${STALWART_ADMIN_PASSWORD:-$(leer_env STALWART_ADMIN_PASSWORD)}
 }
 
 # Contenedor del panel, según la dirección por la que lo llama el webmail
@@ -5284,7 +5297,7 @@ comprobar_motor_016() {
 # autenticada a la API del motor: cada contraseña incorrecta cuenta para su
 # bloqueo automático.
 comprobar_instalacion() {
-  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail) panel="" solo_motor=0
+  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail) panel="" solo_motor=0 avisos
   if [ "${MAILWAY_COMPROBAR_SOLO_MOTOR:-0}" = 1 ]; then solo_motor=1; fi
   if [ "$solo_motor" = 0 ]; then
     if [ "$CON_SKYWAY" = 0 ]; then panel=mailway-panel; else panel=$(contenedor_del_panel); fi
@@ -5415,13 +5428,20 @@ comprobar_instalacion() {
     fi
     titulo "DNS público, PTR y puerto 25 de salida"
     comprobar_desde_internet
-    fallos=$((fallos + INCIDENCIAS_INTERNET))
+    if [ "$INTERNET_SOLO_AVISOS" = 0 ]; then
+      fallos=$((fallos + INCIDENCIAS_INTERNET))
+    elif [ "$INCIDENCIAS_INTERNET" -gt 0 ]; then
+      info "No impiden la migración: no dependen de la versión del motor."
+    fi
   fi
 
   titulo "Resultado"
   if [ "$fallos" = 0 ]; then
     if [ "$solo_motor" = 1 ]; then
       ok "Todo correcto en el motor, el webmail y el extractor (MAILWAY_COMPROBAR_SOLO_MOTOR=1: sin el panel, Traefik ni las comprobaciones desde Internet)."
+    elif [ "$INTERNET_SOLO_AVISOS" = 1 ] && [ "$INCIDENCIAS_INTERNET" -gt 0 ]; then
+      if [ "$INCIDENCIAS_INTERNET" = 1 ]; then avisos="Queda 1 aviso"; else avisos="Quedan $INCIDENCIAS_INTERNET avisos"; fi
+      ok "Todo correcto en el motor, el webmail, el panel y Traefik. $avisos del DNS público, el PTR o el puerto 25 (arriba), que no dependen del motor: corrígelos y repite sudo mailway comprobar."
     else
       ok "Todo correcto. Quedan fuera los puertos de entrada vistos desde Internet, las listas negras y la entrega a otros servidores (sección 12.1 de docs/DESPLIEGUE-SKYWAY.md)."
     fi
