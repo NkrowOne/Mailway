@@ -4447,6 +4447,38 @@ mostrar_registro_motor() {
 # esa CA (la monta en /prueba/ca.pem).
 CA_PRUEBAS=()
 
+# Lo que la comprobación final de la migración (comprobar_instalacion) exige y
+# no depende de la versión del motor: el contenedor del panel sano, que el
+# webmail llega a él, junto a Skyway su Traefik con las rutas de Mailway, y
+# que el panel haya adoptado la identidad del servidor. Si ya falla ahora,
+# fallaría también al final, y la migración pararía el correo para acabar
+# volviendo a la 0.15: se mira antes de cambiar nada, con las mismas
+# comprobaciones y avisos que --comprobar. En la instalación autónoma no hay
+# Traefik que mirar (la comprobación final tampoco lo revisa, y sin el proxy
+# propio comprobaciones_migracion ya se niega). --revertir-motor no lo
+# necesita: su comprobación del final solo informa y nunca deshace nada.
+# Devuelve el número de incidencias.
+comprobar_previas_ajenas_al_motor() {
+  local incidencias=0 panel
+  panel=$(panel_de_la_comprobacion)
+  if [ -z "$panel" ]; then
+    aviso_sin_contenedor_del_panel
+    incidencias=$((incidencias + 1))
+  else
+    comprobar_contenedor "$panel" || incidencias=$((incidencias + 1))
+  fi
+  # El enlace se mira desde el webmail, como en --comprobar.
+  if [ "$(estado_contenedor mailway-webmail)" = healthy ]; then
+    comprobar_enlace_panel || incidencias=$((incidencias + 1))
+  else
+    aviso "El webmail (mailway-webmail) no está en marcha y sano: no se puede comprobar que llega al panel. Revisa: docker logs mailway-webmail"
+    incidencias=$((incidencias + 1))
+  fi
+  if [ "$CON_SKYWAY" = 1 ]; then comprobar_traefik || incidencias=$((incidencias + 1)); fi
+  comprobar_identidad_adoptada || incidencias=$((incidencias + 1))
+  return "$incidencias"
+}
+
 comprobaciones_migracion() {
   titulo "Comprobaciones previas (no cambian nada)"
   if [ -n "${MAILWAY_TLS_CA_FILE:-}" ]; then CA_PRUEBAS=(--ca /prueba/ca.pem); fi
@@ -4505,6 +4537,8 @@ comprobaciones_migracion() {
   if [ "$(hm_campo '.mantenimiento.activo')" = true ]; then
     aviso "El panel ya estaba en mantenimiento (¿una migración interrumpida?): se renueva y se quita al terminar."
   fi
+  comprobar_previas_ajenas_al_motor ||
+    fallo "Antes de migrar, arregla lo de arriba: la comprobación final lo exige y no depende del motor, así que la migración pararía el correo para acabar volviendo a la 0.15. No se ha cambiado nada (sudo mailway comprobar lo revisa)."
 
   # Certificado: con la 0.16 sale siempre del Traefik (con el extractor).
   if [ "$CON_SKYWAY" = 1 ] && { [ -z "$TRAEFIK_ACME_VOLUME" ] || ! docker volume inspect "$TRAEFIK_ACME_VOLUME" >/dev/null 2>&1; }; then
@@ -5102,6 +5136,41 @@ contenedor_del_panel() {
   fi
 }
 
+# Contenedor del panel que revisa la comprobación: el de la instalación
+# autónoma o, junto a Skyway, el de MAILWAY_PANEL_INTERNAL_URL (nada si no lo
+# indica).
+panel_de_la_comprobacion() {
+  if [ "$CON_SKYWAY" = 0 ]; then printf 'mailway-panel'; else contenedor_del_panel; fi
+}
+
+aviso_sin_contenedor_del_panel() {
+  aviso "deploy/.env no indica el contenedor del panel (MAILWAY_PANEL_INTERNAL_URL). Repite: sudo bash deploy/instalar.sh --actualizar"
+}
+
+# ¿Está el contenedor en marcha y sano? Lo dice con el formato de --comprobar.
+comprobar_contenedor() {
+  local estado
+  estado=$(estado_contenedor "$1")
+  case "$estado" in
+    healthy) ok "$1: en marcha y sano." ;;
+    ausente)
+      aviso "$1: no existe. Vuelve a ejecutar el instalador (sudo bash deploy/instalar.sh --actualizar)."
+      return 1
+      ;;
+    *)
+      aviso "$1: $estado. Revisa: docker logs $1"
+      return 1
+      ;;
+  esac
+}
+
+# ¿Ha adoptado ya el panel los nombres o la IP de un cambio confirmado?
+comprobar_identidad_adoptada() {
+  [ -n "$(leer_env MAILWAY_ADOPCION_PENDIENTE)" ] || return 0
+  aviso "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env (MAILWAY_ADOPCION_PENDIENTE): cuando esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar."
+  return 1
+}
+
 # El webmail llama al panel por dentro para cambiar contraseñas: se comprueba
 # desde el propio webmail, con la misma dirección, y se muestra la versión.
 comprobar_enlace_panel() {
@@ -5297,32 +5366,21 @@ comprobar_motor_016() {
 # autenticada a la API del motor: cada contraseña incorrecta cuenta para su
 # bloqueo automático.
 comprobar_instalacion() {
-  local fallos=0 c estado extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail) panel="" solo_motor=0 avisos
+  local fallos=0 c extractor respuesta nombre contenedores=(mailway-mail mailway-mail-gw mailway-webmail) panel="" solo_motor=0 avisos
   if [ "${MAILWAY_COMPROBAR_SOLO_MOTOR:-0}" = 1 ]; then solo_motor=1; fi
   if [ "$solo_motor" = 0 ]; then
-    if [ "$CON_SKYWAY" = 0 ]; then panel=mailway-panel; else panel=$(contenedor_del_panel); fi
+    panel=$(panel_de_la_comprobacion)
     if [ -n "$panel" ]; then contenedores+=("$panel"); fi
   fi
   if bulwark_activo; then contenedores+=(mailway-bulwark mailway-bulwark-gw); fi
 
   titulo "Contenedores"
   if [ "$solo_motor" = 0 ] && [ -z "$panel" ]; then
-    aviso "deploy/.env no indica el contenedor del panel (MAILWAY_PANEL_INTERNAL_URL). Repite: sudo bash deploy/instalar.sh --actualizar"
+    aviso_sin_contenedor_del_panel
     fallos=$((fallos + 1))
   fi
   for c in "${contenedores[@]}"; do
-    estado=$(estado_contenedor "$c")
-    case "$estado" in
-      healthy) ok "$c: en marcha y sano." ;;
-      ausente)
-        aviso "$c: no existe. Vuelve a ejecutar el instalador (sudo bash deploy/instalar.sh --actualizar)."
-        fallos=$((fallos + 1))
-        ;;
-      *)
-        aviso "$c: $estado. Revisa: docker logs $c"
-        fallos=$((fallos + 1))
-        ;;
-    esac
+    comprobar_contenedor "$c" || fallos=$((fallos + 1))
   done
   extractor=$(estado_contenedor mailway-certs-dumper)
   if [ "$extractor" = ausente ]; then
@@ -5418,8 +5476,7 @@ comprobar_instalacion() {
   comprobar_bulwark_diagnostico || fallos=$((fallos + $?))
   if [ "$solo_motor" = 0 ] && [ -n "$(leer_env MAILWAY_ADOPCION_PENDIENTE)" ]; then
     titulo "Identidad del servidor"
-    aviso "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env (MAILWAY_ADOPCION_PENDIENTE): cuando esté desplegado y en marcha, repite sudo bash deploy/instalar.sh --actualizar."
-    fallos=$((fallos + 1))
+    comprobar_identidad_adoptada || fallos=$((fallos + 1))
   fi
   if [ "$solo_motor" = 0 ]; then
     if [ "$CON_SKYWAY" = 1 ]; then

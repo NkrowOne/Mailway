@@ -1406,7 +1406,12 @@ deja todo en su registro; aun así, mejor lanzarla dentro de `tmux` o
    bloqueo automático), la cola de salida (con más de 50 mensajes no
    empieza: suele ser un problema de entrega que conviene resolver antes;
    `MAILWAY_MIGRACION_COLA_MAX` lo cambia), el panel y su herramienta, que
-   no haya un cambio de dominio a medias, el origen del certificado, el espacio, las imágenes, el script oficial de
+   no haya un cambio de dominio a medias, lo que la comprobación del paso 7
+   exige y no depende del motor (el contenedor del panel sano y que el
+   webmail llega a él, junto a Skyway su Traefik con las rutas de Mailway, y
+   ninguna identidad del servidor pendiente de adoptar en el panel: si ya
+   falla, la migración pararía el correo para acabar volviendo atrás), el
+   origen del certificado, el espacio, las imágenes, el script oficial de
    Stalwart (`migrate_v016.py`, fijado a su versión y comprobado con su
    sha256) y sus dependencias, y el certificado que sirve la 0.15.
 2. **Panel en mantenimiento** (120 minutos que se prolongan en cada paso
@@ -2066,7 +2071,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | `--comprobar`: «El 587 está en los ajustes del motor, pero no escucha» | La 0.16 abre una escucha nueva solo al reiniciarse | `docker restart mailway-mail` (o `sudo mailway update -y --reaplicar`, que lo hace solo). |
 | `https://mail.<dominio>` responde 502 o 504 | La pasarela del motor (`mailway-mail-gw`) no está en marcha o no llega al motor | `docker logs mailway-mail-gw` y `sudo mailway update -y --reaplicar` (sección 4.4). IMAP y SMTP no dependen de ella. |
 | `https://mail.<dominio>/admin` (o `/account`, `/login`) responde 403 | Con Stalwart 0.16, Traefik solo publica en ese nombre lo que necesitan los programas de correo | Es lo esperado: el motor se administra desde el panel. Por la red interna sigue en `http://mailway-mail:8080`. |
-| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, un cambio de dominio sin terminar, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
+| `mailway migrar-motor` no empieza | Lo dice el motivo: cola de salida grande, panel sin la herramienta del motor, un cambio de dominio sin terminar, el webmail que no llega al panel, el Traefik de Skyway sin las rutas de Mailway, una identidad pendiente de adoptar en el panel, sin el certificado de Traefik, sin espacio… | Resuélvelo y repite: hasta ese punto no ha cambiado nada (sección 8.3). |
 | `mailway migrar-motor` ha vuelto a la 0.15 | Un paso no ha superado su comprobación | El motivo está en la salida y en `deploy/.migracion-motor/migracion-motor-<fecha>/registro.log`. La 0.15 sigue con sus datos de siempre; repite cuando esté resuelto (sección 8.3). |
 | `sudo mailway bulwark on` responde que Bulwark necesita Stalwart 0.16 | El servidor sigue con la 0.15 | Migra el motor (`sudo mailway migrar-motor`, sección 8.3) y repite. No se ha cambiado nada. |
 | El panel no deja elegir Bulwark para un cliente | Al panel le falta alguna de sus tres variables, o Bulwark no está sano | `sudo mailway bulwark status` dice qué falta; `sudo mailway update -y --reaplicar` se las vuelve a dar (sección 11.1). |
@@ -2215,7 +2220,10 @@ parche de Dependabot cuando todo esto ha terminado bien en su commit (sección
 4. **La migración con contenedores reales** (`deploy/prueba-stack.py
    --migracion`): una 0.15 con dos dominios con DKIM, buzones con su
    contraseña, uno suspendido, un alias con un destino externo y un correo
-   entregado; un intento de migración que falla a propósito (vuelve solo a la
+   entregado; una migración que no empieza porque falta algo que la
+   comprobación final exige y no depende del motor (una identidad pendiente
+   de adoptar en el panel), sin cambiar nada; un intento de migración que
+   falla a propósito (vuelve solo a la
    0.15 sin tocar `deploy/.env` ni perder nada); la migración, con el script
    oficial y el CLI de Stalwart de verdad (el mismo correo se lee por IMAP con
    la misma contraseña, el suspendido no entra, el alias conserva su destino

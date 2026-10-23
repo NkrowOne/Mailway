@@ -34,7 +34,9 @@ un Traefik de Skyway simulado del que solo se usa su volumen de certificados
                           con DKIM, buzones con su contraseña, uno suspendido,
                           un alias con un destino externo y un correo
                           entregado) pasa a la 0.16 con
-                          «instalar.sh --migrar-motor -y»: primero un intento
+                          «instalar.sh --migrar-motor -y»: primero uno que no
+                          empieza (la identidad pendiente en el panel, que la
+                          comprobación final exige), después un intento
                           que falla a propósito (vuelve solo a la 0.15 sin
                           perder nada), después la migración (el mismo correo
                           se lee por IMAP con la misma contraseña; alias,
@@ -1132,6 +1134,20 @@ print(json.dumps({
         estado = json.loads(r.stdout.strip().splitlines()[-1])
         assert estado['mantenimiento']['activo'] is False, f'el panel sigue en mantenimiento: {estado}'
 
+    def migrar_sin_requisitos(self) -> None:
+        """Lo que la comprobación final exige sin depender del motor se mira antes: si falla, no empieza."""
+        antes = self.env.read_bytes()
+        self.env.write_bytes(antes + b"MAILWAY_ADOPCION_PENDIENTE='servidor'\n")
+        salida = self.instalador('--migrar-motor', '-y', codigo=1)
+        for texto in ('MAILWAY_ADOPCION_PENDIENTE', 'Antes de migrar, arregla lo de arriba', 'No se ha cambiado nada'):
+            assert texto in salida, f'la migración que no empieza no dice «{texto}»'
+        assert 'Vuelta atrás' not in salida, 'ha llegado a cambiar algo'
+        assert 'stalwart:v0.15' in self.motor_sano(), 'el motor ya no es la 0.15'
+        self.sin_mantenimiento()
+        self.env.write_bytes(antes)
+        registrar('OK: con algo que la comprobación final exige y no depende del motor (la identidad pendiente en '
+                  'el panel), la migración no empieza y no cambia nada.')
+
     def migrar_con_fallo(self) -> None:
         antes = self.env.read_bytes()
         self.guardar_estado_panel({**self.leer_estado_panel(), 'fallar': {'provisionar': True}})
@@ -1331,6 +1347,7 @@ def prueba_migracion(pila: Pila) -> None:
     pila.sembrar_015()
     pila.entregar()
     pila.comprobar_datos('con la 0.15')
+    pila.migrar_sin_requisitos()
     if PANEL_REAL:
         registrar('(Con el panel de verdad no se provoca el fallo: la vuelta atrás se prueba con el simulado.)')
     else:

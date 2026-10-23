@@ -21,7 +21,9 @@
 #   - su comprobación final, la de verdad (la de --comprobar), con cada orden
 #     como un proceso nuevo que lee de deploy/.env todo lo que necesita: el
 #     motor, el webmail, el panel y Traefik cuentan; el DNS público, el PTR y
-#     el puerto 25 de salida solo avisan;
+#     el puerto 25 de salida solo avisan; y lo que exige sin depender del
+#     motor (el panel y el enlace del webmail con él, Traefik, la identidad
+#     pendiente) se mira antes de empezar: si falla, no se migra;
 #   - --revertir-motor y --retirar-motor-anterior, también cuando se niegan;
 #   - Bulwark: --activar-bulwark se niega con la 0.15; con la 0.16, sus dos
 #     secretos se generan una vez y nunca se muestran, Compose recibe el
@@ -149,12 +151,14 @@ case "$linea" in
   "exec mailway-certs-dumper python /app/extractor.py estado") exit 0 ;;
   # Lo que mira --comprobar desde el webmail: su diagnóstico (certificado y
   # conexión con el motor) y el panel por dentro (/api/health), que responde
-  # si está en marcha.
+  # si está en marcha (con $E/panel-cae-con-016, solo mientras el motor sea
+  # la 0.15: un fallo que llega con la migración).
   "exec -u www-data mailway-webmail php /opt/mailway/comprobar.php "*)
     marcha mailway-webmail && marcha mailway-mail && echo "OK: ${linea##*comprobar.php }"
     ;;
   "exec mailway-webmail curl -fsS --max-time 8 http://"*"/api/health")
     c=${linea#*http://}
+    if [ -f "$E/panel-cae-con-016" ] && grep -q 'v0[.]16' "$E/imagen"; then exit 7; fi
     marcha mailway-webmail && marcha "${c%%:*}" && echo '{"ok":true,"name":"mailway","version":"1.6.0"}'
     ;;
   # Parámetros del Traefik de Skyway: los de la 0.34 (lee las rutas de Mailway)
@@ -728,6 +732,9 @@ comprobar "pasos en orden" en_orden "$REGISTRO" \
   "motor.js provisionar" "--profile tls up -d --no-deps --force-recreate certs-dumper" "migracion.py tls" \
   "migracion.py comprobar" "docker rm -f mailway-mail-016-previo" "docker compose[stalwart-0.16] --env-file" \
   "motor.js provisionar" "comprobar_instalacion" "motor.js tras-migrar" "motor.js mantenimiento off"
+comprobar "mira el panel y el Traefik de Skyway antes de cambiar nada" en_orden "$REGISTRO" \
+  "motor.js estado" "exec mailway-webmail curl -fsS --max-time 8 http://skyway-mailway-panel:4100/api/health" \
+  "inspect -f {{json .Config.Cmd}} skyway-traefik" "motor.js mantenimiento on"
 comprobar "el motor de recuperación arranca en modo recuperación" contiene "$REGISTRO" "-e STALWART_RECOVERY_ADMIN -e STALWART_RECOVERY_MODE=1"
 comprobar "el ayudante corre con el usuario de la orden (dueño de la carpeta de trabajo)" \
   contiene "$REGISTRO" "--security-opt no-new-privileges --user $(id -u):$(id -g) "
@@ -893,22 +900,66 @@ comprobar "el resultado lo dice sin «Todo correcto» a secas" contiene "$SALIDA
 comprobar "sin vuelta atrás" no_contiene "$SALIDA" "Vuelta atrás"
 comprobar "y con las tareas de después" contiene "$REGISTRO" "motor.js tras-migrar"
 
-echo "# El webmail no llega al panel tras migrar: vuelta atrás (el panel sí cuenta)"
+echo "# El webmail deja de llegar al panel con la 0.16: vuelta atrás (el panel sí cuenta al final)"
 preparar_migracion
-echo 'exec mailway-webmail curl *' >"$E/fallar"
+touch "$E/panel-cae-con-016"
 migrar
 comprobar "termina con 1" igual "$CODIGO" 1
-comprobar "dice qué falla" contiene "$SALIDA" "El webmail no llega al panel en http://skyway-mailway-panel:4100"
-comprobar "vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
+comprobar "antes de empezar llegaba" contiene "$SALIDA" "El webmail llega al panel (http://skyway-mailway-panel:4100)"
+comprobar "la comprobación final dice qué falla" contiene "$SALIDA" "El webmail no llega al panel en http://skyway-mailway-panel:4100"
+comprobar "y vuelve atrás" en_orden "$REGISTRO" "comprobar_instalacion" "docker compose[stalwart-0.15] --env-file"
+comprobar "a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
 comprobar "deploy/.env como estaba" env_intacto
 
-echo "# El Traefik de Skyway no lee las rutas de Mailway: vuelta atrás (Traefik sí cuenta)"
+# Lo que la comprobación final exige y no depende del motor se mira antes de
+# empezar: si ya falla, no se migra (pararía el correo para volver atrás).
+# $1: lo que dice el aviso.
+no_empieza() {
+  migrar
+  comprobar "se niega" igual "$CODIGO" 1
+  comprobar "dice qué falla" contiene "$SALIDA" "$1"
+  comprobar "qué hacer y que no se ha cambiado nada" contiene "$SALIDA" "Antes de migrar, arregla lo de arriba: la comprobación final lo exige y no depende del motor"
+  comprobar "sin entrar en mantenimiento" no_contiene "$REGISTRO" "motor.js mantenimiento on"
+  comprobar "sin copiar contraseñas" no_contiene "$REGISTRO" "motor.js capturar"
+  comprobar "sin parar nada" no_contiene "$REGISTRO" "docker stop"
+  comprobar "sin descargar nada" no_contiene "$REGISTRO" "descarga "
+  comprobar "deploy/.env intacto" env_intacto
+}
+
+echo "# El webmail no llega al panel antes de migrar: no empieza"
+preparar_migracion
+echo 'exec mailway-webmail curl *' >"$E/fallar"
+no_empieza "El webmail no llega al panel en http://skyway-mailway-panel:4100"
+
+echo "# El webmail no está en marcha antes de migrar: no empieza (no se puede comprobar el panel)"
+preparar_migracion
+grep -vx mailway-webmail "$E/en_marcha" >"$E/en_marcha.n" && mv "$E/en_marcha.n" "$E/en_marcha"
+no_empieza "El webmail (mailway-webmail) no está en marcha y sano: no se puede comprobar que llega al panel"
+
+echo "# deploy/.env no indica el contenedor del panel (panel pendiente): no empieza"
+preparar_migracion
+escribir_env_prueba "MAILWAY_PANEL_INTERNAL_URL='http://panel-pendiente.invalid:4100'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "deploy/.env no indica el contenedor del panel (MAILWAY_PANEL_INTERNAL_URL)"
+
+echo "# El Traefik de Skyway no lee las rutas de Mailway: no empieza"
 preparar_migracion
 echo '["--entrypoints.web.address=:80"]' >"$E/traefik"
-migrar
-comprobar "termina con 1" igual "$CODIGO" 1
-comprobar "dice qué falla" contiene "$SALIDA" "El Traefik de Skyway no lee las rutas de Mailway"
-comprobar "vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
+no_empieza "El Traefik de Skyway no lee las rutas de Mailway"
+
+echo "# El panel aún no ha adoptado la identidad nueva del servidor: no empieza"
+preparar_migracion
+escribir_env_prueba "MAILWAY_ADOPCION_PENDIENTE='servidor'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env (MAILWAY_ADOPCION_PENDIENTE)"
+
+echo "# Con varias cosas mal, las dice todas de una vez"
+preparar_migracion
+echo '["--entrypoints.web.address=:80"]' >"$E/traefik"
+escribir_env_prueba "MAILWAY_ADOPCION_PENDIENTE='servidor'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "El Traefik de Skyway no lee las rutas de Mailway"
+comprobar "también la identidad" contiene "$SALIDA" "MAILWAY_ADOPCION_PENDIENTE"
 
 echo "# Las órdenes del motor leen de deploy/.env lo mismo que --comprobar para la comprobación final"
 datos() { # <función que carga los datos>
