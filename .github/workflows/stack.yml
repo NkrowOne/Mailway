@@ -18,7 +18,9 @@ name: Pila de correo
 #   - el cambio de dominio: con las mismas peticiones que el driver contra
 #     Stalwart 0.15 (deploy/prueba-cambio-dominio.py), con el driver y el
 #     panel contra los dos motores (pruebas *-real del servidor) y el
-#     complemento mailway_cuentas con la imagen real de Roundcube.
+#     complemento mailway_cuentas con la imagen real de Roundcube;
+#   - la entrada en el webmail con llave de acceso (complemento
+#     mailway_llave) con la imagen real de Roundcube.
 
 on:
   push:
@@ -36,6 +38,7 @@ on:
       - 'server/src/modules/bulwark.ts'
       - 'deploy/prueba-cambio-dominio.py'
       - 'deploy/roundcube/mailway_cuentas/**'
+      - 'deploy/roundcube/mailway_llave/**'
       - 'deploy/roundcube/pruebas/**'
       - '.github/workflows/stack.yml'
   # Incluye los PR de Dependabot que suben una imagen de los compose
@@ -56,6 +59,7 @@ on:
       - 'server/src/modules/bulwark.ts'
       - 'deploy/prueba-cambio-dominio.py'
       - 'deploy/roundcube/mailway_cuentas/**'
+      - 'deploy/roundcube/mailway_llave/**'
       - 'deploy/roundcube/pruebas/**'
       - '.github/workflows/stack.yml'
   workflow_dispatch:
@@ -96,6 +100,11 @@ jobs:
           php -l deploy/roundcube/mailway_cuentas/mailway_cuentas.php
           php -l deploy/roundcube/mailway_cuentas/datos.php
           php -l deploy/roundcube/pruebas/mailway_cuentas.php
+          php -l deploy/roundcube/mailway_llave/mailway_llave.php
+          php -l deploy/roundcube/mailway_llave/localization/es_ES.inc
+          php -l deploy/roundcube/mailway_llave/localization/en_US.inc
+          php -l deploy/roundcube/pruebas/mailway_llave.php
+          node --check deploy/roundcube/mailway_llave/mailway_llave.js
           node --check deploy/prueba-panel-motor.js
           node --check deploy/bulwark/prueba-navegador.cjs
           shopt -s globstar nullglob
@@ -282,7 +291,9 @@ jobs:
   #     nueva, renombrar conserva el correo y las contraseñas, y la baja borra
   #     solo las claves DKIM del dominio viejo (deploy/prueba-cambio-dominio.py);
   #   - trasladarFila y actualizarIdentidades del complemento mailway_cuentas
-  #     con la biblioteca y el esquema SQLite de la imagen real de Roundcube.
+  #     con la biblioteca y el esquema SQLite de la imagen real de Roundcube;
+  #   - de paso, la entrada con llave de acceso (mailway_llave), que también
+  #     pasa por mailway_cuentas, con la misma imagen.
   # El driver de la 0.16 y el panel de punta a punta con los dos motores van
   # en «contrato» (motor016-real y panel-motor-real).
   cambio-dominio:
@@ -296,13 +307,19 @@ jobs:
         env:
           MAILWAY_PRUEBA_DESECHABLE: '1'
         run: python3 deploy/prueba-cambio-dominio.py
-      - name: Complemento mailway_cuentas con Roundcube real
-        # Independiente del paso anterior: se ejecuta aunque falle.
+      - name: Complementos mailway_cuentas y mailway_llave con Roundcube real
+        # Independiente del paso anterior: se ejecuta aunque falle. Las dos
+        # pruebas se ejecutan siempre; el paso falla si falla cualquiera.
+        # mailway_llave lee además los compose (orden de los complementos y
+        # montaje): necesita la carpeta deploy entera.
         if: ${{ !cancelled() }}
         run: |
           roundcube=$(sed -n -E 's#^[[:space:]]*image:[[:space:]]*(roundcube/roundcubemail:[^[:space:]]+).*#\1#p' deploy/docker-compose.mail.yml | head -n 1)
           : "${roundcube:?sin la imagen de Roundcube en deploy/docker-compose.mail.yml}"
-          docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" "$roundcube" php /opt/mailway-rc/pruebas/mailway_cuentas.php
+          estado=0
+          docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" "$roundcube" php /opt/mailway-rc/pruebas/mailway_cuentas.php || estado=1
+          docker run --rm -v "$PWD/deploy:/opt/mailway-deploy:ro" "$roundcube" php /opt/mailway-deploy/roundcube/pruebas/mailway_llave.php || estado=1
+          exit "$estado"
 
   # La pila de la 0.16 con Bulwark: «instalar.sh --activar-bulwark» lo levanta
   # (Bulwark y su pasarela sanos, solo en las redes internas, la API de
