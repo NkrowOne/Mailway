@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
  * API de administración de Bulwark falsa, para probar el cliente del panel
  * (bulwark.test.ts) y la sincronización (correoweb.test.ts) sin contenedores.
  *
- * Copia independiente de lo que hace Bulwark 1.13.0 (no de nuestro módulo):
+ * Copia independiente de lo que hace Bulwark 1.17.1 (no de nuestro módulo):
  * - lib/admin/domain-branding.ts: parseDomainBranding (nombre, comodín,
  *   repetidos, campos conocidos y no vacíos);
  * - app/api/admin/config: PATCH sustituye la clave y responde 400 si el
@@ -16,13 +16,24 @@ import type { AddressInfo } from 'node:net';
  *   distinto de same-origin u Origin de otro host;
  * - lib/admin/rate-limit.ts: cada intento de inicio de sesión cuenta, también
  *   los correctos;
- * - app/api/admin/policy: la lectura sin sesión es la parte pública;
+ * - app/api/admin/policy: la lectura sin sesión es la parte pública; al
+ *   guardar, themePolicy se completa con sus valores por defecto
+ *   (lib/admin/config-manager.ts: setPolicy);
  * - app/api/admin/branding: la subida (multipart con file, slot y host)
  *   guarda domain__<host>__<slot><ext> según el tipo declarado, borra las
  *   demás versiones de ese host y hueco y añade {host, slot: url} a
  *   domainBranding; la lectura de /api/admin/branding/<fichero> no pide
  *   sesión; la retirada {slot, host} borra el fichero y quita el hueco.
  */
+
+/** DEFAULT_THEME_POLICY de lib/admin/types.ts. */
+const TEMAS_POR_DEFECTO = {
+  disabledBuiltinThemes: [],
+  disabledThemes: [],
+  defaultThemeId: null,
+  defaultColorMode: null,
+  lockColorMode: false,
+};
 
 export const CONTRASENA = 'clave-de-administracion-de-prueba-0123456789';
 
@@ -116,7 +127,7 @@ export async function bulwarkFalso(): Promise<BulwarkFalso> {
       restrictions: {},
       features: { pluginsEnabled: false, filesEnabled: true, calendarEnabled: true, nuevaFuncion2027: true },
       defaults: {},
-      themePolicy: { disabledBuiltinThemes: [], disabledThemes: [], defaultThemeId: null },
+      themePolicy: { ...TEMAS_POR_DEFECTO },
       forceEnabledPlugins: [],
       approvedPlugins: [],
       forceEnabledThemes: [],
@@ -273,6 +284,7 @@ export async function bulwarkFalso(): Promise<BulwarkFalso> {
               ...(falso.politica.features as Record<string, unknown>),
               ...((nueva.features as Record<string, unknown>) ?? {}),
             },
+            themePolicy: { ...TEMAS_POR_DEFECTO, ...((nueva.themePolicy as Record<string, unknown>) ?? {}) },
           };
           return json(200, { ok: true });
         }

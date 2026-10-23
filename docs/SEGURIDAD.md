@@ -584,15 +584,17 @@ Bulwark es el correo web JMAP que el panel ofrece por cliente, opcional
   del acceso y al crear su sesión) contra `https://MAIL_HOSTNAME`, que en su
   contenedor apunta a la IP interna del motor (`extra_hosts`) y a su 443 con
   el certificado de `MAIL_HOSTNAME`. Esas comprobaciones salen de la red
-  exenta: el motor no bloquea a Bulwark ni cuenta esos fallos para el buzón.
-  Los límites son entonces los de Bulwark y su pasarela; los del navegador
-  (JMAP directo, por la pasarela del motor) sí cuentan, con la IP real.
+  exenta, así que el motor nunca bloquea a Bulwark para todos; desde la 1.17,
+  Bulwark manda la IP del visitante en `X-Forwarded-For` y el motor cuenta
+  los fallos para esa IP y para el buzón, igual que los del navegador (JMAP
+  directo, por la pasarela del motor).
 - **Oráculo de contraseñas y su límite**: `/api/auth/stalwart-context` y
-  `/api/auth/session` responden 200 o 401 a cada contraseña sin ningún límite
-  propio en Bulwark 1.13 (el ensayo lo comprueba: 40 de 40). La pasarela de
-  Bulwark lo frena: 20 comprobaciones por minuto y ráfagas de 40 por IP real
-  (calculada como la del motor), y 180 por minuto en toda la instancia, solo
-  en `POST` y `PUT` de `/api/auth/*`.
+  `/api/auth/session` respondían 200 o 401 a cada contraseña sin límite
+  propio en Bulwark 1.13. Desde la 1.17 aplican 5 fallos por IP cada 15
+  minutos y contestan 429 (el ensayo lo comprueba: como mucho 5 de 40). La
+  pasarela de Bulwark añade su límite general: 20 comprobaciones por minuto y
+  ráfagas de 40 por IP real (calculada como la del motor), y 180 por minuto
+  en toda la instancia, solo en `POST` y `PUT` de `/api/auth/*`.
 - **Cabeceras de IP**: la pasarela de Bulwark entrega una sola IP real y
   retira `Forwarded`, `CF-Connecting-IP` y `True-Client-IP`; la del motor
   hace lo mismo con el JMAP del navegador.
