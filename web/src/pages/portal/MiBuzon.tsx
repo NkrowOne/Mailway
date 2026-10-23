@@ -22,14 +22,16 @@ import {
 } from '../../lib/portal';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Field';
-import { Cargando, Dialogo, Escala, Hoja, Logotipo, Marca, MarcaFondo, Muestra, Vacio } from '../../ui/kit';
+import { Cargando, Dialogo, Escala, Hoja, Marca, MarcaFondo, Muestra, Vacio } from '../../ui/kit';
 import { useToast } from '../../ui/toast';
 import { BotonWebmail, GuiasDispositivo } from './GuiasDispositivo';
 import { AvisoAtencion, AvisoError, AvisoHecho, BotonCopiarTactil, MarcoPortal, Nota, PaginaEstado, TACTIL } from './comun';
 import { VariablesIntegracion } from '../../components/VariablesIntegracion';
 import { AvatarBuzon } from '../../components/FotoBuzon';
 import { HojaPerfil } from './Perfil';
-import { IlustracionBuzon } from '../../components/Portadas';
+import { EntrarConLlave, HojaLlavesAcceso } from '../../components/LlavesAcceso';
+import { entrarConLlave, leerOrigen, type ListaLlaves } from '../../lib/llaves';
+import { MarcoAccesoPortal } from './MarcoAcceso';
 import { CampoContrasena } from '../bienvenida/CampoContrasena';
 
 /**
@@ -120,73 +122,17 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
     }
   }
 
+  async function entrarConLlaveDeAcceso() {
+    await entrarConLlave<{ ok: true; email: string }>('/api/portal');
+    setPassword('');
+    await queryClient.invalidateQueries({ queryKey: ['portal-me'] });
+  }
+
   return (
-    // Entrada de los buzones: tarjeta centrada con un ordenador y un móvil
-    // encima, sobre un fondo con un velo petróleo. Muy distinta de la del
-    // panel (dos columnas), porque viven en la misma dirección.
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-mesa px-4 py-10">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[26rem]"
-        style={{
-          background:
-            'radial-gradient(55% 100% at 50% 0%, rgb(122 211 200 / 0.26), transparent 72%), radial-gradient(35% 60% at 12% 0%, rgb(13 92 94 / 0.07), transparent 70%)',
-        }}
-      />
-      <div className="relative w-full max-w-[26rem] animate-aparecer">
-        <div className="mb-5 flex items-center justify-center gap-3">
-          <Logotipo />
-          <span className="min-w-0 break-words text-lg font-semibold text-tinta">{marca}</span>
-        </div>
-        <section className="hoja-panel overflow-hidden rounded-3xl border border-regla bg-hoja">
-          <div className="flex justify-center bg-gradient-to-b from-petroleo-claro to-hoja px-6 pb-2 pt-7">
-            <IlustracionBuzon className="h-auto w-[15rem] max-w-full" />
-          </div>
-          <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 pb-7 pt-4 sm:px-8">
-            <div className="text-center">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-petroleo-claro px-2.5 py-1 text-sm font-semibold text-petroleo">
-                <Inbox className="h-4 w-4" aria-hidden />
-                Tu correo
-              </span>
-              <h1 className="mt-3 text-2xl font-semibold text-tinta">Mi buzón</h1>
-              <p className="mt-1 text-base text-tinta-2">
-                Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
-                contraseña.
-              </p>
-            </div>
-            <Input
-              label="Dirección de correo"
-              type="email"
-              autoComplete="username"
-              inputMode="email"
-              autoCapitalize="none"
-              spellCheck={false}
-              value={email}
-              onChange={(e) => {
-                setError('');
-                setEmail(e.target.value);
-              }}
-              placeholder="nombre@empresa.com"
-              className={TACTIL}
-            />
-            <CampoContrasena
-              label="Contraseña del buzón"
-              autoComplete="current-password"
-              value={password}
-              visible={verContrasena}
-              onAlternar={() => setVerContrasena((v) => !v)}
-              onChange={(e) => {
-                setError('');
-                setPassword(e.target.value);
-              }}
-            />
-            {error && <AvisoError>{error}</AvisoError>}
-            <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
-              Entrar en mi buzón
-            </Button>
-          </form>
-        </section>
-        <div className="mt-5 flex flex-col gap-2 text-center text-sm text-tinta-3">
+    <MarcoAccesoPortal
+      marca={marca}
+      pie={
+        <>
           <p>Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.</p>
           {/* Una cuenta del panel (administración o cliente) no entra aquí. */}
           <p>
@@ -196,9 +142,54 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
             </a>
             .
           </p>
+        </>
+      }
+    >
+      <form onSubmit={entrar} noValidate className="flex flex-col gap-4 px-5 pb-7 pt-4 sm:px-8">
+        <div className="text-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-petroleo-claro px-2.5 py-1 text-sm font-semibold text-petroleo">
+            <Inbox className="h-4 w-4" aria-hidden />
+            Tu correo
+          </span>
+          <h1 className="mt-3 text-2xl font-semibold text-tinta">Mi buzón</h1>
+          <p className="mt-1 text-base text-tinta-2">
+            Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
+            contraseña.
+          </p>
         </div>
-      </div>
-    </div>
+        <Input
+          label="Dirección de correo"
+          type="email"
+          autoComplete="username"
+          inputMode="email"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={email}
+          onChange={(e) => {
+            setError('');
+            setEmail(e.target.value);
+          }}
+          placeholder="nombre@empresa.com"
+          className={TACTIL}
+        />
+        <CampoContrasena
+          label="Contraseña del buzón"
+          autoComplete="current-password"
+          value={password}
+          visible={verContrasena}
+          onAlternar={() => setVerContrasena((v) => !v)}
+          onChange={(e) => {
+            setError('');
+            setPassword(e.target.value);
+          }}
+        />
+        {error && <AvisoError>{error}</AvisoError>}
+        <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
+          Entrar en mi buzón
+        </Button>
+        <EntrarConLlave onEntrar={entrarConLlaveDeAcceso} onEmpezar={() => setError('')} />
+      </form>
+    </MarcoAccesoPortal>
   );
 }
 
@@ -222,6 +213,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       // Aunque falle, se descarta la sesión en esta pestaña.
     }
     queryClient.removeQueries({ queryKey: ['portal-app-passwords'] });
+    queryClient.removeQueries({ queryKey: ['llaves'] });
     await queryClient.resetQueries({ queryKey: ['portal-me'] });
     setSaliendo(false);
   }
@@ -295,6 +287,12 @@ function InicioBuzon({ me }: { me: PortalMe }) {
       <div id="contrasenas-aplicacion" className="scroll-mt-4">
         <HojaContrasenasAplicacion />
       </div>
+      <HojaLlavesAcceso
+        base="/api/portal"
+        tactil
+        nota={(lista) => <NotaLlavesCorreoWeb lista={lista} />}
+        notaEliminar="También se cierran las sesiones del correo web abiertas con ella."
+      />
       <HojaCambioContrasena correoWebNuevo={me.newWebmail === true} />
     </MarcoPortal>
   );
@@ -326,6 +324,36 @@ function AvisoContrasenasInvalidadas({ cuantas }: { cuantas: number }) {
         y escribirla en él en lugar de la anterior.
       </p>
     </AvisoAtencion>
+  );
+}
+
+/**
+ * Las llaves quedan ligadas a la dirección desde la que se añaden, y el
+ * webmail solo ofrece entrar con las de un «Mi buzón» concreto: si no es
+ * este, se avisa de que las de aquí no le sirven y se enlaza al bueno.
+ */
+function NotaLlavesCorreoWeb({ lista }: { lista: ListaLlaves }) {
+  const correoWeb = leerOrigen(lista.portalCorreoWeb);
+  if (!correoWeb) return null;
+  if (correoWeb.host === lista.hostActual.toLowerCase()) {
+    return (
+      <Nota>
+        Con estas llaves también puedes entrar en el correo web: pulsa «Entrar con llave de acceso» en su pantalla de
+        acceso.
+      </Nota>
+    );
+  }
+  return (
+    <Nota>
+      Las llaves que añadas aquí no sirven para entrar en el correo web. Para eso, añádelas desde{' '}
+      <a
+        href={`${correoWeb.origen}/mi-buzon`}
+        className="font-medium text-petroleo underline underline-offset-2 [overflow-wrap:anywhere] hover:text-tinta"
+      >
+        {correoWeb.host}/mi-buzon
+      </a>
+      .
+    </Nota>
   );
 }
 

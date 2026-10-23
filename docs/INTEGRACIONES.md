@@ -1426,6 +1426,31 @@ aplicación.
   `400 bad_current_password`; contraseña de aplicación en lugar de la
   principal: `400 app_password_not_allowed`.
 
+**Llaves de acceso (passkeys).** El panel y «Mi buzón» admiten entrar con una
+llave de acceso (Proton Pass, 1Password, Bitwarden, iCloud, Google, Windows
+Hello, llaves físicas). Modelo de seguridad en `docs/SEGURIDAD.md`, sección
+3.5. `opciones` y `respuesta` son los JSON estándar de WebAuthn
+(`@simplewebauthn/browser` 14: `startRegistration`, `startAuthentication`).
+Cada llave: `{ id, nombre, proveedor, host, creadaEn, ultimoUso, sincronizada }`.
+
+| Método y ruta | Descripción |
+|---|---|
+| `POST /api/auth/llave/opciones`, `POST /api/portal/llave/opciones` | `{}` → `{ desafio, opciones }` para entrar (sin indicar la cuenta). |
+| `POST /api/auth/llave/entrar` | `{ desafio, respuesta }` → `{ user }`, como `/api/auth/login`. |
+| `POST /api/portal/llave/entrar` | `{ desafio, respuesta, webmail?, estado? }` → `{ ok, email, webmailUrl? }`. Con `webmail` (host de un Roundcube del titular) y `estado`, `webmailUrl` vuelve al webmail ya identificado (sección 6.3). |
+| `GET /api/auth/llaves`, `GET /api/portal/llaves` | `{ llaves, hostActual }`; «Mi buzón» añade `portalCorreoWeb`: el origen de «Mi buzón» cuyas llaves sirven para el webmail (`null` si el titular no entra por Roundcube). |
+| `POST /api/auth/llaves/opciones`, `POST /api/portal/llaves/opciones` | `{}` → `{ desafio, opciones }` para registrar una llave. |
+| `POST /api/auth/llaves`, `POST /api/portal/llaves` | `{ desafio, respuesta, nombre? }` → `{ llave }`. Sin nombre, el del gestor (por su AAGUID). |
+| `PATCH /api/auth/llaves/:id`, `PATCH /api/portal/llaves/:id` | `{ nombre }` → `{ llave }`. |
+| `DELETE /api/auth/llaves/:id`, `DELETE /api/portal/llaves/:id` | `{ ok }`. En «Mi buzón» cierra también las sesiones del webmail abiertas con esa llave. |
+
+Errores: `401 passkey_invalid` (no se ha podido comprobar), `401 passkey_unknown`
+(no registrada en este nombre), `400 passkey_challenge` (desafío caducado o
+usado), `400 passkey_host` (nombre que no es del panel o sin https),
+`400 passkey_state`, `409 passkey_exists`, `409 passkey_limit` (10 por
+persona), `429` (20 fallos por IP cada 10 minutos). Las rutas `/api/auth/llaves*`
+exigen la sesión del panel (`403 session_required` con un token).
+
 ### 6.3 Webmail
 
 Roundcube es el webmail de la instancia y el predeterminado de cada cliente;
@@ -1454,6 +1479,19 @@ o formulario; sin secreto configurado, `404`; secreto incorrecto, `401`):
 - `POST /api/webmail/photo` `{ user, email }` → la imagen, **solo si `email`
   es un buzón del mismo cliente que `user`**; si no, `404`. La foto de un
   empleado nunca se muestra a otra empresa alojada en la misma instancia.
+
+El complemento `mailway_llave` (entrar con llave de acceso, ver
+`deploy/roundcube/README.md`) usa tres rutas con el mismo secreto:
+
+- `GET /api/webmail/llave/portal?host=` → `{ portal }`: origen de «Mi buzón» al
+  que mandar al titular desde ese webmail; `404` si el nombre no es un webmail
+  Roundcube de la instancia (el botón no aparece).
+- `POST /api/webmail/llave` `{ codigo }` → `{ usuario, contrasena, sesion, expira }`:
+  canjea el código de un solo uso (2 minutos) de la vuelta desde «Mi buzón»
+  por el usuario del motor y una contraseña de aplicación temporal (12 horas
+  como mucho); `404 passkey_code_invalid` si no existe, caducó o ya se usó.
+- `POST /api/webmail/llave/salir` `{ sesion }` → `{ ok }`: retira la contraseña
+  temporal (idempotente).
 
 ---
 

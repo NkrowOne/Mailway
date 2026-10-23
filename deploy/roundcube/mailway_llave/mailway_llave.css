@@ -1,0 +1,54 @@
+/* Botón «Entrar con llave de acceso» de la pantalla de acceso.
+
+   El botón lleva las clases de Bootstrap que Elastic da al de OAuth
+   (btn btn-secondary btn-lg w-100), así que el color, el borde y el modo
+   oscuro salen de Elastic o, con mailway_theme, de su botón secundario y sus
+   variables (claro y oscuro). Aquí solo va lo propio: la separación con el
+   botón de entrar, el tamaño igual al de este en la capa de Mailway y el
+   icono de la llave (el de Lucide que ya define iconos.css). */
+
+#login-form p.mailway-llave {
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+#login-form a.mailway-llave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* Que un texto largo (otro idioma, letra grande) parta en dos líneas antes
+     que desbordar la tarjeta en el móvil. */
+  white-space: normal;
+  text-align: center;
+}
+
+/* El icono solo con la capa de Mailway, que define --mw-i-llave. */
+#login-form .mailway-llave-icono {
+  display: none;
+}
+
+html.mailway #login-form a.mailway-llave {
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: var(--mw-radio-boton, 10px);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Máscara del color del texto, como los iconos de mailway.css: sigue al
+   texto en claro, en oscuro y al pasar por encima. Si la variable no
+   existiera, las dos declaraciones se anulan y no se pinta nada (nunca un
+   cuadrado). */
+html.mailway #login-form .mailway-llave-icono {
+  display: block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: var(--mw-i-llave) 0 0 / 0 0 no-repeat, currentColor;
+  -webkit-mask: var(--mw-i-llave) center / 18px no-repeat;
+  mask: var(--mw-i-llave) center / 18px no-repeat;
+}

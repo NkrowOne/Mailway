@@ -55,6 +55,23 @@ import {
   nombreSchema,
 } from './perfil';
 import { motorCorreoWebEnServicio } from './webmailmotor';
+import { tokenWebmailValido } from './webmailtoken';
+import {
+  ESTADO_RE,
+  abrirSesionWebmail,
+  accesoSchema,
+  borrarLlave,
+  comprobarAcceso,
+  listarLlaves,
+  nombreLlaveSchema,
+  opcionesAcceso,
+  opcionesRegistro,
+  portalCorreoWebDe,
+  registrarLlave,
+  registroSchema,
+  renombrarLlave,
+  retirarSesionesWebmail,
+} from './llaves';
 
 /**
  * Portal del titular del buzón y enlaces de configuración de dispositivos.
@@ -503,6 +520,9 @@ export function purgarEnlaces(): void {
  */
 export function alCambiarContrasenaBuzon(mailboxId: string, sesionQueSeConserva?: string): void {
   db.prepare('UPDATE setup_links SET password_enc = NULL WHERE mailbox_id = ?').run(mailboxId);
+  // Las sesiones del webmail abiertas con llave también: quien cambia la
+  // contraseña espera que nadie más siga dentro.
+  retirarSesionesWebmail(mailboxId);
   if (sesionQueSeConserva) {
     db.prepare('DELETE FROM mailbox_sessions WHERE mailbox_id = ? AND token_hash <> ?').run(
       mailboxId,
@@ -862,17 +882,13 @@ function urlFoto(ruta: string, mailboxId: string): string | null {
   return fecha === null ? null : `${ruta}?v=${fecha}`;
 }
 
-/* ------------------------------ Webmail ------------------------------------ */
-
-/** Comparación en tiempo constante (también en longitud, gracias al hash). */
-function tokenWebmailValido(recibido: unknown): boolean {
-  if (typeof recibido !== 'string' || !config.webmailToken) return false;
-  const a = crypto.createHash('sha256').update(recibido).digest();
-  const b = crypto.createHash('sha256').update(config.webmailToken).digest();
-  return crypto.timingSafeEqual(a, b);
-}
-
 /* -------------------------------- Esquemas --------------------------------- */
+
+const accesoPortalSchema = accesoSchema.extend({
+  /** Host del webmail desde el que vino el titular (página /mi-buzon/correo-web). */
+  webmail: z.string().trim().toLowerCase().min(1).max(253).optional(),
+  estado: z.string().max(64).optional(),
+});
 
 const validezEnlaceSchema = z
   .number()
@@ -1344,6 +1360,87 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     marcarBuzonConfigurado(titular.id);
     auditTitular(req, titular.clientId, 'portal.login', { email: titular.email });
     return { ok: true, email: titular.email };
+  });
+
+  /* ---------------------- «Mi buzón»: llaves de acceso --------------------- */
+
+  app.post('/api/portal/llave/opciones', async (req) => {
+    z.object({}).parse(req.body ?? {});
+    return opcionesAcceso('buzon', req);
+  });
+
+  app.post('/api/portal/llave/entrar', async (req, reply) => {
+    const cuerpo = accesoPortalSchema.parse(req.body);
+    // Sin el estado del webmail no se abre la sesión del webmail: el código
+    // acabaría en un enlace que cualquiera podría haber preparado.
+    if (cuerpo.webmail !== undefined && !(cuerpo.estado && ESTADO_RE.test(cuerpo.estado))) {
+      throw badRequest(
+        'Vuelve al webmail y pulsa de nuevo «Entrar con llave de acceso».',
+        'passkey_state',
+      );
+    }
+    const { ownerId, llaveId } = await comprobarAcceso('buzon', cuerpo, req);
+    const titular = buzonPorId(ownerId);
+    if (!titular) throw unauthorized('No se ha podido comprobar la llave de acceso.', 'passkey_invalid');
+    if (!titular.activo) throw buzonSuspendido();
+    crearSesionBuzon(req, reply, titular.id);
+    auditTitular(req, titular.clientId, 'portal.login', { email: titular.email, via: 'llave' });
+    const webmailUrl =
+      cuerpo.webmail !== undefined
+        ? await abrirSesionWebmail(titular.id, llaveId, cuerpo.webmail, cuerpo.estado!)
+        : null;
+    return { ok: true, email: titular.email, ...(webmailUrl ? { webmailUrl } : {}) };
+  });
+
+  app.get('/api/portal/llaves', async (req, reply) => {
+    const { titular } = sesionBuzon(req);
+    reply.header('Cache-Control', 'no-store');
+    return {
+      llaves: listarLlaves('buzon', titular.id),
+      hostActual: (req.hostname || '').toLowerCase(),
+      portalCorreoWeb: portalCorreoWebDe(titular.id),
+    };
+  });
+
+  app.post('/api/portal/llaves/opciones', async (req) => {
+    const { titular } = sesionBuzon(req);
+    z.object({}).parse(req.body ?? {});
+    return opcionesRegistro(
+      'buzon',
+      { id: titular.id, nombreUsuario: titular.email, nombreVisible: titular.displayName || titular.email },
+      req,
+    );
+  });
+
+  app.post('/api/portal/llaves', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const cuerpo = registroSchema.parse(req.body);
+    const llave = await registrarLlave('buzon', titular.id, cuerpo, req);
+    auditTitular(req, titular.clientId, 'portal.passkey_added', {
+      email: titular.email,
+      nombre: llave.nombre,
+      host: llave.host,
+    });
+    return { llave };
+  });
+
+  app.patch('/api/portal/llaves/:llaveId', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const { llaveId } = req.params as { llaveId: string };
+    const { nombre } = nombreLlaveSchema.parse(req.body);
+    return { llave: renombrarLlave('buzon', titular.id, llaveId, nombre) };
+  });
+
+  app.delete('/api/portal/llaves/:llaveId', async (req) => {
+    const { titular } = sesionBuzon(req);
+    const { llaveId } = req.params as { llaveId: string };
+    const llave = borrarLlave('buzon', titular.id, llaveId);
+    auditTitular(req, titular.clientId, 'portal.passkey_removed', {
+      email: titular.email,
+      nombre: llave.nombre,
+      host: llave.host,
+    });
+    return { ok: true };
   });
 
   app.post('/api/portal/logout', async (req, reply) => {

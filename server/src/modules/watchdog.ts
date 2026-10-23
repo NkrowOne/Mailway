@@ -27,6 +27,7 @@ import {
   webmailAutomaticoGlobal,
   type ClientDomain,
 } from './whitelabel';
+import { retirarSesionesWebmailPendientes } from './llaves';
 
 /**
  * Vigilante de fondo: comprueba periódicamente que todo sigue en pie y abre
@@ -685,6 +686,8 @@ export async function runWatchdogOnce(log?: (msg: string) => void): Promise<void
       // Lo que escribe en el motor también espera al final del mantenimiento.
       await paso('recepción en otro proveedor', checkRecepcionExterna, log);
       await paso('cambios de dominio', () => tickCambiosDeDominio(log), log);
+      // Contraseñas temporales del webmail con llave que ya no deben valer.
+      await paso('webmail con llave', retirarSesionesWebmailPendientes, log);
     }
     await paso('puerto 25 de salida', checkPuerto25, log);
     await paso('IP pública', checkIpPublica, log);

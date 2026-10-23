@@ -151,6 +151,66 @@ se retira su credencial del motor). Solo valen en `/v1/send`.
   contraseña guardada en los enlaces de configuración.
 - Suspender el buzón o su cliente corta las sesiones abiertas del portal.
 
+### 3.5 Llaves de acceso (passkeys)
+
+Usuarios del panel y titulares pueden entrar con una **llave de acceso**
+(WebAuthn) en lugar de la contraseña: Proton Pass, 1Password, Bitwarden, el
+llavero de iCloud, el gestor de Google, Windows Hello o una llave física. La
+contraseña sigue valiendo. Código en `server/src/modules/llaves.ts`
+(verificación con `@simplewebauthn/server`).
+
+- **Verificación del usuario obligatoria** (PIN, huella o cara) al registrar y
+  al entrar: sin ella, tener el dispositivo un momento bastaría para entrar.
+- **Ligadas al nombre**: el RP ID es el host de la petición, y solo se
+  aceptan el del panel de la instancia (`panelUrl`) y los paneles de marca
+  blanca activos, siempre por https (en desarrollo, también `localhost`). El
+  navegador firma su origen real; una web que imite al panel no puede usar
+  las llaves del panel. Una llave registrada en `panel.cliente.es` no sirve en
+  el panel de la instancia ni al revés: cada llave muestra dónde funciona.
+- **Desafíos de un solo uso** (5 minutos), ligados al propósito, al nombre, al
+  origen y, al registrar, a la persona que lo pidió. Se borran también si la
+  comprobación falla.
+- **Sin enumeración**: entrar no pide el correo; el gestor ofrece sus llaves de
+  ese nombre (llaves «descubribles») y una llave desconocida recibe
+  `401 passkey_unknown` sin decir de quién podría ser.
+- Límite: 20 fallos por IP cada 10 minutos (`429`), aparte del de contraseñas.
+- El contador de firmas se guarda en cada acceso (detecta copias de llaves que
+  no se sincronizan).
+- Máximo 10 llaves por persona. Añadir, renombrar y borrar exige la sesión del
+  panel o de «Mi buzón»: un token de gestión no puede añadirse una llave
+  (`403 session_required`). Las altas y bajas se anotan en la Actividad
+  (`auth.passkey_added`, `portal.passkey_added`…), y la entrada con llave como
+  `auth.login` o `portal.login` con `via: "llave"`.
+- Una llave de un titular no abre el panel ni al revés (tablas y desafíos
+  distintos).
+
+**Webmail (Roundcube) con llave.** Roundcube entra en IMAP con usuario y
+contraseña. El botón «Entrar con llave de acceso» del acceso al webmail
+(complemento `mailway_llave`) guarda un estado aleatorio en la sesión de
+Roundcube y lleva al titular a `/mi-buzon/correo-web` del «Mi buzón» que
+corresponde a ese webmail (el panel de marca blanca del cliente o el de la
+instancia). Tras comprobar la llave, el panel:
+
+- solo continúa si el webmail es uno de Roundcube del cliente del titular o el
+  general de la instancia, y si llega el estado (`400 passkey_state` si no);
+- crea en el motor una **contraseña de aplicación temporal** solo para esa
+  sesión (no aparece entre las del titular ni cuenta para su máximo) y
+  devuelve la vuelta al webmail con un **código de un solo uso de 2 minutos**
+  y el mismo estado;
+- el complemento comprueba que el estado coincide con el que guardó (sin eso,
+  un enlace preparado por otra persona haría entrar a la víctima en el buzón
+  de quien lo preparó) y canjea el código de servidor a servidor, con
+  `X-Mailway-Token`. El secreto sale una sola vez y se borra de la base al
+  canjearlo; hasta entonces está cifrado con la clave maestra.
+
+La contraseña temporal se retira del motor al salir del webmail, a las
+12 horas, al cambiar o restablecer la contraseña del buzón, al borrar la llave
+con la que se abrió, al suspender el buzón o su cliente y al abrir más de 10
+a la vez (la más antigua). El vigilante reintenta las retiradas que fallaron
+con el motor caído. Como mucho, quien robara la cookie de Roundcube tendría
+una contraseña que caduca sola y que el titular puede cortar cambiando la
+suya.
+
 ## 4. Autorización y aislamiento entre clientes
 
 - Cada ruta declara su nivel: `requireAuth`, `requireAdmin`,

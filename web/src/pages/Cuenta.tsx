@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import { AvisoError, Hoja, Membrete } from '../ui/kit';
 import { useToast } from '../ui/toast';
+import { HojaLlavesAcceso } from '../components/LlavesAcceso';
 
 const LONGITUD_MINIMA = 10;
 
@@ -14,9 +15,13 @@ export default function Cuenta() {
   // Ya está en caché (App la lee al arrancar): no genera otra petición.
   const me = useQuery({
     queryKey: ['me'],
-    queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
+    queryFn: () => api.get<{ user: User | null; via?: { kind: 'session' | 'token' } }>('/api/auth/me'),
   });
   const user = me.data?.user ?? null;
+  // Las llaves de acceso solo se gestionan con la sesión del panel: con un
+  // token de gestión el servidor rechaza sus rutas (y no tendría sentido
+  // añadir una llave en nombre de una integración).
+  const conSesion = me.data?.via?.kind !== 'token';
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -140,6 +145,8 @@ export default function Cuenta() {
           </form>
         </Hoja>
         )}
+
+        {user && conSesion && <HojaLlavesAcceso base="/api/auth" />}
       </div>
     </>
   );

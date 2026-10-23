@@ -5,6 +5,8 @@ import { api, ApiError, esCredencialIncorrecta, TEXTO_CREDENCIALES_INCORRECTAS, 
 import { LayoutDashboard } from 'lucide-react';
 import { IlustracionPanel } from '../components/Portadas';
 import { CampoContrasena } from './bienvenida/CampoContrasena';
+import { EntrarConLlave } from '../components/LlavesAcceso';
+import { entrarConLlave } from '../lib/llaves';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Field';
 import { AvisoError, Logotipo } from '../ui/kit';
@@ -74,6 +76,37 @@ export default function Login({
     document.title = `Acceso · ${brand}`;
   }, [brand]);
 
+  /**
+   * Lo mismo tras entrar con contraseña o con llave de acceso: caché limpia,
+   * usuario nuevo y a la página que se intentaba abrir.
+   */
+  async function completarAcceso(user: User | undefined) {
+    const destino = destinoTrasEntrar(location.search, location.state, enlaceDeArranque);
+    // Caché limpia: si antes hubo otra sesión en esta pestaña (caducada, o
+    // de otra persona), sus datos no deben asomar en la cuenta nueva. Se
+    // conserva el estado público de la instalación para no recargarlo.
+    const setup = queryClient.getQueryData(['setup']);
+    queryClient.clear();
+    if (setup) queryClient.setQueryData(['setup'], setup);
+    // Sin sesión el estado de la instalación llega recortado (solo la
+    // marca); con la sesión recién abierta se vuelve a leer completo.
+    void queryClient.invalidateQueries({ queryKey: ['setup'] });
+    if (user) {
+      queryClient.setQueryData(['me'], { user });
+    } else {
+      await queryClient.fetchQuery({
+        queryKey: ['me'],
+        queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
+      });
+    }
+    navigate(destino, { replace: true });
+  }
+
+  async function entrarConLlaveDeAcceso() {
+    const res = await entrarConLlave<{ user?: User }>('/api/auth');
+    await completarAcceso(res?.user);
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
@@ -84,25 +117,7 @@ export default function Login({
     setError('');
     try {
       const res = await api.post<{ user?: User }>('/api/auth/login', { email, password });
-      const destino = destinoTrasEntrar(location.search, location.state, enlaceDeArranque);
-      // Caché limpia: si antes hubo otra sesión en esta pestaña (caducada, o
-      // de otra persona), sus datos no deben asomar en la cuenta nueva. Se
-      // conserva el estado público de la instalación para no recargarlo.
-      const setup = queryClient.getQueryData(['setup']);
-      queryClient.clear();
-      if (setup) queryClient.setQueryData(['setup'], setup);
-      // Sin sesión el estado de la instalación llega recortado (solo la
-      // marca); con la sesión recién abierta se vuelve a leer completo.
-      void queryClient.invalidateQueries({ queryKey: ['setup'] });
-      if (res?.user) {
-        queryClient.setQueryData(['me'], { user: res.user });
-      } else {
-        await queryClient.fetchQuery({
-          queryKey: ['me'],
-          queryFn: () => api.get<{ user: User | null }>('/api/auth/me'),
-        });
-      }
-      navigate(destino, { replace: true });
+      await completarAcceso(res?.user);
     } catch (err) {
       setError(
         esCredencialIncorrecta(err)
@@ -169,6 +184,8 @@ export default function Login({
                 Iniciar sesión
               </Button>
             </form>
+
+            <EntrarConLlave className="mt-5" onEntrar={entrarConLlaveDeAcceso} onEmpezar={() => setError('')} />
 
             <div className="mt-8 flex flex-col gap-3 border-t border-regla pt-6 text-sm text-tinta-3">
               <p>
