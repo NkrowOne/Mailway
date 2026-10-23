@@ -1684,7 +1684,10 @@ versión anterior los webmail de esos clientes pasan solos a Roundcube.
 |---|---|---|
 | `GET /api/clients/:id/webmail` | acceso al cliente | `{ motor, enServicio, webmails: [{ hostname, status }], marca }`. `motor` es lo elegido (`roundcube` o `bulwark`); `enServicio`, lo que se sirve de verdad. La administración recibe además `bulwark: { configurado, disponible, motivo, api, motor016 }` (si se puede elegir y, si no, por qué) y `sincronizacion` (como en el resumen, abajo; `null` con Roundcube). |
 | `PUT /api/clients/:id/webmail` | administración (también su token de gestión) | `{ motor: 'roundcube' \| 'bulwark' }` → lo mismo que el anterior. |
-| `PATCH /api/clients/:id/webmail/marca` | acceso al cliente | `{ nombre?, nombreCorto?, empresa?, privacidadUrl?, avisoLegalUrl? }` → `{ marca }`. Solo cambian los campos que llegan; un texto vacío vuelve al valor por defecto. |
+| `PATCH /api/clients/:id/webmail/marca` | acceso al cliente | `{ nombre?, nombreCorto?, empresa?, privacidadUrl?, avisoLegalUrl?, colorTema?, colorFondo? }` → `{ marca }`. Solo cambian los campos que llegan; un texto vacío vuelve al valor por defecto. |
+| `GET /api/settings/correo-web` | administración | Ajustes de toda la instancia: `{ estado: { disponible, motivo, enServicio, motivoServicio }, ajustes: { paraNuevos, calendario, contactos, archivos, relePush }, clientes: { total, conBulwark } }`. |
+| `PUT /api/settings/correo-web` | administración | Cualquier parte de `ajustes` → lo mismo. Con `paraNuevos: 'bulwark'`, los clientes nuevos nacen con el correo web nuevo: exige que se pueda servir ya (`409 bulwark_unavailable`, `409 bulwark_requires_016`) y abre el CORS del motor antes de guardar, como el primer cliente que lo elige. |
+| `POST /api/settings/correo-web/todos` | administración | `{ motor: 'roundcube' \| 'bulwark' }` → `{ cambiados, … }`: pasa a todos los clientes de una vez (mismas condiciones que elegirlo para uno). Cada cliente recibe su entrada `client.webmail_changed` en la Actividad y se puede cambiar después en su ficha. |
 | `GET\|PUT\|DELETE /api/clients/:id/webmail/marca/imagenes/:hueco` | acceso al cliente | `hueco`: `logoClaro`, `logoOscuro`, `favicon` o `icono`. `GET` devuelve la imagen; `PUT { imagen }` (data URL en base64) → `{ imagen: { tipo, bytes, ancho, alto, actualizada, url } }`; `DELETE` → `{ ok }`. |
 
 **Elegir.** Volver a Roundcube se puede siempre. El correo web nuevo exige que
@@ -1704,9 +1707,21 @@ administración y los usuarios del cliente, como la marca blanca), y se puede
 preparar antes de elegir el correo web nuevo. Campos: `nombre` (hasta 60
 caracteres; vacío: el nombre del cliente), `nombreCorto` (30, el de la
 aplicación instalada), `empresa` (80, firma la pantalla de acceso) y
-`privacidadUrl` y `avisoLegalUrl` (`https://`, sin usuario ni contraseña). El
-enlace a «Mi buzón» de la pantalla de acceso lo pone el panel: el de su panel
-de marca blanca si está en servicio y, si no, el de la instancia.
+`privacidadUrl` y `avisoLegalUrl` (`https://`, sin usuario ni contraseña) y
+`colorTema` y `colorFondo` (`#rgb` o `#rrggbb`, los de la aplicación
+instalada; vacíos, los de Bulwark). El enlace a «Mi buzón» de la pantalla de
+acceso lo pone el panel: el de su panel de marca blanca si está en servicio y,
+si no, el de la instancia.
+
+**General y por cliente.** Lo que va por cliente es la elección (la
+administración) y la marca (la administración y el propio cliente). Lo que va
+para toda la instancia está en **Ajustes → Correo web nuevo**: el correo web de
+los clientes nuevos (`paraNuevos`, Roundcube por defecto; el que nació con uno
+lo conserva aunque cambie el general), pasar a todos de una vez y las
+**funciones de los usuarios**: calendario y tareas, contactos, archivos (ocupan
+el espacio del buzón) y un relé propio para las notificaciones (`https://`;
+vacío, el que aloja Bulwark). Las funciones son para todos porque Bulwark tiene
+una sola política para la instancia, no una por dominio.
 
 **Imágenes.** PNG, JPEG o WebP, comprobados por su contenido (no por la
 extensión ni el tipo declarado), de hasta 512 KB y entre 16 y 4096 píxeles por
@@ -1721,8 +1736,9 @@ retira.
 
 **Sincronización con Bulwark.** El panel deja en Bulwark la marca de cada
 webmail en servicio de esos clientes y la política de Mailway (sin
-complementos, temas de usuario, apps propias en la barra, archivos ni
-depuración; con calendario y contactos). Se lanza en segundo plano al elegir el correo web,
+complementos, temas de usuario, apps propias en la barra ni depuración; con
+las funciones de Ajustes → Correo web nuevo: por defecto, calendario y
+contactos sí y archivos no). Se lanza en segundo plano al elegir el correo web,
 al cambiar la marca o una imagen y cuando un webmail del cliente entra en
 servicio o sale; ninguna ruta la espera. Solo escribe si algo difiere de lo
 guardado (si la huella de lo deseado no ha cambiado no se conecta, salvo una
