@@ -6,6 +6,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from 'react';
+import { Button } from './Button';
 
 interface FieldWrapProps {
   label: string;
@@ -136,3 +137,88 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
     </FieldWrap>
   );
 });
+
+interface InputColorProps {
+  label: string;
+  help?: string;
+  error?: string;
+  /** '' (sin color propio), #rgb o #rrggbb; también lo que se esté escribiendo. */
+  value: string;
+  onChange: (valor: string) => void;
+  /** Lo que significa dejarlo vacío («Predeterminado»). */
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+/** #rrggbb para el selector nativo, que no admite #rgb; null si no es un color. */
+function colorCompleto(valor: string): string | null {
+  const v = valor.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(v)) return v;
+  if (/^#[0-9a-f]{3}$/.test(v)) return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`;
+  return null;
+}
+
+/**
+ * Color: la muestra abre el selector del sistema y el campo admite el valor
+ * escrito o pegado. Vacío es un valor (sin color propio): la muestra sale
+ * tachada en lugar de enseñar un color que no se aplicará, y «Quitar» vuelve
+ * a él.
+ */
+export function InputColor({ label, help, error, value, onChange, placeholder, disabled }: InputColorProps) {
+  const color = colorCompleto(value);
+  return (
+    <FieldWrap label={label} help={help} error={error}>
+      {(id, describedBy) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={`relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-regla-fuerte shadow-boton
+              focus-within:border-[rgb(var(--petroleo))] focus-within:ring-[3px] focus-within:ring-petroleo/15
+              ${color ? '' : 'bg-hoja-2'} ${disabled ? 'opacity-60' : ''}`}
+            style={color ? { backgroundColor: color } : undefined}
+          >
+            {!color && (
+              <svg aria-hidden viewBox="0 0 40 40" className="absolute inset-0 h-full w-full text-tinta-3">
+                <path d="M8 32L32 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            )}
+            <input
+              type="color"
+              aria-label={`${label}: elegir en la paleta`}
+              value={color ?? '#ffffff'}
+              disabled={disabled}
+              onChange={(e) => onChange(e.target.value.toLowerCase())}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+            />
+          </span>
+          <input
+            id={id}
+            type="text"
+            value={value}
+            placeholder={placeholder}
+            maxLength={7}
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            disabled={disabled}
+            aria-describedby={describedBy}
+            aria-invalid={error ? true : undefined}
+            onChange={(e) => onChange(e.target.value)}
+            className={`${controlBase} codigo text-sm`}
+          />
+          {value && (
+            <Button
+              type="button"
+              variant="plano"
+              className="shrink-0"
+              aria-label={`Quitar ${label.charAt(0).toLowerCase()}${label.slice(1)}`}
+              disabled={disabled}
+              onClick={() => onChange('')}
+            >
+              Quitar
+            </Button>
+          )}
+        </div>
+      )}
+    </FieldWrap>
+  );
+}

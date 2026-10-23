@@ -850,6 +850,16 @@ const migrations: Migracion[] = [
       CREATE INDEX idx_webmail_passkey_sessions_mailbox ON webmail_passkey_sessions(mailbox_id, created_at);
     `,
   },
+  {
+    // Colores de la marca del correo web nuevo de cada cliente: el del tema y
+    // el de fondo de la aplicación instalada (Bulwark los admitía y el panel
+    // no los ofrecía). Vacío = los de Bulwark.
+    id: '020-colores-del-correo-web',
+    sql: `
+      ALTER TABLE webmail_marca ADD COLUMN color_tema TEXT NOT NULL DEFAULT '';
+      ALTER TABLE webmail_marca ADD COLUMN color_fondo TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 /**

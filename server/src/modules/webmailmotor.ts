@@ -76,6 +76,70 @@ export function bulwarkDisponible(): boolean {
   return estadoBulwark().disponible;
 }
 
+/* ------------------------- Ajustes generales ------------------------------ */
+
+/**
+ * Ajustes del correo web nuevo para toda la instancia. La política de Bulwark
+ * es una sola para todos (no la hay por dominio), así que sus funciones se
+ * deciden aquí; lo que va por cliente es la elección y la marca.
+ */
+export interface AjustesCorreoWeb {
+  /** Correo web con el que nacen los clientes nuevos. */
+  paraNuevos: MotorCorreoWeb;
+  /** Calendario y tareas (CalDAV/JMAP del motor). */
+  calendario: boolean;
+  /** Contactos del servidor (CardDAV/JMAP). */
+  contactos: boolean;
+  /** Archivos del motor (FileNode/WebDAV): ocupan la cuota del buzón. */
+  archivos: boolean;
+  /** Relé de notificaciones push propio (https) o vacío para el alojado de Bulwark. */
+  relePush: string;
+}
+
+const AJUSTE_GENERAL = 'correo_web_general';
+
+export const AJUSTES_CORREO_WEB_POR_DEFECTO: AjustesCorreoWeb = {
+  paraNuevos: 'roundcube',
+  calendario: true,
+  contactos: true,
+  archivos: false,
+  relePush: '',
+};
+
+/** Se lee de la tabla settings sin pasar por settings.ts: este módulo no depende de otros. */
+export function ajustesCorreoWeb(): AjustesCorreoWeb {
+  const fila = db.prepare('SELECT value FROM settings WHERE key = ?').get(AJUSTE_GENERAL) as { value: string } | undefined;
+  let guardados: Partial<AjustesCorreoWeb> = {};
+  try {
+    guardados = fila ? (JSON.parse(fila.value) as Partial<AjustesCorreoWeb>) : {};
+  } catch {
+    guardados = {};
+  }
+  const d = AJUSTES_CORREO_WEB_POR_DEFECTO;
+  return {
+    paraNuevos: guardados.paraNuevos === 'bulwark' ? 'bulwark' : 'roundcube',
+    calendario: typeof guardados.calendario === 'boolean' ? guardados.calendario : d.calendario,
+    contactos: typeof guardados.contactos === 'boolean' ? guardados.contactos : d.contactos,
+    archivos: typeof guardados.archivos === 'boolean' ? guardados.archivos : d.archivos,
+    relePush: typeof guardados.relePush === 'string' ? guardados.relePush : d.relePush,
+  };
+}
+
+export function guardarAjustesCorreoWeb(ajustes: AjustesCorreoWeb): void {
+  db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(AJUSTE_GENERAL, JSON.stringify(ajustes), Date.now());
+}
+
+/**
+ * Correo web de un cliente que se da de alta ahora: el general, si es el nuevo
+ * y se puede servir; si no, Roundcube (nunca un cliente sin destino).
+ */
+export function motorParaClienteNuevo(): MotorCorreoWeb {
+  return ajustesCorreoWeb().paraNuevos === 'bulwark' && bulwarkEnServicio() ? 'bulwark' : 'roundcube';
+}
+
 /** Lo que ha elegido el cliente (lo guardado), se pueda servir o no. */
 export function motorCorreoWebDe(clientId: string): MotorCorreoWeb {
   const row = db.prepare('SELECT webmail_motor FROM clients WHERE id = ?').get(clientId) as
@@ -113,5 +177,8 @@ export function motorCorreoWebEnServicio(clientId: string): MotorCorreoWeb {
  */
 export function corsPermisivoNecesario(): boolean {
   if (!bulwarkDisponible()) return false;
+  // Con el nuevo como general, el próximo cliente nace con él: el CORS se
+  // queda abierto aunque hoy ningún cliente lo use.
+  if (ajustesCorreoWeb().paraNuevos === 'bulwark') return true;
   return Boolean(db.prepare(`SELECT 1 FROM clients WHERE webmail_motor = 'bulwark' LIMIT 1`).get());
 }

@@ -14,6 +14,7 @@ import { listMailboxes } from './mailboxes';
 import { getInstanceSettings } from './settings';
 import { caducidadDelToken } from './tokens';
 import { getTraefikToken, webmailAutomaticoCliente, webmailAutomaticoGlobal, webmailsDelCliente } from './whitelabel';
+import { motorParaClienteNuevo } from './webmailmotor';
 
 /**
  * API de integraciones: lo que necesita un sistema externo (Skyway, un
@@ -392,8 +393,8 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
       const again = clientIdByRef(body.externalRef);
       if (again) return { id: again, created: false };
       db.prepare(
-        `INSERT INTO clients (id, name, slug, contact_email, plan_id, notes, created_at, external_ref)
-         VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
+        `INSERT INTO clients (id, name, slug, contact_email, plan_id, notes, created_at, external_ref, webmail_motor)
+         VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`,
       ).run(
         id,
         body.name,
@@ -402,6 +403,7 @@ export function registerIntegrationRoutes(app: FastifyInstance): void {
         planId,
         now(),
         body.externalRef,
+        motorParaClienteNuevo(),
       );
       return { id, created: true };
     });

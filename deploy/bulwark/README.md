@@ -284,7 +284,9 @@ con `bash deploy/bulwark/cloudflare/generar.sh`; las pruebas fallan si
   de direcciones públicas), o se suben a Bulwark con su API
   (`POST /api/admin/branding`, multipart con `host` y `slot`) y se enlazan como
   `/api/admin/branding/<fichero>`, del mismo origen que cada webmail.
-- No hay color de acento ni tema por cliente: el tema es de toda la instancia.
+- Colores por cliente: los de la aplicación instalada (`pwaThemeColor` y
+  `pwaBackgroundColor`), que el cliente pone en su marca. No hay color de
+  acento ni tema por cliente: el tema es de toda la instancia.
 
 ## Política
 
@@ -297,11 +299,16 @@ interruptores explícitos:
 | `userThemesEnabled` | no | CSS que sube cada usuario. |
 | `sidebarAppsEnabled` | no | Apps propias de cada usuario en un marco (amplían la CSP). Las fijas de la política siguen. |
 | `debugModeEnabled` | no | Herramientas de depuración para usuarios finales. |
-| `filesEnabled` | no (opción) | Archivos del motor: ocupan la cuota del buzón. |
-| `calendarEnabled`, `calendarTasksEnabled`, `contactsEnabled` | sí (opción) | Calendario y contactos del motor (JMAP/CalDAV/CardDAV). |
+| `filesEnabled` | no (Ajustes) | Archivos del motor: ocupan la cuota del buzón. |
+| `calendarEnabled`, `calendarTasksEnabled`, `contactsEnabled` | sí (Ajustes) | Calendario y contactos del motor (JMAP/CalDAV/CardDAV). |
+| `accountArchiveEnabled`, `accountArchivePasswordsEnabled` | no | Copia de la lista de cuentas (y sus contraseñas) en el servidor de Bulwark. |
 | resto | valor de Bulwark | Plantillas, S/MIME, etiquetas, temas incluidos… |
 | `defaultSidebarApps` | «Mi buzón» | Enlace al panel en la barra lateral, en otra pestaña. Es de toda la instancia (la política no es por nombre): el enlace de cada cliente es el del pie del acceso. |
-| `pushRelayUrl` | vacío (opción) | Sin relé propio, quien active las notificaciones del navegador las recibe por el relé alojado de Bulwark (ve la suscripción y los identificadores de lo que cambia, no el contenido). Con `relePush` se fija uno propio. |
+| `pushRelayUrl` | vacío (Ajustes) | Sin relé propio, quien active las notificaciones del navegador las recibe por el relé alojado de Bulwark (ve la suscripción y los identificadores de lo que cambia, no el contenido). Con `relePush` se fija uno propio. |
+
+Las marcadas «Ajustes» las decide la administración en **Ajustes → Correo web
+nuevo** (`GET|PUT /api/settings/correo-web`) para toda la instancia: la
+política de Bulwark es una sola, no la hay por dominio.
 
 `defaults` (`senderFavicons: false`) se guarda pero **Bulwark 1.13 no lo
 aplica** (comprobado en el código y en el ensayo); por eso la pasarela corta
