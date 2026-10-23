@@ -24,6 +24,7 @@ import { registerIntegrationRoutes } from './modules/integrations';
 import { registerCloudflareRoutes } from './modules/cloudflare';
 import { registerAutoconfigRoutes } from './modules/autoconfig';
 import { registerPortalRoutes } from './modules/portal';
+import { registerLlavesRoutes } from './modules/llaves';
 import { registerAppPasswordRoutes } from './modules/apppasswords';
 import { registerProfileRoutes } from './modules/perfil';
 import { registerInviteRoutes } from './modules/invitaciones';
@@ -164,6 +165,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   registerSetupRoutes(app);
   registerAuthRoutes(app);
+  registerLlavesRoutes(app);
   registerClientRoutes(app);
   registerDomainRoutes(app);
   registerDomainMigrationRoutes(app);
