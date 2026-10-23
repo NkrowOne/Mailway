@@ -18,6 +18,12 @@
 #     automática según dónde falle: deploy/.env como estaba, la 0.15 sobre su
 #     volumen y el panel fuera de mantenimiento; nunca se borra un volumen y
 #     la contraseña del motor nunca va en los argumentos de un proceso;
+#   - su comprobación final, la de verdad (la de --comprobar), con cada orden
+#     como un proceso nuevo que lee de deploy/.env todo lo que necesita: el
+#     motor, el webmail, el panel y Traefik cuentan; el DNS público, el PTR y
+#     el puerto 25 de salida solo avisan; y lo que exige sin depender del
+#     motor (el panel y el enlace del webmail con él, Traefik, la identidad
+#     pendiente) se mira antes de empezar: si falla, no se migra;
 #   - --revertir-motor y --retirar-motor-anterior, también cuando se niegan;
 #   - Bulwark: --activar-bulwark se niega con la 0.15; con la 0.16, sus dos
 #     secretos se generan una vez y nunca se muestran, Compose recibe el
@@ -143,11 +149,31 @@ case "$linea" in
     [[ $respuesta == *'"ok":true'* ]]
     ;;
   "exec mailway-certs-dumper python /app/extractor.py estado") exit 0 ;;
+  # Lo que mira --comprobar desde el webmail: su diagnóstico (certificado y
+  # conexión con el motor) y el panel por dentro (/api/health), que responde
+  # si está en marcha (con $E/panel-cae-con-016, solo mientras el motor sea
+  # la 0.15: un fallo que llega con la migración).
+  "exec -u www-data mailway-webmail php /opt/mailway/comprobar.php "*)
+    marcha mailway-webmail && marcha mailway-mail && echo "OK: ${linea##*comprobar.php }"
+    ;;
+  "exec mailway-webmail curl -fsS --max-time 8 http://"*"/api/health")
+    c=${linea#*http://}
+    if [ -f "$E/panel-cae-con-016" ] && grep -q 'v0[.]16' "$E/imagen"; then exit 7; fi
+    marcha mailway-webmail && marcha "${c%%:*}" && echo '{"ok":true,"name":"mailway","version":"1.6.0"}'
+    ;;
+  # Parámetros del Traefik de Skyway: los de la 0.34 (lee las rutas de Mailway)
+  # o los de $E/traefik.
+  "inspect -f {{json .Config.Cmd}} skyway-traefik")
+    marcha skyway-traefik || exit 1
+    cat "$E/traefik" 2>/dev/null || echo '["--providers.http.endpoint=http://skyway:4000/api/traefik/mailway"]'
+    ;;
   "run -i --rm --network mailway-internal curlimages/curl:"*)
     entrada=$(cat)
     printf '%s\n' "$entrada" >>"$E/curl.log"
     case "$linea" in
       *"/api/queue/messages"*) cat "$E/rest/cola" 2>/dev/null || echo '{"data":{"total":0,"items":[]}}' ;;
+      # Los ajustes de la 0.15 que mira --comprobar (tras --revertir-motor).
+      *"/api/settings/keys"*) echo '{"data":{"server.hostname":"mail.ejemplo.test","server.allowed-ip.10.203.53.0/24":"","certificate.mailway.cert":"x"}}' ;;
       *"/jmap")
         metodo=$(printf '%s' "$entrada" | sed -n 's/^data = .*\[\[\\"x:\([A-Za-z]*\)\/\([a-z]*\)\\".*/\1-\2/p' | head -n 1)
         respuesta=$(responder "$E/jmap/$metodo" "jmap $metodo") || respuesta=$'500\n'
@@ -272,6 +298,9 @@ escribir_env_prueba() {
     echo "MAIL_HOSTNAME='mail.ejemplo.test'"
     echo "STALWART_ADMIN_PASSWORD='$CLAVE_MOTOR'"
     echo "MAILWAY_PANEL_INTERNAL_URL='http://skyway-mailway-panel:4100'"
+    echo "WEBMAIL_HOSTNAME='webmail.ejemplo.test'"
+    echo "PANEL_HOSTNAME='panel.ejemplo.test'"
+    echo "MAILWAY_PUBLIC_IP='203.0.113.7'"
     echo "TRAEFIK_ACME_VOLUME='skyway_traefik-letsencrypt'"
     for linea in "$@"; do echo "$linea"; done
   } >"$ENV_FILE"
@@ -609,24 +638,52 @@ preparar_registro_motor() {
   MIG_REGISTRO="$MIG_DIR/registro.log"
   : >"$MIG_REGISTRO"
 }
-# La comprobación final (la de --comprobar) y la espera del extractor tienen
-# sus propias pruebas: aquí, lo que diga FAKE_COMPROBAR.
-FAKE_COMPROBAR=0
-comprobar_instalacion() {
-  echo "comprobar_instalacion TOLERAR_CERTIFICADO=$TOLERAR_CERTIFICADO" >>"$REGISTRO"
-  return "$FAKE_COMPROBAR"
+# La comprobación final es la de verdad (la de --comprobar), con los dobles de
+# docker de arriba y, sin red, los del DNS público, el PTR y el puerto 25: lo
+# que digan FAKE_DNS (0 bien, 1 otra IP, 2 sin respuesta), FAKE_PTR y FAKE_P25.
+# Así se ve que las órdenes del motor leen de deploy/.env todo lo que ella usa
+# (con «set -u», una variable sin leer la cortaba y la migración volvía atrás
+# al final). Se anota cómo se llama: con qué tolerancias.
+FAKE_DNS=0
+FAKE_PTR=mail.ejemplo.test
+FAKE_P25=1
+resuelve_a() {
+  echo "dns $1" >>"$REGISTRO"
+  DNS_LEIDAS=""
+  if [ "$FAKE_DNS" = 1 ]; then DNS_LEIDAS=198.51.100.1; fi
+  return "$FAKE_DNS"
 }
+consultar_ptr() { PTR_LEIDOS=$FAKE_PTR; }
+puerto25_abierto() { [ "$FAKE_P25" = 1 ]; }
+eval "comprobar_instalacion_real() $(declare -f comprobar_instalacion | tail -n +2)"
+comprobar_instalacion() {
+  echo "comprobar_instalacion TOLERAR_CERTIFICADO=$TOLERAR_CERTIFICADO INTERNET_SOLO_AVISOS=${INTERNET_SOLO_AVISOS:-}" >>"$REGISTRO"
+  comprobar_instalacion_real
+}
+# La espera del extractor tiene sus propias pruebas.
 esperar_extractor() { return 0; }
+# En el servidor, cada orden es un proceso nuevo: lo que no lea de deploy/.env
+# no existe. Se quitan las variables que el resto de esta prueba fija a mano.
+DATOS_DE_ENV=(MAIL_HOSTNAME INTERNAL_SUBNET MAIL_INTERNAL_IP STALWART_ADMIN_PASSWORD TRAEFIK_ACME_VOLUME
+  USAR_PROXY_PROPIO PANEL_INTERNAL_URL WEBMAIL_HOSTNAME PANEL_HOSTNAME IP_PUBLICA)
+como_orden() {
+  unset "${DATOS_DE_ENV[@]}"
+  "$@"
+}
 
 # Un servidor con la 0.15 junto a Skyway, sano, con su panel y el extractor.
 preparar_migracion() {
   reiniciar_estado "stalwartlabs/stalwart:v0.15.5" mailway-mail-data mailway-mail-certs skyway_traefik-letsencrypt
-  marcha mailway-mail mailway-webmail mailway-certs-dumper skyway-mailway-panel
+  marcha mailway-mail mailway-webmail mailway-certs-dumper skyway-mailway-panel skyway-traefik
   touch "$E/herramienta"
   escribir_env_prueba
   cp -p "$ENV_FILE" "$TMP/env-original"
   rm -rf "$MIGRACIONES"
-  FAKE_COMPROBAR=0
+  FAKE_DNS=0
+  FAKE_PTR=mail.ejemplo.test
+  FAKE_P25=1
+  # La 0.16 con los ajustes de Mailway (lo que mira la comprobación final).
+  respuesta_ajustes "$ESCUCHAS_BIEN" "10.203.53.0/24" true '{"mail.ejemplo.test":true}'
   printf '%s\n' '{"ok":true,"api":"rest015","mantenimiento":{"activo":false,"hasta":null},"buzones":{"total":3,"conHash":1,"sinHash":2},"contrasenasAplicacion":{"porApi":{},"invalidadas":0}}' >"$E/panel/estado"
   printf '%s\n' '{"ok":true,"activo":true,"hasta":1760000000000}' >"$E/panel/mantenimiento-on"
   printf '%s\n' '{"ok":true,"activo":false,"hasta":null}' >"$E/panel/mantenimiento-off"
@@ -639,7 +696,7 @@ preparar_migracion() {
   printf '%s\n' '{"ok":true,"registroCreado":true}' >"$E/ayudante/recuperacion"
   printf '%s\n' '{"ok":true,"problemas":[],"avisos":[],"recuento":{"dominios":3,"buzones":3,"alias":1,"dkim":4}}' >"$E/ayudante/comprobar"
 }
-migrar() { ejecutar migrar_motor; }
+migrar() { ejecutar como_orden migrar_motor; }
 # ¿Están todas las líneas de $2… en $1 en ese orden?
 en_orden() {
   local fichero=$1 desde=0 n
@@ -675,6 +732,9 @@ comprobar "pasos en orden" en_orden "$REGISTRO" \
   "motor.js provisionar" "--profile tls up -d --no-deps --force-recreate certs-dumper" "migracion.py tls" \
   "migracion.py comprobar" "docker rm -f mailway-mail-016-previo" "docker compose[stalwart-0.16] --env-file" \
   "motor.js provisionar" "comprobar_instalacion" "motor.js tras-migrar" "motor.js mantenimiento off"
+comprobar "mira el panel y el Traefik de Skyway antes de cambiar nada" en_orden "$REGISTRO" \
+  "motor.js estado" "exec mailway-webmail curl -fsS --max-time 8 http://skyway-mailway-panel:4100/api/health" \
+  "inspect -f {{json .Config.Cmd}} skyway-traefik" "motor.js mantenimiento on"
 comprobar "el motor de recuperación arranca en modo recuperación" contiene "$REGISTRO" "-e STALWART_RECOVERY_ADMIN -e STALWART_RECOVERY_MODE=1"
 comprobar "el ayudante corre con el usuario de la orden (dueño de la carpeta de trabajo)" \
   contiene "$REGISTRO" "--security-opt no-new-privileges --user $(id -u):$(id -g) "
@@ -698,6 +758,11 @@ comprobar "el motor queda con la 0.16" igual "$(cat "$E/imagen")" "stalwartlabs/
 comprobar "la carpeta de trabajo queda sin el volcado ni el plan" igual "$(find "$MIGRACIONES" -name '*.json' ! -name 'resumen-015.json' | wc -l)" 0
 comprobar "ni la copia de deploy/.env" igual "$(find "$MIGRACIONES" -name 'env-antes' | wc -l)" 0
 comprobar "la comprobación final no tolera un certificado malo" contiene "$REGISTRO" "comprobar_instalacion TOLERAR_CERTIFICADO=0"
+comprobar "la comprobación final (la de --comprobar) pasa entera" contiene "$SALIDA" "Todo correcto. Quedan fuera"
+comprobar "sin ninguna variable sin leer de deploy/.env" no_contiene "$SALIDA" "unbound variable"
+comprobar "revisa que el webmail llega al panel" contiene "$SALIDA" "El webmail llega al panel (http://skyway-mailway-panel:4100)"
+comprobar "y el Traefik de Skyway" contiene "$SALIDA" "Traefik lee las rutas de Mailway a través de Skyway"
+comprobar "y el DNS público de los tres nombres" en_orden "$REGISTRO" "dns mail.ejemplo.test" "dns webmail.ejemplo.test" "dns panel.ejemplo.test"
 comprobar "prolonga el mantenimiento en cada paso largo" igual "$(grep -c 'motor.js mantenimiento on' "$REGISTRO")" 4
 comprobar "explica las contraseñas de aplicación" contiene "$SALIDA" "contraseñas de aplicación invalidadas: 3"
 comprobar "y cómo retirar la 0.15 después" contiene "$SALIDA" "sudo mailway retirar-motor-anterior"
@@ -793,11 +858,12 @@ comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/s
 comprobar "deploy/.env intacto" env_intacto
 comprobar "sin aviso de correo en la 0.16" no_contiene "$SALIDA" "llegó a abrir los puertos"
 
-echo "# Falla la comprobación final (la 0.16 ya con puertos): vuelta atrás y deploy/.env como estaba"
+echo "# Falla la comprobación final (la 0.16 ya con puertos, sin el 587): vuelta atrás y deploy/.env como estaba"
 preparar_migracion
-FAKE_COMPROBAR=1
+respuesta_ajustes "$ESCUCHAS_SIN_587" "10.203.53.0/24" true '{"mail.ejemplo.test":true}'
 migrar
 comprobar "termina con 1" igual "$CODIGO" 1
+comprobar "dice qué falla" contiene "$SALIDA" "El motor no escucha en 587 (STARTTLS)"
 comprobar "para la 0.16 y arranca la 0.15" en_orden "$REGISTRO" "comprobar_instalacion" "docker stop -t 60 mailway-mail" "docker compose[stalwart-0.15] --env-file"
 comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
 comprobar "deploy/.env exactamente como estaba" env_intacto
@@ -807,7 +873,7 @@ comprobar "sin las tareas de después" no_contiene "$REGISTRO" "motor.js tras-mi
 
 echo "# Tampoco vuelve la 0.15: código 2 y los pasos a mano"
 preparar_migracion
-FAKE_COMPROBAR=1
+respuesta_ajustes "$ESCUCHAS_SIN_587" "10.203.53.0/24" true '{"mail.ejemplo.test":true}'
 echo '*compose\[stalwart-0.15\]* up -d mailway-mail' >"$E/fallar"
 migrar
 comprobar "termina con 2" igual "$CODIGO" 2
@@ -815,6 +881,108 @@ comprobar "lo dice" contiene "$SALIDA" "la vuelta a la 0.15 tampoco del todo"
 comprobar "con los pasos a mano" contiene "$SALIDA" "sudo bash deploy/instalar.sh --actualizar"
 comprobar "deploy/.env como estaba" env_intacto
 comprobar "no se borra ningún volumen" sin_borrar_volumenes
+
+echo "# El DNS público, el PTR y el puerto 25 mal no deshacen la migración: no dependen del motor"
+preparar_migracion
+FAKE_DNS=1
+FAKE_PTR=vps-1.proveedor.test
+FAKE_P25=0
+migrar
+comprobar "termina bien" igual "$CODIGO" 0
+comprobar "se queda con la 0.16" igual "$(valor_env MAILWAY_MOTOR)" stalwart-0.16
+comprobar "el motor sigue en la 0.16" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.16.25"
+comprobar "la comprobación final las da por avisos" contiene "$REGISTRO" "comprobar_instalacion TOLERAR_CERTIFICADO=0 INTERNET_SOLO_AVISOS=1"
+comprobar "dice el DNS que no apunta aquí" contiene "$SALIDA" "mail.ejemplo.test apunta a 198.51.100.1, no a 203.0.113.7"
+comprobar "el PTR" contiene "$SALIDA" "DNS inverso (PTR) INCORRECTO: 203.0.113.7 → vps-1.proveedor.test"
+comprobar "y el puerto 25" contiene "$SALIDA" "El puerto 25 de salida parece bloqueado"
+comprobar "y que no impiden la migración" contiene "$SALIDA" "No impiden la migración"
+comprobar "el resultado lo dice sin «Todo correcto» a secas" contiene "$SALIDA" "5 avisos del DNS público, el PTR o el puerto 25"
+comprobar "sin vuelta atrás" no_contiene "$SALIDA" "Vuelta atrás"
+comprobar "y con las tareas de después" contiene "$REGISTRO" "motor.js tras-migrar"
+
+echo "# El webmail deja de llegar al panel con la 0.16: vuelta atrás (el panel sí cuenta al final)"
+preparar_migracion
+touch "$E/panel-cae-con-016"
+migrar
+comprobar "termina con 1" igual "$CODIGO" 1
+comprobar "antes de empezar llegaba" contiene "$SALIDA" "El webmail llega al panel (http://skyway-mailway-panel:4100)"
+comprobar "la comprobación final dice qué falla" contiene "$SALIDA" "El webmail no llega al panel en http://skyway-mailway-panel:4100"
+comprobar "y vuelve atrás" en_orden "$REGISTRO" "comprobar_instalacion" "docker compose[stalwart-0.15] --env-file"
+comprobar "a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
+comprobar "deploy/.env como estaba" env_intacto
+
+# Lo que la comprobación final exige y no depende del motor se mira antes de
+# empezar: si ya falla, no se migra (pararía el correo para volver atrás).
+# $1: lo que dice el aviso.
+no_empieza() {
+  migrar
+  comprobar "se niega" igual "$CODIGO" 1
+  comprobar "dice qué falla" contiene "$SALIDA" "$1"
+  comprobar "qué hacer y que no se ha cambiado nada" contiene "$SALIDA" "Antes de migrar, arregla lo de arriba: la comprobación final lo exige y no depende del motor"
+  comprobar "sin entrar en mantenimiento" no_contiene "$REGISTRO" "motor.js mantenimiento on"
+  comprobar "sin copiar contraseñas" no_contiene "$REGISTRO" "motor.js capturar"
+  comprobar "sin parar nada" no_contiene "$REGISTRO" "docker stop"
+  comprobar "sin descargar nada" no_contiene "$REGISTRO" "descarga "
+  comprobar "deploy/.env intacto" env_intacto
+}
+
+echo "# El webmail no llega al panel antes de migrar: no empieza"
+preparar_migracion
+echo 'exec mailway-webmail curl *' >"$E/fallar"
+no_empieza "El webmail no llega al panel en http://skyway-mailway-panel:4100"
+
+echo "# El webmail no está en marcha antes de migrar: no empieza (no se puede comprobar el panel)"
+preparar_migracion
+grep -vx mailway-webmail "$E/en_marcha" >"$E/en_marcha.n" && mv "$E/en_marcha.n" "$E/en_marcha"
+no_empieza "El webmail (mailway-webmail) no está en marcha y sano: no se puede comprobar que llega al panel"
+
+echo "# deploy/.env no indica el contenedor del panel (panel pendiente): no empieza"
+preparar_migracion
+escribir_env_prueba "MAILWAY_PANEL_INTERNAL_URL='http://panel-pendiente.invalid:4100'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "deploy/.env no indica el contenedor del panel (MAILWAY_PANEL_INTERNAL_URL)"
+
+echo "# El Traefik de Skyway no lee las rutas de Mailway: no empieza"
+preparar_migracion
+echo '["--entrypoints.web.address=:80"]' >"$E/traefik"
+no_empieza "El Traefik de Skyway no lee las rutas de Mailway"
+
+echo "# El panel aún no ha adoptado la identidad nueva del servidor: no empieza"
+preparar_migracion
+escribir_env_prueba "MAILWAY_ADOPCION_PENDIENTE='servidor'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "El panel aún no ha adoptado los nombres o la IP nuevos de deploy/.env (MAILWAY_ADOPCION_PENDIENTE)"
+
+echo "# Con varias cosas mal, las dice todas de una vez"
+preparar_migracion
+echo '["--entrypoints.web.address=:80"]' >"$E/traefik"
+escribir_env_prueba "MAILWAY_ADOPCION_PENDIENTE='servidor'"
+cp -p "$ENV_FILE" "$TMP/env-original"
+no_empieza "El Traefik de Skyway no lee las rutas de Mailway"
+comprobar "también la identidad" contiene "$SALIDA" "MAILWAY_ADOPCION_PENDIENTE"
+
+echo "# Las órdenes del motor leen de deploy/.env lo mismo que --comprobar para la comprobación final"
+datos() { # <función que carga los datos>
+  "$1" && echo "MOTOR=$MOTOR SKYWAY=$CON_SKYWAY PANEL=$PANEL_INTERNAL_URL WEBMAIL=$WEBMAIL_HOSTNAME PANELH=$PANEL_HOSTNAME IP=$IP_PUBLICA RED=$INTERNAL_SUBNET CLAVE=$STALWART_ADMIN_PASSWORD"
+}
+reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data
+escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'"
+JUNTO_A_SKYWAY="MOTOR=stalwart-0.16 SKYWAY=1 PANEL=http://skyway-mailway-panel:4100 WEBMAIL=webmail.ejemplo.test PANELH=panel.ejemplo.test IP=203.0.113.7 RED=10.203.53.0/24 CLAVE=$CLAVE_MOTOR"
+ejecutar como_orden datos cargar_instalacion_motor
+comprobar "junto a Skyway, las órdenes del motor" contiene "$SALIDA" "$JUNTO_A_SKYWAY"
+ejecutar como_orden datos preparar_diagnostico
+comprobar "y --comprobar, lo mismo" contiene "$SALIDA" "$JUNTO_A_SKYWAY"
+ejecutar como_orden eval 'export STALWART_ADMIN_PASSWORD=del-entorno && datos preparar_diagnostico'
+comprobar "--comprobar sigue tomando la contraseña del entorno si la hay" contiene "$SALIDA" "CLAVE=del-entorno"
+{
+  echo "MAILWAY_INSTALACION='autonoma'"
+  echo "MAIL_HOSTNAME='mail.ejemplo.test'"
+  echo "STALWART_ADMIN_PASSWORD='$CLAVE_MOTOR'"
+  echo "MAILWAY_MOTOR='stalwart-0.16'"
+} >"$ENV_FILE"
+ejecutar como_orden datos cargar_instalacion_motor
+comprobar "autónoma y sin nada más en deploy/.env: el panel de siempre y el resto vacío, sin cortarse" \
+  contiene "$SALIDA" "MOTOR=stalwart-0.16 SKYWAY=0 PANEL=http://mailway-panel:4100 WEBMAIL= PANELH= IP= RED=10.203.53.0/24"
 
 echo "# Sin un certificado válido en la 0.15 tampoco se le exige a la 0.16"
 preparar_migracion
@@ -838,12 +1006,14 @@ comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/s
 preparar_revertir() {
   reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-mail-data mailway-stalwart-etc-20261001-101010 \
     mailway-stalwart-data-20261001-101010 skyway_traefik-letsencrypt
-  marcha mailway-mail mailway-webmail mailway-certs-dumper skyway-mailway-panel
+  marcha mailway-mail mailway-webmail mailway-certs-dumper skyway-mailway-panel skyway-traefik
   touch "$E/herramienta"
   escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_STALWART_ETC_VOLUME='mailway-stalwart-etc-20261001-101010'" \
     "MAILWAY_STALWART_DATA_VOLUME='mailway-stalwart-data-20261001-101010'" "MAILWAY_MOTOR_MIGRADO='2026-10-01T10:10:10Z'"
   rm -rf "$MIGRACIONES"
-  FAKE_COMPROBAR=0
+  FAKE_DNS=0
+  FAKE_PTR=mail.ejemplo.test
+  FAKE_P25=1
   printf '%s\n' '{"ok":true,"activo":true,"hasta":1760000000000}' >"$E/panel/mantenimiento-on"
   printf '%s\n' '{"ok":true,"activo":false,"hasta":null}' >"$E/panel/mantenimiento-off"
   printf '%s\n' "$PROVISION_OK" >"$E/panel/provisionar"
@@ -852,7 +1022,7 @@ preparar_revertir() {
 
 echo "# --revertir-motor: la 0.15 sobre su volumen, con el panel al día"
 preparar_revertir
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "pasos en orden" en_orden "$REGISTRO" "motor.js mantenimiento on --minutos 60" "docker stop -t 120 mailway-mail" \
   "docker compose[stalwart-0.15] --env-file" "motor.js provisionar" "motor.js tras-migrar" "motor.js mantenimiento off" \
@@ -864,25 +1034,29 @@ comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/s
 comprobar "no se borra ningún volumen" sin_borrar_volumenes
 comprobar "avisa del correo que se queda en la 0.16" contiene "$SALIDA" "se queda en el volumen de la 0.16 (mailway-stalwart-data-20261001-101010)"
 comprobar "dice cuántas contraseñas de aplicación de la 0.15 vuelven a valer" contiene "$SALIDA" "de la 0.15 que vuelven a valer: 4"
+comprobar "la comprobación del final (la de --comprobar) pasa entera" contiene "$SALIDA" "Todo correcto. Quedan fuera"
+comprobar "sin ninguna variable sin leer de deploy/.env" no_contiene "$SALIDA" "unbound variable"
+comprobar "con el DNS, el PTR y el puerto 25 como en --comprobar" contiene "$REGISTRO" "comprobar_instalacion TOLERAR_CERTIFICADO=0 INTERNET_SOLO_AVISOS=0"
+comprobar "y termina con el registro" contiene "$SALIDA" "Registro: $MIGRACIONES/revertir-motor-"
 
 echo "# --revertir-motor sin migración previa, en la 0.15 o sin el volumen de la 0.15: se niega"
 preparar_revertir
 escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'"
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "instalación nueva con la 0.16: se niega" igual "$CODIGO" 1
 comprobar "y lo explica" contiene "$SALIDA" "empezó con Stalwart 0.16"
 preparar_revertir
 escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.15'"
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "con la 0.15: se niega" igual "$CODIGO" 1
 preparar_revertir
 reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data-20261001-101010
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "sin el volumen de la 0.15: se niega" igual "$CODIGO" 1
 comprobar "y lo explica" contiene "$SALIDA" "se retiró y no se puede volver a ella"
 preparar_revertir
 SIN_CONFIRMAR=0
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 SIN_CONFIRMAR=1
 comprobar "sin terminal y sin -y: se niega" igual "$CODIGO" 1
 comprobar "sin parar nada" no_contiene "$REGISTRO" "docker stop"
@@ -890,7 +1064,7 @@ comprobar "sin parar nada" no_contiene "$REGISTRO" "docker stop"
 echo "# --revertir-motor y la 0.15 no arranca: lo dice y deja cómo seguir con la 0.16"
 preparar_revertir
 echo '*compose\[stalwart-0.15\]* up -d mailway-mail' >"$E/fallar"
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "falla" igual "$CODIGO" 1
 comprobar "explica cómo seguir con la 0.16" contiene "$SALIDA" "MAILWAY_MOTOR=stalwart-0.16 en $ENV_FILE"
 comprobar "conserva la marca de la migración" igual "$(valor_env MAILWAY_MOTOR_MIGRADO)" "2026-10-01T10:10:10Z"
@@ -910,17 +1084,17 @@ preparar_retirar() {
 
 echo "# --retirar-motor-anterior -y sin decir el volumen, o con otro nombre: no borra nada"
 preparar_retirar
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "sin MAILWAY_RETIRAR_VOLUMEN: se niega" igual "$CODIGO" 1
 comprobar "y dice cuál poner" contiene "$SALIDA" "MAILWAY_RETIRAR_VOLUMEN=mailway-mail-data"
 MAILWAY_RETIRAR_VOLUMEN=mailway-stalwart-data-20261001-101010
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "con otro nombre: se niega" igual "$CODIGO" 1
 comprobar "no borra nada" sin_borrar_volumenes
 
 echo "# --retirar-motor-anterior con el nombre: solo el volumen de la 0.15"
 MAILWAY_RETIRAR_VOLUMEN=mailway-mail-data
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "borra el volumen de la 0.15" sin_volumen mailway-mail-data
 comprobar "y nada más" igual "$(grep -c 'docker volume rm' "$REGISTRO")" 1
@@ -928,14 +1102,14 @@ comprobar "los de la 0.16 siguen" volumen mailway-stalwart-data-20261001-101010
 comprobar "quita MAILWAY_MAIL_VOLUME de deploy/.env" igual "$(valor_env MAILWAY_MAIL_VOLUME)" ""
 comprobar "dice los de un intento anterior, sin borrarlos" contiene "$SALIDA" "mailway-stalwart-etc-20260930-090909 mailway-stalwart-data-20260930-090909"
 comprobar "que siguen ahí" volumen mailway-stalwart-data-20260930-090909
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "repetirlo no hace nada" igual "$CODIGO" 0
 comprobar "y lo dice" contiene "$SALIDA" "No queda ningún volumen de la 0.15"
 
 echo "# --retirar-motor-anterior con un contenedor que usa el volumen: no lo borra"
 preparar_retirar
 echo "mailway-mail-viejo" >"$E/usado"
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "se niega" igual "$CODIGO" 1
 comprobar "dice qué contenedor" contiene "$SALIDA" "mailway-mail-viejo"
 comprobar "no borra nada" sin_borrar_volumenes
@@ -945,10 +1119,10 @@ echo "# --retirar-motor-anterior en la terminal: hay que escribir el nombre"
 preparar_retirar
 SIN_CONFIRMAR=0
 INTERACTIVO=1
-ejecutar retirar_motor_anterior <<<"mailway-mail"
+ejecutar como_orden retirar_motor_anterior <<<"mailway-mail"
 comprobar "otro nombre: se niega" igual "$CODIGO" 1
 comprobar "no borra nada" sin_borrar_volumenes
-ejecutar retirar_motor_anterior <<<"mailway-mail-data"
+ejecutar como_orden retirar_motor_anterior <<<"mailway-mail-data"
 comprobar "el nombre exacto: lo borra" sin_volumen mailway-mail-data
 INTERACTIVO=0
 SIN_CONFIRMAR=1
@@ -957,7 +1131,7 @@ unset MAILWAY_RETIRAR_VOLUMEN
 echo "# --retirar-motor-anterior con la 0.15 en uso: se niega"
 preparar_retirar
 escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.15'"
-ejecutar retirar_motor_anterior
+ejecutar como_orden retirar_motor_anterior
 comprobar "se niega" igual "$CODIGO" 1
 comprobar "no borra nada" sin_borrar_volumenes
 
@@ -1070,7 +1244,7 @@ escribir_env_prueba "MAILWAY_MOTOR='stalwart-0.16'" "MAILWAY_STALWART_ETC_VOLUME
   "MAILWAY_STALWART_DATA_VOLUME='mailway-stalwart-data-20261001-101010'" "MAILWAY_MOTOR_MIGRADO='2026-10-01T10:10:10Z'" \
   "MAILWAY_BULWARK='1'" "BULWARK_SESSION_SECRET='$(printf 's%.0s' {1..40})'" "BULWARK_ADMIN_PASSWORD='admin-de-bulwark'" \
   "MAILWAY_BULWARK_URL='http://mailway-bulwark:3000'" "MAILWAY_BULWARK_BACKEND_URL='http://mailway-bulwark-gw:8080'"
-ejecutar revertir_motor
+ejecutar como_orden revertir_motor
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "MAILWAY_BULWARK=0" igual "$(valor_env MAILWAY_BULWARK)" 0
 comprobar "sin las variables del panel" igual "$(valor_env MAILWAY_BULWARK_URL)$(valor_env MAILWAY_BULWARK_BACKEND_URL)" ""
