@@ -34,12 +34,17 @@ un Traefik de Skyway simulado del que solo se usa su volumen de certificados
                           con DKIM, buzones con su contraseña, uno suspendido,
                           un alias con un destino externo y un correo
                           entregado) pasa a la 0.16 con
-                          «instalar.sh --migrar-motor -y»: primero un intento
+                          «instalar.sh --migrar-motor -y»: primero uno que no
+                          empieza (la identidad pendiente en el panel, que la
+                          comprobación final exige), después un intento
                           que falla a propósito (vuelve solo a la 0.15 sin
                           perder nada), después la migración (el mismo correo
                           se lee por IMAP con la misma contraseña; alias,
                           firmas DKIM y suspensión intactos), --revertir-motor,
-                          otra migración y --retirar-motor-anterior.
+                          otra migración y --retirar-motor-anterior. La
+                          migración y --revertir-motor terminan con la
+                          comprobación completa de --comprobar (el panel y el
+                          Traefik simulados responden como los de verdad).
 
 Con los dos motores, además, Traefik (proveedor Docker, con las etiquetas de
 verdad) llega al motor por su pasarela (mailway-mail-gw): el servicio de
@@ -113,6 +118,26 @@ SEGUNDO = f'eva@{DOMINIO_2}'
 SUSPENDIDO = f'suspendido@{DOMINIO}'
 ALIAS = f'ventas@{DOMINIO}'
 EXTERNO = 'fuera@ejemplo.org'
+# --comprobar, solo en el motor, el webmail y el extractor: sus comprobaciones
+# desde Internet (el DNS público de nombres .test, el PTR de una IP de
+# documentación y el puerto 25 de salida del ejecutor) no pueden pasar aquí y
+# cuentan como incidencias. La migración y --revertir-motor, en cambio, hacen
+# su comprobación completa (en la final de la migración, esas tres solo
+# avisan: no dependen del motor), con el panel y el Traefik simulados
+# respondiendo como los de verdad. Así se prueba que esas órdenes leen de
+# deploy/.env todo lo que la comprobación necesita: cuando no lo hacían, con
+# esta variable aquí nadie lo vio.
+COMPROBAR_SOLO_MOTOR = {'MAILWAY_COMPROBAR_SOLO_MOTOR': '1'}
+# Panel simulado: responde en /api/health como el de verdad (el webmail lo
+# llama por dentro) y tiene su comprobación de salud (la del Dockerfile).
+SERVIDOR_PANEL = ("require('node:http').createServer((p, r) => { const ok = p.url === '/api/health'; "
+                  "r.writeHead(ok ? 200 : 404, {'content-type': 'application/json'}); "
+                  "r.end(ok ? JSON.stringify({ok: true, name: 'mailway', version: 'prueba'}) : '{}'); }).listen(4100);")
+SALUD_PANEL = ('node -e "fetch(\'http://127.0.0.1:4100/api/health\')'
+               '.then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"')
+# Traefik simulado: los parámetros del de Skyway 0.34, que lee las rutas de
+# Mailway a través de Skyway (lo que mira --comprobar).
+ARGUMENTOS_TRAEFIK = ('traefik', '--providers.http.endpoint=http://skyway:4000/api/traefik/mailway')
 
 DIRECCION = os.environ.get('MAILWAY_PRUEBA_DIRECCION', '127.0.0.1')
 PANEL_REAL = os.environ.get('MAILWAY_PRUEBA_PANEL_IMAGEN', '')
@@ -325,12 +350,11 @@ class Pila:
         # laboratorio y deja su carpeta de trabajo con la prueba. La IP de
         # deploy/.env es de documentación (192.0.2.10): sin MAILWAY_IP, el
         # instalador la compararía con la de salida del ejecutor y, sin
-        # terminal, se detendría. --comprobar se limita al motor, el webmail
-        # y el extractor: aquí no hay Traefik de verdad ni DNS público.
+        # terminal, se detendría.
         self.entorno.update({'MAILWAY_ENV_FILE': str(self.env), 'MAILWAY_COMPOSE_EXTRA': str(self.extra),
                              'MAILWAY_ESPERA_DNS': '0', 'MAILWAY_TRAEFIK_PROVEEDOR': '0',
                              'MAILWAY_TLS_CA_FILE': str(ca), 'MAILWAY_MIGRACION_DIR': str(self.migraciones),
-                             'MAILWAY_IP': valores['MAILWAY_PUBLIC_IP'], 'MAILWAY_COMPROBAR_SOLO_MOTOR': '1'})
+                             'MAILWAY_IP': valores['MAILWAY_PUBLIC_IP']})
 
     # -- preparación
 
@@ -346,7 +370,7 @@ class Pila:
         docker('volume', 'create', VOLUMEN_ACME)
         self.escribir_acme((self.otro, [OTRO]), (self.primero, [MAIL]))
         docker('run', '-d', '--name', 'skyway-traefik', '--network', 'skyway-edge',
-               '-v', f'{VOLUMEN_ACME}:/letsencrypt', IMAGEN_AUX, 'sleep', '86400')
+               '-v', f'{VOLUMEN_ACME}:/letsencrypt', IMAGEN_AUX, 'sh', '-c', 'exec sleep 86400', *ARGUMENTOS_TRAEFIK)
         if volcado_antiguo:
             # Lo que dejaba traefik-certs-dumper en el volumen del motor: una
             # carpeta por dominio de Traefik, con su clave privada.
@@ -387,8 +411,9 @@ class Pila:
                '-e', 'STALWART_URL=http://mailway-mail:8080', '-e', 'STALWART_ADMIN_PASSWORD',
                '-e', f'MAILWAY_MAIL_HOSTNAME={MAIL}', '-e', f'MAILWAY_ENGINE_TRUSTED_NETWORK={SUBRED}',
                '-e', 'MAILWAY_PRUEBA_ESTADO=/app/datos/estado.json',
+               '--health-cmd', SALUD_PANEL, '--health-interval', '5s', '--health-start-period', '10s',
                '-v', f'{DEPLOY / "prueba-panel-motor.js"}:/app/server/dist/tools/motor.js:ro',
-               '-v', f'{self.estado_panel.parent}:/app/datos', IMAGEN_NODE, 'sleep', '86400',
+               '-v', f'{self.estado_panel.parent}:/app/datos', IMAGEN_NODE, 'node', '-e', SERVIDOR_PANEL,
                entorno={'STALWART_ADMIN_PASSWORD': self.clave_admin})
         registrar('OK: panel simulado en marcha (herramienta del motor de prueba).')
 
@@ -631,7 +656,7 @@ class Pila:
         registrar('OK: autenticación SMTP en 465 (TLS) y 587 (STARTTLS), sin enviar correo.')
 
     def comprobar_instalador(self) -> None:
-        self.instalador('--comprobar')
+        self.instalador('--comprobar', entorno=COMPROBAR_SOLO_MOTOR)
         registrar('== deploy/instalar.sh --probar-acceso')
         resultado = subprocess.run(['bash', str(DEPLOY / 'instalar.sh'), '--probar-acceso'],
                                    input=f'{BUZON}\n{self.clave_buzon}\n', text=True, capture_output=True,
@@ -952,7 +977,7 @@ print(json.dumps({
         registrar('OK: el panel sube una imagen de marca a Bulwark (volumen de administración escribible) y la '
                   'pasarela la sirve con GET y HEAD, sin dejar borrarla ni sustituirla.')
 
-        salida = self.instalador('--comprobar')
+        salida = self.instalador('--comprobar', entorno=COMPROBAR_SOLO_MOTOR)
         for texto in ('Bulwark responde a través de su pasarela', 'Bulwark verifica el certificado de',
                       'El motor sirve HTTPS en su 443 interno'):
             assert texto in salida, f'--comprobar no dice «{texto}»'
@@ -1109,6 +1134,20 @@ print(json.dumps({
         estado = json.loads(r.stdout.strip().splitlines()[-1])
         assert estado['mantenimiento']['activo'] is False, f'el panel sigue en mantenimiento: {estado}'
 
+    def migrar_sin_requisitos(self) -> None:
+        """Lo que la comprobación final exige sin depender del motor se mira antes: si falla, no empieza."""
+        antes = self.env.read_bytes()
+        self.env.write_bytes(antes + b"MAILWAY_ADOPCION_PENDIENTE='servidor'\n")
+        salida = self.instalador('--migrar-motor', '-y', codigo=1)
+        for texto in ('MAILWAY_ADOPCION_PENDIENTE', 'Antes de migrar, arregla lo de arriba', 'No se ha cambiado nada'):
+            assert texto in salida, f'la migración que no empieza no dice «{texto}»'
+        assert 'Vuelta atrás' not in salida, 'ha llegado a cambiar algo'
+        assert 'stalwart:v0.15' in self.motor_sano(), 'el motor ya no es la 0.15'
+        self.sin_mantenimiento()
+        self.env.write_bytes(antes)
+        registrar('OK: con algo que la comprobación final exige y no depende del motor (la identidad pendiente en '
+                  'el panel), la migración no empieza y no cambia nada.')
+
     def migrar_con_fallo(self) -> None:
         antes = self.env.read_bytes()
         self.guardar_estado_panel({**self.leer_estado_panel(), 'fallar': {'provisionar': True}})
@@ -1125,8 +1164,16 @@ print(json.dumps({
         self.guardar_estado_panel(estado)
         registrar('OK: la migración que falla vuelve sola a la 0.15 sin cambiar deploy/.env ni perder datos.')
 
+    def comprobacion_completa(self, salida: str, que: str) -> None:
+        """La comprobación de --comprobar entera: también el panel, Traefik y lo de Internet."""
+        assert 'unbound variable' not in salida, f'a {que} le falta una variable de deploy/.env'
+        for texto in (f'{PANEL}: en marcha y sano', 'El webmail llega al panel', 'Traefik lee las rutas de Mailway',
+                      '== DNS público, PTR y puerto 25 de salida =='):
+            assert texto in salida, f'{que} no dice «{texto}»'
+
     def migrar(self) -> None:
-        self.instalador('--migrar-motor', '-y')
+        salida = self.instalador('--migrar-motor', '-y')
+        self.comprobacion_completa(salida, 'la comprobación final de la migración')
         assert 'stalwart:v0.16' in self.motor_sano(), 'el motor no es la 0.16'
         env = self.leer_env()
         assert env.get('MAILWAY_MOTOR') == MOTOR_016, env.get('MAILWAY_MOTOR')
@@ -1146,7 +1193,8 @@ print(json.dumps({
                   'de antes.')
 
     def revertir(self) -> None:
-        self.instalador('--revertir-motor', '-y')
+        salida = self.instalador('--revertir-motor', '-y')
+        self.comprobacion_completa(salida, 'la comprobación de --revertir-motor')
         assert 'stalwart:v0.15' in self.motor_sano(), 'el motor no ha vuelto a la 0.15'
         env = self.leer_env()
         assert env.get('MAILWAY_MOTOR') == MOTOR_015 and not env.get('MAILWAY_MOTOR_MIGRADO'), env
@@ -1299,6 +1347,7 @@ def prueba_migracion(pila: Pila) -> None:
     pila.sembrar_015()
     pila.entregar()
     pila.comprobar_datos('con la 0.15')
+    pila.migrar_sin_requisitos()
     if PANEL_REAL:
         registrar('(Con el panel de verdad no se provoca el fallo: la vuelta atrás se prueba con el simulado.)')
     else:

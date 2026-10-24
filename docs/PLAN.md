@@ -400,7 +400,10 @@ Detalle en [SEGURIDAD.md](SEGURIDAD.md).
     públicos** para los ajustes del panel (también las suspensiones, que el
     script no conserva), el certificado y la comparación con el volcado; y
     solo entonces el motor definitivo. Cualquier fallo antes de su
-    comprobación vuelve a la 0.15 sola. El volumen de la 0.15 nunca se
+    comprobación (la de `--comprobar`) vuelve a la 0.15 sola; en ella, el DNS
+    público, el PTR y el puerto 25 de salida solo avisan: no dependen del
+    motor, y volver atrás por ellos pararía otra vez el correo sin arreglar
+    nada. El volumen de la 0.15 nunca se
     escribe: es la copia de seguridad, la vuelta atrás (`--revertir-motor`)
     y solo se borra con una orden aparte que pide su nombre
     (`--retirar-motor-anterior`). Una migración nueva nunca reutiliza los
