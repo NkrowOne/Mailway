@@ -16,6 +16,7 @@ import {
 import { HojaServidorCorreo } from '../../components/HojaServidorCorreo';
 import { nombreMotor, type EngineApi } from '../../lib/motor';
 import { HojaWebmailAutomaticoGeneral } from '../../components/WebmailAutomatico';
+import { HojaCorreoWebGeneral } from '../../components/CorreoWebGeneral';
 import { DialogoCambioNombre } from '../../components/CambioNombreServidor';
 import { Button } from '../../ui/Button';
 import { Input, Select } from '../../ui/Field';
@@ -107,6 +108,7 @@ export default function Ajustes() {
         </div>
         <HojaAutoconfiguracion />
         <HojaWebmailAutomaticoGeneral />
+        <HojaCorreoWebGeneral />
         <HojaTraefik />
       </div>
     </>

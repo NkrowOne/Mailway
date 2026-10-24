@@ -1,16 +1,22 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import {
+  DESCRIPCION_MOTOR,
   HUECOS_IMAGEN,
   IMAGENES,
   MAX_IMAGEN_BYTES,
   NOMBRE_MOTOR,
+  RUTA_AJUSTES_CORREO_WEB,
   SE_GANA,
   SE_PIERDE,
   TIPOS_IMAGEN,
+  esColor,
+  esHttps,
   motivoSinBulwark,
   motivoSinServicio,
+  normalizarColor,
   resumenImagen,
   type EstadoCorreoWeb,
   type HuecoImagen,
@@ -21,7 +27,7 @@ import {
 import { formatDate } from '../lib/format';
 import { mensajeDe } from '../lib/gestion';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Field';
+import { Input, InputColor } from '../ui/Field';
 import { AvisoError, Cargando, Dialogo, Hoja, MarcaFondo } from '../ui/kit';
 import { useToast } from '../ui/toast';
 import { BandaAviso, Botonera } from './gestion/comun';
@@ -121,18 +127,9 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
     setConfirmar(motor);
   }
 
-  const opciones: { motor: MotorCorreoWeb; descripcion: string; bloqueo: string | null }[] = [
-    {
-      motor: 'roundcube',
-      descripcion: 'El correo web de siempre, en español, con cambio de contraseña, filtros y aviso de ausencia.',
-      bloqueo: null,
-    },
-    {
-      motor: 'bulwark',
-      descripcion:
-        'Interfaz actual con calendario y contactos, aplicación instalable y la marca del cliente. Necesita Stalwart 0.16.',
-      bloqueo: estado.motor === 'bulwark' ? null : sinBulwark,
-    },
+  const opciones: { motor: MotorCorreoWeb; bloqueo: string | null }[] = [
+    { motor: 'roundcube', bloqueo: null },
+    { motor: 'bulwark', bloqueo: estado.motor === 'bulwark' ? null : sinBulwark },
   ];
 
   return (
@@ -158,7 +155,7 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
                   {NOMBRE_MOTOR[opcion.motor]}
                   {opcion.motor === 'roundcube' && <span className="font-normal text-tinta-3"> · predeterminado</span>}
                 </p>
-                <p className="text-sm text-tinta-2">{opcion.descripcion}</p>
+                <p className="text-sm text-tinta-2">{DESCRIPCION_MOTOR[opcion.motor]}</p>
                 {!elegida && opcion.bloqueo && <p className="mt-1 text-sm text-tinta-3">{opcion.bloqueo}</p>}
               </div>
               <div className="shrink-0">
@@ -193,6 +190,14 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
           {enServicio.length === 0
             ? 'El cliente aún no tiene ningún webmail propio en servicio: lo elegido se aplicará cuando lo tenga. La dirección general del webmail sigue siendo Roundcube.'
             : `Se aplica a ${enServicio.map((w) => w.hostname).join(', ')}. La dirección general del webmail sigue siendo Roundcube.`}
+        </p>
+        <p className="max-w-[75ch] text-sm text-tinta-3">
+          El correo web de los clientes nuevos y las funciones del nuevo, iguales para todos los clientes, se
+          eligen en{' '}
+          <Link to={RUTA_AJUSTES_CORREO_WEB} className="text-petroleo underline underline-offset-2 hover:text-tinta">
+            «Correo web nuevo» de Ajustes
+          </Link>
+          .
         </p>
       </div>
 
@@ -242,7 +247,7 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
   );
 }
 
-function ListaCambios({ titulo, elementos }: { titulo: string; elementos: string[] }) {
+export function ListaCambios({ titulo, elementos }: { titulo: string; elementos: string[] }) {
   return (
     <div className="min-w-0">
       <p className="rotulo">{titulo}</p>
@@ -257,7 +262,10 @@ function ListaCambios({ titulo, elementos }: { titulo: string; elementos: string
 
 /* --------------------------------- Marca ---------------------------------- */
 
-type CamposMarca = Pick<MarcaCorreoWeb, 'nombre' | 'nombreCorto' | 'empresa' | 'privacidadUrl' | 'avisoLegalUrl'>;
+type CamposMarca = Pick<
+  MarcaCorreoWeb,
+  'nombre' | 'nombreCorto' | 'empresa' | 'privacidadUrl' | 'avisoLegalUrl' | 'colorTema' | 'colorFondo'
+>;
 
 function camposDe(marca: MarcaCorreoWeb): CamposMarca {
   return {
@@ -266,16 +274,9 @@ function camposDe(marca: MarcaCorreoWeb): CamposMarca {
     empresa: marca.empresa,
     privacidadUrl: marca.privacidadUrl,
     avisoLegalUrl: marca.avisoLegalUrl,
+    colorTema: marca.colorTema,
+    colorFondo: marca.colorFondo,
   };
-}
-
-function esHttps(valor: string): boolean {
-  try {
-    const url = new URL(valor);
-    return url.protocol === 'https:' && !url.username && !url.password;
-  } catch {
-    return false;
-  }
 }
 
 function HojaMarca({ clientId, estado, isAdmin }: { clientId: string; estado: EstadoCorreoWeb; isAdmin: boolean }) {
@@ -345,7 +346,7 @@ function FormularioMarca({ clientId, marca }: { clientId: string; marca: MarcaCo
   const [error, setError] = useState('');
 
   const guardar = useMutation({
-    mutationFn: () => api.patch<{ marca: MarcaCorreoWeb }>(`${urlCorreoWeb(clientId)}/marca`, campos),
+    mutationFn: (datos: CamposMarca) => api.patch<{ marca: MarcaCorreoWeb }>(`${urlCorreoWeb(clientId)}/marca`, datos),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: claveConsulta(clientId) });
       toast('ok', 'Marca guardada. El correo web la muestra en unos segundos.');
@@ -370,8 +371,20 @@ function FormularioMarca({ clientId, marca }: { clientId: string; marca: MarcaCo
         return;
       }
     }
+    const colorTema = normalizarColor(campos.colorTema);
+    const colorFondo = normalizarColor(campos.colorFondo);
+    for (const [valor, texto] of [
+      [colorTema, 'El color de la aplicación'],
+      [colorFondo, 'El color de fondo'],
+    ] as const) {
+      if (!esColor(valor)) {
+        setError(`${texto} debe ser un color como #0d5c5e, o quedar vacío.`);
+        return;
+      }
+    }
     setError('');
-    guardar.mutate();
+    setCampos((c) => ({ ...c, colorTema, colorFondo }));
+    guardar.mutate({ ...campos, colorTema, colorFondo });
   }
 
   const sinCambios = JSON.stringify(campos) === JSON.stringify(camposDe(marca));
@@ -393,6 +406,20 @@ function FormularioMarca({ clientId, marca }: { clientId: string; marca: MarcaCo
           value={campos.nombreCorto}
           onChange={(e) => cambiar('nombreCorto', e.target.value)}
           help="Opcional. El de la aplicación instalada en el móvil o el ordenador."
+        />
+        <InputColor
+          label="Color de la aplicación"
+          value={campos.colorTema}
+          placeholder="Predeterminado"
+          onChange={(valor) => cambiar('colorTema', valor)}
+          help="Opcional. El de la barra de título de la aplicación instalada y la barra superior en el móvil."
+        />
+        <InputColor
+          label="Color de fondo"
+          value={campos.colorFondo}
+          placeholder="Predeterminado"
+          onChange={(valor) => cambiar('colorFondo', valor)}
+          help="Opcional. El de la pantalla con el icono que se ve al abrir la aplicación instalada."
         />
         <Input
           label="Empresa"

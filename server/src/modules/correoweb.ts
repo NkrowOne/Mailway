@@ -31,6 +31,9 @@ import { applyRecommendedEngineSettings, trustedEngineNetworks } from './engineo
 import { exigirSinMantenimiento } from './mantenimiento';
 import { getInstanceSettings, getJsonSetting, setJsonSetting } from './settings';
 import {
+  ajustesCorreoWeb,
+  guardarAjustesCorreoWeb,
+  type AjustesCorreoWeb,
   bulwarkDisponible,
   bulwarkEnServicio,
   clientesConBulwarkEnServicio,
@@ -93,6 +96,10 @@ export interface MarcaCorreoWeb {
   empresa: string;
   privacidadUrl: string;
   avisoLegalUrl: string;
+  /** Color del tema de la aplicación instalada (#rgb o #rrggbb); vacío = el de Bulwark. */
+  colorTema: string;
+  /** Color de fondo al abrir la aplicación instalada; vacío = el de Bulwark. */
+  colorFondo: string;
   /** El nombre que se usa si `nombre` está vacío: el del cliente. */
   nombrePorDefecto: string;
   actualizada: number | null;
@@ -105,6 +112,8 @@ interface FilaMarca {
   empresa: string;
   privacidad_url: string;
   aviso_legal_url: string;
+  color_tema: string;
+  color_fondo: string;
   updated_at: number;
 }
 
@@ -152,7 +161,8 @@ export function leerMarca(clientId: string): MarcaCorreoWeb {
   const cliente = filaCliente(clientId);
   const fila = db
     .prepare(
-      'SELECT nombre, nombre_corto, empresa, privacidad_url, aviso_legal_url, updated_at FROM webmail_marca WHERE client_id = ?',
+      `SELECT nombre, nombre_corto, empresa, privacidad_url, aviso_legal_url, color_tema, color_fondo, updated_at
+       FROM webmail_marca WHERE client_id = ?`,
     )
     .get(clientId) as FilaMarca | undefined;
   const imagenes = Object.fromEntries(HUECOS_IMAGEN.map((h) => [h, null])) as Record<HuecoImagen, ImagenMarca | null>;
@@ -178,6 +188,8 @@ export function leerMarca(clientId: string): MarcaCorreoWeb {
     empresa: fila?.empresa ?? '',
     privacidadUrl: fila?.privacidad_url ?? '',
     avisoLegalUrl: fila?.aviso_legal_url ?? '',
+    colorTema: fila?.color_tema ?? '',
+    colorFondo: fila?.color_fondo ?? '',
     nombrePorDefecto: nombreDeCliente(cliente.name),
     actualizada: fila?.updated_at ?? null,
     imagenes,
@@ -210,12 +222,23 @@ function enlaceMarca(que: string) {
     .refine((v) => v === '' || esHttpsSinCredenciales(v), `${que} debe ser una dirección que empiece por https://, sin usuario ni contraseña.`);
 }
 
+/** El mismo formato que acepta Bulwark (bulwark.ts); se guarda en minúsculas. */
+function colorMarca(que: string) {
+  return z
+    .string({ invalid_type_error: `${que} debe ser un texto.` })
+    .trim()
+    .toLowerCase()
+    .refine((v) => v === '' || /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(v), `${que} debe ser un color como #0d5c5e.`);
+}
+
 const marcaSchema = z.object({
   nombre: textoMarca(MAX_NOMBRE, 'El nombre del correo web').optional(),
   nombreCorto: textoMarca(30, 'El nombre corto').optional(),
   empresa: textoMarca(80, 'La empresa').optional(),
   privacidadUrl: enlaceMarca('La política de privacidad').optional(),
   avisoLegalUrl: enlaceMarca('El aviso legal').optional(),
+  colorTema: colorMarca('El color de la aplicación').optional(),
+  colorFondo: colorMarca('El color de fondo').optional(),
 });
 
 const CAMPOS_MARCA: Record<keyof z.infer<typeof marcaSchema>, keyof FilaMarca> = {
@@ -224,6 +247,8 @@ const CAMPOS_MARCA: Record<keyof z.infer<typeof marcaSchema>, keyof FilaMarca> =
   empresa: 'empresa',
   privacidadUrl: 'privacidad_url',
   avisoLegalUrl: 'aviso_legal_url',
+  colorTema: 'color_tema',
+  colorFondo: 'color_fondo',
 };
 
 /** Guarda los campos indicados (los demás no cambian) y devuelve los que han cambiado. */
@@ -235,16 +260,30 @@ export function guardarMarca(clientId: string, cambios: z.infer<typeof marcaSche
     empresa: cambios.empresa ?? actual.empresa,
     privacidadUrl: cambios.privacidadUrl ?? actual.privacidadUrl,
     avisoLegalUrl: cambios.avisoLegalUrl ?? actual.avisoLegalUrl,
+    colorTema: cambios.colorTema ?? actual.colorTema,
+    colorFondo: cambios.colorFondo ?? actual.colorFondo,
   };
   const cambiados = (Object.keys(CAMPOS_MARCA) as (keyof typeof CAMPOS_MARCA)[]).filter((k) => nuevos[k] !== actual[k]);
   if (cambiados.length === 0) return [];
   db.prepare(
-    `INSERT INTO webmail_marca (client_id, nombre, nombre_corto, empresa, privacidad_url, aviso_legal_url, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO webmail_marca (client_id, nombre, nombre_corto, empresa, privacidad_url, aviso_legal_url,
+                               color_tema, color_fondo, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(client_id) DO UPDATE SET nombre = excluded.nombre, nombre_corto = excluded.nombre_corto,
        empresa = excluded.empresa, privacidad_url = excluded.privacidad_url,
-       aviso_legal_url = excluded.aviso_legal_url, updated_at = excluded.updated_at`,
-  ).run(clientId, nuevos.nombre, nuevos.nombreCorto, nuevos.empresa, nuevos.privacidadUrl, nuevos.avisoLegalUrl, now());
+       aviso_legal_url = excluded.aviso_legal_url, color_tema = excluded.color_tema,
+       color_fondo = excluded.color_fondo, updated_at = excluded.updated_at`,
+  ).run(
+    clientId,
+    nuevos.nombre,
+    nuevos.nombreCorto,
+    nuevos.empresa,
+    nuevos.privacidadUrl,
+    nuevos.avisoLegalUrl,
+    nuevos.colorTema,
+    nuevos.colorFondo,
+    now(),
+  );
   return cambiados;
 }
 
@@ -378,8 +417,13 @@ export interface EstadoDeseadoCorreoWeb {
  */
 export function calcularEstadoDeseado(conDatos = false): EstadoDeseadoCorreoWeb {
   const panelInstancia = getInstanceSettings().panelUrl.replace(/\/+$/, '');
+  const ajustes = ajustesCorreoWeb();
   const politica = politicaBulwark({
     miBuzonUrl: panelInstancia.startsWith('https://') ? `${panelInstancia}/mi-buzon` : undefined,
+    calendario: ajustes.calendario,
+    contactos: ajustes.contactos,
+    archivos: ajustes.archivos,
+    relePush: ajustes.relePush || undefined,
   });
   const clientes = clientesConBulwarkEnServicio();
   const marca: EntradaMarcaBulwark[] = [];
@@ -430,6 +474,8 @@ export function calcularEstadoDeseado(conDatos = false): EstadoDeseadoCorreoWeb 
           miBuzonUrl: miBuzonDelCliente(clientId, panelInstancia),
           privacidadUrl: datos.privacidadUrl || undefined,
           avisoLegalUrl: datos.avisoLegalUrl || undefined,
+          colorTema: datos.colorTema || undefined,
+          colorFondo: datos.colorFondo || undefined,
         };
         // Se valida por cliente: un dato que Bulwark descartaría deja a ese
         // cliente con la marca de la instancia, no a todos sin la suya.
@@ -864,6 +910,20 @@ async function corsAbierto(motor: MailEngine): Promise<boolean> {
 async function elegirBulwark(
   clientId: string,
 ): Promise<{ hostname: string; errors: number; restartRequired: number } | null> {
+  const aplicados = await prepararMotorParaBulwark('El cliente sigue con Roundcube.');
+  db.prepare(`UPDATE clients SET webmail_motor = 'bulwark' WHERE id = ?`).run(clientId);
+  return aplicados;
+}
+
+/**
+ * Lo que hace falta antes de mandar a alguien al correo web nuevo: Bulwark
+ * disponible, Stalwart 0.16 y el CORS del motor abierto (se abre si hace
+ * falta). Devuelve los ajustes aplicados, o null si ya estaba listo. Se llama
+ * dentro de CERROJO_CORS. `siFalla` completa el error del CORS.
+ */
+async function prepararMotorParaBulwark(
+  siFalla: string,
+): Promise<{ hostname: string; errors: number; restartRequired: number } | null> {
   const estado = estadoBulwark();
   if (!estado.disponible) throw conflict(estado.motivo ?? 'El correo web nuevo no está disponible.', 'bulwark_unavailable');
   exigirSinMantenimiento();
@@ -882,7 +942,7 @@ async function elegirBulwark(
     const resultado = await applyRecommendedEngineSettings(getInstanceSettings().mailHostname, motor, { permissiveCors: true });
     if (!(await corsAbierto(motor))) {
       throw upstream(
-        `No se ha podido abrir el CORS del motor de correo, que necesita el correo web nuevo${resultado.errors.length ? `: ${resultado.errors.join('; ')}` : '.'} El cliente sigue con Roundcube.`,
+        `No se ha podido abrir el CORS del motor de correo, que necesita el correo web nuevo${resultado.errors.length ? `: ${resultado.errors.join('; ')}` : '.'} ${siFalla}`,
         'bulwark_cors_failed',
       );
     }
@@ -892,7 +952,6 @@ async function elegirBulwark(
       restartRequired: resultado.restartRequired.length,
     };
   }
-  db.prepare(`UPDATE clients SET webmail_motor = 'bulwark' WHERE id = ?`).run(clientId);
   return aplicados;
 }
 
@@ -931,7 +990,122 @@ const motorSchema = z.object({
   }),
 });
 
+const ajustesSchema = z
+  .object({
+    paraNuevos: z.enum(['roundcube', 'bulwark'], {
+      errorMap: () => ({ message: 'El correo web de los clientes nuevos debe ser «roundcube» o «bulwark».' }),
+    }),
+    calendario: z.boolean(),
+    contactos: z.boolean(),
+    archivos: z.boolean(),
+    relePush: z
+      .string()
+      .trim()
+      .max(2048, 'La dirección del relé es demasiado larga.')
+      .refine(
+        (v) => v === '' || esHttpsSinCredenciales(v),
+        'El relé de notificaciones debe ser una dirección que empiece por https://, sin usuario ni contraseña.',
+      ),
+  })
+  .partial();
+
+/** Lo que enseña Ajustes → Correo web nuevo. */
+function estadoGeneral() {
+  const estado = estadoBulwark();
+  const enServicio = bulwarkEnServicio();
+  const total = (db.prepare('SELECT COUNT(*) AS c FROM clients').get() as { c: number }).c;
+  const conBulwark = (db.prepare(`SELECT COUNT(*) AS c FROM clients WHERE webmail_motor = 'bulwark'`).get() as { c: number }).c;
+  return {
+    estado: {
+      disponible: estado.disponible,
+      motivo: estado.motivo,
+      enServicio,
+      // Disponible pero sin servir: el motor no es (o no se sabe si es) 0.16.
+      motivoServicio:
+        estado.disponible && !enServicio
+          ? 'El correo web nuevo necesita Stalwart 0.16. Migra el motor con sudo mailway migrar-motor.'
+          : null,
+    },
+    ajustes: ajustesCorreoWeb(),
+    clientes: { total, conBulwark },
+  };
+}
+
 export function registerCorreoWebRoutes(app: FastifyInstance): void {
+  /* ------------------------ Ajustes generales ------------------------------ */
+
+  app.get('/api/settings/correo-web', async (req) => {
+    requireAdmin(req);
+    return estadoGeneral();
+  });
+
+  /**
+   * Ajustes de toda la instancia: el correo web de los clientes nuevos y las
+   * funciones que ven los usuarios del nuevo (la política de Bulwark es una
+   * sola para todos). Solo cambian los campos que llegan.
+   */
+  app.put('/api/settings/correo-web', async (req) => {
+    requireAdmin(req);
+    const cambios = ajustesSchema.parse(req.body ?? {});
+    const actuales = ajustesCorreoWeb();
+    const nuevos: AjustesCorreoWeb = { ...actuales, ...cambios };
+    if (nuevos.paraNuevos === 'bulwark' && actuales.paraNuevos !== 'bulwark') {
+      // Los clientes nuevos irán directos al nuevo: tiene que poder servirse
+      // ya, con el CORS del motor abierto (prepararMotorParaBulwark lo abre).
+      const aplicados = await withLock(CERROJO_CORS, () =>
+        prepararMotorParaBulwark('Los clientes nuevos siguen naciendo con Roundcube.'),
+      );
+      if (aplicados) audit(req, 'engine.recommended_applied', { ...aplicados, permissiveCors: true });
+    }
+    guardarAjustesCorreoWeb(nuevos);
+    const cambiados = (Object.keys(nuevos) as (keyof AjustesCorreoWeb)[]).filter((k) => nuevos[k] !== actuales[k]);
+    if (cambiados.length > 0) {
+      audit(req, 'settings.webmail_updated', { fields: cambiados, paraNuevos: nuevos.paraNuevos });
+      programarSincronizacionBulwark();
+      if (actuales.paraNuevos === 'bulwark' && nuevos.paraNuevos === 'roundcube' && !corsPermisivoNecesario()) {
+        cerrarCorsSiSobra();
+      }
+    }
+    return estadoGeneral();
+  });
+
+  /**
+   * Pasar a todos los clientes al mismo correo web de una vez. Cada uno lo
+   * puede cambiar después en su ficha (la administración) como siempre.
+   */
+  app.post('/api/settings/correo-web/todos', async (req) => {
+    requireAdmin(req);
+    const { motor } = motorSchema.parse(req.body ?? {});
+    const pasar = () => {
+      const ids = (
+        db.prepare('SELECT id FROM clients WHERE webmail_motor <> ?').all(motor) as { id: string }[]
+      ).map((f) => f.id);
+      db.prepare('UPDATE clients SET webmail_motor = ? WHERE webmail_motor <> ?').run(motor, motor);
+      return ids;
+    };
+    let cambiados: string[] = [];
+    if (motor === 'bulwark') {
+      const aplicados = await withLock(CERROJO_CORS, async () => {
+        const hechos = await prepararMotorParaBulwark('Los clientes siguen con el correo web que tenían.');
+        cambiados = pasar();
+        return hechos;
+      });
+      if (aplicados) audit(req, 'engine.recommended_applied', { ...aplicados, permissiveCors: true });
+    } else {
+      cambiados = pasar();
+      if (!corsPermisivoNecesario()) cerrarCorsSiSobra();
+    }
+    if (cambiados.length > 0) {
+      // Una entrada por cliente, para que cada uno lo vea en su Actividad.
+      const anterior = motor === 'bulwark' ? 'roundcube' : 'bulwark';
+      for (const id of cambiados) {
+        audit(req, 'client.webmail_changed', { webmail: motor, previous: anterior, todos: true }, id);
+      }
+      programarSincronizacionBulwark();
+    }
+    return { cambiados: cambiados.length, ...estadoGeneral() };
+  });
+
   /** Correo web del cliente y su marca. La administración ve además si se puede elegir el nuevo. */
   app.get('/api/clients/:id/webmail', async (req) => {
     const { id } = req.params as { id: string };

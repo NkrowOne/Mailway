@@ -28,6 +28,10 @@ export interface MarcaCorreoWeb {
   empresa: string;
   privacidadUrl: string;
   avisoLegalUrl: string;
+  /** Color del tema de la aplicación instalada (#rgb o #rrggbb, en minúsculas); vacío: el del correo web. */
+  colorTema: string;
+  /** Color de fondo al abrir la aplicación instalada; vacío: el del correo web. */
+  colorFondo: string;
   nombrePorDefecto: string;
   actualizada: number | null;
   imagenes: Record<HuecoImagen, ImagenMarca | null>;
@@ -56,6 +60,72 @@ export const NOMBRE_MOTOR: Record<MotorCorreoWeb, string> = {
   roundcube: 'Roundcube',
   bulwark: 'Correo web nuevo (beta)',
 };
+
+/** Lo que es cada uno, en una frase: lo comparten la ficha del cliente y Ajustes. */
+export const DESCRIPCION_MOTOR: Record<MotorCorreoWeb, string> = {
+  roundcube: 'El correo web de siempre, en español, con cambio de contraseña, filtros y aviso de ausencia.',
+  bulwark:
+    'Interfaz actual con calendario y contactos, aplicación instalable y la marca del cliente. Necesita Stalwart 0.16.',
+};
+
+/* ------------------------- Ajustes de la instancia ------------------------- */
+
+/** Ancla de la tarjeta «Correo web nuevo» en Ajustes (enlazada desde la ficha del cliente). */
+export const ANCLA_AJUSTES_CORREO_WEB = 'correo-web-nuevo';
+export const RUTA_AJUSTES_CORREO_WEB = `/ajustes#${ANCLA_AJUSTES_CORREO_WEB}`;
+
+/** Lo que vale para toda la instancia: Bulwark tiene una sola política, no una por dominio. */
+export interface AjustesCorreoWeb {
+  /** Con el que empiezan los clientes nuevos (el nuevo, solo si está en servicio). */
+  paraNuevos: MotorCorreoWeb;
+  /** Calendario y tareas. */
+  calendario: boolean;
+  contactos: boolean;
+  /** Archivos del servidor: ocupan el espacio del buzón. */
+  archivos: boolean;
+  /** Relé propio de las notificaciones (https://); vacío: el que aloja Bulwark. */
+  relePush: string;
+}
+
+/** GET y PUT /api/settings/correo-web (y POST …/todos, con `cambiados`). */
+export interface EstadoCorreoWebGeneral {
+  estado: {
+    /** Instalado y bien configurado en el entorno del panel. */
+    disponible: boolean;
+    /** Por qué no está disponible. */
+    motivo: string | null;
+    /** Disponible y con Stalwart 0.16: los clientes que lo eligen lo reciben. */
+    enServicio: boolean;
+    /** Disponible pero sin servir: por qué. */
+    motivoServicio: string | null;
+  };
+  ajustes: AjustesCorreoWeb;
+  clientes: { total: number; conBulwark: number };
+}
+
+/** Dirección https:// sin usuario ni contraseña (la misma regla que el servidor). */
+export function esHttps(valor: string): boolean {
+  try {
+    const url = new URL(valor);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Color como lo guarda el servidor: sin espacios, en minúsculas y con «#»
+ * (se añade si se ha escrito solo el número). Vacío sigue vacío.
+ */
+export function normalizarColor(valor: string): string {
+  const v = valor.trim().toLowerCase();
+  return /^(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(v) ? `#${v}` : v;
+}
+
+/** #rgb o #rrggbb (o vacío): el formato que acepta el correo web nuevo. */
+export function esColor(valor: string): boolean {
+  return valor === '' || /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(valor);
+}
 
 /** Tamaño máximo de cada imagen (el mismo que comprueba el servidor). */
 export const MAX_IMAGEN_BYTES = 512 * 1024;

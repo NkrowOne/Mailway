@@ -9,6 +9,7 @@ import { audit } from './audit';
 import { exigirSinMantenimiento } from './mantenimiento';
 import { createUser, requireAdmin, requireClientAccess } from './auth';
 import { dominiosExentos, loginParaMotor } from './direcciones';
+import { motorParaClienteNuevo } from './webmailmotor';
 
 /* --------------------------------- Planes -------------------------------- */
 
@@ -596,9 +597,9 @@ export function registerClientRoutes(app: FastifyInstance): void {
 
     const created = db.transaction(() => {
       db.prepare(
-        `INSERT INTO clients (id, name, slug, contact_email, plan_id, notes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, body.name, slug, body.contactEmail, body.planId, body.notes, now());
+        `INSERT INTO clients (id, name, slug, contact_email, plan_id, notes, created_at, webmail_motor)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, body.name, slug, body.contactEmail, body.planId, body.notes, now(), motorParaClienteNuevo());
       return body.user && userPassword
         ? createUser({
             email: body.user.email,
