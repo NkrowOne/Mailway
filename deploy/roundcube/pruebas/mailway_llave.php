@@ -582,9 +582,9 @@ comprobar(
     'el botón va debajo del de entrar, como botón secundario'
 );
 comprobar(
-    (bool) preg_match('#id="rcmloginsubmit"[^>]*>Accede</button>#', $html)
+    (bool) preg_match('#id="rcmloginsubmit"[^>]*>Acceder</button>#', $html)
         && (bool) preg_match('#class="support-link"[^>]*>Mi buzón</a>#', $html),
-    'el botón del formulario dice «Accede» y el enlace de soporte, «Mi buzón»',
+    'el botón del formulario dice «Acceder» y el enlace de soporte, «Mi buzón»',
     preg_match('#<button[^>]*rcmloginsubmit[^>]*>[^<]*</button>|<a[^>]*support-link[^>]*>[^<]*</a>#', $html, $m) ? $m[0] : substr($html, 0, 300)
 );
 // Las hojas de estilo no se pueden comprobar aquí: Roundcube solo enlaza las de

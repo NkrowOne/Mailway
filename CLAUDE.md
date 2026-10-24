@@ -152,8 +152,9 @@ prueba que lo reproduce.
   tú («Revisa el token», «Tu sesión ha caducado»), con construcciones
   impersonales cuando encajen, botones en infinitivo y sin coloquialismos.
   La guía completa está en **[docs/ESTILO-TEXTOS.md](docs/ESTILO-TEXTOS.md)**:
-  el acceso va en imperativo («Accede al panel», «Accede a tu correo»;
-  nunca «entrar» ni «Acceder…»), el botón de la llave es «Usar llave de
+  el acceso es «Acceder» cuando va solo y «Accede a…» cuando lleva algo
+  detrás («Accede al panel», «Accede a tu correo»; nunca «entrar» ni
+  «Acceder a…»), el botón de la llave es «Usar llave de
   acceso» y al titular se le habla de «tu correo». «Su», «le» y
   «puede» no cambian cuando se refieren a un tercero (el cliente, el buzón,
   el titular). Terminología fija: buzón, alias, clave de API, token de

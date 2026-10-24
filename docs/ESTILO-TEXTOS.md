@@ -21,7 +21,7 @@ terminología de Mailway.
   «No se ha podido guardar», «Se ha enviado el enlace».
 - Botones y menús en **infinitivo**, con mayúscula solo en la primera palabra:
   «Guardar cambios», «Añadir buzón», «Usar llave de acceso». Excepción: el
-  acceso va en imperativo («Accede al panel», ver «Acceso»).
+  acceso con algo detrás va en imperativo («Accede al panel», ver «Acceso»).
 - Frases completas, con punto en descripciones y mensajes; sin punto en
   etiquetas, botones y títulos.
 - Sin primera persona del sistema, sin exclamaciones, sin emojis, sin
@@ -38,10 +38,12 @@ terminología de Mailway.
 
 ## Acceso (regla fija)
 
-- El verbo es **acceder**, en **imperativo** («Accede…») en botones, títulos
-  y enlaces de acceso. Nunca «entrar» ni «iniciar sesión», ni el infinitivo
-  «Acceder…». Es la excepción a la regla de los botones en infinitivo.
-  - Botón de un formulario de acceso: **«Accede»**.
+- El verbo es **acceder**. Nunca «entrar» ni «iniciar sesión».
+  - Solo, en infinitivo, como cualquier botón: **«Acceder»** (el botón de un
+    formulario de acceso).
+  - Con algo detrás, en imperativo: **«Accede a…»**, **«Accede al…»**,
+    **«Accede con…»** (nunca «Acceder a…»). Es la excepción a la regla de los
+    botones en infinitivo.
   - Llave de acceso: **«Usar llave de acceso»** (nunca «Entrar con llave de
     acceso»).
   - Ir al correo del titular: **«Accede a tu correo»** (nunca «entrar en el
@@ -78,7 +80,7 @@ servidor de correo, «Mi buzón», Actividad, Avisos, Ajustes.
 
 - ✗ «Entrar con llave de acceso» → ✓ «Usar llave de acceso»
 - ✗ «Entrar en el correo web» → ✓ «Accede a tu correo»
-- ✗ «Entrar en mi buzón» → ✓ «Accede»
+- ✗ «Entrar en mi buzón» → ✓ «Acceder»
 - ✗ «Acceder al panel» → ✓ «Accede al panel»
 - ✗ «Abrir el correo web» (titular) → ✓ «Accede a tu correo»
 - ✗ «No se ha podido entrar» → ✓ «No se ha podido acceder»

@@ -50,7 +50,7 @@ Qué cambia:
 - La pantalla de acceso es una portada en dos columnas: panel de marca en
   petróleo (logotipo y nombre del servicio centrados y una bandeja de
   entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
-  «Dirección de correo» y el botón «Accede»; en el móvil, el panel queda
+  «Dirección de correo» y el botón «Acceder»; en el móvil, el panel queda
   como franja de cabecera con la marca.
 - El enlace de soporte, que `mailway.php` apunta a «Mi buzón», se llama
   «Mi buzón» en lugar de «Obtener soporte» (si el operador cambia
@@ -228,7 +228,7 @@ lugar de su contraseña. Roundcube no comprueba la llave: lo hace «Mi buzón»
 del panel, que es quien conoce las llaves del titular.
 
 - **Botón en el acceso** (gancho `loginform_content`): «Usar llave de
-  acceso», debajo de «Accede», como botón secundario (las clases que
+  acceso», debajo de «Acceder», como botón secundario (las clases que
   Elastic da al botón de OAuth, con el icono de la llave de `mailway_theme`).
   Solo aparece si el panel dice que el nombre por el que se ha llegado es un
   webmail Roundcube de la instancia (`GET
