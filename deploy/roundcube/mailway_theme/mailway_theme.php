@@ -70,9 +70,9 @@ class mailway_theme extends rcube_plugin
 
         // En el acceso, el usuario es la dirección completa: la etiqueta lo
         // dice en lugar de «Nombre de usuario», que hace dudar a la gente. El
-        // botón dice «Accede», como el panel y «Mi buzón» (guía de estilo).
+        // botón dice «Acceder», como el panel y «Mi buzón» (guía de estilo).
         if ($this->logo_propio && $rcmail->task === 'login') {
-            $rcmail->load_language(null, [], ['username' => 'Dirección de correo', 'login' => 'Accede']);
+            $rcmail->load_language(null, [], ['username' => 'Dirección de correo', 'login' => 'Acceder']);
         }
         // El enlace de soporte lleva a «Mi buzón» (mailway.php): se llama así
         // en lugar de «Obtener soporte», que promete algo que no es. Si el

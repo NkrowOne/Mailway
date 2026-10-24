@@ -181,7 +181,7 @@ export default function Login({
               />
               {error && <AvisoError>{error}</AvisoError>}
               <Button type="submit" variant="principal" busy={busy} className="mt-1 min-h-11 w-full sm:min-h-0">
-                Accede
+                Acceder
               </Button>
             </form>
 

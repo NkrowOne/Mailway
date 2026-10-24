@@ -465,7 +465,7 @@ para que nadie las confunda:
   petróleo de la marca (`IlustracionPanel`); en el móvil, solo el formulario.
 - **Mi buzón** (`/mi-buzon`): tarjeta centrada de 24 px de radio con un
   ordenador y un móvil dibujados (`IlustracionBuzon`), distintivo «Tu
-  correo», título «Mi buzón» y botón «Accede», sobre un velo aguamarina.
+  correo», título «Mi buzón» y botón «Acceder», sobre un velo aguamarina.
 
 Cada una enlaza a la otra, las dos dejan ver la contraseña y las
 ilustraciones (`components/Portadas.tsx`) son solo formas, sin texto.
