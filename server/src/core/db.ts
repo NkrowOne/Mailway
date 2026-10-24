@@ -781,6 +781,75 @@ const migrations: Migracion[] = [
       CREATE INDEX idx_panel_password_resets_user ON panel_password_resets(user_id, created_at);
     `,
   },
+  {
+    // Llaves de acceso (passkeys) de los usuarios del panel y de los titulares
+    // en «Mi buzón», los desafíos de WebAuthn (un solo uso) y las sesiones del
+    // webmail abiertas con llave (contraseña de aplicación temporal en el
+    // motor). Ver modules/llaves.ts.
+    id: '019-llaves-de-acceso',
+    sql: `
+      CREATE TABLE user_passkeys (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        credential_id TEXT NOT NULL,
+        rp_id TEXT NOT NULL,
+        public_key BLOB NOT NULL,
+        counter INTEGER NOT NULL DEFAULT 0,
+        transports TEXT,
+        aaguid TEXT,
+        backed_up INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        UNIQUE (rp_id, credential_id)
+      );
+      CREATE INDEX idx_user_passkeys_user ON user_passkeys(user_id);
+      CREATE TABLE mailbox_passkeys (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        credential_id TEXT NOT NULL,
+        rp_id TEXT NOT NULL,
+        public_key BLOB NOT NULL,
+        counter INTEGER NOT NULL DEFAULT 0,
+        transports TEXT,
+        aaguid TEXT,
+        backed_up INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        UNIQUE (rp_id, credential_id)
+      );
+      CREATE INDEX idx_mailbox_passkeys_mailbox ON mailbox_passkeys(mailbox_id);
+      CREATE TABLE webauthn_challenges (
+        id TEXT PRIMARY KEY,
+        challenge TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        subject TEXT,
+        rp_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE webmail_passkey_sessions (
+        id TEXT PRIMARY KEY,
+        mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+        passkey_id TEXT,
+        code_hash TEXT,
+        code_expires_at INTEGER,
+        login TEXT NOT NULL,
+        engine_ref TEXT NOT NULL,
+        engine_api TEXT,
+        secret_enc TEXT,
+        webmail_host TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        exchanged_at INTEGER,
+        revoked_at INTEGER,
+        engine_removed_at INTEGER
+      );
+      CREATE UNIQUE INDEX idx_webmail_passkey_sessions_code ON webmail_passkey_sessions(code_hash);
+      CREATE INDEX idx_webmail_passkey_sessions_mailbox ON webmail_passkey_sessions(mailbox_id, created_at);
+    `,
+  },
 ];
 
 /**

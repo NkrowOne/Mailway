@@ -356,6 +356,7 @@ obligatorio y cada vista pasa el de lo que falta:
 | Servidor de correo, IP | `Server` |
 | Usuarios del cliente | `UserRound` |
 | Contraseñas de aplicación (portal) | `Smartphone` |
+| Llaves de acceso (panel y portal) | `FingerprintPattern` |
 | Búsqueda sin resultados | `SearchX` |
 | Comprobación incompleta / sin pendientes | `CircleDashed` / `CircleCheck` |
 

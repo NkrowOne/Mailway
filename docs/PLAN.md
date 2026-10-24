@@ -1,6 +1,6 @@
 # Mailway — Plan técnico y decisiones de arquitectura
 
-> Versión de este documento: 1.6.0. Si el código y este documento discrepan,
+> Versión de este documento: 1.7.0. Si el código y este documento discrepan,
 > gana el código (`server/src/`, `deploy/`, `web/src/`).
 
 Este documento recoge las decisiones de arquitectura y su porqué, el modelo
@@ -538,6 +538,7 @@ edita una ya publicada.
 | `014-credenciales-locales` | `credenciales_buzon`: copia cifrada del hash `$6$` de la contraseña principal de cada buzón (Stalwart 0.16 enmascara los secretos); columnas de `app_passwords` (`verifier`, `engine_api`, `invalidated_at`, `invalidation_notified_at`) y de la credencial SMTP de `api_keys` y `forms` (`smtp_engine_api`, `smtp_invalidated_at`) para el cambio de versión del motor. |
 | `015-correo-web-por-cliente` | `clients.webmail_motor` (`roundcube` por defecto o `bulwark`), `webmail_marca` (nombre, nombre corto, empresa y enlaces de la marca del correo web nuevo) y `webmail_marca_imagenes` (logotipos e iconos: tipo comprobado, bytes, sha256 y dimensiones; aparte para no leer los bytes al comparar). |
 | `016-recepcion-externa-y-copias-dns` | `domains.recepcion_externa` (el MX público apunta a otro servidor: lo enviado desde aquí sale por ese MX) y `cloudflare_copias`: lo que borraron los reemplazos en Cloudflare (una fila por dominio que acumula los reemplazos; cada entrada lleva su fecha y se puede deshacer durante 30 días). Tolera un esquema que ya lo tenga (ver más abajo). |
+| `019-llaves-de-acceso` | `user_passkeys` y `mailbox_passkeys` (llaves de acceso de los usuarios del panel y de los titulares: id de la credencial, nombre en el que funciona, clave pública, contador, AAGUID, sincronizada, nombre y fechas; se borran con su usuario o su buzón), `webauthn_challenges` (desafíos de un solo uso, 5 minutos) y `webmail_passkey_sessions` (sesiones de Roundcube abiertas con llave: hash del código de un solo uso, contraseña de aplicación temporal del motor, cifrada solo hasta que se canjea, caducidad y retirada). |
 | `017-cambio-de-dominio` | `domain_migrations` (cambio de dominio de un cliente: origen, destino, estado, paso, error, origen panel o Skyway, lo que creó el cambio y fechas; un dominio en un solo cambio abierto, como origen o como destino) y `domain_migration_items` (buzones y alias que se mudan); en `mailboxes`, `usuario_motor` (usuario del motor cuando no es la dirección: pendiente de actualizar dispositivos; único), `usuario_cambiando_a` (cambio de usuario en curso), `login_anterior` (el webmail traslada su fila) y `semilla_perfil` (dirección con la que nació el perfil de Apple). Tolera un esquema que ya lo tenga. |
 
 Las migraciones 016 y 017 son las de la rama del cambio de dominio, que las
@@ -575,6 +576,10 @@ envios_configuracion  correos de configuración a los titulares: destinatario, e
 remitentes_configuracion  cuenta oculta configuration@ de cada dominio (contraseña cifrada)
 client_invites     enlaces de bienvenida de los clientes: contacto, hash y token cifrado, estado
 mailbox_sessions   sesiones de «Mi buzón»
+user_passkeys      llaves de acceso de los usuarios del panel (WebAuthn; nombre en el que funcionan)
+mailbox_passkeys   llaves de acceso de los titulares en «Mi buzón»
+webauthn_challenges  desafíos de WebAuthn (un solo uso, 5 minutos)
+webmail_passkey_sessions  sesiones del webmail abiertas con llave (contraseña temporal del motor)
 mailbox_photos     foto de cada buzón (tipo comprobado, bytes, fecha para la caché)
 api_keys           claves de envío: prefijo, hash, remitente, credencial SMTP cifrada,
                    límite diario opcional, revocación

@@ -32,7 +32,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   - `src/modules/`: un módulo por área. `auth` (sesiones, tokens `mwt_`,
     guardas), `tokens`, `integrations`, `audit`, `setup`, `settings`,
     `clients` (planes, clientes, usuarios, `assertWithinLimit`),
-    `invitaciones` (enlace de bienvenida del cliente), `restablecimientos`
+    `invitaciones` (enlace de bienvenida del cliente), `llaves` (llaves de acceso, passkeys, del
+    panel y de «Mi buzón», y la entrada en Roundcube con llave mediante una
+    contraseña de aplicación temporal), `restablecimientos`
     (enlace por correo para restablecer la contraseña del panel de un usuario
     de un cliente), `domains`
     (DNS y propiedad), `zonefile`, `deliverability`, `cloudflare`,

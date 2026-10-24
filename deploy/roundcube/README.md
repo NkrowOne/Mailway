@@ -1,8 +1,8 @@
 # Roundcube en Mailway
 
-Cuatro complementos propios (`mailway_theme`, `mailway_perfil`,
-`mailway_sesion` y `mailway_cuentas`), la configuración (`mailway.php`) y el
-diagnóstico que usa el instalador.
+Cinco complementos propios (`mailway_theme`, `mailway_perfil`,
+`mailway_sesion`, `mailway_cuentas` y `mailway_llave`), la configuración
+(`mailway.php`) y el diagnóstico que usa el instalador.
 
 ## Apariencia (`mailway_theme`)
 
@@ -121,7 +121,9 @@ también desde las peticiones AJAX y los marcos (refresco de la bandeja, vista
 previa), por el mismo camino que una sesión caducada; en la redacción,
 Roundcube guarda antes el borrador en el navegador. Un fallo de red, de TLS o
 temporal del servidor (IMAP caído, `UNAVAILABLE`) no cierra la sesión, y el
-acceso normal fallido sigue igual. No depende del panel.
+acceso normal fallido sigue igual. No depende del panel. En una sesión iniciada con
+llave de acceso, el aviso de la pantalla de acceso lo pone `mailway_llave`
+(ver más abajo).
 
 ## Configuración y diagnóstico
 
@@ -162,8 +164,8 @@ valida esta capa PHP/CSS y la prueba requiere una instancia de Roundcube.
 Para volver al aspecto original, retira `mailway_theme` de la variable de
 complementos y recrea solo el servicio; para dejar de usar el nombre y la
 foto del panel, retira `mailway_perfil` (las identidades conservan el nombre
-que ya tuvieran); `mailway_sesion` y `mailway_cuentas` se retiran igual. No
-hay cambios de esquema ni de datos.
+que ya tuvieran); `mailway_sesion`, `mailway_cuentas` y `mailway_llave` se
+retiran igual. No hay cambios de esquema ni de datos.
 
 ## Cambio de dominio: `mailway_cuentas`
 
@@ -215,3 +217,96 @@ docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" \
 
 Para desactivarlo, retira `mailway_cuentas` de `ROUNDCUBEMAIL_PLUGINS` y
 recrea solo el webmail. No cambia el esquema de Roundcube.
+
+## Entrar con llave de acceso: `mailway_llave`
+
+El titular puede entrar en el webmail con una llave de acceso (passkey) en
+lugar de su contraseña. Roundcube no comprueba la llave: lo hace «Mi buzón»
+del panel, que es quien conoce las llaves del titular.
+
+- **Botón en el acceso** (gancho `loginform_content`): «Entrar con llave de
+  acceso», debajo de «Iniciar sesión», como botón secundario (las clases que
+  Elastic da al botón de OAuth, con el icono de la llave de `mailway_theme`).
+  Solo aparece si el panel dice que el nombre por el que se ha llegado es un
+  webmail Roundcube de la instancia (`GET
+  <MAILWAY_PANEL_INTERNAL_URL>/api/webmail/llave/portal?host=<nombre>`). La
+  respuesta, también la negativa, se recuerda cinco minutos para todos los
+  visitantes en la caché compartida de Roundcube (un minuto si el panel
+  falla); sin respuesta no hay botón y el acceso es el de siempre.
+- **Ida al panel** (acción `plugin.mailway_llave_ir`, la del botón): genera
+  un estado aleatorio, lo guarda en la sesión previa al acceso junto con la
+  zona horaria del navegador (`mailway_llave.js` la añade al enlace) y lleva
+  a `<portal>/mi-buzon/correo-web?destino=<nombre>&estado=<estado>`, donde el
+  titular usa su llave.
+- **Vuelta** (acción `plugin.mailway_llave`, con `_codigo` y `_estado`): el
+  estado tiene que coincidir con el guardado, que vale una sola vez y 15
+  minutos. Solo entonces se canjea el código (`POST /api/webmail/llave`) por
+  el usuario del motor y una contraseña de aplicación temporal (12 horas como
+  mucho) y se entra por el camino normal de Roundcube, como con OAuth: purga
+  de la sesión previa, `authenticate`, `rcmail::login` contra el mismo IMAP
+  que el formulario, id de sesión nuevo, cookie de autenticación, registro del
+  acceso, `login_after` y redirección al correo, con la zona horaria del
+  navegador. `mailway_cuentas`, `mailway_perfil` y `mailway_sesion` funcionan
+  igual que con contraseña. Con una sesión ya iniciada, el enlace lleva al
+  correo sin canjear nada.
+- **Salida** (gancho `session_destroy`: salir, caducidad, `mailway_sesion` o
+  un acceso nuevo encima): pide al panel que retire la contraseña temporal
+  (`POST /api/webmail/llave/salir`) con un plazo corto (3 s); si el panel no
+  contesta, caduca sola. Una sesión que Roundcube olvida por inactividad (30
+  minutos) no pasa por aquí: su contraseña temporal dura hasta que caduca.
+- **Caducidad**: un minuto antes de que caduque la contraseña temporal, la
+  sesión se cierra y la pantalla de acceso dice «La sesión que iniciaste con
+  tu llave de acceso ha caducado. Vuelve a entrar.», también desde las
+  peticiones AJAX y los marcos. Si el panel la retira antes (se borra la
+  llave, se cambia la contraseña del buzón o se abren demasiadas sesiones), el
+  IMAP la rechaza y `mailway_sesion` cierra la sesión; una cookie breve
+  (`mailway_llave_fin`) permite a `mailway_llave` cambiar el aviso de
+  contraseña cambiada por «La sesión que iniciaste con tu llave de acceso ya
+  no es válida y se ha cerrado. Vuelve a entrar.». En una petición AJAX el
+  aviso de `mailway_sesion` se ve un instante antes de ir al acceso.
+- **Fallos**: un código caducado, gastado o con un estado que no coincide
+  vuelve al acceso con «El enlace para entrar con tu llave de acceso ha
+  caducado o ya se ha usado. Vuelve a intentarlo.»; si el panel falla o el IMAP
+  no acepta la contraseña temporal (que entonces se retira), con «No se ha
+  podido entrar con tu llave de acceso…».
+
+**Por qué el estado**: sin él, cualquiera podría usar su propia llave para
+conseguir un código y mandar el enlace a otra persona, que entraría sin darse
+cuenta en el buzón de quien se lo mandó («login CSRF»). El estado lo genera
+el webmail en la sesión de cada navegador, así que un enlace preparado en
+otro navegador no sirve: se vuelve al acceso sin canjear el código. Las dos
+acciones son GET sin el token de petición de Roundcube porque llegan del
+panel por una redirección; las protegen el estado y que el código es de un
+solo uso y de dos minutos.
+
+**Orden**: `mailway_llave` va antes que `mailway_cuentas` y `mailway_sesion`
+en `ROUNDCUBEMAIL_PLUGINS` (los compose ya lo hacen y la prueba lo
+comprueba). Su `authenticate` tiene que poner el usuario del motor antes de
+que `mailway_cuentas` lo traduzca, y su aviso tiene que ir antes que el de
+`mailway_sesion`.
+
+No necesita configuración propia: lee `MAILWAY_PANEL_INTERNAL_URL` y
+`MAILWAY_WEBMAIL_TOKEN`; sin alguna de las dos no hace nada (ni botón). Los
+fallos del panel quedan en el registro de errores de Roundcube con el prefijo
+`mailway_llave:`, sin códigos ni contraseñas. El código de un solo uso sí
+aparece en el registro de accesos del servidor web, porque va en la URL de
+vuelta; para entonces ya está gastado o caduca a los dos minutos.
+
+La prueba `pruebas/mailway_llave.php` entra como un navegador por el
+`index.php` de la imagen real (configuración `mailway.php`, los complementos
+`mailway_*` en el orden de los compose, IMAP falso y el panel simulado dentro
+del mismo contenedor, sin red): el botón, el viaje con estado (también el
+enlace abierto en otro navegador), la entrada con `mailway_cuentas`
+traduciendo el usuario, la sesión regenerada y la zona horaria, salir, la
+caducidad (también por AJAX), el cierre por `mailway_sesion` con su aviso y
+los fallos del panel. Lee los compose, así que necesita la carpeta `deploy`
+entera:
+
+```sh
+docker run --rm -v "$PWD/deploy:/opt/mailway-deploy:ro" \
+  roundcube/roundcubemail:1.7.5-apache php /opt/mailway-deploy/roundcube/pruebas/mailway_llave.php
+```
+
+Para desactivarlo, retira `mailway_llave` de `ROUNDCUBEMAIL_PLUGINS` y recrea
+solo el webmail. No cambia el esquema de Roundcube (usa su tabla
+`cache_shared`).
