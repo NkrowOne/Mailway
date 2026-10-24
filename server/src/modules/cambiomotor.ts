@@ -193,7 +193,7 @@ export async function capturarParaMigrar(engine?: MailEngine): Promise<Resultado
       ...(ok
         ? {}
         : {
-            error: `No se ha podido copiar la contraseña de ${resultado.fallidos.length} buzón(es): ${enumerar(resultado.fallidos)}. Sin copia, sus titulares no podrán entrar en «Mi buzón» tras migrar hasta que se restablezca su contraseña.`,
+            error: `No se ha podido copiar la contraseña de ${resultado.fallidos.length} buzón(es): ${enumerar(resultado.fallidos)}. Sin copia, sus titulares no podrán acceder a «Mi buzón» tras migrar hasta que se restablezca su contraseña.`,
           }),
       capturados: resultado.capturados,
       yaEstaban: resultado.yaEstaban,
@@ -552,7 +552,7 @@ export async function trasMigrarMotor(
       title: `${afectados.length === 1 ? 'Un buzón ha perdido' : `${afectados.length} buzones han perdido`} sus contraseñas de aplicación con la actualización del servidor de correo`,
       message: `Con el cambio a ${NOMBRES_API[api]} dejaron de funcionar ${muertas.length} contraseña(s) de aplicación creadas antes. Buzones afectados: ${enumerar(afectados, 30)}.`,
       remedy:
-        'Cada titular puede crear una nueva en «Mi buzón», donde se le avisa; desde el panel, en la ficha de cada buzón. Las de los servicios de Skyway se vuelven a conectar desde el proyecto de Skyway («Conectar a un servicio»). Las claves de API y los formularios ya se han renovado solos.',
+        'Cada titular puede crear una nueva en «Mi buzón», donde se le avisa; desde el panel, en la ficha de cada buzón. Las de los servicios de Skyway se vuelven a conectar desde el proyecto de Skyway («Conectar a un servicio»). Las claves de API y los formularios ya se han renovado automáticamente.',
     });
   }
 
@@ -571,7 +571,7 @@ export async function trasMigrarMotor(
       type: 'engine_password_copy_missing',
       dedupeKey: 'engine_password_copy_missing',
       title: `${sinCopia.length === 1 ? 'Un buzón no tiene' : `${sinCopia.length} buzones no tienen`} copia de su contraseña en el panel`,
-      message: `El panel no pudo copiar su contraseña antes de migrar y Stalwart 0.16 ya no la da: sus titulares no pueden entrar en «Mi buzón» ni cambiar la contraseña desde el webmail (el correo sigue funcionando). Buzones: ${enumerar(sinCopia, 30)}.`,
+      message: `El panel no pudo copiar su contraseña antes de migrar y Stalwart 0.16 ya no la da: sus titulares no pueden acceder a «Mi buzón» ni cambiar la contraseña desde el webmail (el correo sigue funcionando). Buzones: ${enumerar(sinCopia, 30)}.`,
       remedy: 'Restablece la contraseña de esos buzones desde el panel (ficha del buzón → Restablecer contraseña) o con un reinicio de su configuración.',
     });
   }
@@ -747,7 +747,7 @@ ${
     ? `<tr><td align="center" style="padding:0 32px 32px 32px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
 <td align="center" bgcolor="#0d5c5e" style="border-radius:6px;background-color:#0d5c5e;">
-<a href="${e(datos.urlMiBuzon)}" style="display:inline-block;padding:12px 28px;${fuente}font-size:16px;line-height:24px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">Abrir «Mi buzón»</a>
+<a href="${e(datos.urlMiBuzon)}" style="display:inline-block;padding:12px 28px;${fuente}font-size:16px;line-height:24px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">Accede a «Mi buzón»</a>
 </td>
 </tr></table>
 </td></tr>`

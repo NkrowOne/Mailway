@@ -23,7 +23,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
 
     let engineHealth: { ok: boolean; detail?: string } = {
       ok: false,
-      detail: 'Motor sin configurar',
+      detail: 'El servidor de correo aún no está configurado.',
     };
     let queue = { pending: 0, oldestSeconds: null as number | null };
     if (engineConfigured()) {

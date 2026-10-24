@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Search, CircleHelp, ArrowRight } from 'lucide-react';
+import { Search, CircleHelp, ArrowRight, SearchX } from 'lucide-react';
 import { api, type Client, type DomainRecord, type Mailbox, type User } from '../lib/api';
-import { AvisoError, Dialogo, Cargando } from '../ui/kit';
+import { AvisoError, Dialogo, Cargando, Vacio } from '../ui/kit';
 import { rutaCliente } from '../components/gestion/comun';
 
 /**
@@ -96,7 +96,7 @@ export function PanelTools({ user }: { user: User }) {
         </Link>
       </div>
 
-      <Dialogo open={searchOpen} onClose={() => setSearchOpen(false)} title="Buscar en tu servicio">
+      <Dialogo open={searchOpen} onClose={() => setSearchOpen(false)} title="Buscar en el panel">
         <input
           data-autofocus
           type="search"
@@ -104,7 +104,8 @@ export function PanelTools({ user }: { user: User }) {
           value={term}
           onChange={(e) => setTerm(e.target.value)}
           placeholder={esAdmin ? 'Nombre, dominio o dirección de correo' : 'Dominio o dirección de correo'}
-          className="h-11 w-full rounded-lg border border-regla px-3 text-base"
+          className="h-11 w-full rounded-lg border border-regla-fuerte bg-hoja px-3 text-base text-tinta placeholder:text-tinta-3
+            focus:border-[rgb(var(--petroleo))] focus:outline-none focus:ring-[3px] focus:ring-petroleo/15"
         />
         <div className="mt-3" aria-live="polite">
           {loading && !error ? (
@@ -114,7 +115,9 @@ export function PanelTools({ user }: { user: User }) {
               No se han podido cargar todos los resultados.
             </AvisoError>
           ) : results.length === 0 ? (
-            <p className="py-4 text-tinta-2">No hay resultados para esta búsqueda.</p>
+            <Vacio icono={SearchX} title="Sin resultados">
+              {query ? 'Revisa lo que has escrito o prueba con otra parte del nombre.' : 'Todavía no hay dominios ni buzones.'}
+            </Vacio>
           ) : (
             <ul>
               {results.map((r) => (
@@ -138,23 +141,23 @@ export function PanelTools({ user }: { user: User }) {
         </div>
       </Dialogo>
 
-      <Dialogo open={helpOpen} onClose={() => setHelpOpen(false)} title="¿Qué necesitas hacer?">
+      <Dialogo open={helpOpen} onClose={() => setHelpOpen(false)} title="Ayuda">
         <ul className="space-y-4">
           {[
             {
               to: '/dominios',
               title: 'Configurar tu dominio',
-              text: 'Añade el dominio y copia los registros DNS indicados. Después, comprueba la configuración.',
+              text: 'Añade el dominio, copia los registros DNS indicados en tu proveedor y comprueba la configuración.',
             },
             {
               to: '/buzones',
               title: 'Crear un buzón o conectar un dispositivo',
-              text: 'Desde Buzones puedes crear direcciones y consultar los datos de conexión para el móvil y el ordenador.',
+              text: 'En «Buzones» se crean las direcciones y se consultan los datos de conexión para el móvil y el ordenador.',
             },
             {
               to: '/cuenta',
               title: 'Cambiar tu contraseña',
-              text: 'Actualiza la contraseña de acceso a este panel desde Mi cuenta.',
+              text: 'En «Mi cuenta» se cambia la contraseña con la que accedes a este panel.',
             },
           ].map((item) => (
             <li key={item.to}>

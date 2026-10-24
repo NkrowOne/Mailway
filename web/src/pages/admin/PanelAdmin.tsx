@@ -27,7 +27,7 @@ import { autorAnotacion, detalleAnotacion, etiquetaAccion } from '../../lib/toke
  * lo que promete el texto del botón.
  */
 const accesosRapidos: { to: string; label: string }[] = [
-  { to: '/clientes?nuevo=1', label: 'Alta de cliente' },
+  { to: '/clientes?nuevo=1', label: 'Dar de alta un cliente' },
   { to: '/dominios?nuevo=1', label: 'Añadir dominio' },
   { to: '/buzones?nuevo=1', label: 'Crear buzón' },
   { to: '/conexiones', label: 'Conexiones' },
@@ -145,7 +145,7 @@ export default function PanelAdmin() {
       veredicto:
         score === undefined ? 'sin-dato' : score >= 80 ? 'normal' : score >= 50 ? 'vigilar' : 'fuera',
       nota: health.isError
-        ? 'No se ha podido consultar el PTR, el registro A ni las listas negras. Repite la comprobación desde Entregabilidad.'
+        ? 'No se ha podido consultar el PTR, el registro A ni las listas negras. Repite la comprobación desde «Entregabilidad».'
         : health.data && !completa
           ? TEXTO_MEDICION_INCOMPLETA
           : undefined,
@@ -165,7 +165,7 @@ export default function PanelAdmin() {
     veredictoGlobal === 'normal'
       ? 'Todo en orden'
       : veredictoGlobal === 'fuera'
-        ? 'Requiere atención'
+        ? 'Necesita atención'
         : veredictoGlobal === 'vigilar'
           ? 'Hay puntos que revisar'
           : health.isFetching
@@ -190,7 +190,7 @@ export default function PanelAdmin() {
               <MarcaFondo veredicto={veredictoGlobal}>{estadoGlobal}</MarcaFondo>
               <span className="text-sm text-tinta-2">
                 {veredictoGlobal === 'normal'
-                  ? 'Tu correo funciona correctamente.'
+                  ? 'El servicio funciona correctamente.'
                   : 'Consulta los detalles a continuación.'}
               </span>
             </div>
@@ -244,7 +244,7 @@ export default function PanelAdmin() {
           flush
         >
           {health.isPending ? (
-            <Cargando label="Consultando PTR, registro A y listas negras…" />
+            <Cargando label="Consultando el PTR, el registro A y las listas negras…" />
           ) : health.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
@@ -352,9 +352,9 @@ export default function PanelAdmin() {
             </div>
           ) : entradas.length === 0 ? (
             <Vacio icono={History}
-              title="Todavía no hay movimiento"
+              title="Todavía no hay actividad"
               action={
-                <Link to="/clientes" className={estiloBoton('perfil')}>
+                <Link to="/clientes?nuevo=1" className={estiloBoton('perfil')}>
                   Dar de alta un cliente
                 </Link>
               }
@@ -437,7 +437,7 @@ function constanteCorreoWebNuevo(b: ResumenCorreoWebNuevo): Constante {
       valor: 'En marcha',
       referencia: 'En marcha',
       veredicto: 'vigilar',
-      nota: `La marca de los clientes no se ha podido aplicar. ${b.sincronizacion.error.mensaje} Se reintenta sola.`,
+      nota: `No se ha podido aplicar la marca de los clientes. ${b.sincronizacion.error.mensaje} Se volverá a intentar automáticamente.`,
     };
   }
   return {
@@ -447,7 +447,7 @@ function constanteCorreoWebNuevo(b: ResumenCorreoWebNuevo): Constante {
     veredicto: b.enServicio || b.clientes === 0 ? 'normal' : 'vigilar',
     nota: b.enServicio
       ? usan
-      : `${usan} Mientras el servidor de correo no sea Stalwart 0.16, sus webmail se sirven con Roundcube.`,
+      : `${usan} Mientras el servidor de correo no sea Stalwart 0.16, esos clientes usan Roundcube.`,
   };
 }
 

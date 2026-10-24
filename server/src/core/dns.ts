@@ -212,7 +212,7 @@ export async function checkDnsbl(ip: string): Promise<DnsblResult[]> {
             label,
             status: 'inconclusive',
             detail:
-              'Spamhaus rechazó la consulta (resolutor público o límite de uso). Comprueba manualmente en check.spamhaus.org.',
+              'Spamhaus ha rechazado la consulta (resolutor público o límite de uso). Compruébalo manualmente en check.spamhaus.org.',
           };
         }
         return {
@@ -229,7 +229,7 @@ export async function checkDnsbl(ip: string): Promise<DnsblResult[]> {
           zone,
           label,
           status: 'inconclusive',
-          detail: 'No se pudo consultar la lista (error de red o tiempo de espera).',
+          detail: 'No se ha podido consultar la lista (error de red o tiempo de espera agotado).',
         };
       }
     }),

@@ -246,7 +246,7 @@ export function IndicePasos({
         })}
       </ol>
       <p className="border-t border-regla px-4 py-3 text-sm text-tinta-3">
-        Todo se guarda al momento: puedes dejarlo y seguir más tarde.
+        El progreso se guarda automáticamente y puedes continuar más tarde.
       </p>
     </nav>
   );

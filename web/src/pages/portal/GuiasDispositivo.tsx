@@ -1,6 +1,5 @@
 import { useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { QR } from '../../components/QR';
-import { Button } from '../../ui/Button';
 import {
   detectarDispositivo,
   esDispositivoMovil,
@@ -162,7 +161,7 @@ function GuiaIphone(props: GuiasDispositivoProps & { enEsteDispositivo: boolean 
       <a href={props.appleProfileUrl} className={`${claseEnlaceBoton('principal')} self-stretch sm:self-start`}>
         Instalar perfil
       </a>
-      <p className="max-w-[70ch] border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta">
+      <p className="max-w-[70ch] rounded-lg border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta">
         <strong className="font-semibold">Importante:</strong> abre esta página en Safari; otros navegadores no
         permiten instalar perfiles. El perfil descargado caduca si no se instala en 8 minutos.
       </p>
@@ -390,9 +389,9 @@ export function DatosManuales({
   // Sin nombre del servidor en Ajustes, una fila con solo el puerto parece un
   // dato completo: se dice que falta y quién lo configura.
   const sinServidor =
-    'Sin configurar: falta el nombre del servidor de correo en la configuración del servicio (Ajustes → Identidad del servidor).';
+    'Sin configurar: falta el nombre del servidor de correo en Ajustes → Identidad del servidor.';
   return (
-    <div className="border border-regla bg-hoja-2">
+    <div className="overflow-hidden rounded-lg border border-regla bg-hoja-2">
       {usuarioDistinto(email, usuario) ? (
         // Stalwart solo autentica por el usuario: con la dirección nueva, la
         // configuración manual fallaría hasta actualizar los dispositivos.
@@ -460,18 +459,17 @@ function FilaDato({
   );
 }
 
-/** Botón para abrir el webmail en otra pestaña, sin enviar el enlace actual como referencia. */
+/**
+ * Botón para abrir el webmail en otra pestaña, sin enviar el enlace actual como referencia. Sin dirección, se
+ * explica en lugar de mostrar un botón deshabilitado que no dice por qué.
+ */
 export function BotonWebmail({ url, variante = 'perfil' }: { url: string; variante?: 'principal' | 'perfil' }) {
   if (!url) {
-    return (
-      <Button variant="perfil" disabled>
-        Correo web no disponible
-      </Button>
-    );
+    return <Nota>El acceso desde el navegador no está disponible. Ponte en contacto con quien administra tu correo.</Nota>;
   }
   return (
     <a href={url} target="_blank" rel="noreferrer noopener" className={`${claseEnlaceBoton(variante)} self-stretch sm:self-start`}>
-      Abrir el correo web
+      Accede a tu correo
     </a>
   );
 }

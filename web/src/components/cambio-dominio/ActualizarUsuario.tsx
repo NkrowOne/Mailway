@@ -49,7 +49,7 @@ export function LineaUsuarioPendiente({
   return (
     <p className={`text-sm ${className}`}>
       <span className="text-tinta-2">
-        Entra con <span className="valor break-all">{login}</span>
+        Accede con <span className="valor [overflow-wrap:anywhere]">{login}</span>
       </span>
       <span className="text-tinta-3"> · </span>
       <span className="font-medium text-vigilar">Pendiente de actualizar dispositivos</span>
@@ -102,7 +102,7 @@ export function ConfirmarActualizarUsuario({
     mutationFn: () => actualizarUsuarioBuzon(buzon.id),
     onSuccess: async () => {
       await invalidarTrasActualizarUsuario(queryClient);
-      toast('ok', `Usuario actualizado: ${buzon.email} entra ahora con su dirección.`);
+      toast('ok', `Usuario actualizado: ${buzon.email} accede ahora con su dirección.`);
       onHecho();
     },
   });

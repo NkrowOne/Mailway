@@ -82,13 +82,13 @@ function reservarEnvio(mailboxId: string, clientId: string): () => void {
   const claveCliente = `cliente:${clientId}`;
   if (enviosRecientes('mailbox_id', mailboxId) + (enCurso.get(claveBuzon) ?? 0) >= MAX_ENVIOS_POR_BUZON) {
     throw tooMany(
-      `Ya se han enviado ${MAX_ENVIOS_POR_BUZON} correos de configuración de este buzón en la última hora. Espera un poco antes de volver a enviarlo.`,
+      `Ya se han enviado ${MAX_ENVIOS_POR_BUZON} correos de configuración de este buzón en la última hora. Vuelve a intentarlo más tarde.`,
       'too_many_setup_emails',
     );
   }
   if (enviosRecientes('client_id', clientId) + (enCurso.get(claveCliente) ?? 0) >= MAX_ENVIOS_POR_CLIENTE) {
     throw tooMany(
-      `Se han enviado ${MAX_ENVIOS_POR_CLIENTE} correos de configuración en la última hora. Espera un poco antes de enviar más.`,
+      `Se han enviado ${MAX_ENVIOS_POR_CLIENTE} correos de configuración en la última hora. Vuelve a intentarlo más tarde.`,
       'too_many_setup_emails',
     );
   }
@@ -237,9 +237,9 @@ export function componerCorreoConfiguracion(datos: DatosCorreoConfiguracion): {
   const conPunto = (frase: string): string => (frase.endsWith('.') ? frase : `${frase}.`);
   const firma = conPunto(remitente ? `Te lo envía ${remitente} desde ${cliente}` : `Te lo envía ${cliente}`);
   const instrucciones = datos.hasPassword
-    ? 'Para usarlo en el móvil o en el ordenador, abre este enlace y sigue los pasos para tu dispositivo. La contraseña ya va incluida, así que solo lleva un par de minutos.'
+    ? 'Para usarlo en el móvil o en el ordenador, abre este enlace y sigue los pasos para tu dispositivo. La contraseña ya está incluida, así que solo se tarda unos minutos.'
     : 'Para usarlo en el móvil o en el ordenador, abre este enlace y sigue los pasos para tu dispositivo; necesitarás la contraseña de tu buzón.';
-  const validez = `El enlace es personal y vale hasta el ${fechaLargaConfiguracion(datos.expiresAt)}.`;
+  const validez = `El enlace es personal y es válido hasta el ${fechaLargaConfiguracion(datos.expiresAt)}.`;
   const aviso = datos.hasPassword ? ' Como incluye tu contraseña, no lo reenvíes a nadie.' : '';
 
   const text = [
@@ -365,7 +365,9 @@ export function registerSetupEmailRoutes(app: FastifyInstance): void {
     const client = getClient(titular.clientId);
     if (client.suspended) {
       throw forbidden(
-        'La cuenta del cliente está suspendida: no se pueden enviar correos de configuración.',
+        req.user?.role === 'admin'
+          ? 'La cuenta del cliente está suspendida: no se pueden enviar correos de configuración.'
+          : 'Tu cuenta está suspendida: no se pueden enviar correos de configuración. Ponte en contacto con tu proveedor.',
         'client_suspended',
       );
     }

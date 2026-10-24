@@ -709,9 +709,9 @@ test('el mensaje: saludo, contraseña incluida o no, firma y todo escapado en el
   assert.equal(con.subject, 'Configura tu correo ana@acme.test');
   assert.match(con.text, /^Hola, Ana:\n/);
   assert.match(con.text, /Ya tienes tu buzón de correo ana@acme\.test\./);
-  assert.match(con.text, /La contraseña ya va incluida, así que solo lleva un par de minutos\./);
+  assert.match(con.text, /La contraseña ya está incluida, así que solo se tarda unos minutos\./);
   assert.match(con.text, /\nhttps:\/\/panel\.acme\.test\/conectar\/abc_DEF-123\n/);
-  assert.match(con.text, /El enlace es personal y vale hasta el 15 de octubre de 2026 a las 10:30\. Como incluye tu contraseña, no lo reenvíes a nadie\./);
+  assert.match(con.text, /El enlace es personal y es válido hasta el 15 de octubre de 2026 a las 10:30\. Como incluye tu contraseña, no lo reenvíes a nadie\./);
   assert.match(con.text, /Te lo envía Luis desde Acme\.\n$/);
   assert.match(con.html, /Configurar mi correo<\/a>/);
   assert.match(con.html, /#0d5c5e/);
@@ -742,7 +742,7 @@ test('el mensaje: saludo, contraseña incluida o no, firma y todo escapado en el
 
   assert.match(sin.text, /^Hola:\n/);
   assert.match(sin.text, /necesitarás la contraseña de tu buzón\./);
-  assert.doesNotMatch(sin.text, /incluye tu contraseña|ya va incluida/);
+  assert.doesNotMatch(sin.text, /incluye tu contraseña|ya está incluida/);
   assert.match(sin.text, /Te lo envía Acme <b>& "Cía"<\/b>\.\n$/);
   assert.ok(sin.html.includes('Te lo envía Acme &lt;b&gt;&amp; &quot;Cía&quot;&lt;/b&gt;.'));
   assert.ok(!sin.html.includes('<script>'));

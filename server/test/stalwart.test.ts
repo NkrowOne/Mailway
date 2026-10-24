@@ -307,7 +307,7 @@ test('un HTTP 404 (ruta desconocida) es RutaDeGestionAusente, nunca Â«no existeÂ
   const salud = await motor.ping();
   assert.equal(salud.ok, false);
   assert.equal(salud.api, 'rest015');
-  assert.match(salud.detail ?? '', /Revisa la URL del motor/);
+  assert.match(salud.detail ?? '', /Revisa la URL en Ajustes/);
 });
 
 test('un HTTP 401 es un error de credenciales del motor', async () => {

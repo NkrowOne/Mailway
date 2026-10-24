@@ -278,7 +278,7 @@ function Equipo({
       }
       if (previa.exceedsPlan) {
         setErrorGeneral(
-          `Tu plan permite crear ${plural(previa.capacity.remaining, 'buzón más', 'buzones más')} y la lista tiene ${usadas.length}. Quita a alguien de la lista o pide a tu proveedor que amplíe el plan.`,
+          `Tu plan permite crear ${plural(previa.capacity.remaining, 'buzón más', 'buzones más')} y la lista tiene ${usadas.length}. Quita a alguien de la lista o solicita a tu proveedor una ampliación del plan.`,
         );
         return;
       }
@@ -381,13 +381,13 @@ function Equipo({
   return (
     <>
       {ctx.buzones.length === 0 ? (
-        <CabeceraPaso ref={tituloRef} titulo="¿Quién va a tener correo?">
-          Crea de una vez un buzón para cada persona. Después le enviarás su configuración para que tenga el correo en
-          el móvil y el ordenador sin ayuda.
+        <CabeceraPaso ref={tituloRef} titulo="Crea los buzones de tu equipo">
+          Añade a cada persona que necesite correo y se creará un buzón para cada una. Después podrás enviarle su
+          configuración para que tenga el correo en el móvil y el ordenador sin ayuda.
         </CabeceraPaso>
       ) : (
         <CabeceraPaso ref={tituloRef} titulo="Tu equipo">
-          Cada persona necesita su configuración para usar el correo. Las que aún no la tienen salen en rojo:
+          Cada persona necesita su configuración para usar el correo. Las que aún no la tienen aparecen en rojo:
           envíasela por correo o copia su enlace.
         </CabeceraPaso>
       )}
@@ -432,8 +432,8 @@ function Equipo({
             {excede && (
               <AvisoError>
                 {plazas === 0
-                  ? `Has llegado al máximo de buzones de tu plan (${plan.maxMailboxes}). Pide a tu proveedor que lo amplíe para añadir a más personas.`
-                  : `Tu plan permite crear ${plural(plazas, 'buzón más', 'buzones más')} y la lista tiene ${usadas.length}. Quita a alguien de la lista o pide a tu proveedor que amplíe el plan.`}
+                  ? `Se ha alcanzado el máximo de buzones de tu plan (${plan.maxMailboxes}). Para añadir a más personas, solicita a tu proveedor una ampliación del plan.`
+                  : `Tu plan permite crear ${plural(plazas, 'buzón más', 'buzones más')} y la lista tiene ${usadas.length}. Quita a alguien de la lista o solicita a tu proveedor una ampliación del plan.`}
               </AvisoError>
             )}
             <fieldset>
@@ -498,7 +498,7 @@ function Equipo({
                   value={textoPegado}
                   onChange={(e) => setTextoPegado(e.target.value)}
                   placeholder={'Ana García\nLuis Martín, luis.martin@gmail.com'}
-                  help="Puedes pegarla desde una hoja de cálculo o desde tu agenda: el nombre y, si quieres, su correo personal."
+                  help="Se puede pegar desde una hoja de cálculo o desde la agenda: el nombre y, opcionalmente, el correo personal."
                 />
                 <div className="flex flex-wrap gap-2">
                   <Button variant="perfil" disabled={!textoPegado.trim()} onClick={anadirLista}>
@@ -511,8 +511,8 @@ function Equipo({
               </div>
             )}
             <p className="max-w-[68ch] text-sm text-tinta-3">
-              Las contraseñas se generan solas y van dentro del enlace de cada persona. Con su correo personal, al crear
-              los buzones podrás enviarle su configuración por correo.
+              Las contraseñas se generan automáticamente y van dentro del enlace de cada persona. Si indicas su correo
+              personal, al crear los buzones podrás enviarle la configuración por correo.
             </p>
             {errorGeneral && <AvisoError>{errorGeneral}</AvisoError>}
           </div>
@@ -548,7 +548,7 @@ function Equipo({
             : usadas.length > 0
               ? `Cada buzón tendrá su enlace con la contraseña incluida, válido ${VALIDEZ_ENLACE_HORAS / 24} días.`
               : sinConfigurar > 0
-                ? `${sinConfigurar === 1 ? 'Queda 1 buzón' : `Quedan ${sinConfigurar} buzones`} sin configurar. Puedes seguir y enviar la configuración más tarde.`
+                ? `${sinConfigurar === 1 ? 'Queda 1 buzón' : `Quedan ${sinConfigurar} buzones`} sin configurar. Puedes continuar y enviar la configuración más tarde.`
                 : undefined
         }
       />

@@ -65,9 +65,9 @@ export default function PuestaCliente({ contexto }: { contexto: ContextoCliente 
       >
         <div className="flex flex-col gap-2.5">
           <p className="max-w-[75ch] text-base text-tinta-2">
-            Con el enlace, la persona de contacto entra en su panel y sigue la guía: su dominio, los buzones que
-            necesite su equipo y la configuración de cada persona. Debajo ves lo mismo que verá ella, y puedes hacerlo
-            por ella.
+            Con el enlace, la persona de contacto accede a su panel y sigue la guía: su dominio, los buzones que
+            necesite su equipo y la configuración de cada persona. Debajo se muestra la misma guía que verá ella;
+            también puedes completarla en su nombre.
           </p>
           {vigente && estado && (
             <p className="flex flex-wrap items-center gap-2 text-sm text-tinta-2">
@@ -142,7 +142,7 @@ function DialogoReinicio({
         queryClient.invalidateQueries({ queryKey: ['client-dashboard'] }),
         queryClient.invalidateQueries({ queryKey: ['activity'] }),
       ]);
-      if (r.failed.length === 0) toast('ok', `Puesta en marcha reiniciada: ${plural(r.reset, 'buzón', 'buzones')} desde cero.`);
+      if (r.failed.length === 0) toast('ok', `Puesta en marcha reiniciada en ${plural(r.reset, 'buzón', 'buzones')}.`);
     },
   });
 
@@ -180,7 +180,7 @@ function DialogoReinicio({
             {resultado.reset === 0
               ? `${clientName} no tenía buzones activos que reiniciar.`
               : `${plural(resultado.reset, 'buzón queda', 'buzones quedan')} sin configurar, con contraseña nueva y sin enlaces anteriores.`}
-            {resultado.skipped > 0 && ` ${plural(resultado.skipped, 'buzón suspendido no se ha tocado', 'buzones suspendidos no se han tocado')}.`}
+            {resultado.skipped > 0 && ` ${plural(resultado.skipped, 'buzón suspendido se mantiene sin cambios', 'buzones suspendidos se mantienen sin cambios')}.`}
           </p>
           {resultado.failed.length > 0 && (
             <AvisoError>
@@ -193,12 +193,12 @@ function DialogoReinicio({
       ) : (
         <div className="flex flex-col gap-3 text-base text-tinta-2">
           <p>
-            Todos los buzones de {clientName} vuelven a empezar de cero, como tras una prueba: contraseña nueva, fuera
-            los enlaces de configuración anteriores, las sesiones de «Mi buzón» y las fotos, y todos quedan sin
-            configurar para que la persona de contacto envíe a cada uno su configuración.
+            Todos los buzones de {clientName} vuelven al estado inicial, como tras una prueba: reciben una contraseña
+            nueva, se retiran los enlaces de configuración anteriores, las sesiones de «Mi buzón» y las fotos, y quedan
+            sin configurar para que la persona de contacto envíe a cada uno su configuración.
           </p>
           <p>
-            El correo que ya tengan no se toca. Quien ya use un buzón en algún dispositivo tendrá que volver a
+            El correo que ya tengan se conserva. Quien ya use un buzón en algún dispositivo tendrá que volver a
             configurarlo.
           </p>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-regla bg-hoja-2 px-3 py-2.5">

@@ -209,7 +209,7 @@ async function completarPuestaEnMarcha(avisos: string[]): Promise<void> {
     // Dónde se retoma lo que falte al entrar en el panel.
     const dondeSeguir = isSetupComplete()
       ? 'Conéctalo en Ajustes → Servidor de correo.'
-      : 'Al entrar en el panel, el asistente de puesta en marcha continúa en el paso del motor.';
+      : 'Al acceder al panel, el asistente de puesta en marcha continúa en el paso del motor.';
     if (!env) {
       avisos.push(
         `El entorno del panel no define el motor de correo (STALWART_URL y STALWART_ADMIN_PASSWORD). ${dondeSeguir}`,
@@ -321,7 +321,7 @@ export async function emparejar(opciones: OpcionesEmparejado): Promise<Resultado
 function mensajeDeError(err: unknown): string {
   if (err instanceof ZodError) return err.issues[0]?.message ?? 'Datos no válidos.';
   if (err instanceof ErrorEmparejado || err instanceof HttpError) return err.message;
-  return `No se pudo completar el emparejado: ${(err as Error)?.message || String(err)}`;
+  return `No se ha podido completar el emparejado: ${(err as Error)?.message || String(err)}`;
 }
 
 /** Escribe y termina cuando la línea ha salido entera (la lee otro programa). */

@@ -58,7 +58,7 @@ export function QR({
       role="img"
       aria-label={etiqueta}
       shapeRendering="crispEdges"
-      className={`block shrink-0 border border-regla bg-white ${className}`}
+      className={`block shrink-0 rounded-lg border border-regla bg-white ${className}`}
     >
       <rect width={dibujo.lado} height={dibujo.lado} fill="#ffffff" />
       <path d={dibujo.d} fill="rgb(22 21 19)" />

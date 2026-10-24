@@ -322,7 +322,7 @@ function loginInUse(email: string): boolean {
 
 function loginInUseError(email: string, what: 'buzón' | 'alias'): HttpError {
   return conflict(
-    `Ya hay un buzón que entra con el usuario ${email}. Elige otro nombre para el ${what}.`,
+    `Ya hay un buzón que accede con el usuario ${email}. Elige otro nombre para el ${what}.`,
     'mailbox_exists',
   );
 }
@@ -640,7 +640,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const user = requireClientAccess(req, domain.clientId);
     const viewerIsAdmin = user.role === 'admin';
     const client = getClient(domain.clientId);
-    assertClientActive(client.id);
+    assertClientActive(client.id, viewerIsAdmin);
     // Sin propiedad comprobada no se crea ningún buzón; la revisión lo dice
     // en cada línea para que nadie prepare un lote que no se va a crear.
     const ownershipError = ownershipPendingMessage(domain.id);
@@ -656,7 +656,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       if (!error && seen.has(localPart)) error = 'La dirección está repetida en la lista.';
       if (!error && mailboxExists(domain.id, localPart)) error = 'El buzón ya existe.';
       if (!error && aliasExists(domain.id, localPart)) error = 'Ya existe un alias con esa dirección.';
-      if (!error && loginInUse(email)) error = 'Ya hay un buzón que entra con ese usuario.';
+      if (!error && loginInUse(email)) error = 'Ya hay un buzón que accede con ese usuario.';
       if (!error && migrationError) error = `${domain.domain} está en un cambio de dominio.`;
       if (!error && ownershipError) error = 'Falta comprobar la propiedad del dominio.';
       seen.add(localPart);
@@ -776,7 +776,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
 
   app.patch('/api/mailboxes/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const { domain } = requireMailboxAccess(req, id);
+    const { domain, user } = requireMailboxAccess(req, id);
     const body = z
       .object({
         displayName: displayNameSchema.optional(),
@@ -794,7 +794,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
       const client = getClient(domain.clientId);
       if (body.status === 'active' && client.suspended) {
         throw conflict(
-          'El cliente está suspendido: sus buzones permanecen suspendidos hasta que se reactive el cliente.',
+          user.role === 'admin'
+            ? 'El cliente está suspendido: sus buzones permanecen suspendidos hasta que se reactive el cliente.'
+            : 'Tu cuenta está suspendida y sus buzones también. Ponte en contacto con tu proveedor.',
           'client_suspended',
         );
       }
@@ -1016,7 +1018,7 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     assertAltasPermitidas(domain.id);
     const localPart = normalizeLocalPart(body.localPart);
     // postmaster@ y abuse@ los exigen los estándares: no cuentan para el plan.
-    if (esDireccionObligatoria(localPart)) assertClientActive(domain.clientId);
+    if (esDireccionObligatoria(localPart)) assertClientActive(domain.clientId, user.role === 'admin');
     else assertWithinLimit(domain.clientId, 'aliases', 1, user.role === 'admin');
     assertDomainOwnership(domain.id);
 
@@ -1101,9 +1103,9 @@ export function registerMailboxRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const domain = getDomain(id);
     const body = z.object({ destinations: destinationsSchema }).parse(req.body ?? {});
-    requireClientAccess(req, domain.clientId);
+    const user = requireClientAccess(req, domain.clientId);
     return withLock(clientLockKey(domain.clientId), async () => {
-      assertClientActive(domain.clientId);
+      assertClientActive(domain.clientId, user.role === 'admin');
       assertDomainOwnership(domain.id);
       assertAltasPermitidas(domain.id);
       const engine = getEngine();

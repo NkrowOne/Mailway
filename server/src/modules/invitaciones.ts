@@ -64,7 +64,7 @@ function invitacionNoValida(): HttpError {
 function invitacionUsada(): HttpError {
   return new HttpError(
     409,
-    'Este enlace de bienvenida ya se ha usado. Inicia sesión con tu correo y tu contraseña.',
+    'Este enlace de bienvenida ya se ha usado. Accede con tu correo y tu contraseña.',
     'invite_used',
   );
 }

@@ -65,9 +65,9 @@ export async function sincronizarRecepcionExterna(): Promise<RemoteDomainsResult
           title: 'La entrega por MX de los dominios con el correo en otro proveedor no está disponible con este motor',
           message:
             `Con Stalwart 0.16, Mailway todavía no escribe las reglas que envían por su MX lo que sale de este servidor hacia ${dominios.join(', ')} (dominios cuyo MX apunta a otro proveedor). ` +
-            'Mientras tanto, esos mensajes se entregan en los buzones de aquí o se rechazan si la dirección no existe aquí.',
+            'Mientras tanto, esos mensajes se entregan en los buzones de este servidor o se rechazan si la dirección no existe en él.',
           remedy:
-            'Cambia el MX de esos dominios a este servidor cuando sus buzones estén listos, o avisa a quien envía desde este servidor a esas direcciones de que los mensajes quedan en los buzones de aquí hasta el cambio.',
+            'Cambia el MX de esos dominios a este servidor cuando sus buzones estén listos, o avisa a quien envía desde este servidor a esas direcciones de que los mensajes quedan en los buzones de este servidor hasta el cambio.',
         });
       } else {
         resolveAlert(ALERTA_SIN_SOPORTE);
@@ -88,7 +88,7 @@ export async function sincronizarRecepcionExterna(): Promise<RemoteDomainsResult
           title: 'El servidor de correo tiene personalizada la entrega de los mensajes',
           message:
             `Las reglas session.rcpt.directory, queue.strategy.route o queue.strategy.schedule del motor tienen valores que no ha escrito Mailway, así que no se han modificado. ` +
-            `Mientras tanto, lo que se envíe desde este servidor a ${dominios.join(', ')} (dominios cuyo MX apunta a otro proveedor) se entregará en los buzones de aquí o se rechazará si la dirección no existe aquí, en lugar de llegar a su proveedor actual.`,
+            `Mientras tanto, lo que se envíe desde este servidor a ${dominios.join(', ')} (dominios cuyo MX apunta a otro proveedor) se entregará en los buzones de este servidor o se rechazará si la dirección no existe en él, en lugar de llegar a su proveedor actual.`,
           remedy:
             'Si esa personalización no es necesaria, elimina esas claves en la administración de Stalwart y Mailway escribirá las suyas en la siguiente comprobación. Si lo es, añade a tus reglas las que se describen en docs/INTEGRACIONES.md («Recepción en otro proveedor»).',
         });

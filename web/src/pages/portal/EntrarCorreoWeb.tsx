@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Mail } from 'lucide-react';
+import { FingerprintPattern, Mail } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type SetupStatus } from '../../lib/api';
@@ -14,6 +14,9 @@ import {
 import { Button } from '../../ui/Button';
 import { AvisoError, claseEnlaceBoton, TACTIL } from './comun';
 import { MarcoAccesoPortal } from './MarcoAcceso';
+
+/** Qué hacer con un enlace incompleto: empezar de nuevo desde la pantalla de acceso del webmail. */
+const TEXTO_VOLVER = 'Vuelve a la pantalla de acceso de tu correo y pulsa de nuevo «Usar llave de acceso».';
 
 /** Respuesta de POST /api/portal/llave/entrar cuando se pide entrar en un webmail. */
 interface RespuestaEntrar {
@@ -62,7 +65,7 @@ export default function EntrarCorreoWeb() {
   const marca = setup.data?.instance?.brandName || 'Correo';
 
   useEffect(() => {
-    document.title = 'Entrar en el correo web';
+    document.title = 'Accede a tu correo';
   }, []);
 
   // Al volver con «Atrás» desde el webmail, el navegador puede restaurar la
@@ -89,7 +92,7 @@ export default function EntrarCorreoWeb() {
       }
       setSinPaso(true);
       setError(
-        'Se ha comprobado la llave, pero no se ha podido abrir este correo web con ella. Entra con tu contraseña.',
+        'Se ha comprobado la llave de acceso, pero no se ha podido acceder a tu correo con ella. Accede con tu contraseña.',
       );
     } catch (err) {
       setError(mensajeErrorLlave(err, 'entrar'));
@@ -103,7 +106,7 @@ export default function EntrarCorreoWeb() {
       <a href="/mi-buzon" className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
         «Mi buzón»
       </a>
-      , después de entrar con tu dirección y tu contraseña.
+      , después de acceder con tu dirección y tu contraseña.
     </p>
   );
 
@@ -113,9 +116,7 @@ export default function EntrarCorreoWeb() {
         <div className="flex flex-col gap-4 px-5 pb-7 pt-4 sm:px-8">
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-tinta">El enlace no es válido</h1>
-            <p className="mt-1 text-base text-tinta-2">
-              Vuelve al correo web y pulsa de nuevo «Entrar con llave de acceso».
-            </p>
+            <p className="mt-1 text-base text-tinta-2">{TEXTO_VOLVER}</p>
           </div>
         </div>
       </MarcoAccesoPortal>
@@ -132,18 +133,18 @@ export default function EntrarCorreoWeb() {
         <div className="text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-petroleo-claro px-2.5 py-1 text-sm font-semibold text-petroleo">
             <Mail className="h-4 w-4" aria-hidden />
-            Correo web
+            Tu correo
           </span>
-          <h1 className="mt-3 text-2xl font-semibold text-tinta">Entrar en el correo web</h1>
+          <h1 className="mt-3 text-2xl font-semibold text-tinta">Accede a tu correo</h1>
           <p className="mt-1 text-base text-tinta-2">
-            Usa tu llave de acceso para entrar en{' '}
+            Usa tu llave de acceso para acceder a tu correo en{' '}
             <span className="font-medium text-tinta [overflow-wrap:anywhere]">{destino}</span> sin escribir la
             contraseña.
           </p>
         </div>
 
         {!estado ? (
-          <AvisoError>Vuelve al correo web y pulsa de nuevo «Entrar con llave de acceso».</AvisoError>
+          <AvisoError>{TEXTO_VOLVER}</AvisoError>
         ) : !disponible ? (
           <p className="text-center text-base text-tinta-2">{motivoSinLlaves()}</p>
         ) : sinPaso ? null : (
@@ -154,7 +155,8 @@ export default function EntrarCorreoWeb() {
             onClick={() => void entrar()}
             className={`w-full ${TACTIL}`}
           >
-            Entrar con llave de acceso
+            {!busy && <FingerprintPattern className="h-4 w-4" aria-hidden />}
+            Usar llave de acceso
           </Button>
         )}
         {error && <AvisoError>{error}</AvisoError>}
@@ -164,7 +166,7 @@ export default function EntrarCorreoWeb() {
           href={enlaceContrasena}
           className={`${claseEnlaceBoton(puedeEntrar ? 'perfil' : 'principal')} w-full`}
         >
-          Entrar con contraseña
+          Accede con contraseña
         </a>
       </div>
     </MarcoAccesoPortal>

@@ -163,7 +163,7 @@ function classifyRecord(record: EngineDnsRecord, domain: string): {
     id: `${record.type.toLowerCase()}:${name}`,
     label: `${record.type} (${name})`,
     required,
-    help: 'Registro adicional recomendado por el motor de correo.',
+    help: 'Registro adicional recomendado por el servidor de correo.',
   };
 }
 
@@ -437,7 +437,7 @@ function pendientesEnElMotor(domain: string, seleccion: EngineDnsRecord[]): DnsC
       type: 'MX',
       name: raiz,
       presente: (r) => r.type === 'MX' && nombre(r) === raiz,
-      help: 'El servidor de correo no ha propuesto el registro MX de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+      help: 'El servidor de correo no ha propuesto el registro MX de este dominio, así que no hay valor que publicar. Revisa el dominio en el servidor de correo y vuelve a medir.',
     },
     {
       familia: 'spf',
@@ -445,7 +445,7 @@ function pendientesEnElMotor(domain: string, seleccion: EngineDnsRecord[]): DnsC
       type: 'TXT',
       name: raiz,
       presente: (r) => r.type === 'TXT' && nombre(r) === raiz && esSpf(r.content),
-      help: 'El servidor de correo no ha propuesto el registro SPF de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+      help: 'El servidor de correo no ha propuesto el registro SPF de este dominio, así que no hay valor que publicar. Revisa el dominio en el servidor de correo y vuelve a medir.',
     },
     {
       familia: 'dkim',
@@ -464,7 +464,7 @@ function pendientesEnElMotor(domain: string, seleccion: EngineDnsRecord[]): DnsC
       type: 'TXT',
       name: `_dmarc.${raiz}`,
       presente: (r) => r.type === 'TXT' && nombre(r) === `_dmarc.${raiz}` && esDmarc(r.content),
-      help: 'El servidor de correo no ha propuesto el registro DMARC de este dominio, así que no hay valor que publicar. Revisa el dominio en el motor de correo y vuelve a medir.',
+      help: 'El servidor de correo no ha propuesto el registro DMARC de este dominio, así que no hay valor que publicar. Revisa el dominio en el servidor de correo y vuelve a medir.',
     },
   ];
   return familias
@@ -653,7 +653,7 @@ export async function checkServerHealth(): Promise<ServerHealthReport> {
     recommendations.push({
       severity: 'critical',
       title: 'El registro inverso (PTR) no coincide',
-      detail: `La IP ${publicIp} resuelve a "${(ptr || []).join(', ') || 'nada'}" y debería resolver a "${mailHostname}". El PTR se configura en el panel del proveedor del servidor (no en el DNS del dominio). Sin un PTR correcto, Gmail y Outlook rechazan los mensajes o los clasifican como spam.`,
+      detail: `La IP ${publicIp} resuelve a «${(ptr || []).join(', ') || 'nada'}» y debería resolver a «${mailHostname}». El PTR se configura en el panel del proveedor del servidor (no en el DNS del dominio). Sin un PTR correcto, Gmail y Outlook rechazan los mensajes o los clasifican como spam.`,
     });
   } else if (ptrOk === null && publicIp) {
     recommendations.push({

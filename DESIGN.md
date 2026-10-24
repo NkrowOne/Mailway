@@ -460,12 +460,12 @@ Las dos entradas viven en la misma dirección y son a propósito distintas,
 para que nadie las confunda:
 
 - **Panel de gestión** (`/login`): dos columnas en escritorio, el formulario
-  a la izquierda sobre blanco (distintivo «Panel de gestión», «Iniciar
-  sesión») y, a la derecha, un panel de gestión dibujado sobre el degradado
+  a la izquierda sobre blanco (distintivo «Panel de gestión», «Accede al
+  panel») y, a la derecha, un panel de gestión dibujado sobre el degradado
   petróleo de la marca (`IlustracionPanel`); en el móvil, solo el formulario.
 - **Mi buzón** (`/mi-buzon`): tarjeta centrada de 24 px de radio con un
   ordenador y un móvil dibujados (`IlustracionBuzon`), distintivo «Tu
-  correo» y «Entrar en mi buzón», sobre un velo aguamarina.
+  correo», título «Mi buzón» y botón «Accede», sobre un velo aguamarina.
 
 Cada una enlaza a la otra, las dos dejan ver la contraseña y las
 ilustraciones (`components/Portadas.tsx`) son solo formas, sin texto.
@@ -529,4 +529,7 @@ HTML también en oscuro. Letra del sistema; nada se carga de fuera.
 - **Don't** poner dos acciones principales en la misma zona.
 - **Don't** usar `<table>`, recortar identificadores con elipsis en móvil ni
   permitir desplazamiento horizontal.
+- **Don't** usar `break-all` en direcciones, dominios o URL dentro de una
+  frase: `[overflow-wrap:anywhere]` las corta solo cuando no caben (con
+  `break-all` se parten aunque quepan en la línea siguiente, «htt p://»).
 - **Don't** introducir un tema oscuro en el panel: el sistema es claro.

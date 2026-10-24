@@ -84,7 +84,7 @@ export function TransicionCambio({
 
       <Seccion>
         <p className="max-w-[75ch] text-base text-tinta [overflow-wrap:anywhere]">
-          Desde ahora el correo sale como @{hacia}. Lo que llegue a @{desde} sigue entrando en los mismos buzones.
+          Desde ahora el correo sale como @{hacia}. Lo que llegue a @{desde} sigue llegando a los mismos buzones.
         </p>
       </Seccion>
 
@@ -123,7 +123,7 @@ export function TransicionCambio({
               Volver a {desde}
             </Button>
             <Button variant="peligro" onClick={() => setDialogo('baja')}>
-              Dar de baja {desde}…
+              Dar de baja {desde}
             </Button>
           </div>
         </Seccion>
@@ -157,7 +157,7 @@ function FilaPersona({ persona, onActualizar }: { persona: PersonaCambio; onActu
         <p className="valor break-all text-base text-tinta">{persona.email}</p>
         {persona.pendiente && (
           <p className="text-sm text-tinta-2">
-            Entra con <span className="valor break-all">{persona.login}</span>
+            Accede con <span className="valor [overflow-wrap:anywhere]">{persona.login}</span>
           </p>
         )}
         {/* Nadie pone al día esas aplicaciones: se dice aquí, donde se decide actualizar. */}

@@ -781,11 +781,11 @@ function partesAppsManuales(apps: string[]): { lista: string; una: boolean } {
 function avisoAppsManuales(buzones: number, apps: string[], desde: string): AvisoCambio {
   const { lista, una } = partesAppsManuales(apps);
   const sujeto = buzones === 1 ? 'Un buzón tiene' : `${buzones} buzones tienen`;
-  const cuales = una ? 'una contraseña de aplicación creada a mano' : 'contraseñas de aplicación creadas a mano';
+  const cuales = una ? 'una contraseña de aplicación creada manualmente' : 'contraseñas de aplicación creadas manualmente';
   const quien = una ? 'la aplicación que la usa tiene' : 'las aplicaciones que las usan tienen';
   return {
     code: 'apps_manuales',
-    mensaje: `${sujeto} ${cuales} (${lista}). Tras actualizar su usuario o dar de baja ${desde}, ${quien} que entrar con la dirección nueva.`,
+    mensaje: `${sujeto} ${cuales} (${lista}). Tras actualizar su usuario o dar de baja ${desde}, ${quien} que acceder con la dirección nueva.`,
   };
 }
 
@@ -797,13 +797,13 @@ function avisoAppsManuales(buzones: number, apps: string[], desde: string): Avis
  */
 function avisoAppsManualesDeVuelta(buzones: number, apps: string[], desde: string, hacia: string): AvisoCambio {
   const { lista, una } = partesAppsManuales(apps);
-  const sujeto = buzones === 1 ? 'Un buzón entra' : `${buzones} buzones entran`;
+  const sujeto = buzones === 1 ? 'Un buzón accede' : `${buzones} buzones acceden`;
   const tiene = buzones === 1 ? 'tiene' : 'tienen';
-  const cuales = una ? 'una contraseña de aplicación creada a mano' : 'contraseñas de aplicación creadas a mano';
+  const cuales = una ? 'una contraseña de aplicación creada manualmente' : 'contraseñas de aplicación creadas manualmente';
   const quien = una ? 'la aplicación que la usa tiene' : 'las aplicaciones que las usan tienen';
   return {
     code: 'apps_manuales',
-    mensaje: `${sujeto} con su usuario de ${hacia} y ${tiene} ${cuales} (${lista}). Si cancelas el cambio o actualizas su usuario, ${quien} que volver a entrar con su dirección de ${desde}; si vuelves a pasar, no cambia nada.`,
+    mensaje: `${sujeto} con su usuario de ${hacia} y ${tiene} ${cuales} (${lista}). Si cancelas el cambio o actualizas su usuario, ${quien} que volver a acceder con su dirección de ${desde}; si vuelves a pasar, no cambia nada.`,
   };
 }
 
@@ -837,7 +837,7 @@ function errorCancelarConApps(fila: FilaCambio, conApps: { buzon: BuzonDelCambio
       ? `${direcciones[0]} lo ${quienLoUsa(apps)} con su usuario de ${hacia}`
       : `Estos buzones los ${quienLoUsa(apps)} con su usuario de ${hacia}: ${direcciones.join(', ')}`;
   return conflict(
-    `${sujeto}. Al cancelar, ${conApps.length === 1 ? 'el buzón volvería' : 'volverían'} a entrar con su dirección de ${desde} y ${que} de enviar. Revoca antes sus contraseñas de aplicación «skyway:…» y, después de cancelar, vuelve a conectar ${apps.length > 1 ? 'las aplicaciones' : 'la aplicación'} desde Skyway.`,
+    `${sujeto}. Al cancelar, ${conApps.length === 1 ? 'el buzón volvería' : 'volverían'} a acceder con su dirección de ${desde} y ${que} de enviar. Revoca antes sus contraseñas de aplicación «skyway:…» y, después de cancelar, vuelve a conectar ${apps.length > 1 ? 'las aplicaciones' : 'la aplicación'} desde Skyway.`,
     'mailbox_used_by_app',
   );
 }
@@ -1009,6 +1009,11 @@ interface OpcionesPlan {
   /** Administrador que no actúa en nombre de un cliente: salta las reservas. */
   comoAdministrador: boolean;
   /**
+   * Quien lo pide es de la administración (aunque actúe en nombre de un
+   * cliente): decide a quién se remite en el cliente suspendido o sin plaza.
+   */
+  esAdministrador: boolean;
+  /**
    * Quién gestionaría el cambio. Con Skyway, el mismo cambio ya abierto solo
    * vale si es suyo (`referencia` undefined: el plan no sabe de qué proyecto
    * es, y solo descarta el que se lleva desde el panel).
@@ -1069,7 +1074,7 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
     bloquear(
       409,
       'domain_www',
-      `«${hacia}» empieza por «www.», que suele ser el nombre de la web. ¿Querías decir ${visible(sugerido)}? Las direcciones de correo no deben colgar de www.`,
+      `«${hacia}» empieza por «www.», que suele ser el nombre de la web. ¿Querías decir ${visible(sugerido)}? Las direcciones de correo no deben ir en el subdominio www.`,
     );
   }
   let suspendido = false;
@@ -1082,7 +1087,9 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
     bloquear(
       400,
       'client_suspended',
-      'Este cliente está suspendido. No es posible crear recursos ni credenciales hasta que se reactive.',
+      opts.esAdministrador
+        ? 'Este cliente está suspendido. No es posible crear recursos ni credenciales hasta que se reactive.'
+        : 'Tu cuenta está suspendida: no es posible crear recursos ni credenciales. Ponte en contacto con tu proveedor.',
     );
   }
   if (from.ownershipVerifiedAt === null) {
@@ -1134,7 +1141,9 @@ function calcularPlan(from: DomainRecord, to: string, opts: OpcionesPlan): PlanC
         bloquear(
           400,
           'plan_limit_reached',
-          `Se ha alcanzado el máximo de dominios del plan «${plan.name}» (${plan.maxDomains}), incluso sin contar ${desde}. Solicita una ampliación del plan.`,
+          `Se ha alcanzado el máximo de dominios del plan «${plan.name}» (${plan.maxDomains}), incluso sin contar ${desde}. ${
+            opts.esAdministrador ? 'Amplía el plan del cliente en su ficha.' : 'Solicita a tu proveedor una ampliación del plan.'
+          }`,
         );
       }
     }
@@ -1744,6 +1753,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     const to = normalizeDomain(body.toDomain);
     const { bloqueosHttp: _b, ...plan } = calcularPlan(from, to, {
       comoAdministrador: user.role === 'admin' && !pideSoloCliente(req.query),
+      esAdministrador: user.role === 'admin',
       // El plan no dice el origen: con el token de la administración lo pide
       // Skyway, que no puede adoptar un cambio que se lleva desde el panel.
       gestor: esIntegracionDeAdministracion(req) ? { origen: 'skyway' } : undefined,
@@ -1778,7 +1788,7 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
         if (ajeno) throw new HttpError(ajeno.status, ajeno.mensaje, ajeno.code);
         if (existente?.to_domain_id) return { id: existente.id, creado: false, completado: false };
         const from = getDomain(inicial.id);
-        const { bloqueosHttp } = calcularPlan(from, to, { comoAdministrador, gestor });
+        const { bloqueosHttp } = calcularPlan(from, to, { comoAdministrador, esAdministrador: alta.esAdministrador, gestor });
         const primero = bloqueosHttp[0];
         if (existente) {
           // Un reinicio cortó la creación mientras se daba de alta
@@ -2229,7 +2239,9 @@ export function registerDomainMigrationRoutes(app: FastifyInstance): void {
     vacioSchema.parse(req.body ?? {});
     if (getClient(fila.client_id).suspended) {
       throw badRequest(
-        'El cliente está suspendido. Reactívalo antes de crear enlaces de configuración.',
+        req.user?.role === 'admin'
+          ? 'El cliente está suspendido. Reactívalo antes de crear enlaces de configuración.'
+          : 'Tu cuenta está suspendida: no es posible crear enlaces de configuración. Ponte en contacto con tu proveedor.',
         'client_suspended',
       );
     }

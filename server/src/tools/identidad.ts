@@ -114,7 +114,7 @@ async function main(): Promise<void> {
     const mensaje =
       err instanceof ErrorIdentidad
         ? err.message
-        : `No se pudo adoptar la identidad del servidor: ${(err as Error)?.message || String(err)}`;
+        : `No se ha podido adoptar la identidad del servidor: ${(err as Error)?.message || String(err)}`;
     terminar(1, '', `${mensaje}\n`);
   }
 }

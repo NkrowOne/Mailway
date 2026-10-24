@@ -104,7 +104,7 @@ export async function detectarApiStalwart(settings: EngineSettings): Promise<Api
       });
     } catch (err) {
       throw upstream(
-        `No se pudo conectar con el motor de correo (${base}): ${(err as Error).message}`,
+        `No se ha podido conectar con el servidor de correo (${base}): ${(err as Error).message}`,
         'engine_unreachable',
       );
     }
@@ -128,7 +128,7 @@ export async function detectarApiStalwart(settings: EngineSettings): Promise<Api
   if (rest.ok && pareceGestion015(cuerpoRest)) return 'rest015';
 
   throw upstream(
-    `En ${base} no responde la API de gestión de Stalwart 0.15 ni la de 0.16 (HTTP ${sesion.status} en /jmap/session y ${rest.status} en /api/principal). Revisa la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart (p. ej. http://mailway-mail:8080).`,
+    `En ${base} no responde la API de gestión de Stalwart 0.15 ni la de 0.16 (HTTP ${sesion.status} en /jmap/session y ${rest.status} en /api/principal). Revisa en Ajustes la URL de la API de gestión de Stalwart (p. ej. http://mailway-mail:8080).`,
     'engine_error',
   );
 }

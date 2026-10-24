@@ -45,7 +45,7 @@ export function HojaWebmailAutomatico({ clientId, isAdmin }: { clientId: string;
         'ok',
         data.webmailAutomatico
           ? 'Webmail automático activado. Los dominios comprobados tendrán su webmail en unos minutos.'
-          : 'Webmail automático desactivado. Los webmail que se crearon solos se han retirado.',
+          : 'Webmail automático desactivado. Se han retirado los webmail creados automáticamente.',
       );
     },
     onError: (err) =>
@@ -83,14 +83,14 @@ export function HojaWebmailAutomatico({ clientId, isAdmin }: { clientId: string;
             <>
               Cada dominio de correo con la propiedad comprobada recibe su webmail en{' '}
               <span className="valor">webmail.&lt;dominio&gt;</span>, con su registro en Cloudflare y su
-              certificado, sin darlo de alta a mano. Si ese nombre ya se usa para otra cosa, no se toca.
+              certificado, sin darlo de alta manualmente. Si ese nombre ya se usa para otra cosa, no se modifica.
             </>
           }
         />
         {!global && (
           <p className="text-sm text-tinta-2">
             {isAdmin
-              ? 'El webmail automático está desactivado para todo el servidor en Ajustes: este ajuste no tiene efecto hasta que se active allí.'
+              ? 'El webmail automático está desactivado para todo el servidor en «Ajustes»: este ajuste no tiene efecto hasta que se active allí.'
               : 'La administración ha desactivado el webmail automático para todo el servidor: este ajuste no tiene efecto por ahora.'}
           </p>
         )}
@@ -102,7 +102,7 @@ export function HojaWebmailAutomatico({ clientId, isAdmin }: { clientId: string;
         title="Desactivar el webmail automático"
         pie={
           <Botonera>
-            <Button variant="perfil" onClick={() => setConfirmar(false)}>
+            <Button variant="plano" onClick={() => setConfirmar(false)}>
               Cancelar
             </Button>
             <Button variant="peligro" busy={cambiar.isPending} onClick={() => cambiar.mutate(false)}>
@@ -112,9 +112,9 @@ export function HojaWebmailAutomatico({ clientId, isAdmin }: { clientId: string;
         }
       >
         <p className="text-base text-tinta-2">
-          Los webmail que Mailway creó solos dejarán de funcionar en unos segundos y sus usuarios volverán a la
+          Los webmail creados automáticamente dejarán de funcionar en unos segundos y sus usuarios pasarán a la
           dirección general del webmail; también se elimina su registro en Cloudflare. Los que se dieron de alta
-          a mano se mantienen. Puedes volver a activarlo cuando quieras.
+          manualmente se mantienen. Puedes volver a activarlo cuando quieras.
         </p>
       </Dialogo>
     </Hoja>
@@ -169,8 +169,8 @@ export function HojaWebmailAutomaticoGeneral() {
               <>
                 Cada dominio de correo con la propiedad comprobada recibe su webmail en{' '}
                 <span className="valor">webmail.&lt;dominio&gt;</span>, con su registro en Cloudflare con proxy
-                y su certificado. Cada cliente puede desactivarlo en su ficha (Marca blanca) o desde Skyway.
-                Apagarlo aquí no retira los que ya existen.
+                y su certificado. Cada cliente puede desactivarlo en la pestaña «Marca blanca» de su ficha o desde
+                Skyway. Desactivarlo aquí no retira los que ya existen.
               </>
             }
           />

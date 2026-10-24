@@ -63,8 +63,7 @@ export default function Ajustes() {
       <>
         <Membrete title="Ajustes" meta={META} />
         <AvisoError onRetry={() => void settings.refetch()} retrying={settings.isFetching}>
-          No se han podido cargar los ajustes. Comprueba que el servidor de Mailway sigue en marcha y vuelve a
-          intentarlo.
+          No se han podido cargar los ajustes. Comprueba que el servicio está en marcha y vuelve a intentarlo.
         </AvisoError>
       </>
     );
@@ -279,8 +278,8 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
                   <span className="valor">{estadoIp.registroA.join(', ')}</span>
                 </>
               ) : null}
-              , pero aquí figura <span className="valor">{initial.publicIp}</span>. Si ha cambiado de IP,
-              actualízala: con la anterior, Entregabilidad comprueba el PTR y las listas negras de otra máquina.
+              , pero aquí figura <span className="valor">{initial.publicIp}</span>. Si la IP ha cambiado,
+              actualízala: con la anterior, «Entregabilidad» comprueba el PTR y las listas negras de otra máquina.
               {estadoIp?.mailHostname
                 ? ''
                 : ' Si el servidor tiene varias IP y sale por otra a propósito, no es necesario cambiar nada.'}
@@ -306,7 +305,7 @@ function HojaIdentidad({ initial, onSaved }: { initial: InstanceSettings; onSave
           value={form.webmailUrl}
           onChange={set('webmailUrl')}
           placeholder="https://webmail.tuempresa.com"
-          help="Se usa para los clientes sin dominio propio de webmail en servicio (se configura en Marca blanca). Si se deja vacía, a esos clientes no se les muestran enlaces al webmail."
+          help="Para los clientes sin un webmail propio en servicio (se configura en «Marca blanca»). Si se deja vacía, esos clientes no ven enlaces al webmail."
         />
         {error && <AvisoError>{error}</AvisoError>}
         {/* Única acción principal de la vista: el resto de hojas usan filete. */}
@@ -380,14 +379,14 @@ function HojaMotor({
     onError: (err) =>
       setTestResult({
         ok: false,
-        detail: err instanceof ApiError ? err.message : 'No se ha podido contactar con el servidor.',
+        detail: err instanceof ApiError ? err.message : 'No se ha podido conectar con el servidor.',
       }),
   });
 
   const save = useMutation({
     mutationFn: () => api.put('/api/settings/engine', payload()),
     onSuccess: () => {
-      toast('ok', 'Se ha guardado y verificado la conexión con el motor.');
+      toast('ok', 'Conexión con el motor guardada y verificada.');
       setAdminPassword('');
       onSaved();
     },
@@ -485,7 +484,7 @@ function HojaMotor({
         {testResult && (
           <p
             role="status"
-            className={`revelar border px-3 py-2 text-sm ${
+            className={`revelar rounded-lg border px-3 py-2 text-sm ${
               testResult.ok
                 ? 'border-[rgb(var(--normal)/0.35)] bg-normal-fondo text-normal'
                 : 'border-[rgb(var(--fuera)/0.35)] bg-fuera-fondo text-fuera'
@@ -493,7 +492,7 @@ function HojaMotor({
           >
             {testResult.ok
               ? `La conexión con el motor es correcta${testResult.api ? `: ${nombreMotor(testResult.api)}` : ''}.`
-              : `No hay conexión con el motor: ${testResult.detail || 'sin detalle'}`}
+              : `No se ha podido conectar con el motor${testResult.detail ? `: ${testResult.detail}` : '.'}`}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
@@ -503,12 +502,12 @@ function HojaMotor({
             </Button>
           )}
           <Button type="submit" variant="perfil" busy={save.isPending} disabled={data.demoMode}>
-            Guardar motor
+            Guardar conexión
           </Button>
         </div>
         <p className="text-sm text-tinta-3">
-          Probar y guardar la conexión con el motor requiere una sesión iniciada en el panel: no es posible
-          hacerlo con un token de gestión.
+          Probar y guardar la conexión con el motor requiere una sesión en el panel: un token de gestión no
+          puede hacerlo.
         </p>
       </form>
     </Hoja>
@@ -558,7 +557,7 @@ function HojaAutoconfiguracion() {
       const { ok, pending, unknown } = data.summary;
       toast(
         'ok',
-        `Comprobación terminada: ${plural(ok, 'nombre apunta', 'nombres apuntan')} a este servidor, ${pending} sin DNS y ${unknown} sin dato.`,
+        `Comprobación terminada: ${plural(ok, 'nombre apunta', 'nombres apuntan')} a este servidor, ${pending} sin DNS y ${unknown} sin comprobar.`,
       );
     },
     onError: (err) =>
@@ -577,7 +576,7 @@ function HojaAutoconfiguracion() {
     return (
       <Hoja title={titulo} className="min-w-0 lg:col-span-2">
         <AvisoError onRetry={() => void status.refetch()} retrying={status.isFetching}>
-          No se ha podido leer el estado de la autoconfiguración. Si el problema continúa, revisa el registro
+          No se ha podido cargar el estado de la autoconfiguración. Si el problema continúa, revisa el registro
           del servidor.
         </AvisoError>
       </Hoja>
@@ -608,8 +607,8 @@ function HojaAutoconfiguracion() {
     >
       <div className="flex flex-col gap-3 p-4">
         <p className="max-w-[75ch] text-base text-tinta-2">
-          Thunderbird, Outlook y los móviles se configuran solos al escribir la dirección cuando
-          estos nombres apuntan a este servidor. Con los dos nombres de la instancia, Thunderbird
+          Thunderbird, Outlook y los móviles se configuran automáticamente al escribir la dirección
+          cuando estos nombres apuntan a este servidor. Con los dos nombres de la instancia, Thunderbird
           configura cualquier dominio cuyo MX sea{' '}
           <span className="valor">{data.mailHostname || 'el servidor de correo'}</span> sin
           registros adicionales en el dominio del cliente.
@@ -649,7 +648,7 @@ function HojaAutoconfiguracion() {
       </div>
 
       {/* Cabecera de columnas: en móvil cada celda lleva su propio rótulo. */}
-      <div className="regla-cabecera hidden items-baseline gap-x-4 border-t border-regla bg-hoja-3 px-4 py-1.5 sm:flex">
+      <div className="regla-cabecera hidden items-baseline gap-x-4 border-t border-regla bg-hoja-2 px-4 py-1.5 sm:flex">
         <span className="rotulo min-w-0 flex-1">Dominio</span>
         {COLUMNAS.map((c) => (
           <span key={c} className="rotulo shrink-0 basis-32">
@@ -665,7 +664,7 @@ function HojaAutoconfiguracion() {
             }`}
           >
             <span className="min-w-0 basis-full sm:basis-0 sm:grow">
-              <span className="valor break-all text-base text-tinta">{data.instance.base}</span>
+              <span className="valor text-base text-tinta [overflow-wrap:anywhere]">{data.instance.base}</span>
               <span className="rotulo ml-2">Instancia</span>
             </span>
             {COLUMNAS.map((c) => (
@@ -691,7 +690,7 @@ function HojaAutoconfiguracion() {
             className="regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1.5 px-4 py-2.5 last:border-b-0"
           >
             <span className="min-w-0 basis-full sm:basis-0 sm:grow">
-              <span className="valor break-all text-base text-tinta">{d.domain}</span>
+              <span className="valor text-base text-tinta [overflow-wrap:anywhere]">{d.domain}</span>
               {d.clientName && <span className="ml-2 text-sm text-tinta-3">{d.clientName}</span>}
             </span>
             {COLUMNAS.map((c) => (
@@ -862,7 +861,7 @@ function HojaTraefik() {
               }`}
             >
               <span className="min-w-0 basis-full text-base text-tinta sm:basis-40 sm:flex-1">{p.rotulo}</span>
-              <span className="valor min-w-0 break-all text-sm text-tinta-2 sm:text-right">{p.valor}</span>
+              <span className="valor min-w-0 text-sm text-tinta-2 sm:text-right [overflow-wrap:anywhere]">{p.valor}</span>
               {p.aviso && <p className="w-full text-sm text-tinta-2">{p.aviso}</p>}
             </div>
           ))}

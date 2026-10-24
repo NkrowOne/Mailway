@@ -59,8 +59,8 @@ export function mailtoEnlacePersona(persona: EnlaceDePersona, firma?: string): s
     persona.url,
     '',
     persona.hasPassword
-      ? `El enlace es personal y vale hasta el ${fechaLarga(persona.expiresAt)}. Como incluye tu contraseña, no lo reenvíes a nadie.`
-      : `El enlace es personal y vale hasta el ${fechaLarga(persona.expiresAt)}.`,
+      ? `El enlace es personal y es válido hasta el ${fechaLarga(persona.expiresAt)}. Como incluye tu contraseña, no lo reenvíes a nadie.`
+      : `El enlace es personal y es válido hasta el ${fechaLarga(persona.expiresAt)}.`,
     '',
     'Si tienes cualquier duda, dímelo.',
     '',
@@ -127,7 +127,7 @@ export function BotonCopiarTexto({
         {estado === 'ok'
           ? 'Copiado al portapapeles.'
           : estado === 'fallo'
-            ? 'No se ha podido copiar. Abre el código QR para ver el enlace y cópialo manualmente.'
+            ? 'No se ha podido copiar. Vuelve a intentarlo o cópialo manualmente.'
             : ''}
       </span>
     </>

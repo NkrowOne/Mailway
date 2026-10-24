@@ -62,8 +62,8 @@ export default function PuestaEnMarcha() {
               </Link>
             }
           >
-            Abre la ficha del cliente y su pestaña «Puesta en marcha»: ahí ves lo mismo que ve el cliente, le envías
-            el enlace o la haces por él.
+            Abre la ficha del cliente y su pestaña «Puesta en marcha». Ahí se ve lo mismo que ve el cliente y se
+            le puede enviar el enlace o completarla por él.
           </Vacio>
         </Hoja>
       </>

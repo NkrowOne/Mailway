@@ -150,8 +150,11 @@ prueba que lo reproduce.
   **español**. Los comentarios explican el *porqué*.
 - **Registro de los textos**: profesional y neutro, tratando al usuario de
   tú («Revisa el token», «Tu sesión ha caducado»), con construcciones
-  impersonales cuando encajen, botones en infinitivo y sin coloquialismos
-  (mismo criterio que `docs/ESTILO-TEXTOS.md` de Skyway). «Su», «le» y
+  impersonales cuando encajen, botones en infinitivo y sin coloquialismos.
+  La guía completa está en **[docs/ESTILO-TEXTOS.md](docs/ESTILO-TEXTOS.md)**:
+  el acceso va en imperativo («Accede al panel», «Accede a tu correo»;
+  nunca «entrar» ni «Acceder…»), el botón de la llave es «Usar llave de
+  acceso» y al titular se le habla de «tu correo». «Su», «le» y
   «puede» no cambian cuando se refieren a un tercero (el cliente, el buzón,
   el titular). Terminología fija: buzón, alias, clave de API, token de
   gestión, contraseña de aplicación, enlace de configuración, plan,

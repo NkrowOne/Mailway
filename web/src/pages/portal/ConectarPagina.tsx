@@ -100,17 +100,28 @@ export default function ConectarPagina() {
           </h1>
           <p className="text-base text-tinta-2">
             {caducado
-              ? mensajeError(err, 'Este enlace de configuración no es válido o ha caducado.')
+              ? mensajeError(
+                  err,
+                  'Este enlace de configuración no es válido o ha caducado. Pide uno nuevo a quien administra tu correo.',
+                )
               : mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}
           </p>
           {!definitivo && (
-            <Button variant="principal" className={TACTIL} onClick={() => void consulta.refetch()}>
+            <Button
+              variant="principal"
+              className={TACTIL}
+              busy={consulta.isFetching}
+              onClick={() => void consulta.refetch()}
+            >
               Volver a intentarlo
             </Button>
           )}
           <Nota>
             Si ya tienes la contraseña de tu buzón, también puedes acceder a{' '}
-            <a href="/mi-buzon" className="text-petroleo underline hover:text-tinta">
+            <a
+              href="/mi-buzon"
+              className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta"
+            >
               «Mi buzón»
             </a>{' '}
             para configurar tus dispositivos.
@@ -130,7 +141,7 @@ export default function ConectarPagina() {
   const usadoPorApp = Boolean(datos.usadoPorApp) || (actualizar.isError && esUsadoPorApp(actualizar.error));
   const notaContrasena = datos.password
     ? 'La indicada en el apartado «Contraseña del buzón».'
-    : 'La contraseña del buzón que te ha facilitado la persona que administra tu correo.';
+    : 'La contraseña del buzón que te ha dado quien administra tu correo.';
 
   return (
     <MarcoPortal
@@ -169,11 +180,13 @@ export default function ConectarPagina() {
         >
           <div className="flex flex-col gap-3">
             <p className="max-w-[70ch] text-base text-tinta-2 [overflow-wrap:anywhere]">
-              Los dispositivos que sigan configurados con {datos.login || usuario} dejarán de conectar hasta que los
+              Los dispositivos que sigan configurados con {datos.login || usuario} dejarán de conectarse hasta que los
               actualices.
             </p>
             {actualizar.isError && (
-              <AvisoError>{mensajeError(actualizar.error, 'No se ha podido actualizar el usuario.')}</AvisoError>
+              <AvisoError>
+                {mensajeError(actualizar.error, 'No se ha podido actualizar el usuario. Vuelve a intentarlo.')}
+              </AvisoError>
             )}
             <Button
               variant="principal"
@@ -186,7 +199,7 @@ export default function ConectarPagina() {
           </div>
         </Hoja>
       )}
-      {actualizado && <AvisoHecho>Listo. Ahora entras con {actualizado}.</AvisoHecho>}
+      {actualizado && <AvisoHecho>Se ha actualizado tu usuario. Ahora es {actualizado}.</AvisoHecho>}
 
       {datos.password ? (
         <Hoja title="Contraseña del buzón">
@@ -194,8 +207,8 @@ export default function ConectarPagina() {
             <ContrasenaRevelable password={datos.password} />
             <Nota>
               Necesitarás esta contraseña si configuras el correo manualmente. Por seguridad, se eliminará de este
-              enlace cuando indiques que has terminado (al final de esta página) o cuando el enlace caduque; si quieres
-              conservarla, guárdala en un lugar seguro.
+              enlace cuando lo marques como configurado (al final de esta página) o cuando el enlace caduque; si
+              quieres conservarla, guárdala en un lugar seguro.
             </Nota>
           </div>
         </Hoja>
@@ -210,7 +223,7 @@ export default function ConectarPagina() {
         <Hoja title="Contraseña del buzón">
           <Nota>
             Este enlace no incluye la contraseña del buzón. Utiliza la contraseña actual de tu buzón; si no la
-            conoces, solicítala a la persona que administra tu correo.
+            conoces, pídela a quien administra tu correo.
           </Nota>
         </Hoja>
       )}
@@ -260,7 +273,7 @@ export default function ConectarPagina() {
         </Hoja>
       )}
 
-      <Hoja title="Correo web">
+      <Hoja title="Tu correo en el navegador">
         <div className="flex flex-col gap-3">
           <p className="max-w-[70ch] text-base text-tinta-2">
             También puedes leer y enviar correo desde el navegador, sin configurar nada, con tu dirección y tu
@@ -277,7 +290,7 @@ export default function ConectarPagina() {
             perder el móvil no obligue a cambiar la de todos los demás.
           </p>
           <a href={datos.portalUrl || '/mi-buzon'} className={`${claseEnlaceBoton('perfil')} self-stretch sm:self-start`}>
-            Acceder a «Mi buzón»
+            Accede a «Mi buzón»
           </a>
         </div>
       </Hoja>
@@ -285,11 +298,11 @@ export default function ConectarPagina() {
       {/* Al final, cuando ya se han seguido las instrucciones: pulsarlo antes
           de configurar dejaba al titular sin la contraseña a mitad de camino. */}
       {datos.password && (
-        <Hoja title="¿Has terminado?">
+        <Hoja title="Terminar la configuración">
           <div className="flex flex-col gap-3">
             <p className="max-w-[70ch] text-base text-tinta-2">
-              Cuando el correo funcione en tus dispositivos, indícalo para eliminar la contraseña de este enlace.
-              Las instrucciones seguirán disponibles.
+              Cuando el correo funcione en tus dispositivos, márcalo como configurado para eliminar la contraseña de
+              este enlace. Las instrucciones seguirán disponibles.
             </p>
             <Button
               variant="perfil"
@@ -299,7 +312,7 @@ export default function ConectarPagina() {
                 setPreguntando(true);
               }}
             >
-              Ya lo he configurado
+              Marcar como configurado
             </Button>
           </div>
         </Hoja>
@@ -308,11 +321,13 @@ export default function ConectarPagina() {
       <Dialogo open={preguntando} onClose={() => setPreguntando(false)} title="Eliminar la contraseña del enlace">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            Se eliminará la contraseña de este enlace. Asegúrate de que el correo funciona en tu dispositivo o de
-            haberla guardado. ¿Quieres continuar?
+            Se eliminará la contraseña de este enlace. Antes, comprueba que el correo funciona en tu dispositivo o
+            guarda la contraseña en un lugar seguro.
           </p>
           {hecho.isError && (
-            <AvisoError>{mensajeError(hecho.error, 'No se ha podido registrar la configuración.')}</AvisoError>
+            <AvisoError>
+              {mensajeError(hecho.error, 'No se ha podido marcar como configurado. Vuelve a intentarlo.')}
+            </AvisoError>
           )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button variant="plano" className={TACTIL} onClick={() => setPreguntando(false)}>
@@ -334,10 +349,11 @@ function ContrasenaRevelable({ password }: { password: string }) {
   return (
     <Muestra rotulo="Contraseña">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="codigo min-w-0 grow break-all text-lg text-tinta" aria-live="polite">
+        <span className="codigo min-w-0 grow text-lg text-tinta [overflow-wrap:anywhere]" aria-live="polite">
           {visible ? password : '•'.repeat(Math.min(password.length, 16))}
         </span>
-        <Button variant="perfil" className={TACTIL} onClick={() => setVisible((v) => !v)} aria-pressed={visible}>
+        {/* El rótulo cambia con el estado: sin aria-pressed, que lo anunciaría dos veces. */}
+        <Button variant="perfil" className={TACTIL} onClick={() => setVisible((v) => !v)}>
           {visible ? 'Ocultar' : 'Mostrar'}
         </Button>
         <BotonCopiarTactil texto={password} />

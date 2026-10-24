@@ -80,7 +80,10 @@ export function HojaLlavesAcceso({
     },
     onError: (err) => {
       setAEliminar(null);
-      toast('error', err instanceof ApiError ? err.message : 'No se ha podido eliminar la llave de acceso.');
+      toast(
+        'error',
+        err instanceof ApiError ? err.message : 'No se ha podido eliminar la llave de acceso. Vuelve a intentarlo.',
+      );
     },
   });
 
@@ -101,8 +104,8 @@ export function HojaLlavesAcceso({
     >
       <div className="flex flex-col gap-4 p-4">
         <p className="max-w-[70ch] text-base text-tinta-2">
-          Entra con la huella, la cara o el PIN de tu dispositivo, sin escribir la contraseña. Cada llave funciona solo en
-          la dirección desde la que se añade
+          Accede con la huella, la cara o el PIN de tu dispositivo, sin escribir la contraseña. Cada llave funciona solo
+          en la dirección desde la que se añade
           {hostActual ? (
             <>
               ; ahora estás en <span className="font-medium text-tinta [overflow-wrap:anywhere]">{hostActual}</span>.
@@ -161,7 +164,7 @@ export function HojaLlavesAcceso({
         <div className="border-t border-regla">
           <Vacio icono={FingerprintPattern} title="Aún no hay llaves de acceso">
             Una llave de acceso se guarda en tu gestor de contraseñas o en el propio dispositivo y sustituye a la
-            contraseña; funcionan Proton Pass, 1Password, Bitwarden, iCloud, Google o Windows Hello.
+            contraseña. Funciona con Proton Pass, 1Password, Bitwarden, iCloud, Google o Windows Hello.
           </Vacio>
         </div>
       ) : (
@@ -207,8 +210,8 @@ export function HojaLlavesAcceso({
         {aEliminar && (
           <div className="flex flex-col gap-4">
             <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
-              La llave «{aEliminar.nombre}» dejará de servir para entrar.{notaEliminar ? ` ${notaEliminar}` : ''} Si
-              sigue guardada en tu gestor de contraseñas, bórrala también allí para que no te la vuelva a ofrecer.
+              La llave «{aEliminar.nombre}» dejará de servir para acceder.{notaEliminar ? ` ${notaEliminar}` : ''} Si
+              sigue guardada en tu gestor de contraseñas, elimínala también allí para que no te la vuelva a ofrecer.
             </p>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="plano" className={alto} onClick={() => setAEliminar(null)}>
@@ -379,7 +382,7 @@ function FilaRenombrar({
 
 /**
  * Alternativa a la contraseña en las pantallas de acceso: una «o» discreta y
- * el botón «Entrar con llave de acceso». No aparece si el navegador no admite
+ * el botón secundario «Usar llave de acceso». No aparece si el navegador no admite
  * llaves. `onEntrar` hace la operación completa y lanza el error si falla.
  */
 export function EntrarConLlave({
@@ -414,12 +417,12 @@ export function EntrarConLlave({
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
       <div aria-hidden className="flex items-center gap-3 text-sm text-tinta-3">
-        <span className="h-px flex-1 bg-regla" />o<span className="h-px flex-1 bg-regla" />
+        <span className="flex-1 border-t border-regla" />o<span className="flex-1 border-t border-regla" />
       </div>
       {/* type="button": puede ir dentro del formulario de la contraseña sin enviarlo. */}
       <Button type="button" variant="perfil" busy={busy} onClick={() => void entrar()} className={`w-full ${TACTIL}`}>
         {!busy && <FingerprintPattern className="h-4 w-4" aria-hidden />}
-        Entrar con llave de acceso
+        Usar llave de acceso
       </Button>
       {error && <AvisoError>{error}</AvisoError>}
     </div>

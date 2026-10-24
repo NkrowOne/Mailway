@@ -70,7 +70,7 @@ export default function Clientes() {
         }
         actions={
           <Button variant="principal" onClick={() => setOpen(true)}>
-            Alta de cliente
+            Dar de alta un cliente
           </Button>
         }
       />
@@ -517,7 +517,7 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
               checked={acceso === 'contrasena'}
               onChange={() => limpiar(setAcceso)('contrasena')}
               label="Crear el usuario con una contraseña generada"
-              help="Se muestra una sola vez y tendrás que entregarla tú por un canal seguro."
+              help="Se muestra una sola vez y debes entregarla por un canal seguro."
             />
             <Opcion
               name="alta-acceso"
@@ -586,9 +586,9 @@ function AltaCliente({ onClose }: { onClose: () => void }) {
               checked={autoDns}
               onChange={setAutoDns}
               label="Configurar el DNS automáticamente en Cloudflare"
-              help={`La zona del dominio debe estar en una cuenta de Cloudflare de la instancia (${deInstancia
+              help={`La zona debe estar en una cuenta de Cloudflare de la instancia (${deInstancia
                 .map((c) => c.label)
-                .join(', ')}). Solo se crean los registros que faltan: lo que ya existe (también un SPF que habría que completar) no se modifica y podrás revisarlo y aplicarlo en la ficha del dominio. Si el correo del dominio llega hoy a otro proveedor, el SPF y el DMARC se crean junto con el MX cuando hagas el cambio desde la ficha.`}
+                .join(', ')}). Solo se crean los registros que faltan: los que ya existen (también un SPF que haya que completar) no se modifican y se pueden revisar y aplicar en la ficha del dominio. Si el correo del dominio llega hoy a otro proveedor, el SPF y el DMARC se crean junto con el MX al hacer el cambio desde la ficha.`}
             />
           )}
         </section>

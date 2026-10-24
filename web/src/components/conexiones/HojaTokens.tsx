@@ -151,16 +151,16 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         {tokens.isPending ? (
-          <Cargando label="Leyendo los tokens de gestión…" />
+          <Cargando label="Cargando los tokens de gestión…" />
         ) : tokens.isError ? (
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void tokens.refetch()} retrying={tokens.isFetching}>
-              No se han podido leer los tokens de gestión.{' '}
+              No se han podido cargar los tokens de gestión.{' '}
               {tokens.error instanceof ApiError ? tokens.error.message : 'Comprueba la conexión con el servidor.'}
             </AvisoError>
           </div>
         ) : vigentes.length === 0 && revocados.length === 0 ? (
-          <Vacio icono={Cable} title="No hay tokens de gestión">
+          <Vacio icono={Cable} title="Todavía no hay tokens de gestión">
             Crea un token con «Crear token» para conectar Skyway o automatizar tareas por API. El
             token completo se muestra una sola vez.
           </Vacio>
@@ -172,7 +172,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
               </p>
             ) : (
               <>
-                <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+                <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 sm:flex">
                   <span className="rotulo min-w-0 flex-1">Token</span>
                   <span className="rotulo shrink-0 basis-28">Creado</span>
                   <span className="rotulo shrink-0 basis-32">Último uso</span>
@@ -282,7 +282,7 @@ export function HojaTokens({ isAdmin }: { isAdmin: boolean }) {
         confirmarCierre={{ pregunta: '¿Has guardado el token?', detalle: 'No se podrá volver a ver.' }}
         pie={
           <Button variant="principal" onClick={() => setCreado(null)}>
-            Ya lo he guardado
+            Ya he guardado el token
           </Button>
         }
       >
@@ -384,7 +384,7 @@ function FilaToken({
       </span>
       <span className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
         {onRevocar && (
-          <Button variant="plano" onClick={onRevocar}>
+          <Button variant="peligro" onClick={onRevocar}>
             Revocar
           </Button>
         )}

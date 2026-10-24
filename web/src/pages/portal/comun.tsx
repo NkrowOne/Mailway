@@ -83,10 +83,23 @@ export function PaginaEstado({ children }: { children: ReactNode }) {
 
 /**
  * Banda de error de la vista: nombra el problema y, si lo hay, el arreglo. Es
- * la misma banda que el panel (una sola en toda la aplicación).
+ * la misma banda que el panel (una sola en toda la aplicación), con
+ * «Reintentar» cuando la petición se puede repetir.
  */
-export function AvisoError({ children }: { children: ReactNode }) {
-  return <AvisoErrorKit>{children}</AvisoErrorKit>;
+export function AvisoError({
+  children,
+  onRetry,
+  retrying,
+}: {
+  children: ReactNode;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
+  return (
+    <AvisoErrorKit onRetry={onRetry} retrying={retrying}>
+      {children}
+    </AvisoErrorKit>
+  );
 }
 
 /**

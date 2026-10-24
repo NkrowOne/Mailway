@@ -262,7 +262,7 @@ export function checkPerMinute(keyId: string, limit: number, nowMs = Date.now())
   bucket.count += 1;
   if (bucket.count > limit) {
     throw tooMany(
-      `Se ha superado el límite de ${limit} envíos por minuto del plan. Reintenta en unos segundos.`,
+      `Se ha superado el límite de ${limit} envíos por minuto del plan. Vuelve a intentarlo en unos segundos.`,
     );
   }
 }
@@ -462,7 +462,7 @@ export function registerApiKeyRoutes(app: FastifyInstance): void {
     const clientId = user.role === 'admin' ? body.clientId || '' : user.clientId!;
     if (!clientId) throw badRequest('Indica el cliente propietario de la clave.');
     requireClientAccess(req, clientId);
-    assertClientActive(clientId);
+    assertClientActive(clientId, user.role === 'admin');
 
     const mailbox = getMailbox(body.senderMailboxId);
     const domain = db
@@ -903,7 +903,7 @@ function reservarIdempotencia(apiKeyId: string, clave: string, cuerpoHash: strin
     }
     if (t - fila.created_at < IDEMPOTENCIA_EN_CURSO_MAX_MS) {
       throw conflict(
-        'Hay otra petición con la misma Idempotency-Key en curso. Reintenta en unos segundos.',
+        'Hay otra petición con la misma Idempotency-Key en curso. Vuelve a intentarlo en unos segundos.',
         'idempotency_in_progress',
       );
     }
@@ -1187,7 +1187,7 @@ async function enviar(
     smtpMessageId = `<demo-${messageId}@mailway>`;
   } else if (!engineSettings) {
     status = 'failed';
-    error = 'el motor de correo no está configurado';
+    error = 'el servidor de correo no está configurado';
   } else {
     const { mailHostname } = getInstanceSettings();
     try {
@@ -1242,7 +1242,7 @@ async function enviar(
     return {
       id: messageId,
       status,
-      error: `No se pudo entregar al servidor SMTP: ${error}`,
+      error: `No se ha podido entregar al servidor SMTP: ${error}`,
     };
   }
   return { id: messageId, status, messageId: smtpMessageId };

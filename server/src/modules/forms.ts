@@ -664,7 +664,7 @@ async function entregar(
     smtpMessageId = `<demo-${id}@mailway>`;
   } else if (!engineSettings) {
     status = 'failed';
-    error = 'el motor de correo no está configurado';
+    error = 'el servidor de correo no está configurado';
   } else {
     const { mailHostname } = getInstanceSettings();
     try {
@@ -793,7 +793,7 @@ export function registerFormRoutes(app: FastifyInstance): void {
     if (Boolean(body.turnstileSiteKey) !== Boolean(body.turnstileSecret)) throw turnstileIncompleto();
 
     const row = await withLock(clientLockKey(clientId), async () => {
-      assertClientActive(clientId);
+      assertClientActive(clientId, user.role === 'admin');
       const total = (db.prepare('SELECT COUNT(*) AS c FROM forms WHERE client_id = ?').get(clientId) as { c: number }).c;
       if (total >= MAX_FORMULARIOS_POR_CLIENTE) {
         throw conflict(
@@ -862,7 +862,7 @@ export function registerFormRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     requireAuth(req);
     const row = filaPorId(id);
-    requireClientAccess(req, row.client_id);
+    const user = requireClientAccess(req, row.client_id);
     const body = editarSchema.parse(req.body ?? {});
 
     const cambios: Record<string, unknown> = {};
@@ -885,7 +885,7 @@ export function registerFormRoutes(app: FastifyInstance): void {
       cambios.allowedOrigins = origenes;
     }
     if (body.enabled !== undefined && body.enabled !== (row.enabled === 1)) {
-      if (body.enabled) assertClientActive(row.client_id);
+      if (body.enabled) assertClientActive(row.client_id, user.role === 'admin');
       sets.push('enabled = ?');
       valores.push(body.enabled ? 1 : 0);
       cambios.enabled = body.enabled;

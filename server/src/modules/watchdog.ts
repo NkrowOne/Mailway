@@ -84,7 +84,7 @@ async function checkEngine(): Promise<void> {
     type: 'engine_down',
     dedupeKey: 'engine_down',
     title: 'El servidor de correo no responde',
-    message: `Mailway no consigue comunicarse con el motor de correo. ${detail}`.trim(),
+    message: `Mailway no consigue comunicarse con el servidor de correo. ${detail}`.trim(),
     remedy:
       'Accede al servidor por SSH y ejecuta: docker ps (comprueba que «mailway-mail» está en marcha) y docker logs mailway-mail. Mientras esté detenido no se entrega ni se envía correo.',
   });
@@ -150,7 +150,7 @@ export function evaluarCola(summary: QueueSummary, puerto25: ResultadoPuerto25 |
               : 'Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos.'
           }`,
       remedy: bloqueado
-        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
+        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían automáticamente en los siguientes reintentos.'
         : 'Revisa la salud del servidor en Entregabilidad: si la IP está en una lista negra o falta el PTR, esa es la causa más probable.',
     });
   }
@@ -178,10 +178,10 @@ export function evaluarCola(summary: QueueSummary, puerto25: ResultadoPuerto25 |
         ? 'El puerto 25 de salida está bloqueado: el servidor no puede entregar correo a otros servidores y los mensajes se quedan en la cola hasta que caducan.'
         : causa === 'desconocido'
           ? `${puerto25!.detalle} Sin resolver nombres, el servidor tampoco puede encontrar los servidores de destino y los mensajes se quedan en la cola.`
-          : 'Algún mensaje lleva más de una hora sin poder entregarse. Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos. El motor sigue reintentándolo y, si no lo consigue, devuelve el mensaje al remitente.',
+          : 'Algún mensaje lleva más de una hora sin poder entregarse. Suele indicar que el puerto 25 de salida está bloqueado o que un destino está rechazando los envíos. El servidor de correo lo sigue intentando y, si no lo consigue, devuelve el mensaje al remitente.',
     remedy:
       causa === 'bloqueado'
-        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían solos en los siguientes reintentos.'
+        ? 'Solicita al proveedor del servidor la apertura del puerto 25 de salida (OVH, Hetzner y AWS, entre otros, lo bloquean por defecto). Los mensajes retenidos se envían automáticamente en los siguientes reintentos.'
         : causa === 'desconocido'
           ? 'Comprueba en el servidor que el DNS responde (por ejemplo, con getent hosts gmail-smtp-in.l.google.com) y revisa la configuración de resolutores del sistema y de Docker.'
           : 'Revisa la salud del servidor en Entregabilidad: el puerto 25 de salida, el PTR y las listas negras.',
@@ -225,7 +225,7 @@ export function evaluarPuerto25(resultado: ResultadoPuerto25): void {
     title: 'El puerto 25 de salida está bloqueado',
     message: `${resultado.detalle} Sin él no se entrega correo a otros servidores: los mensajes se quedan en la cola hasta que caducan.`,
     remedy:
-      'Solicita al proveedor del servidor la apertura del puerto 25 de salida: OVH, Hetzner y AWS, entre otros, lo bloquean por defecto. Mientras el aviso siga abierto se vuelve a medir cada hora y se cierra solo en cuanto el puerto responda.',
+      'Solicita al proveedor del servidor la apertura del puerto 25 de salida: OVH, Hetzner y AWS, entre otros, lo bloquean por defecto. Mientras el aviso siga abierto se vuelve a medir cada hora y se cierra automáticamente en cuanto el puerto responda.',
   });
 }
 
@@ -356,7 +356,7 @@ export async function checkWebmail(): Promise<void> {
       // autónoma) y la ruta, de la carpeta: el instalador elige el bueno
       // según deploy/.env, desde cualquier sitio.
       remedy:
-        'Revisa su registro en el servidor con «docker logs mailway-webmail». Después, en la carpeta de Mailway, «sudo bash deploy/instalar.sh --comprobar» lo diagnostica y «sudo bash deploy/instalar.sh --actualizar» lo vuelve a levantar con la configuración de la instalación (junto a Skyway o autónoma).',
+        'Revisa su registro en el servidor con «docker logs mailway-webmail». Después, en la carpeta de Mailway, «sudo bash deploy/instalar.sh --comprobar» lo diagnostica y «sudo bash deploy/instalar.sh --actualizar» lo vuelve a poner en marcha con la configuración de la instalación (junto a Skyway o autónoma).',
     });
   }
 }

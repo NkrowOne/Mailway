@@ -81,7 +81,7 @@ export function RegistrosDns({ vista }: { vista: CambioDominioVista }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className="min-w-0 flex-1 basis-60 text-base text-tinta-2">Añade estos registros en tu proveedor de DNS</p>
+        <p className="min-w-0 flex-1 basis-60 text-base text-tinta-2">Añade estos registros en tu proveedor de DNS.</p>
         <div className="flex flex-wrap gap-2">
           <BotonCopiar text={textoRegistros(principales)} label="Copiar todo" />
           <Button
@@ -114,7 +114,7 @@ export function RegistrosDns({ vista }: { vista: CambioDominioVista }) {
           <p className="rotulo [overflow-wrap:anywhere]">Cuando veas «{dominio} ya recibe en los buzones», cambia el MX:</p>
           {!vista.recepcionPreparada && (
             <p className="max-w-[75ch] text-sm text-tinta-3">
-              Todavía no: el correo de {dominio} sigue llegando a su proveedor actual.
+              Todavía no hay que cambiarlo: el correo de {dominio} sigue llegando a su proveedor actual.
             </p>
           )}
           <ListaRegistros registros={mx} copiable={vista.recepcionPreparada} />

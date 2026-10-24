@@ -105,15 +105,15 @@ export default function Avisos() {
           ) : !alerts.data ? (
             <div className="p-4">
               <AvisoError onRetry={() => void alerts.refetch()} retrying={alerts.isFetching}>
-                No se han podido leer los avisos. Comprueba que el servidor de Mailway sigue en
-                marcha.
+                No se han podido cargar los avisos. Comprueba que el servicio está en marcha y vuelve
+                a intentarlo.
               </AvisoError>
             </div>
           ) : list.length === 0 ? (
             <Vacio icono={BellRing} title={verResueltas ? 'Sin avisos registrados' : 'Todo en orden'}>
-              El vigilante comprueba cada minuto el servidor de correo, el webmail y la cola de
-              salida y, una vez al día, las listas negras. Si algo falla, aparecerá aquí y se
-              notificará por los canales configurados más abajo.
+              Mailway comprueba cada minuto el servidor de correo, el webmail y la cola de salida y,
+              una vez al día, las listas negras. Si algo falla, aparecerá aquí y se notificará por los
+              canales configurados más abajo.
             </Vacio>
           ) : (
             <>
@@ -127,9 +127,9 @@ export default function Avisos() {
               <div
                 className={`regla-cabecera hidden gap-x-4 px-4 pb-1.5 pt-2.5 sm:grid ${rejilla}`}
               >
-                <span className="rotulo">Veredicto</span>
-                <span className="rotulo">Hallazgo</span>
-                <span className="rotulo sm:text-right">Registro</span>
+                <span className="rotulo">Gravedad</span>
+                <span className="rotulo">Incidencia</span>
+                <span className="rotulo sm:text-right">Fecha</span>
               </div>
               <ul>
                 {list.map((alert) => {
@@ -162,7 +162,7 @@ export default function Avisos() {
                           {alert.message}
                         </p>
                         {alert.remedy && abierta && (
-                          <div className="mt-2 bg-hoja-2 px-3 py-2">
+                          <div className="mt-2 rounded-lg bg-hoja-2 px-3 py-2">
                             <p className="rotulo">Qué hacer</p>
                             <p className="mt-0.5 text-base text-tinta-2">{alert.remedy}</p>
                           </div>
@@ -285,14 +285,13 @@ function CanalesAviso({ onToast }: { onToast: ReturnType<typeof useToast> }) {
         <Cargando label="Cargando los canales de aviso…" />
       ) : !channels.data ? (
         <AvisoError onRetry={() => void channels.refetch()} retrying={channels.isFetching}>
-          No se han podido leer los canales de aviso.
+          No se han podido cargar los canales de aviso.
         </AvisoError>
       ) : (
         <>
           <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
-            Completa los canales que utilices. Si no configuras ninguno, los avisos solo aparecerán
-            en esta página y no recibirás ninguna notificación hasta que accedas al panel. El aviso
-            de prueba se envía por los canales ya guardados.
+            Completa los canales que utilices. Sin ninguno, los avisos solo se muestran en esta
+            página. El aviso de prueba se envía por los canales ya guardados.
           </p>
           <form
             noValidate

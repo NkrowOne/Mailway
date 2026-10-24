@@ -25,7 +25,7 @@ export const etiquetaDe: Record<CheckStatus, string> = {
   ok: 'Correcto',
   missing: 'Falta',
   mismatch: 'No coincide',
-  unknown: 'Sin dato',
+  unknown: 'Sin datos',
 };
 
 /** Orden de lectura del informe: primero lo que reclama una acción. */
@@ -106,7 +106,7 @@ export function BloquePropiedad({
         <div className="max-w-[75ch] text-base text-tinta-2">
           {explicacion ?? (
             <p>
-              Antes de crear buzones o alias es necesario comprobar que el dominio es tuyo. Queda
+              Antes de crear buzones o alias hay que comprobar que el dominio es tuyo. Queda
               comprobado en cuanto el registro MX apunta a este servidor. Si el correo del dominio
               todavía llega a otro proveedor (por ejemplo, para preparar los buzones antes del
               traslado), crea este registro TXT y pulsa «Verificar». El TXT no cambia dónde se recibe
@@ -128,7 +128,7 @@ export function BloquePropiedad({
         {pie ?? (
           <p className="max-w-[75ch] text-sm text-tinta-3">
             Si el DNS del dominio está en Cloudflare, «Revisar cambios» en la configuración automática
-            lo crea junto con el resto de registros. Mailway comprueba la propiedad en cada medición.
+            lo crea junto con el resto de registros. La propiedad se revisa en cada comprobación del DNS.
           </p>
         )}
       </div>
@@ -219,10 +219,10 @@ export function BloqueRecepcionExterna({ dominio, mx }: { dominio: string; mx: s
     <Hoja title="El correo se recibe en otro proveedor" meta="Recepción externa">
       <div className="flex flex-col gap-3">
         <p className="max-w-[75ch] text-base text-tinta-2">
-          El registro MX de <span className="valor break-all">{dominio}</span> apunta a{' '}
-          {mx.length > 0 ? <span className="valor break-all">{mx.join(', ')}</span> : 'otro servidor'}, así
+          El registro MX de <span className="valor [overflow-wrap:anywhere]">{dominio}</span> apunta a{' '}
+          {mx.length > 0 ? <span className="valor [overflow-wrap:anywhere]">{mx.join(', ')}</span> : 'otro servidor'}, así
           que su correo se recibe allí. Mientras sea así, lo que se envíe desde este servidor a
-          direcciones de este dominio (buzones de otros clientes, la web, la API de envío o los
+          direcciones de este dominio (otros buzones de este servidor, la web, la API de envío o los
           formularios) también se entrega en ese proveedor, igual que el correo que llega de
           Internet, y los buzones y alias creados aquí no lo reciben. Las respuestas a los mensajes
           que se envíen desde aquí también llegan al proveedor actual.
@@ -233,7 +233,7 @@ export function BloqueRecepcionExterna({ dominio, mx }: { dominio: string; mx: s
           proveedor actual. Hasta hacer el cambio, revisa esos reenvíos.
         </p>
         <p className="max-w-[75ch] text-sm text-tinta-3">
-          Cuando el MX apunte a este servidor, Mailway lo detecta en la siguiente comprobación y el
+          Cuando el MX apunte a este servidor, el panel lo detecta en la siguiente comprobación y el
           correo empieza a entregarse en los buzones de aquí. Para adelantarlo, pulsa «Comprobar el
           DNS ahora».
         </p>

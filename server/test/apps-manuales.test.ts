@@ -97,7 +97,7 @@ test('plan y vista: las de Skyway en usadoPorApps, las creadas a mano en appsMan
   assert.deepEqual(plan.bloqueos, []);
   assert.equal(
     aviso(plan.avisos)?.mensaje,
-    'Un buzón tiene una contraseña de aplicación creada a mano (n8n-a-mano). Tras actualizar su usuario o dar de baja manual-viejo.test, la aplicación que la usa tiene que entrar con la dirección nueva.',
+    'Un buzón tiene una contraseña de aplicación creada manualmente (n8n-a-mano). Tras actualizar su usuario o dar de baja manual-viejo.test, la aplicación que la usa tiene que acceder con la dirección nueva.',
   );
   // Las de Skyway siguen en su propio aviso.
   assert.ok(plan.avisos.some((a) => a.code === 'apps_smtp'));
@@ -115,7 +115,7 @@ test('plan y vista: las de Skyway en usadoPorApps, las creadas a mano en appsMan
   const anaPasada = vista.buzones.lista.find((b) => b.id === e.ids.ana)!;
   assert.equal(anaPasada.pendiente, true);
   assert.deepEqual([anaPasada.usadoPorApps, anaPasada.appsManuales], [['skyway:web'], ['n8n-a-mano']]);
-  assert.match(aviso(vista.avisos)?.mensaje ?? '', /^Un buzón tiene una contraseña de aplicación creada a mano \(n8n-a-mano\)\./);
+  assert.match(aviso(vista.avisos)?.mensaje ?? '', /^Un buzón tiene una contraseña de aplicación creada manualmente \(n8n-a-mano\)\./);
 });
 
 test('aviso apps_manuales: solo con los buzones pendientes, sin bloquear la baja, y fuera tras la baja', async (t) => {
@@ -132,7 +132,7 @@ test('aviso apps_manuales: solo con los buzones pendientes, sin bloquear la baja
   // Los nombres no se repiten aunque los tengan varios buzones.
   assert.equal(
     aviso(vista.avisos)?.mensaje,
-    '2 buzones tienen contraseñas de aplicación creadas a mano (n8n-a-mano, Móvil de Ana). Tras actualizar su usuario o dar de baja aviso-manual-viejo.test, las aplicaciones que las usan tienen que entrar con la dirección nueva.',
+    '2 buzones tienen contraseñas de aplicación creadas manualmente (n8n-a-mano, Móvil de Ana). Tras actualizar su usuario o dar de baja aviso-manual-viejo.test, las aplicaciones que las usan tienen que acceder con la dirección nueva.',
   );
   // Solo informa: la baja sigue disponible.
   assert.deepEqual(vista.bloqueosBaja, []);
@@ -142,7 +142,7 @@ test('aviso apps_manuales: solo con los buzones pendientes, sin bloquear la baja
   const actualizado = await post(`/api/mailboxes/${e.ids.ana}/login-update`);
   assert.equal(actualizado.statusCode, 200, actualizado.body);
   const trasActualizar = await vistaDe(listo.id);
-  assert.match(aviso(trasActualizar.avisos)?.mensaje ?? '', /^Un buzón tiene una contraseña de aplicación creada a mano \(n8n-a-mano\)\./);
+  assert.match(aviso(trasActualizar.avisos)?.mensaje ?? '', /^Un buzón tiene una contraseña de aplicación creada manualmente \(n8n-a-mano\)\./);
   // La lista sigue nombrándolas: las aplicaciones de Ana también tienen que cambiar su usuario.
   assert.deepEqual(trasActualizar.buzones.lista.find((b) => b.id === e.ids.ana)!.appsManuales, ['n8n-a-mano', 'Móvil de Ana']);
   assert.equal(trasActualizar.puedeDarDeBaja, true);
@@ -197,7 +197,7 @@ test('tras un «Volver», apps_manuales dice que cancelar o actualizar las devue
   assert.deepEqual(
     avisos.map((a) => a.mensaje),
     [
-      'Un buzón entra con su usuario de vuelve-manual-nuevo.test y tiene una contraseña de aplicación creada a mano (n8n-a-mano). Si cancelas el cambio o actualizas su usuario, la aplicación que la usa tiene que volver a entrar con su dirección de vuelve-manual-viejo.test; si vuelves a pasar, no cambia nada.',
+      'Un buzón accede con su usuario de vuelve-manual-nuevo.test y tiene una contraseña de aplicación creada manualmente (n8n-a-mano). Si cancelas el cambio o actualizas su usuario, la aplicación que la usa tiene que volver a acceder con su dirección de vuelve-manual-viejo.test; si vuelves a pasar, no cambia nada.',
     ],
   );
 
@@ -210,7 +210,7 @@ test('tras un «Volver», apps_manuales dice que cancelar o actualizar las devue
   assert.deepEqual(
     pasado.avisos.filter((a) => a.code === 'apps_manuales').map((a) => a.mensaje),
     [
-      'Un buzón tiene una contraseña de aplicación creada a mano (Móvil de Luis). Tras actualizar su usuario o dar de baja vuelve-manual-viejo.test, la aplicación que la usa tiene que entrar con la dirección nueva.',
+      'Un buzón tiene una contraseña de aplicación creada manualmente (Móvil de Luis). Tras actualizar su usuario o dar de baja vuelve-manual-viejo.test, la aplicación que la usa tiene que acceder con la dirección nueva.',
     ],
   );
 });

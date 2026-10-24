@@ -45,7 +45,7 @@ function AvisoZonaPendiente({ zona }: { zona: ZonaCloudflare }) {
       dominio sean los de Cloudflare
       {zona.nameServers && zona.nameServers.length > 0 && (
         <>
-          : <span className="valor break-all">{zona.nameServers.join(', ')}</span>
+          : <span className="valor [overflow-wrap:anywhere]">{zona.nameServers.join(', ')}</span>
         </>
       )}
       .
@@ -69,11 +69,11 @@ export function RevisionCambios({
 }: Props) {
   const idCasilla = useId();
 
-  if (cargando) return <Cargando label="Leyendo la zona en Cloudflare…" />;
+  if (cargando) return <Cargando label="Consultando la zona en Cloudflare…" />;
   if (error || !plan) {
     return (
       <div className="flex flex-col gap-4">
-        <BandaError>{error || 'No se ha podido leer la zona en Cloudflare.'}</BandaError>
+        <BandaError>{error || 'No se ha podido consultar la zona en Cloudflare.'}</BandaError>
         <div className="flex justify-end">
           <Button variant="plano" onClick={onCancelar}>
             Cerrar
@@ -142,7 +142,7 @@ export function RevisionCambios({
       {sinZona.length > 0 && (
         <BandaAviso titulo="Nombres sin zona">
           Ninguna cuenta de la instancia contiene la zona de{' '}
-          <span className="valor break-all">{sinZona.join(', ')}</span>. Estos nombres no se
+          <span className="valor [overflow-wrap:anywhere]">{sinZona.join(', ')}</span>. Estos nombres no se
           modificarán.
         </BandaAviso>
       )}

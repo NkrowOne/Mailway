@@ -815,7 +815,7 @@ export class ClienteAdminBulwark {
     if (r.status !== 200) {
       const detalle = textoError(r.datos);
       throw new ErrorBulwark(
-        `Bulwark ha respondido ${r.status} al iniciar sesión${detalle ? `: ${detalle}` : '.'}`,
+        `Bulwark ha respondido ${r.status} al iniciar la sesión de administración${detalle ? `: ${detalle}` : '.'}`,
         'bulwark_error',
       );
     }

@@ -644,7 +644,7 @@ export function registerDomainRoutes(app: FastifyInstance): void {
       const visible = domainToUnicode(domain) || domain;
       const sugeridoVisible = domainToUnicode(sugerido) || sugerido;
       throw conflict(
-        `«${visible}» empieza por «www.», que suele ser el nombre de la web. ¿Querías decir ${sugeridoVisible}? Con ${visible}, las direcciones serían como nombre@${visible} y todos sus registros DNS colgarían de www. Si es lo que quieres, confírmalo.`,
+        `«${visible}» empieza por «www.», que suele ser el nombre de la web. ¿Querías decir ${sugeridoVisible}? Con ${visible}, las direcciones serían como nombre@${visible} y todos sus registros DNS quedarían bajo www. Si es lo que quieres, confírmalo.`,
         'domain_www',
       );
     }

@@ -157,7 +157,7 @@ function llaveDesconocida(tipo: Propietario, deLaOtra: boolean): HttpError {
     );
   }
   return unauthorized(
-    'Esta llave de acceso no está registrada aquí. Entra con tu contraseña y añádela desde tu cuenta.',
+    'Esta llave de acceso no está registrada aquí. Accede con tu contraseña y añádela desde tu cuenta.',
     'passkey_unknown',
   );
 }
@@ -212,7 +212,7 @@ export function origenWebauthn(req: FastifyRequest): OrigenWebauthn {
     const instancia = getInstanceSettings().panelUrl;
     throw badRequest(
       instancia
-        ? `Las llaves de acceso solo funcionan entrando por la dirección del panel (${instancia}).`
+        ? `Las llaves de acceso solo funcionan al acceder desde la dirección del panel (${instancia}).`
         : 'Las llaves de acceso no están disponibles en esta dirección.',
       'passkey_host',
     );
@@ -281,7 +281,7 @@ function comprobarLimiteLlaves(req: FastifyRequest): void {
       .get(claveFallos(req), desde) as { c: number }
   ).c;
   if (fallos >= MAX_FALLOS_IP) {
-    throw tooMany('Demasiados intentos de inicio de sesión. Espera unos minutos y vuelve a intentarlo.');
+    throw tooMany('Se han producido demasiados intentos de acceso. Espera unos minutos y vuelve a intentarlo.');
   }
 }
 
@@ -334,7 +334,7 @@ export async function opcionesRegistro(
   const existentes = llavesDe(tipo, persona.id);
   if (existentes.length >= MAX_LLAVES) {
     throw conflict(
-      `Ya tienes ${MAX_LLAVES} llaves de acceso. Borra las que ya no uses antes de añadir otra.`,
+      `Ya tienes ${MAX_LLAVES} llaves de acceso. Elimina las que ya no uses antes de añadir otra.`,
       'passkey_limit',
     );
   }
@@ -386,7 +386,7 @@ export async function registrarLlave(
   const ya = db
     .prepare('SELECT 1 FROM user_passkeys WHERE rp_id = ? AND credential_id = ? UNION ALL SELECT 1 FROM mailbox_passkeys WHERE rp_id = ? AND credential_id = ?')
     .get(origen.rpId, info.credential.id, origen.rpId, info.credential.id);
-  if (ya) throw conflict('Esta llave de acceso ya está registrada.', 'passkey_exists');
+  if (ya) throw conflict('Ya has añadido esta llave de acceso.', 'passkey_exists');
   const proveedor = proveedorDeAaguid(info.aaguid);
   const nombre = cuerpo.nombre || proveedor || 'Llave de acceso';
   const id = randomId('psk');
@@ -668,7 +668,7 @@ interface FilaSesionWebmail {
 }
 
 function codigoNoValido(): HttpError {
-  return new HttpError(404, 'El código para entrar en el webmail no es válido o ha caducado.', 'passkey_code_invalid');
+  return new HttpError(404, 'El código para acceder a tu correo no es válido o ha caducado. Vuelve a intentarlo.', 'passkey_code_invalid');
 }
 
 /** Entrega (una vez) el usuario y la contraseña temporal a cambio del código. */
@@ -876,7 +876,7 @@ export function registerLlavesRoutes(app: FastifyInstance): void {
     exigirTokenWebmail(req);
     const { host } = z.object({ host: z.string().min(1).max(253) }).parse(req.query);
     const portal = portalParaWebmail(host);
-    if (!portal) throw notFound('Este webmail no admite entrar con llave de acceso.');
+    if (!portal) throw notFound('Este webmail no admite llaves de acceso.');
     reply.header('Cache-Control', 'no-store');
     return { portal };
   });

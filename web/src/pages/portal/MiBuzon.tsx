@@ -71,7 +71,7 @@ export default function MiBuzon() {
             No se ha podido cargar la página
           </h1>
           <AvisoError>{mensajeError(err, 'Comprueba la conexión a Internet y vuelve a intentarlo.')}</AvisoError>
-          <Button variant="principal" className={TACTIL} onClick={() => void me.refetch()}>
+          <Button variant="principal" className={TACTIL} busy={me.isFetching} onClick={() => void me.refetch()}>
             Volver a intentarlo
           </Button>
         </div>
@@ -102,7 +102,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
   async function entrar(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
-      setError('Indica la dirección de correo y la contraseña del buzón.');
+      setError('Introduce tu dirección de correo y la contraseña del buzón.');
       return;
     }
     setBusy(true);
@@ -115,7 +115,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
       setError(
         esCredencialIncorrecta(err)
           ? TEXTO_CREDENCIALES_INCORRECTAS
-          : mensajeError(err, 'No se ha podido iniciar sesión.'),
+          : mensajeError(err, 'No se ha podido acceder. Comprueba la conexión y vuelve a intentarlo.'),
       );
     } finally {
       setBusy(false);
@@ -133,12 +133,12 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
       marca={marca}
       pie={
         <>
-          <p>Si no recuerdas la contraseña, solicita un restablecimiento a la persona que administra tu correo.</p>
+          <p>Si no recuerdas tu contraseña, pide a quien administra tu correo que la restablezca.</p>
           {/* Una cuenta del panel (administración o cliente) no entra aquí. */}
           <p>
             ¿Gestionas el correo de tu empresa o el servicio?{' '}
             <a href="/login" className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
-              Entra en el panel de gestión
+              Accede al panel de gestión
             </a>
             .
           </p>
@@ -153,7 +153,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
           </span>
           <h1 className="mt-3 text-2xl font-semibold text-tinta">Mi buzón</h1>
           <p className="mt-1 text-base text-tinta-2">
-            Entra con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
+            Accede con tu dirección de correo y la contraseña del buzón para configurar tus dispositivos o cambiar la
             contraseña.
           </p>
         </div>
@@ -185,7 +185,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
         />
         {error && <AvisoError>{error}</AvisoError>}
         <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
-          Entrar en mi buzón
+          Accede
         </Button>
         <EntrarConLlave onEntrar={entrarConLlaveDeAcceso} onEmpezar={() => setError('')} />
       </form>
@@ -274,7 +274,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
         </Hoja>
       )}
 
-      <Hoja title="Correo web">
+      <Hoja title="Tu correo en el navegador">
         <div className="flex flex-col gap-3">
           <p className="max-w-[70ch] text-base text-tinta-2">
             Lee y envía correo desde cualquier navegador con tu dirección y tu contraseña.
@@ -291,7 +291,7 @@ function InicioBuzon({ me }: { me: PortalMe }) {
         base="/api/portal"
         tactil
         nota={(lista) => <NotaLlavesCorreoWeb lista={lista} />}
-        notaEliminar="También se cierran las sesiones del correo web abiertas con ella."
+        notaEliminar="También se cierran las sesiones de tu correo en el navegador abiertas con ella."
       />
       <HojaCambioContrasena correoWebNuevo={me.newWebmail === true} />
     </MarcoPortal>
@@ -314,14 +314,14 @@ function AvisoContrasenasInvalidadas({ cuantas }: { cuantas: number }) {
     >
       <p>
         El servidor de correo se ha actualizado y las contraseñas de aplicación creadas antes ya no sirven. Los
-        dispositivos y programas que las usaban no pueden recibir ni enviar correo hasta que les pongas una nueva. Tu
+        dispositivos y programas que las usaban no pueden recibir ni enviar correo hasta que tengan una nueva. Tu
         contraseña principal no ha cambiado.
       </p>
       <p className="mt-2">
         <a href="#contrasenas-aplicacion" className="font-semibold text-petroleo underline underline-offset-2">
-          Crear una contraseña nueva para cada dispositivo
+          Crea una contraseña nueva para cada dispositivo
         </a>{' '}
-        y escribirla en él en lugar de la anterior.
+        y escríbela en él en lugar de la anterior.
       </p>
     </AvisoAtencion>
   );
@@ -338,14 +338,14 @@ function NotaLlavesCorreoWeb({ lista }: { lista: ListaLlaves }) {
   if (correoWeb.host === lista.hostActual.toLowerCase()) {
     return (
       <Nota>
-        Con estas llaves también puedes entrar en el correo web: pulsa «Entrar con llave de acceso» en su pantalla de
-        acceso.
+        Con estas llaves también puedes acceder a tu correo en el navegador: pulsa «Usar llave de acceso» en su
+        pantalla de acceso.
       </Nota>
     );
   }
   return (
     <Nota>
-      Las llaves que añadas aquí no sirven para entrar en el correo web. Para eso, añádelas desde{' '}
+      Las llaves que añadas aquí no sirven para acceder a tu correo en el navegador. Para eso, añádelas desde{' '}
       <a
         href={`${correoWeb.origen}/mi-buzon`}
         className="font-medium text-petroleo underline underline-offset-2 [overflow-wrap:anywhere] hover:text-tinta"
@@ -358,7 +358,7 @@ function NotaLlavesCorreoWeb({ lista }: { lista: ListaLlaves }) {
 }
 
 const NOTA_CONTRASENA =
-  'La contraseña del buzón o, mejor, una contraseña de aplicación creada para ese dispositivo (más abajo).';
+  'La contraseña del buzón o, preferiblemente, una contraseña de aplicación creada para ese dispositivo (más abajo, en «Contraseñas de aplicación»).';
 
 /* --------------------------- Cambio de dirección --------------------------- */
 
@@ -421,22 +421,22 @@ function HojaNuevaDireccion({
     return (
       <Hoja title={titulo}>
         <div className="flex flex-col gap-4">
-          <AvisoHecho>Listo. Ahora entras con {actualizado}. Configura cada dispositivo:</AvisoHecho>
+          <AvisoHecho>Se ha actualizado tu usuario. Ahora es {actualizado}; cámbialo en cada dispositivo:</AvisoHecho>
           <Muestra rotulo="Usuario nuevo">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="codigo min-w-0 grow break-all text-lg text-tinta">{actualizado}</span>
+              <span className="codigo min-w-0 grow text-lg text-tinta [overflow-wrap:anywhere]">{actualizado}</span>
               <BotonCopiarTactil texto={actualizado} />
             </div>
           </Muestra>
           <dl className="flex flex-col gap-2.5">
             <PasoDispositivo rotulo="iPhone o Mac">Instala el perfil de nuevo: sustituye al anterior.</PasoDispositivo>
-            <PasoDispositivo rotulo="A mano">
+            <PasoDispositivo rotulo="Configuración manual">
               Ajustes → Mail → Cuentas → tu cuenta: cambia el usuario a{' '}
               <span className="valor [overflow-wrap:anywhere]">{actualizado}</span> en el servidor de entrada y en el de
               salida.
             </PasoDispositivo>
             <PasoDispositivo rotulo="Android con QR">
-              La lectura del código crea una cuenta nueva: borra después la anterior.
+              Al escanear el código se crea una cuenta nueva: después, elimina la anterior.
             </PasoDispositivo>
           </dl>
           <div className="regla-cabecera" aria-hidden />
@@ -481,15 +481,18 @@ function HojaNuevaDireccion({
       <Dialogo open={preguntando} onClose={() => setPreguntando(false)} title="Actualizar mis dispositivos">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
-            Los dispositivos que sigan configurados con {anterior} dejarán de conectar hasta que los actualices.
+            Los dispositivos que sigan configurados con {anterior} dejarán de conectarse hasta que los actualices.
           </p>
           {conApps && (
             <p className="text-base text-tinta-2 [overflow-wrap:anywhere]">
-              Tus aplicaciones con contraseña de aplicación tienen que entrar con {me.email}; la contraseña no cambia.
+              Los programas que usan una contraseña de aplicación deberán usar {me.email} como usuario; la contraseña
+              no cambia.
             </p>
           )}
           {actualizar.isError && (
-            <AvisoError>{mensajeError(actualizar.error, 'No se ha podido actualizar el usuario.')}</AvisoError>
+            <AvisoError>
+              {mensajeError(actualizar.error, 'No se ha podido actualizar el usuario. Vuelve a intentarlo.')}
+            </AvisoError>
           )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button variant="plano" className={TACTIL} onClick={() => setPreguntando(false)}>
@@ -537,7 +540,7 @@ function HojaEspacio({ me }: { me: PortalMe }) {
     >
       {usado === null ? (
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-base text-tinta-2">No se ha podido consultar el espacio ocupado en este momento.</p>
+          <p className="text-base text-tinta-2">Ahora no se puede consultar el espacio ocupado.</p>
           <Marca veredicto="sin-dato" />
         </div>
       ) : (
@@ -593,7 +596,7 @@ function HojaContrasenasAplicacion() {
       // El aviso de arriba cuenta las que dejaron de funcionar.
       if (app.invalidatedAt) await queryClient.invalidateQueries({ queryKey: ['portal-me'] });
     },
-    onError: (err) => toast('error', mensajeError(err, 'No se ha podido revocar la contraseña.')),
+    onError: (err) => toast('error', mensajeError(err, 'No se ha podido revocar la contraseña. Vuelve a intentarlo.')),
   });
 
   function enviar(e: FormEvent) {
@@ -611,8 +614,8 @@ function HojaContrasenasAplicacion() {
     <Hoja title="Contraseñas de aplicación" flush>
       <div className="flex flex-col gap-4 p-4">
         <p className="max-w-[70ch] text-base text-tinta-2">
-          Crea una contraseña distinta para cada dispositivo o programa (el móvil, el portátil, Outlook…) y utilízala
-          en lugar de la contraseña principal. Si pierdes el móvil, revoca solo la suya: el resto seguirá funcionando y
+          Crea una contraseña distinta para cada dispositivo o programa (por ejemplo, el móvil, el portátil u Outlook)
+          y utilízala en lugar de la contraseña principal. Si pierdes el móvil, revoca solo la suya: el resto seguirá funcionando y
           no tendrás que cambiar la contraseña principal.
         </p>
 
@@ -620,7 +623,7 @@ function HojaContrasenasAplicacion() {
           <div className="revelar flex flex-col gap-3">
             <Muestra rotulo={`Contraseña para «${nueva.nombre}»`}>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="codigo min-w-0 grow break-all text-lg text-tinta">{nueva.password}</span>
+                <span className="codigo min-w-0 grow text-lg text-tinta [overflow-wrap:anywhere]">{nueva.password}</span>
                 <BotonCopiarTactil texto={nueva.password} />
               </div>
             </Muestra>
@@ -679,15 +682,19 @@ function HojaContrasenasAplicacion() {
           </form>
         )}
         {crear.isError && (
-          <AvisoError>{mensajeError(crear.error, 'No se ha podido crear la contraseña de aplicación.')}</AvisoError>
+          <AvisoError>
+            {mensajeError(crear.error, 'No se ha podido crear la contraseña de aplicación. Vuelve a intentarlo.')}
+          </AvisoError>
         )}
       </div>
 
       {lista.isPending ? (
-        <Cargando label="Cargando contraseñas…" />
+        <Cargando label="Cargando las contraseñas de aplicación…" />
       ) : lista.isError ? (
         <div className="px-4 pb-4">
-          <AvisoError>{mensajeError(lista.error, 'No se han podido cargar las contraseñas de aplicación.')}</AvisoError>
+          <AvisoError onRetry={() => void lista.refetch()} retrying={lista.isFetching}>
+            {mensajeError(lista.error, 'No se han podido cargar las contraseñas de aplicación. Comprueba la conexión.')}
+          </AvisoError>
         </div>
       ) : todas.length === 0 ? (
         <div className="border-t border-regla">
@@ -788,6 +795,8 @@ function HojaCambioContrasena({ correoWebNuevo }: { correoWebNuevo: boolean }) {
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
   const [repetida, setRepetida] = useState('');
+  // Un solo interruptor para los tres campos, como en la bienvenida.
+  const [visible, setVisible] = useState(false);
   const [error, setError] = useState('');
   // El correo web nuevo no vuelve solo al acceso tras un cambio de contraseña:
   // sigue intentándolo con la anterior y el servidor acaba bloqueando la conexión.
@@ -804,16 +813,16 @@ function HojaCambioContrasena({ correoWebNuevo }: { correoWebNuevo: boolean }) {
       setCerrarCorreoWeb(Boolean(data?.reopenWebmail));
       toast('ok', 'Se ha cambiado la contraseña del buzón.');
     },
-    onError: (err) => setError(mensajeError(err, 'No se ha podido cambiar la contraseña.')),
+    onError: (err) => setError(mensajeError(err, 'No se ha podido cambiar la contraseña. Vuelve a intentarlo.')),
   });
 
   function enviar(e: FormEvent) {
     e.preventDefault();
     // Las comprobaciones evidentes se hacen aquí para no gastar intentos.
-    if (!actual) return setError('Indica la contraseña actual.');
-    if (nueva.length < 10) return setError('La nueva contraseña debe tener al menos 10 caracteres.');
+    if (!actual) return setError('Introduce la contraseña actual.');
+    if (nueva.length < 10) return setError('La contraseña nueva debe tener al menos 10 caracteres.');
     if (nueva !== repetida) return setError('Las dos contraseñas nuevas no coinciden.');
-    if (nueva === actual) return setError('La nueva contraseña debe ser distinta de la actual.');
+    if (nueva === actual) return setError('La contraseña nueva debe ser distinta de la actual.');
     setError('');
     cambiar.mutate();
   }
@@ -822,54 +831,55 @@ function HojaCambioContrasena({ correoWebNuevo }: { correoWebNuevo: boolean }) {
     <Hoja title="Cambiar la contraseña">
       <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
         {cerrarCorreoWeb && (
-          <AvisoAtencion titulo="Cierra el correo web y vuelve a entrar">
+          <AvisoAtencion titulo="Vuelve a acceder a tu correo en el navegador">
             <p>
-              Si tienes el correo web abierto en alguna pestaña o dispositivo, ciérralo y vuelve a entrar con la
-              contraseña nueva. Mientras siga abierto, intentará conectar con la anterior y el servidor de correo
-              puede bloquear tu conexión durante una hora; en ese tiempo, desde esa red tampoco se sincronizarán
-              tu móvil ni tu ordenador.
+              Si tienes tu correo abierto en el navegador, en alguna pestaña o dispositivo, ciérralo y vuelve a
+              acceder con la contraseña nueva. Mientras siga abierto, intentará conectar con la anterior y el
+              servidor de correo puede bloquear tu conexión durante una hora; en ese tiempo, desde esa red tampoco se
+              sincronizarán tu móvil ni tu ordenador.
             </p>
           </AvisoAtencion>
         )}
         <Nota>
           Los dispositivos configurados con la contraseña principal dejarán de sincronizar hasta que introduzcas en ellos
           la nueva. Los que utilizan una contraseña de aplicación no se ven afectados.
-          {correoWebNuevo && ' Si tienes el correo web abierto, después tendrás que cerrarlo y volver a entrar.'}
+          {correoWebNuevo &&
+            ' Si tienes tu correo abierto en el navegador, después tendrás que cerrarlo y volver a acceder.'}
         </Nota>
-        <Input
+        <CampoContrasena
           label="Contraseña actual"
-          type="password"
           autoComplete="current-password"
           value={actual}
+          visible={visible}
+          onAlternar={() => setVisible((v) => !v)}
           onChange={(e) => {
             setError('');
             setActual(e.target.value);
           }}
-          className={TACTIL}
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Nueva contraseña"
-            type="password"
+          <CampoContrasena
+            label="Contraseña nueva"
             autoComplete="new-password"
             help="Al menos 10 caracteres."
             value={nueva}
+            visible={visible}
+            onAlternar={() => setVisible((v) => !v)}
             onChange={(e) => {
               setError('');
               setNueva(e.target.value);
             }}
-            className={TACTIL}
           />
-          <Input
-            label="Repetir la nueva contraseña"
-            type="password"
+          <CampoContrasena
+            label="Repite la contraseña nueva"
             autoComplete="new-password"
             value={repetida}
+            visible={visible}
+            onAlternar={() => setVisible((v) => !v)}
             onChange={(e) => {
               setError('');
               setRepetida(e.target.value);
             }}
-            className={TACTIL}
           />
         </div>
         {error && <AvisoError>{error}</AvisoError>}

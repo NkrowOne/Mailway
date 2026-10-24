@@ -22,7 +22,7 @@ export function PasoObligatorias({ ctx, tituloRef }: { ctx: ContextoPuesta; titu
   const cabecera = (
     <CabeceraPaso ref={tituloRef} titulo="Direcciones obligatorias">
       Los estándares del correo exigen que todo dominio tenga postmaster@ y abuse@: ahí llegan los avisos de
-      entrega y las quejas por abuso. No ocupan buzones ni cuentan para tu plan.
+      entrega y las quejas por abuso. No ocupan buzones ni cuentan en tu plan.
     </CabeceraPaso>
   );
   const pie = (
@@ -84,7 +84,7 @@ function Obligatorias({
           </AvisoError>
         ) : (
           <Hoja>
-            <Cargando label="Consultando postmaster@ y abuse@…" />
+            <Cargando label="Cargando el estado de postmaster@ y abuse@…" />
           </Hoja>
         )}
         <PieDePaso
@@ -151,7 +151,7 @@ function Formulario({
     onSuccess: async (data) => {
       queryClient.setQueryData(['essential-addresses', dominio.id], data);
       await invalidarCorreo(queryClient);
-      toast('ok', configuradas ? 'Destino de postmaster@ y abuse@ guardado.' : 'postmaster@ y abuse@ creadas.');
+      toast('ok', configuradas ? 'Destino de postmaster@ y abuse@ guardado.' : 'Se han creado postmaster@ y abuse@.');
       ctx.irA('dispositivos');
     },
     onError: (err) => setError(mensajeDe(err, 'No se han podido guardar las direcciones.')),
@@ -160,7 +160,7 @@ function Formulario({
   function enviar() {
     setError('');
     if (fuera && !esCorreoValido(fuera)) {
-      setErrorExterna('Esta dirección no parece válida. Revísala o déjala en blanco.');
+      setErrorExterna('Esta dirección no es válida. Revísala o déjala en blanco.');
       return;
     }
     if (destinos.length === 0) {
@@ -182,14 +182,14 @@ function Formulario({
         {direcciones.map((d) => (
           <FilaEstado
             key={d.localPart}
-            concepto={<span className="break-all font-medium">{d.email}</span>}
+            concepto={<span className="font-medium [overflow-wrap:anywhere]">{d.email}</span>}
             veredicto={d.kind ? 'normal' : 'sin-dato'}
-            estado={d.kind === 'mailbox' ? 'Es un buzón: ya entrega' : d.kind === 'alias' ? 'Creada' : 'Sin crear'}
+            estado={d.kind === 'mailbox' ? 'Es un buzón' : d.kind === 'alias' ? 'Creada' : 'Sin crear'}
             nota={
               <>
                 {PORQUE[d.localPart]}
                 {d.kind === 'alias' && d.destinations.length > 0 && (
-                  <span className="block break-all text-tinta-3">Reenvía a {d.destinations.join(', ')}</span>
+                  <span className="block text-tinta-3 [overflow-wrap:anywhere]">Reenvía a {d.destinations.join(', ')}</span>
                 )}
               </>
             }
@@ -200,11 +200,11 @@ function Formulario({
       {soloBuzones ? (
         <Hoja>
           <p className="text-base text-tinta-2">
-            Las dos son buzones de tu equipo, así que ya reciben su correo. No hay nada más que hacer aquí.
+            Las dos son buzones de tu equipo, así que ya reciben su correo. No hay que hacer nada más en este paso.
           </p>
         </Hoja>
       ) : (
-        <Hoja title="¿Quién las recibe?">
+        <Hoja title="Destino de los avisos">
           <form
             id="form-obligatorias"
             noValidate
@@ -223,8 +223,8 @@ function Formulario({
               }}
               help={
                 ctx.buzonesCliente.length === 0
-                  ? 'Aún no hay buzones en tu equipo: usa una dirección externa o vuelve al paso anterior.'
-                  : 'Lo normal es quien se ocupa del correo en la empresa.'
+                  ? 'Todavía no hay buzones en tu equipo: usa una dirección externa o vuelve al paso anterior.'
+                  : 'Lo habitual es el de la persona que se ocupa del correo en la empresa.'
               }
             >
               {ctx.buzonesCliente.map((b) => (
@@ -236,7 +236,7 @@ function Formulario({
               <option value={NINGUNO}>Ningún buzón del equipo</option>
             </Select>
             <Input
-              label="Y además, una dirección externa (opcional)"
+              label="Dirección externa adicional (opcional)"
               type="email"
               inputMode="email"
               autoComplete="off"
@@ -250,11 +250,11 @@ function Formulario({
                 setErrorExterna('');
               }}
               placeholder="informatica@ejemplo.com"
-              help="Por ejemplo, la de quien os lleva la informática. Recibirá también cada aviso."
+              help="Por ejemplo, la de quien se ocupa de la informática de la empresa. También recibirá cada aviso."
             />
             {pendientes.length < direcciones.length && (
               <p className="text-sm text-tinta-3">
-                {direcciones.find((d) => d.kind === 'mailbox')?.email} es un buzón y se queda como está.
+                {direcciones.find((d) => d.kind === 'mailbox')?.email} es un buzón y no cambia.
               </p>
             )}
             {error && <AvisoError>{error}</AvisoError>}

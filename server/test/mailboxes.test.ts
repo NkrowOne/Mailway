@@ -504,5 +504,5 @@ test('al llegar al máximo del plan, el administrador lo amplía y el cliente lo
 
   const propio = await asCookie(cliente.userCookie!, 'POST', '/api/mailboxes', { domainId, localPart: 'segundo' });
   assert.equal(propio.statusCode, 400);
-  assert.match(propio.json().error, /Solicita una ampliación del plan\./);
+  assert.match(propio.json().error, /Solicita a tu proveedor una ampliación del plan\./);
 });

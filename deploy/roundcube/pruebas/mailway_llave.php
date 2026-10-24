@@ -369,6 +369,7 @@ $config["des_key"] = "mailway-prueba-24-bytes!";
 $config["log_driver"] = "file";
 $config["log_dir"] = ' . var_export($registrosRc, true) . ';
 $config["temp_dir"] = "/tmp";
+$config["support_url"] = "https://portal.test/mi-buzon";
 ');
 // Los complementos de la imagen y los nuestros, como los montan los compose.
 $enlacesRc = [];
@@ -571,14 +572,20 @@ $a = navegador();
 $boton = strpos($html, 'id="mailway-llave"');
 comprobar(
     $http === 200 && $boton !== false && preg_match('#href="/?\?_task=login&amp;_action=plugin\.mailway_llave_ir"#', $html)
-        && str_contains($html, 'Entrar con llave de acceso'),
-    'la pantalla de acceso muestra «Entrar con llave de acceso», que lleva a plugin.mailway_llave_ir',
+        && str_contains($html, 'Usar llave de acceso'),
+    'la pantalla de acceso muestra «Usar llave de acceso», que lleva a plugin.mailway_llave_ir',
     "{$http} " . ($boton !== false ? substr($html, max(0, $boton - 200), 500) : registros())
 );
 comprobar(
     $boton !== false && strpos($html, 'id="rcmloginsubmit"') < $boton && str_contains($html, 'class="mailway-llave"')
         && str_contains($html, 'btn btn-secondary btn-lg w-100 mailway-llave'),
     'el botón va debajo del de entrar, como botón secundario'
+);
+comprobar(
+    (bool) preg_match('#id="rcmloginsubmit"[^>]*>Accede</button>#', $html)
+        && (bool) preg_match('#class="support-link"[^>]*>Mi buzón</a>#', $html),
+    'el botón del formulario dice «Accede» y el enlace de soporte, «Mi buzón»',
+    preg_match('#<button[^>]*rcmloginsubmit[^>]*>[^<]*</button>|<a[^>]*support-link[^>]*>[^<]*</a>#', $html, $m) ? $m[0] : substr($html, 0, 300)
 );
 // Las hojas de estilo no se pueden comprobar aquí: Roundcube solo enlaza las de
 // los complementos que están dentro de su instalación (los compose los montan
@@ -620,7 +627,7 @@ comprobar(
     "{$http} {$destino}"
 );
 [, , $html] = pedir($b, $destino, ['Host' => 'caido.test']);
-comprobar(str_contains($html, 'Ahora no se puede entrar con llave de acceso'), 'con el aviso de que ahora no se puede');
+comprobar(str_contains($html, 'Ahora no se puede acceder con llave de acceso'), 'con el aviso de que ahora no se puede');
 
 /* ---------------------------- El viaje con estado ------------------------------ */
 
@@ -863,7 +870,7 @@ comprobar(
     "{$http} {$destino} " . json_encode($salidas)
 );
 [, , $html] = pedir($j, $destino);
-comprobar(str_contains($html, 'No se ha podido entrar con tu llave de acceso'), 'que explica que no se ha podido entrar');
+comprobar(str_contains($html, 'No se ha podido acceder con tu llave de acceso'), 'que explica que no se ha podido acceder');
 
 // Código gastado o caducado (404 passkey_code_invalid).
 $k = navegador();

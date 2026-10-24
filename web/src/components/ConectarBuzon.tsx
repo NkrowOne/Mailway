@@ -89,7 +89,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
       // móvil quedaría fuera de la vista.
       arriba.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
-    onError: (err) => toast('error', mensajeError(err, 'No se ha podido recuperar el enlace.')),
+    onError: (err) => toast('error', mensajeError(err, 'No se ha podido recuperar el enlace. Vuelve a intentarlo.')),
   });
 
   const revocar = useMutation({
@@ -100,7 +100,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
       toast('ok', 'Se ha revocado el enlace de configuración.');
       await queryClient.invalidateQueries({ queryKey: ['setup-links', mailboxId] });
     },
-    onError: (err) => toast('error', mensajeError(err, 'No se ha podido revocar el enlace.')),
+    onError: (err) => toast('error', mensajeError(err, 'No se ha podido revocar el enlace. Vuelve a intentarlo.')),
   });
 
   async function descargarPerfil() {
@@ -109,7 +109,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
     try {
       await descargarFichero(`/api/mailboxes/${mailboxId}/mobileconfig`, `correo-${email}.mobileconfig`);
     } catch (err) {
-      setErrorPerfil(mensajeError(err, 'No se ha podido descargar el perfil.'));
+      setErrorPerfil(mensajeError(err, 'No se ha podido descargar el perfil. Vuelve a intentarlo.'));
     } finally {
       setDescargando(false);
     }
@@ -172,7 +172,9 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
               </label>
             )}
             {crear.isError && (
-              <AvisoError>{mensajeError(crear.error, 'No se ha podido crear el enlace de configuración.')}</AvisoError>
+              <AvisoError>
+                {mensajeError(crear.error, 'No se ha podido crear el enlace de configuración. Vuelve a intentarlo.')}
+              </AvisoError>
             )}
             <Button type="submit" variant="principal" busy={crear.isPending} className="self-start">
               Crear enlace de configuración
@@ -184,7 +186,7 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
           // aquí, donde se crea el enlace, que se puede empezar de cero.
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla pt-3">
             <p className="min-w-0 flex-1 basis-56 text-sm text-tinta-2">
-              ¿Has probado el buzón antes de entregarlo? Reinícialo para que el titular empiece de cero.
+              Si has probado el buzón antes de entregarlo, reinícialo para que el titular empiece de cero.
             </p>
             <Button variant="perfil" onClick={onReiniciar}>
               Reiniciar configuración
@@ -196,21 +198,23 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
       {/* 2. Para quien prefiere configurarlo en persona. */}
       <Seccion titulo="Datos de conexión">
         {conexion.isPending ? (
-          <Cargando label="Cargando datos de conexión…" />
+          <Cargando label="Cargando los datos de conexión…" />
         ) : conexion.isError ? (
-          <AvisoError>{mensajeError(conexion.error, 'No se han podido cargar los datos de conexión.')}</AvisoError>
+          <AvisoError onRetry={() => void conexion.refetch()} retrying={conexion.isFetching}>
+            {mensajeError(conexion.error, 'No se han podido cargar los datos de conexión. Comprueba la conexión.')}
+          </AvisoError>
         ) : (
           <>
             <DatosManuales
               email={email}
               usuario={conexion.data.username || undefined}
               conexion={conexion.data}
-              notaContrasena="La del buzón, o una contraseña de aplicación."
+              notaContrasena="La del buzón o una contraseña de aplicación."
               compacto
             />
             <div className="flex flex-wrap gap-2">
               <Button variant="perfil" busy={descargando} onClick={() => void descargarPerfil()}>
-                Descargar perfil (iPhone/Mac)
+                Descargar perfil (iPhone o Mac)
               </Button>
               {conexion.data.webmailUrl && (
                 <a
@@ -219,13 +223,13 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
                   rel="noreferrer noopener"
                   className={claseEnlaceBoton('perfil', 'panel')}
                 >
-                  Abrir el correo web
+                  Abrir el webmail
                 </a>
               )}
             </div>
             {errorPerfil && <AvisoError>{errorPerfil}</AvisoError>}
             <p className="text-sm text-tinta-3">
-              El perfil no incluye la contraseña: el iPhone o el Mac la solicitan al instalarlo.
+              El perfil no incluye la contraseña: el iPhone o el Mac la piden al instalarlo.
             </p>
           </>
         )}
@@ -234,13 +238,15 @@ export function ConectarBuzon({ mailboxId, email, passwordRecienGenerada, onRein
       {/* 3. Historial: saber si el titular lo abrió y poder retirarlo. */}
       <Seccion titulo="Enlaces creados">
         {enlaces.isPending ? (
-          <Cargando label="Cargando enlaces…" />
+          <Cargando label="Cargando los enlaces…" />
         ) : enlaces.isError ? (
-          <AvisoError>{mensajeError(enlaces.error, 'No se han podido cargar los enlaces.')}</AvisoError>
+          <AvisoError onRetry={() => void enlaces.refetch()} retrying={enlaces.isFetching}>
+            {mensajeError(enlaces.error, 'No se han podido cargar los enlaces. Comprueba la conexión.')}
+          </AvisoError>
         ) : lista.length === 0 ? (
           <p className="text-sm text-tinta-3">Aún no se ha creado ningún enlace para este buzón.</p>
         ) : (
-          <div className="border border-regla">
+          <div className="overflow-hidden rounded-lg border border-regla">
             {lista.map((enlace) => {
               const estado = estadoEnlace(enlace);
               return (

@@ -94,15 +94,15 @@ export function DialogoBaja({
     >
       <div className="flex flex-col gap-4 text-base text-tinta-2 [overflow-wrap:anywhere]">
         <p>
-          {desdeVisible} dejará de recibir correo en esta plataforma. Antes, su MX tiene que apuntar a otro sitio o ser
-          un MX nulo («0 .»).
+          {desdeVisible} dejará de recibir correo en este servidor. Antes, su registro MX debe apuntar a otro servidor o
+          ser un MX nulo («0 .»).
         </p>
         {pendientes.length > 0 && (
           <div className="flex flex-col gap-2">
             <p>
               {pendientes.length === 1
-                ? `La persona que aún entra con su usuario de ${desdeVisible} pasará a entrar con su dirección de ${haciaVisible}. Sus dispositivos sin actualizar dejarán de conectar hasta que cambien el usuario. La contraseña no cambia.`
-                : `Las ${pendientes.length} personas que aún entran con su usuario de ${desdeVisible} pasarán a entrar con su dirección de ${haciaVisible}. Sus dispositivos sin actualizar dejarán de conectar hasta que cambien el usuario. La contraseña no cambia.`}
+                ? `La persona que aún accede con su usuario de ${desdeVisible} pasará a acceder con su dirección de ${haciaVisible}. Sus dispositivos sin actualizar dejarán de conectar hasta que cambien el usuario. La contraseña no cambia.`
+                : `Las ${pendientes.length} personas que aún acceden con su usuario de ${desdeVisible} pasarán a acceder con su dirección de ${haciaVisible}. Sus dispositivos sin actualizar dejarán de conectar hasta que cambien el usuario. La contraseña no cambia.`}
             </p>
             <ul className="rounded-lg border border-regla bg-hoja-2">
               {pendientes.map((p) => (
@@ -115,7 +115,7 @@ export function DialogoBaja({
         )}
         {vista.webmail.viejo && <p>{vista.webmail.viejo.hostname} dejará de funcionar.</p>}
         <p className="text-sm">
-          Si acabas de cambiar el MX, espera al menos un día: algunos servidores tardan en ver el cambio.
+          Si acabas de cambiar el MX, espera al menos un día: algunos servidores tardan en aplicar el cambio.
         </p>
         <BloqueosYAvisos bloqueos={vista.bloqueosBaja} />
         <Input

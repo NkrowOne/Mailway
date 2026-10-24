@@ -50,8 +50,11 @@ Qué cambia:
 - La pantalla de acceso es una portada en dos columnas: panel de marca en
   petróleo (logotipo y nombre del servicio centrados y una bandeja de
   entrada dibujada, sin textos añadidos) y la tarjeta, con la etiqueta
-  «Dirección de correo»; en el móvil, el panel queda como franja de
-  cabecera con la marca.
+  «Dirección de correo» y el botón «Accede»; en el móvil, el panel queda
+  como franja de cabecera con la marca.
+- El enlace de soporte, que `mailway.php` apunta a «Mi buzón», se llama
+  «Mi buzón» en lugar de «Obtener soporte» (si el operador cambia
+  `support_url`, conserva la etiqueta de Roundcube).
 
 Ficheros:
 
@@ -115,8 +118,8 @@ restablece, la administración reinicia la configuración…), cada refresco
 fallaba con errores de conexión confusos. Con este complemento, cuando IMAP
 rechaza las credenciales de una sesión ya iniciada (respuesta `NO` sin código
 o con `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED` o `EXPIRED`), se cierra la
-sesión y se vuelve a la pantalla de acceso con el aviso «Tu contraseña ha
-cambiado y la sesión se ha cerrado. Vuelve a iniciar sesión con la nueva.»,
+sesión y se vuelve a la pantalla de acceso con el aviso «Tu contraseña ya no es
+válida (puede que haya cambiado) y la sesión se ha cerrado. Vuelve a acceder.»,
 también desde las peticiones AJAX y los marcos (refresco de la bandeja, vista
 previa), por el mismo camino que una sesión caducada; en la redacción,
 Roundcube guarda antes el borrador en el navegador. Un fallo de red, de TLS o
@@ -218,14 +221,14 @@ docker run --rm -v "$PWD/deploy/roundcube:/opt/mailway-rc:ro" \
 Para desactivarlo, retira `mailway_cuentas` de `ROUNDCUBEMAIL_PLUGINS` y
 recrea solo el webmail. No cambia el esquema de Roundcube.
 
-## Entrar con llave de acceso: `mailway_llave`
+## Acceso con llave de acceso: `mailway_llave`
 
-El titular puede entrar en el webmail con una llave de acceso (passkey) en
+El titular puede acceder al webmail con una llave de acceso (passkey) en
 lugar de su contraseña. Roundcube no comprueba la llave: lo hace «Mi buzón»
 del panel, que es quien conoce las llaves del titular.
 
-- **Botón en el acceso** (gancho `loginform_content`): «Entrar con llave de
-  acceso», debajo de «Iniciar sesión», como botón secundario (las clases que
+- **Botón en el acceso** (gancho `loginform_content`): «Usar llave de
+  acceso», debajo de «Accede», como botón secundario (las clases que
   Elastic da al botón de OAuth, con el icono de la llave de `mailway_theme`).
   Solo aparece si el panel dice que el nombre por el que se ha llegado es un
   webmail Roundcube de la instancia (`GET
@@ -256,19 +259,19 @@ del panel, que es quien conoce las llaves del titular.
   minutos) no pasa por aquí: su contraseña temporal dura hasta que caduca.
 - **Caducidad**: un minuto antes de que caduque la contraseña temporal, la
   sesión se cierra y la pantalla de acceso dice «La sesión que iniciaste con
-  tu llave de acceso ha caducado. Vuelve a entrar.», también desde las
+  tu llave de acceso ha caducado. Vuelve a acceder.», también desde las
   peticiones AJAX y los marcos. Si el panel la retira antes (se borra la
   llave, se cambia la contraseña del buzón o se abren demasiadas sesiones), el
   IMAP la rechaza y `mailway_sesion` cierra la sesión; una cookie breve
   (`mailway_llave_fin`) permite a `mailway_llave` cambiar el aviso de
   contraseña cambiada por «La sesión que iniciaste con tu llave de acceso ya
-  no es válida y se ha cerrado. Vuelve a entrar.». En una petición AJAX el
+  no es válida y se ha cerrado. Vuelve a acceder.». En una petición AJAX el
   aviso de `mailway_sesion` se ve un instante antes de ir al acceso.
 - **Fallos**: un código caducado, gastado o con un estado que no coincide
-  vuelve al acceso con «El enlace para entrar con tu llave de acceso ha
+  vuelve al acceso con «El enlace para acceder con tu llave de acceso ha
   caducado o ya se ha usado. Vuelve a intentarlo.»; si el panel falla o el IMAP
   no acepta la contraseña temporal (que entonces se retira), con «No se ha
-  podido entrar con tu llave de acceso…».
+  podido acceder con tu llave de acceso…».
 
 **Por qué el estado**: sin él, cualquiera podría usar su propia llave para
 conseguir un código y mandar el enlace a otra persona, que entraría sin darse

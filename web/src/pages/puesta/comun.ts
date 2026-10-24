@@ -215,7 +215,7 @@ export function errorFila(f: FilaPersona, repetidas: Set<string>): { campo: 'nom
   if (error) return { campo: 'local', texto: local ? error : 'Escribe la dirección.' };
   if (repetidas.has(local)) return { campo: 'local', texto: 'Esta dirección está repetida en la lista.' };
   if (f.personal.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.personal.trim())) {
-    return { campo: 'personal', texto: 'El correo personal no parece válido.' };
+    return { campo: 'personal', texto: 'El correo personal no es válido.' };
   }
   return null;
 }
@@ -341,7 +341,7 @@ export function lecturaCuenta(b: Mailbox): LecturaCuenta {
       estado: 'sin-configurar',
       veredicto: 'fuera',
       rotulo: 'Sin configurar',
-      nota: `No se pudo enviar a ${correo.to}. Vuelve a intentarlo o copia su enlace.`,
+      nota: `No se ha podido enviar a ${correo.to}. Vuelve a intentarlo o copia su enlace.`,
     };
   }
   return {
@@ -349,7 +349,7 @@ export function lecturaCuenta(b: Mailbox): LecturaCuenta {
     veredicto: 'fuera',
     rotulo: 'Sin configurar',
     nota: b.setup?.lastLinkAt
-      ? 'Su enlace aún no se ha abierto. Envíale la configuración por correo o copia el enlace y pásaselo.'
+      ? 'Su enlace aún no se ha abierto. Envíale la configuración por correo o copia el enlace y compártelo con su titular.'
       : 'Aún no ha recibido su configuración.',
   };
 }

@@ -129,16 +129,16 @@ export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
             <>
               {recuento && <span className="block">{recuento}</span>}
               <span className="block text-sm text-tinta-3">
-                Reciben correo y lo reenvían a buzones del cliente o a direcciones externas; para enviar se
-                utiliza un buzón.
+                Reciben correo y lo reenvían a buzones del cliente o a direcciones externas. Para enviar se
+                usa un buzón.
               </span>
             </>
           ) : (
             <>
               <p>
                 {isAdmin ? 'Alias de todos los clientes: direcciones' : 'Direcciones'} que reciben correo y lo
-                reenvían a buzones de la plataforma o a direcciones externas. Los alias solo reciben: para enviar se
-                utiliza un buzón.
+                reenvían a buzones o a direcciones externas. Los alias solo reciben; para enviar se usa un
+                buzón.
               </p>
               {recuento && <p className="mt-1 text-sm text-tinta-3">{recuento}</p>}
             </>
@@ -161,7 +161,7 @@ export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
             Se ha alcanzado el máximo de alias del plan ({clienteContexto.plan.maxAliases}). Para crear más,
             {isAdmin
               ? ' elimina alguno o cambia el plan del cliente en «Resumen».'
-              : ' elimina alguno o solicita una ampliación del plan.'}
+              : ' elimina alguno o solicita a tu proveedor una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
@@ -209,8 +209,8 @@ export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
               )
             }
           >
-            Un alias como ventas@{domainList[0]?.domain} puede reenviar a varios buzones a la vez, o a una
-            dirección externa, sin ocupar plaza de buzón.
+            Un alias como ventas@{domainList[0]?.domain} reenvía el correo a uno o varios buzones, o a una
+            dirección externa, sin ocupar un buzón del plan.
           </Vacio>
         </Hoja>
       ) : (
@@ -248,7 +248,7 @@ export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
             />
           ) : (
             <>
-              <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 lg:flex">
+              <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-2 lg:flex">
                 <span className="rotulo min-w-0 grow basis-0">Alias</span>
                 {verCliente && <span className="rotulo w-32 shrink-0">Cliente</span>}
                 <span className="rotulo min-w-0 grow-[1.4] basis-0">Reenvía a</span>
@@ -290,7 +290,7 @@ export default function Alias({ clienteFijo }: { clienteFijo?: string } = {}) {
                       <ul>
                         {alias.destinations.map((destination) => (
                           <li key={destination} className="flex flex-wrap items-baseline gap-x-2">
-                            <span className="valor break-all text-sm text-tinta-2">{destination}</span>
+                            <span className="valor text-sm text-tinta-2 [overflow-wrap:anywhere]">{destination}</span>
                             {externos.has(destination) && <span className="rotulo">externa</span>}
                           </li>
                         ))}
@@ -484,8 +484,8 @@ function FormularioAlias({
       // un buzón de otro cliente no se ofrece y el servidor lo rechazaría.
       setError(
         correosCandidatos.has(propia)
-          ? `${propia} es de un dominio de esta plataforma: selecciónala en la lista de buzones.`
-          : `${propia} pertenece a otro cliente de esta plataforma y no puede usarse como destino.`,
+          ? `${propia} es uno de los buzones de la lista: selecciónalo en «Buzones de destino».`
+          : `${propia} pertenece a un dominio de este servidor y no es ninguno de los buzones de la lista, así que no puede usarse como destino.`,
       );
       return;
     }
@@ -537,7 +537,7 @@ function FormularioAlias({
                   placeholder="ventas"
                 />
               </div>
-              <span className="valor break-all pb-2.5 text-sm text-tinta-3">@{dominio?.domain || '…'}</span>
+              <span className="valor pb-2.5 text-sm text-tinta-3 [overflow-wrap:anywhere]">@{dominio?.domain || '…'}</span>
             </div>
           </>
         )}
@@ -548,20 +548,20 @@ function FormularioAlias({
             <BandaError>No se han podido cargar los buzones. Cierra el diálogo y vuelve a intentarlo.</BandaError>
           ) : candidatos.length === 0 ? (
             <p className="text-sm text-tinta-3">
-              Este cliente aún no tiene buzones. Puedes reenviar a una dirección externa o crear antes un buzón.
+              Todavía no hay buzones. Puedes reenviar a una dirección externa o crear antes un buzón.
             </p>
           ) : (
             <>
               {candidatos.length > 8 && (
                 <Input label="Filtrar buzones" type="search" value={buscar} onChange={(e) => setBuscar(e.target.value)} />
               )}
-              <div className="flex max-h-56 flex-col gap-2 overflow-y-auto border border-regla p-3">
+              <div className="flex max-h-56 flex-col gap-2 overflow-y-auto rounded-lg border border-regla p-3">
                 {visibles.map((m) => (
                   <Casilla
                     key={m.id}
                     checked={internos.has(m.email.toLowerCase())}
                     onChange={(v) => alternar(m.email.toLowerCase(), v)}
-                    label={<span className="valor break-all text-sm">{m.email}</span>}
+                    label={<span className="valor text-sm [overflow-wrap:anywhere]">{m.email}</span>}
                     help={m.displayName || undefined}
                   />
                 ))}
@@ -574,9 +574,8 @@ function FormularioAlias({
         <fieldset className="flex flex-col gap-2">
           <legend className="rotulo mb-1">Direcciones externas</legend>
           <p className="text-sm text-tinta-3">
-            Reenvío a una dirección externa: el correo que llegue al alias se reenviará también a esa dirección
-            (por ejemplo, una cuenta de otro proveedor). Algunos proveedores pueden clasificar como no deseado
-            el correo reenviado.
+            El correo que llegue al alias se reenviará también a estas direcciones (por ejemplo, una cuenta de
+            otro proveedor). Algunos proveedores clasifican el correo reenviado como no deseado.
           </p>
           {externos.map((valor, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2">
@@ -616,13 +615,13 @@ function FormularioAlias({
         {destinosConRecepcionExterna.length > 0 && (
           <BandaAviso>
             El correo de{' '}
-            <span className="valor break-all">
+            <span className="valor [overflow-wrap:anywhere]">
               {[...new Set(destinosConRecepcionExterna.map((c) => c.split('@')[1]))].join(', ')}
             </span>{' '}
-            se recibe hoy en otro proveedor. Lo que llegue de Internet a este alias se entregará en{' '}
+            se recibe ahora en otro proveedor. Lo que llegue de Internet a este alias se entregará en{' '}
             {destinosConRecepcionExterna.length === 1 ? 'el buzón' : 'los buzones'} de aquí (
-            <span className="valor break-all">{destinosConRecepcionExterna.join(', ')}</span>), no en ese
-            proveedor, hasta que se haga el cambio del MX. Lo que se envíe al alias desde este servidor sí
+            <span className="valor [overflow-wrap:anywhere]">{destinosConRecepcionExterna.join(', ')}</span>), no en ese
+            proveedor, hasta que se cambie el registro MX. Lo que se envíe al alias desde este servidor sí
             llega al proveedor actual.
           </BandaAviso>
         )}

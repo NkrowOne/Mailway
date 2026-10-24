@@ -117,7 +117,7 @@ export function resumirEnlazados(enlazados: ObjetoJmap[] | undefined): string {
   const partes: string[] = [];
   for (const [objeto, n] of cuenta) {
     if (objeto === 'SystemSettings') {
-      partes.push('los ajustes del sistema (es el dominio por defecto del motor; aplica los ajustes recomendados para que lo sea el dominio reservado del servidor)');
+      partes.push('los ajustes del sistema (es el dominio por defecto del servidor de correo; los ajustes recomendados lo cambian por el dominio reservado del servidor)');
       continue;
     }
     const nombres = NOMBRES_ENLAZADOS[objeto];
@@ -137,15 +137,15 @@ export function resumirEnlazados(enlazados: ObjetoJmap[] | undefined): string {
 export function errorDeObjeto(detalle: ErrorDeConjunto, que: string): ErrorDeObjetoJmap {
   const tipo = String(detalle.type ?? 'desconocido');
   if (tipo === 'notFound') {
-    return new ErrorDeObjetoJmap(502, `El motor de correo no encuentra ${que}.`, 'engine_not_found', tipo, detalle);
+    return new ErrorDeObjetoJmap(502, `El servidor de correo no encuentra ${que}.`, 'engine_not_found', tipo, detalle);
   }
   if (tipo === 'primaryKeyViolation') {
-    return new ErrorDeObjetoJmap(502, `El motor de correo ya tiene ${que}.`, 'engine_exists', tipo, detalle);
+    return new ErrorDeObjetoJmap(502, `El servidor de correo ya tiene ${que}.`, 'engine_exists', tipo, detalle);
   }
   if (tipo === 'objectIsLinked') {
     return new ErrorDeObjetoJmap(
       502,
-      `El motor de correo no puede borrar ${que} porque aún tiene elementos enlazados: ${resumirEnlazados(detalle.linkedObjects)}.`,
+      `El servidor de correo no puede borrar ${que} porque aún tiene elementos enlazados: ${resumirEnlazados(detalle.linkedObjects)}.`,
       'engine_error',
       tipo,
       detalle,
@@ -163,7 +163,7 @@ export function errorDeObjeto(detalle: ErrorDeConjunto, que: string): ErrorDeObj
   }
   return new ErrorDeObjetoJmap(
     502,
-    `El motor de correo rechazó la operación sobre ${que} (${tipo})${partes.length ? `: ${partes.join('; ')}` : ''}.`,
+    `El servidor de correo ha rechazado la operación sobre ${que} (${tipo})${partes.length ? `: ${partes.join('; ')}` : ''}.`,
     'engine_error',
     tipo,
     detalle,
@@ -182,7 +182,7 @@ export class RespuestasJmap {
     const respuesta = this.respuestas.find((r) => r[2] === id);
     const metodo = this.llamadas.find((l) => l[2] === id)?.[0] ?? id;
     if (!respuesta) {
-      throw upstream(`El motor de correo no respondió a ${metodo}.`, 'engine_error');
+      throw upstream(`El servidor de correo no ha respondido a ${metodo}.`, 'engine_error');
     }
     if (respuesta[0] === 'error') throw errorDeMetodo(metodo, respuesta[1]);
     return respuesta[1] as T;
@@ -197,17 +197,17 @@ export function errorDeMetodo(metodo: string, error: Argumentos): HttpError {
     // Un motor sin la API de gestión de 0.16 (0.15 tras volver atrás) no
     // conoce los métodos `x:`: no es un fallo de la operación sino de versión.
     return new RutaDeGestionAusente(
-      `El motor de correo no reconoce el método de gestión ${metodo}: no parece Stalwart 0.16. Revisa la versión del motor y su URL en Ajustes.`,
+      `El servidor de correo no reconoce el método de gestión ${metodo}: no parece Stalwart 0.16. Revisa su versión y su URL en Ajustes.`,
     );
   }
   if (tipo === 'forbidden') {
     return upstream(
-      `El motor de correo no permite ${metodo} con las credenciales de administración${descripcion ? `: ${descripcion}` : ''}. Revisa que el usuario del motor en Ajustes sea el administrador (STALWART_RECOVERY_ADMIN).`,
+      `El servidor de correo no permite ${metodo} con las credenciales de administración${descripcion ? `: ${descripcion}` : ''}. Revisa que el usuario de administración de Ajustes sea el administrador de Stalwart (STALWART_RECOVERY_ADMIN).`,
       'engine_error',
     );
   }
   return upstream(
-    `El motor de correo rechazó ${metodo} (${tipo})${descripcion ? `: ${descripcion}` : ''}.`,
+    `El servidor de correo ha rechazado ${metodo} (${tipo})${descripcion ? `: ${descripcion}` : ''}.`,
     'engine_error',
   );
 }
@@ -268,7 +268,7 @@ export class ClienteJmap {
       const { cuerpo } = await this.http('POST', '/jmap', { using: USING, methodCalls: llamadas }, opciones.timeoutMs);
       const respuestas = (cuerpo as { methodResponses?: unknown } | null)?.methodResponses;
       if (!Array.isArray(respuestas)) {
-        throw upstream('El motor de correo devolvió una respuesta JMAP sin methodResponses.', 'engine_error');
+        throw upstream('El servidor de correo ha devuelto una respuesta JMAP sin methodResponses.', 'engine_error');
       }
       return new RespuestasJmap(respuestas as RespuestaCruda[], llamadas);
     });
@@ -308,18 +308,18 @@ export class ClienteJmap {
     if (res.status === 401) {
       throw new HttpError(
         502,
-        'El motor de correo rechazó las credenciales de administración (HTTP 401). Revisa el usuario y la contraseña del motor en Ajustes: en Stalwart 0.16 son los de STALWART_RECOVERY_ADMIN.',
+        'El servidor de correo ha rechazado las credenciales de administración (HTTP 401). Revisa el usuario y la contraseña de administración en Ajustes: en Stalwart 0.16 son los de STALWART_RECOVERY_ADMIN.',
         'engine_auth_failed',
       );
     }
     if (res.status === 404) {
       throw new RutaDeGestionAusente(
-        `El motor de correo no reconoce la ruta de gestión ${ruta} (HTTP 404). Revisa la URL del motor en Ajustes: debe ser la del puerto HTTP de Stalwart 0.16.`,
+        `El servidor de correo no reconoce la ruta de gestión ${ruta} (HTTP 404). Revisa la URL en Ajustes: debe ser la del puerto HTTP de Stalwart 0.16.`,
       );
     }
     if (res.status === 429) {
       throw upstream(
-        'El motor de correo está limitando las peticiones del panel (HTTP 429). Vuelve a intentarlo en unos segundos.',
+        'El servidor de correo está limitando las peticiones del panel (HTTP 429). Vuelve a intentarlo en unos segundos.',
         'engine_error',
       );
     }
@@ -331,10 +331,10 @@ export class ClienteJmap {
       (tipo.endsWith(':notRequest') && /unknown capability/i.test(detalle) && detalle.includes(CAPACIDAD_STALWART))
     ) {
       throw new RutaDeGestionAusente(
-        `El motor de correo no admite la API de gestión de Stalwart 0.16 (${CAPACIDAD_STALWART}). Revisa la versión del motor y su URL en Ajustes.`,
+        `El servidor de correo no admite la API de gestión de Stalwart 0.16 (${CAPACIDAD_STALWART}). Revisa su versión y su URL en Ajustes.`,
       );
     }
-    throw upstream(`El motor de correo respondió ${res.status}: ${detalle}`, 'engine_error');
+    throw upstream(`El servidor de correo ha respondido ${res.status}: ${detalle}`, 'engine_error');
   }
 
   private esperaTrasLimite(res: Response): number {
@@ -371,8 +371,8 @@ export class ClienteJmap {
     const e = err as Error & { cause?: { code?: string; message?: string } };
     const motivo =
       e.name === 'TimeoutError' || e.name === 'AbortError'
-        ? `no respondió en ${Math.max(1, Math.round(timeoutMs / 1000))} s`
+        ? `no ha respondido en ${Math.max(1, Math.round(timeoutMs / 1000))} s`
         : [e.message, e.cause?.code ?? e.cause?.message].filter(Boolean).join(': ');
-    return upstream(`No se pudo conectar con el motor de correo (${this.base}): ${motivo}`, 'engine_unreachable');
+    return upstream(`No se ha podido conectar con el servidor de correo (${this.base}): ${motivo}`, 'engine_unreachable');
   }
 }

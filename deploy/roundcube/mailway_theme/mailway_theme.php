@@ -69,9 +69,17 @@ class mailway_theme extends rcube_plugin
         $this->logo_propio = $this->sin_logo_del_operador($rcmail);
 
         // En el acceso, el usuario es la dirección completa: la etiqueta lo
-        // dice en lugar de «Nombre de usuario», que hace dudar a la gente.
+        // dice en lugar de «Nombre de usuario», que hace dudar a la gente. El
+        // botón dice «Accede», como el panel y «Mi buzón» (guía de estilo).
         if ($this->logo_propio && $rcmail->task === 'login') {
-            $rcmail->load_language(null, [], ['username' => 'Dirección de correo']);
+            $rcmail->load_language(null, [], ['username' => 'Dirección de correo', 'login' => 'Accede']);
+        }
+        // El enlace de soporte lleva a «Mi buzón» (mailway.php): se llama así
+        // en lugar de «Obtener soporte», que promete algo que no es. Si el
+        // operador lo apunta a otro sitio, se queda la etiqueta de Roundcube.
+        $soporte = (string) $rcmail->config->get('support_url', '');
+        if (str_ends_with($soporte, '/mi-buzon')) {
+            $rcmail->load_language(null, [], ['support' => 'Mi buzón']);
         }
         if ($this->logo_propio) {
             $logo = $rcmail->config->get('skin_logo');

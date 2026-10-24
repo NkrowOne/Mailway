@@ -87,7 +87,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               </svg>
             </span>
             <div className="min-w-0 flex-1">
-              <span className="sr-only">{toast.tone === 'ok' ? 'Hecho: ' : 'No se ha podido: '}</span>
+              <span className="sr-only">{toast.tone === 'ok' ? 'Correcto: ' : 'Error: '}</span>
               <p className="[overflow-wrap:anywhere]">{toast.text}</p>
             </div>
             <button

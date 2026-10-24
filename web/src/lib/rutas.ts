@@ -59,7 +59,7 @@ export const veredictoHost: Record<EstadoHost, Veredicto> = {
 export const etiquetaHost: Record<EstadoHost, string> = {
   ok: 'Apunta aquí',
   pending: 'Sin DNS',
-  unknown: 'Sin dato',
+  unknown: 'Sin datos',
 };
 
 export const usoHost: Record<UsoHost, string> = {

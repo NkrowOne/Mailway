@@ -403,7 +403,7 @@ async function actualizarSinCerrojo(mailboxId: string): Promise<{ de: string; a:
     .get(a, mailboxId);
   if (otro) {
     throw conflict(
-      `Otro buzón entra todavía con el usuario ${a}: no se puede cambiar el de este a esa dirección.`,
+      `Otro buzón accede todavía con el usuario ${a}: no se puede cambiar el de este a esa dirección.`,
       'mailbox_exists',
     );
   }
