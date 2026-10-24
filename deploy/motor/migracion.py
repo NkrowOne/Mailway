@@ -312,7 +312,7 @@ def orden_convertir(args) -> int:
     # puede crear).
     texto = json.dumps(operaciones)
     if '/opt/stalwart' in texto:
-        raise Problema('El plan de la 0.16 aún contiene rutas de /opt/stalwart: no se puede aplicar tal cual.')
+        raise Problema('El plan de la 0.16 aún contiene rutas de /opt/stalwart: no se puede aplicar.')
     operaciones = ajustar_plan(operaciones, args.nombre)
     with open(TRABAJO / 'export.json', 'w', encoding='utf-8') as salida:
         for op in operaciones:
@@ -341,13 +341,13 @@ class Jmap:
         except urllib.error.HTTPError as error:
             if error.code in (401, 403):
                 raise Problema(f'El motor 0.16 rechaza la credencial de administración (HTTP {error.code}).') from None
-            raise Problema(f'El motor 0.16 respondió HTTP {error.code} a la petición JMAP.') from None
+            raise Problema(f'El motor 0.16 ha respondido HTTP {error.code} a la petición JMAP.') from None
         except (urllib.error.URLError, OSError) as error:
-            raise Problema(f'No se puede hablar con el motor 0.16: {error}') from None
+            raise Problema(f'No se puede conectar con el motor 0.16: {error}') from None
         respuestas = datos.get('methodResponses') or []
         for nombre, cuerpo, _ in respuestas:
             if nombre == 'error':
-                raise Problema(f"El motor 0.16 rechazó la petición: {cuerpo.get('type')} {cuerpo.get('description', '')}".strip())
+                raise Problema(f"El motor 0.16 ha rechazado la petición: {cuerpo.get('type')} {cuerpo.get('description', '')}".strip())
         return respuestas
 
     def todos(self, objeto: str, propiedades: list[str]) -> list[dict]:

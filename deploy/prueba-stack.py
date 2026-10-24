@@ -1139,7 +1139,7 @@ print(json.dumps({
         antes = self.env.read_bytes()
         self.env.write_bytes(antes + b"MAILWAY_ADOPCION_PENDIENTE='servidor'\n")
         salida = self.instalador('--migrar-motor', '-y', codigo=1)
-        for texto in ('MAILWAY_ADOPCION_PENDIENTE', 'Antes de migrar, arregla lo de arriba', 'No se ha cambiado nada'):
+        for texto in ('MAILWAY_ADOPCION_PENDIENTE', 'Antes de migrar, corrige lo indicado arriba', 'No se ha cambiado nada'):
             assert texto in salida, f'la migración que no empieza no dice «{texto}»'
         assert 'Vuelta atrás' not in salida, 'ha llegado a cambiar algo'
         assert 'stalwart:v0.15' in self.motor_sano(), 'el motor ya no es la 0.15'

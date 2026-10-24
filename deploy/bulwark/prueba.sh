@@ -227,7 +227,7 @@ retirar
 
 seccion 'Imágenes'
 for imagen in "$IMAGEN_STALWART" "$IMAGEN_BULWARK" "$IMAGEN_NGINX" "$IMAGEN_TRAEFIK"; do
-  traer "$imagen" || detener "No se pudo descargar $imagen."
+  traer "$imagen" || detener "No se ha podido descargar $imagen."
   ok "imagen $imagen"
 done
 
@@ -239,13 +239,13 @@ openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=mail.m
   -keyout "$TMP/tls/servidor.key" -out "$TMP/tls/servidor.csr" >/dev/null 2>&1
 printf 'subjectAltName=DNS:mail.mwb.test,DNS:mail-crudo.mwb.test,DNS:webmail.cliente.test,DNS:webmail.otro.test,DNS:eco.cliente.test\nextendedKeyUsage=serverAuth\n' >"$TMP/tls/ext.cnf"
 openssl x509 -req -in "$TMP/tls/servidor.csr" -CA "$TMP/tls/ca.pem" -CAkey "$TMP/tls/ca.key" -CAcreateserial \
-  -days 2 -extfile "$TMP/tls/ext.cnf" -out "$TMP/tls/servidor.pem" >/dev/null 2>&1 || detener 'No se pudo crear el certificado de prueba.'
+  -days 2 -extfile "$TMP/tls/ext.cnf" -out "$TMP/tls/servidor.pem" >/dev/null 2>&1 || detener 'No se ha podido crear el certificado de prueba.'
 chmod 644 "$TMP/tls/"*
 
 seccion 'Redes'
 crear_red() {
   docker network create --label "$ETIQUETA" --subnet "$2" "$1" >/dev/null 2>"$TMP/red.err" ||
-    detener "No se pudo crear la red $1 ($2): $(cat "$TMP/red.err"). Cambia MWB_SUBRED_*."
+    detener "No se ha podido crear la red $1 ($2): $(cat "$TMP/red.err"). Cambia MWB_SUBRED_*."
 }
 crear_red mwb-interna "$SUBRED_INTERNA"
 crear_red mwb-borde "$SUBRED_BORDE"
@@ -273,10 +273,10 @@ ok 'motor arrancado y configurado (x:Bootstrap y reinicio)'
 
 CLAVE_ANA="Prueba-Ana-$(openssl rand -hex 6)"
 HASH_ANA=$(openssl passwd -6 "$CLAVE_ANA")
-R=$(jmap_ok "{$USING,\"methodCalls\":[[\"x:Domain/set\",{\"create\":{\"d\":{\"name\":\"cliente.test\"}}},\"a\"]]}") || detener 'No se pudo crear el dominio.'
+R=$(jmap_ok "{$USING,\"methodCalls\":[[\"x:Domain/set\",{\"create\":{\"d\":{\"name\":\"cliente.test\"}}},\"a\"]]}") || detener 'No se ha podido crear el dominio.'
 DOMINIO=$(jq -r '.methodResponses[0][1].created.d.id' <<<"$R")
 jmap_ok "$(jq -n --arg d "$DOMINIO" --arg h "$HASH_ANA" "{$USING,\"methodCalls\":[[\"x:Account/set\",{\"create\":{\"u\":{\"@type\":\"User\",\"name\":\"ana\",\"domainId\":\$d,\"description\":\"Ana de Cliente\",\"credentials\":{\"0\":{\"@type\":\"Password\",\"secret\":\$h}}}}},\"a\"]]}")" >/dev/null ||
-  detener 'No se pudo crear el buzón.'
+  detener 'No se ha podido crear el buzón.'
 ok "dominio cliente.test y buzón ana@cliente.test con hash \$6\$ (JMAP)"
 
 # Ajustes que Bulwark necesita del motor: CORS para el origen de cada
@@ -288,10 +288,10 @@ R=$(jmap_ok "$(jq -n --rawfile c "$TMP/tls/servidor.pem" --rawfile k "$TMP/tls/s
   [\"x:AllowedIp/set\",{\"create\":{\"i\":{\"address\":\$red,\"reason\":\"Red interna de Mailway (Bulwark)\"}}},\"b\"],
   [\"x:Security/set\",{\"update\":{\"singleton\":{\"authBanRate\":{\"count\":10,\"period\":86400000}}}},\"c\"],
   [\"x:Certificate/set\",{\"create\":{\"k\":{\"certificate\":{\"@type\":\"Text\",\"value\":\$c},\"privateKey\":{\"@type\":\"Text\",\"secret\":\$k}}}},\"d\"]]}")") ||
-  detener 'No se pudieron aplicar los ajustes del motor.'
+  detener 'No se han podido aplicar los ajustes del motor.'
 CERTIFICADO=$(jq -r '.methodResponses[3][1].created.k.id' <<<"$R")
 jmap_ok "{$USING,\"methodCalls\":[[\"x:SystemSettings/set\",{\"update\":{\"singleton\":{\"defaultCertificateId\":\"$CERTIFICADO\"}}},\"a\"],[\"x:Action/set\",{\"create\":{\"r\":{\"@type\":\"ReloadSettings\"},\"t\":{\"@type\":\"ReloadTlsCertificates\"}}},\"b\"]]}" >/dev/null ||
-  detener 'No se pudieron recargar los ajustes del motor.'
+  detener 'No se han podido recargar los ajustes del motor.'
 ok 'motor: CORS permisivo, X-Forwarded, red exenta, umbral de 10 fallos y certificado en el 443'
 # Este ensayo es de Bulwark y de su pasarela, no de cuándo aplica el motor una
 # recarga: con Internet (la CI), la 0.16 termina de arrancar en segundo plano
@@ -314,7 +314,7 @@ dejar_mensaje() { # dejar_mensaje <buzón> <contraseña> <asunto>
     jq -r '.methodResponses[0][1].ids[0]')
   r=$(curl -sS -u "$buzon:$clave" -H 'Content-Type: application/json' "http://127.0.0.1:$PUERTO_MOTOR/jmap" \
     -d "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:ietf:params:jmap:mail\"],\"methodCalls\":[[\"Email/import\",{\"accountId\":\"$cuenta\",\"emails\":{\"m\":{\"blobId\":\"$blob\",\"mailboxIds\":{\"$bandeja\":true},\"keywords\":{}}}},\"a\"]]}")
-  [ "$(jq -r '.methodResponses[0][1].created.m.id // empty' <<<"$r")" != "" ] || detener "No se pudo dejar el mensaje de prueba: $r"
+  [ "$(jq -r '.methodResponses[0][1].created.m.id // empty' <<<"$r")" != "" ] || detener "No se ha podido dejar el mensaje de prueba: $r"
 }
 ASUNTO="Prueba de Bulwark $(openssl rand -hex 4)"
 dejar_mensaje ana@cliente.test "$CLAVE_ANA" "$ASUNTO"
@@ -323,7 +323,7 @@ ok 'mensaje de prueba en la bandeja de entrada de ana'
 # Un segundo buzón, limpio, para el navegador (al final del ensayo).
 CLAVE_EVA="Prueba-Eva-$(openssl rand -hex 6)"
 R=$(jmap_ok "$(jq -n --arg d "$DOMINIO" --arg h "$(openssl passwd -6 "$CLAVE_EVA")" "{$USING,\"methodCalls\":[[\"x:Account/set\",{\"create\":{\"u\":{\"@type\":\"User\",\"name\":\"eva\",\"domainId\":\$d,\"description\":\"Eva de Cliente\",\"credentials\":{\"0\":{\"@type\":\"Password\",\"secret\":\$h}}}}},\"a\"]]}")") ||
-  detener 'No se pudo crear el segundo buzón.'
+  detener 'No se ha podido crear el segundo buzón.'
 CUENTA_EVA=$(jq -r '.methodResponses[0][1].created.u.id' <<<"$R")
 ASUNTO_EVA="Hola Eva $(openssl rand -hex 4)"
 dejar_mensaje eva@cliente.test "$CLAVE_EVA" "$ASUNTO_EVA"
@@ -476,7 +476,7 @@ if [ -z "$BLOQUEADAS" ] && [ "$(grep -c ' 404$' <<<"$SALIDA")" -ge 24 ]; then
 else
   fallo 'administración y asistente bloqueados por la pasarela' "$(tr '\n' ' ' <<<"$BLOQUEADAS")"
 fi
-comprobar 'inicio de sesión de administración: 404 por la pasarela' 'POST-auth 404' "$(grep '^POST-auth' <<<"$SALIDA")"
+comprobar 'acceso de administración: 404 por la pasarela' 'POST-auth 404' "$(grep '^POST-auth' <<<"$SALIDA")"
 comprobar 'la política no se puede escribir por la pasarela' 'PUT-politica 404' "$(grep '^PUT-politica' <<<"$SALIDA")"
 comprobar 'la política se puede leer (el correo web la necesita)' 'GET-politica 200' "$(grep '^GET-politica' <<<"$SALIDA")"
 comprobar 'acciones de servidor de Next.js rechazadas' 'Next-Action 404' "$(grep '^Next-Action' <<<"$SALIDA")"
@@ -525,7 +525,7 @@ if SALIDA=$(cd "$RAIZ/server" && MWB_URL="http://127.0.0.1:$PUERTO_BULWARK" MWB_
 else
   fallo 'el cliente del panel aplica la marca' "$SALIDA"
 fi
-comprobar 'un solo inicio de sesión de administración para las dos sincronizaciones' '1' \
+comprobar 'un solo acceso de administración para las dos sincronizaciones' '1' \
   "$(docker exec mwb-bulwark cat /app/data/admin-state/audit.log 2>/dev/null | grep -c '"action":"admin.login",')"
 
 SALIDA=$(cliente mwb-calle "$C.50" <<'EOF'
@@ -706,9 +706,9 @@ echo "CONTEXTO $(curl -sS --cacert /ca.pem -H 'content-type: application/json' h
   -d "{\"serverUrl\":\"https://mail.mwb.test\",\"username\":\"ana@cliente.test\",\"authHeader\":\"$AUTH\"}")"
 EOF
 )
-comprobar 'con el buzón por encima del umbral, la contraseña buena sigue entrando por Bulwark' \
+comprobar 'con el buzón por encima del umbral, la contraseña buena sigue accediendo por Bulwark' \
   'VERIFICA {"result":"ok"}' "$(grep '^VERIFICA' <<<"$SALIDA")"
-comprobar 'Bulwark sigue entrando en el motor con la contraseña buena' 'CONTEXTO {"ok":true}' "$(grep '^CONTEXTO' <<<"$SALIDA")"
+comprobar 'Bulwark sigue accediendo al motor con la contraseña buena' 'CONTEXTO {"ok":true}' "$(grep '^CONTEXTO' <<<"$SALIDA")"
 
 # /api/auth/stalwart-context comprueba la contraseña desde Bulwark. Hasta la
 # 1.13 lo hacía sin límite (un oráculo de contraseñas); desde la 1.17 aplica
@@ -743,10 +743,10 @@ directo() { # directo <ip>: un fallo de ana contra el motor por Traefik (camino 
 curl -sS -o /dev/null -w '%{http_code}' --cacert /ca.pem -u 'ana@cliente.test:mala-directa' https://mail.mwb.test/jmap/session 2>/dev/null || printf 'x'
 EOF
 }
-comprobar 'los fallos por Bulwark cuentan para el buzón: un fallo directo desde una IP nueva cae al primero' '429' "$(directo "$C.60")"
+comprobar 'los fallos por Bulwark cuentan para el buzón: un fallo directo desde una IP nueva se bloquea al primero' '429' "$(directo "$C.60")"
 for ip in "$C.61" "$C.62" "$C.63"; do directo "$ip" >/dev/null; done
 for _ in 1 2 3 4 5 6; do directo "$C.64" >/dev/null; done
-comprobar 'los fallos directos sí cuentan por buzón: superado el umbral, una IP nueva cae al primer fallo' '429' "$(directo "$C.65")"
+comprobar 'los fallos directos sí cuentan por buzón: superado el umbral, una IP nueva se bloquea al primer fallo' '429' "$(directo "$C.65")"
 
 # ------------------------------------------------------------ Forwarded --
 

@@ -856,7 +856,7 @@ comprobar "termina con 1" igual "$CODIGO" 1
 comprobar "nunca abre los puertos de la 0.16" no_contiene "$REGISTRO" "docker compose[stalwart-0.16] --env-file $ENV_FILE -f $TMP/deploy/docker-compose.mail.yml up -d mailway-mail"
 comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
 comprobar "deploy/.env intacto" env_intacto
-comprobar "sin aviso de correo en la 0.16" no_contiene "$SALIDA" "llegó a abrir los puertos"
+comprobar "sin aviso de correo en la 0.16" no_contiene "$SALIDA" "ha llegado a abrir los puertos"
 
 echo "# Falla la comprobación final (la 0.16 ya con puertos, sin el 587): vuelta atrás y deploy/.env como estaba"
 preparar_migracion
@@ -867,7 +867,7 @@ comprobar "dice qué falla" contiene "$SALIDA" "El motor no escucha en 587 (STAR
 comprobar "para la 0.16 y arranca la 0.15" en_orden "$REGISTRO" "comprobar_instalacion" "docker stop -t 60 mailway-mail" "docker compose[stalwart-0.15] --env-file"
 comprobar "el motor vuelve a la 0.15" igual "$(cat "$E/imagen")" "stalwartlabs/stalwart:v0.15.5"
 comprobar "deploy/.env exactamente como estaba" env_intacto
-comprobar "avisa del correo recibido mientras tanto" contiene "$SALIDA" "llegó a abrir los puertos"
+comprobar "avisa del correo recibido mientras tanto" contiene "$SALIDA" "ha llegado a abrir los puertos"
 comprobar "no se borra ningún volumen" sin_borrar_volumenes
 comprobar "sin las tareas de después" no_contiene "$REGISTRO" "motor.js tras-migrar"
 
@@ -918,7 +918,7 @@ no_empieza() {
   migrar
   comprobar "se niega" igual "$CODIGO" 1
   comprobar "dice qué falla" contiene "$SALIDA" "$1"
-  comprobar "qué hacer y que no se ha cambiado nada" contiene "$SALIDA" "Antes de migrar, arregla lo de arriba: la comprobación final lo exige y no depende del motor"
+  comprobar "qué hacer y que no se ha cambiado nada" contiene "$SALIDA" "Antes de migrar, corrige lo indicado arriba: la comprobación final lo exige y no depende del motor"
   comprobar "sin entrar en mantenimiento" no_contiene "$REGISTRO" "motor.js mantenimiento on"
   comprobar "sin copiar contraseñas" no_contiene "$REGISTRO" "motor.js capturar"
   comprobar "sin parar nada" no_contiene "$REGISTRO" "docker stop"
@@ -1053,7 +1053,7 @@ preparar_revertir
 reiniciar_estado "stalwartlabs/stalwart:v0.16.25" mailway-stalwart-data-20261001-101010
 ejecutar como_orden revertir_motor
 comprobar "sin el volumen de la 0.15: se niega" igual "$CODIGO" 1
-comprobar "y lo explica" contiene "$SALIDA" "se retiró y no se puede volver a ella"
+comprobar "y lo explica" contiene "$SALIDA" "se ha retirado y no se puede volver a ella"
 preparar_revertir
 SIN_CONFIRMAR=0
 ejecutar como_orden revertir_motor

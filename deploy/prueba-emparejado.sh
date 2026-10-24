@@ -818,7 +818,7 @@ datos_instalacion
 (desplegar_en_skyway) >"$SALIDA" 2>&1
 codigo=$?
 comprobar "se detiene" igual "$codigo" 1
-comprobar "lo explica" contiene "$SALIDA" "es el que has dicho que no es de esta instalación"
+comprobar "lo explica" contiene "$SALIDA" "es el que has indicado que no es de esta instalación"
 comprobar "sin tocar sus variables" no_contiene "$REGISTRO" "svc_rechazado/env"
 
 echo "# Un servicio «panel» que no despliega Mailway no se toma por el panel"
@@ -1132,9 +1132,9 @@ reiniciar_datos
   MAILWAY_MAIL_VOLUME="" MAILWAY_WEBMAIL_DB_VOLUME="" MAILWAY_PANEL_VOLUME=""
   escribir_env
   # Lo siguiente falla (p. ej., Skyway rechaza las variables del panel).
-  fallo "No se pudieron actualizar las variables del panel: HTTP 500."
+  fallo "No se han podido actualizar las variables del panel: HTTP 500."
 ) >"$SALIDA" 2>&1
-comprobar "la primera ejecución se detiene" contiene "$SALIDA" "No se pudieron actualizar las variables del panel"
+comprobar "la primera ejecución se detiene" contiene "$SALIDA" "No se han podido actualizar las variables del panel"
 comprobar "deploy/.env ya tiene los nombres nuevos" tiene_linea "$ENV_FILE" "MAIL_HOSTNAME='mail.nuevo.test'"
 comprobar "y lo que el panel debe adoptar" tiene_linea "$ENV_FILE" "MAILWAY_ADOPCION_PENDIENTE='servidor,webmail,panel'"
 comprobar "explicado en un comentario" tiene_linea "$ENV_FILE" "$COMENTARIO_ADOPCION"
