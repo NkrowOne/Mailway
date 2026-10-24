@@ -260,10 +260,10 @@ instalador la pide (o la toma de `STALWART_ADMIN_PASSWORD`).
 | Opción | Efecto |
 |---|---|
 | `--sin-skyway` | Instalación autónoma con `docker-compose.standalone.yml`: panel, motor y webmail, y un Traefik propio en 80/443 si esos puertos están libres (sección 7). |
-| `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean a mano. |
+| `--sin-cloudflare` | No usa la API de Cloudflare: los registros DNS se crean manualmente. |
 | `--actualizar` | Reaplica la configuración de `deploy/.env` sin preguntas: descarga imágenes, recrea contenedores, reaplica los ajustes del motor y, con Skyway, actualiza las variables y vuelve a desplegar el panel. Mantiene el modo de la instalación (junto a Skyway o autónoma). Ejecuta antes `git pull`. |
 | `--comprobar` | Diagnóstico de solo lectura: contenedores (también el del panel), ajustes y certificado del motor, certificado servido en 993 y 465, conexión IMAP y SMTP desde el webmail, enlace del webmail con el panel, estado del extractor, rutas de Traefik (junto a Skyway), DNS público de los tres nombres, PTR y puerto 25 de salida (sección 13.1). Termina con código 1 si algo falla. |
-| `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, e inicia sesión desde el webmail con un único intento (sección 13.1). |
+| `--probar-acceso` | Pide la dirección y la contraseña de un buzón, sin mostrarla ni guardarla, y accede con ellas desde el webmail con un único intento (sección 13.1). |
 | `--emparejar` | Repite solo el emparejado con Skyway (sección 2.6) con la configuración de `deploy/.env`, sin preguntas. Renueva siempre el token de gestión «Skyway». Termina con código 1 si no se completa. |
 | `--migrar-motor` | Pasa el motor de Stalwart 0.15 a 0.16 con vuelta atrás automática si algo falla (sección 8.3). Pide confirmación. |
 | `--revertir-motor` | Vuelve a Stalwart 0.15 tras una migración terminada (sección 8.3). Pide confirmación. |
@@ -280,7 +280,7 @@ el instalador no pregunta: usa estas variables o los valores por defecto.
 
 | Variable | Uso |
 |---|---|
-| `MAILWAY_DOMINIO` | Dominio base (`mail.`, `webmail.` y `panel.` cuelgan de él). **Obligatoria** en la primera ejecución. |
+| `MAILWAY_DOMINIO` | Dominio base (`mail.`, `webmail.` y `panel.` son sus subdominios). **Obligatoria** en la primera ejecución. |
 | `MAILWAY_MAIL_HOST`, `MAILWAY_WEBMAIL_HOST`, `MAILWAY_PANEL_HOST` | Nombres concretos (por defecto `mail.`, `webmail.` y `panel.` del dominio). |
 | `MAILWAY_IP` | IPv4 pública. Sin ella se detecta y se compara con la de `deploy/.env`: si no coinciden y la guardada no es de ninguna interfaz del servidor, una ejecución desatendida se detiene y dice qué valor indicar (sección 8.4). |
 | `MAILWAY_CAMBIAR_NOMBRES` | `1` confirma, sin terminal, que cambian los nombres de la plataforma (otro `MAILWAY_DOMINIO` o `MAILWAY_*_HOST` distintos de los de `deploy/.env`). Sin ella, una ejecución desatendida que los cambiaría se detiene sin tocar nada (sección 8.4). |
@@ -1055,7 +1055,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.standalone.yml --
 Sin el perfil `proxy` (por ejemplo, si 80/443 ya los usa otro servidor web),
 el panel (`127.0.0.1:4100`), el webmail (`127.0.0.1:8000`) y la web del motor
 (`127.0.0.1:8080`, a través de su pasarela, sección 4.4) escuchan **solo en
-local**: ponles delante un proxy con TLS (Caddy, Nginx…). Nunca los publiques
+local**: coloca delante de ellos un proxy con TLS (Caddy, Nginx…). Nunca los publiques
 en HTTP hacia Internet: por ellos viajan contraseñas. Con Stalwart 0.16,
 publica de la web del motor solo las rutas que deja pasar Traefik (las
 etiquetas de `deploy/motor/stalwart-0.16/compose.yml`): su administración y
@@ -1279,7 +1279,7 @@ El instalador también resuelve lo que dejaba configurado la guía anterior:
   certificado por ACME (con Cloudflare o configurado antes), solo borra
   `certificate.default` y limpia el volumen. Un certificado propio con otras
   rutas no se toca.
-- **Webmail.** El webmail anterior entraba al motor por su nombre público
+- **Webmail.** El webmail anterior se conectaba al motor por su nombre público
   (`ssl://<servidor de correo>`); el de la 1.0 entra por la red interna
   (`ssl://mailway-mail`). Roundcube identifica a cada usuario por su
   dirección y por ese servidor (`users.mail_host`). Sin más, cada titular
@@ -2088,7 +2088,7 @@ se guardan en la base de datos y se cambian en **Ajustes**.
 | El extractor dice que el motor no sirve el certificado aunque se le pidió recargarlo | El motor conserva en memoria otro certificado para ese nombre | Reinicia el motor (`docker restart mailway-mail`) y comprueba que existe `certificate.mailway.subjects.0` (sección 5.2). |
 | `--probar-acceso` dice que el motor rechazó el inicio de sesión | Contraseña incorrecta, o buzón inexistente o desactivado | Revisa el buzón en el panel antes de repetir: cada intento fallido cuenta para el bloqueo automático. |
 | Un envío por API devuelve `status: "failed"` con un error de certificado | El SMTP interno no puede verificar el certificado | Emite el certificado (sección 5) o, solo mientras tanto, `MAILWAY_SMTP_ALLOW_SELF_SIGNED=1` en las variables del panel. |
-| El webmail no inicia sesión | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; comprueba en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
+| No se puede acceder desde el webmail | El motor no está sano o la IP del webmail está bloqueada | `docker ps`; comprueba en Ajustes → Servidor de correo que la exención de la red interna está aplicada. |
 | El webmail no muestra «Contraseña» o no la cambia | Falta `MAILWAY_WEBMAIL_TOKEN` (en `deploy/.env` y en el panel, con el mismo valor) o `MAILWAY_PANEL_INTERNAL_URL` no apunta al contenedor real del panel | Sección 6.5; recrea `mailway-webmail`. |
 | Una IP legítima no puede conectar al motor (bloqueo automático) | Stalwart bloquea de forma permanente una IP tras demasiados fallos de autenticación | Stalwart 0.15: `docker run --rm --network mailway-internal curlimages/curl:8.11.1 -sS -u "admin:$PASS" -X DELETE http://mailway-mail:8080/api/settings/server.blocked-ip.<IP>` y después `…/api/reload/server.blocked-ip`. Stalwart 0.16: es un objeto `x:BlockedIp`; búscalo con `x:BlockedIp/get` y bórralo con `x:BlockedIp/set` (`destroy`), por JMAP en `http://mailway-mail:8080/jmap` y con la contraseña por la entrada estándar de curl (`-K -`, como en la sección 6.3). |
 | No se pueden crear buzones: `domain_ownership_pending` | La propiedad del dominio no está comprobada | Apunta el MX a este servidor o crea el TXT `_mailway.<dominio>` de la ficha del dominio y pulsa «Medir el DNS ahora». |

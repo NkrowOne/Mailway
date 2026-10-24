@@ -192,7 +192,7 @@ Uso: sudo bash deploy/instalar.sh [opciones]
 Opciones:
   --sin-skyway      Instala panel, motor y webmail con docker-compose.standalone.yml,
                     con un Traefik propio en 80/443 si esos puertos están libres.
-  --sin-cloudflare  No usa la API de Cloudflare: los registros DNS se crean a mano.
+  --sin-cloudflare  No usa la API de Cloudflare: los registros DNS se crean manualmente.
   --actualizar      Reaplica la configuración existente (deploy/.env) sin preguntas:
                     descarga imágenes, recrea contenedores, reaplica los ajustes del
                     motor y, con Skyway, actualiza las variables y redespliega el panel.
@@ -205,7 +205,7 @@ Opciones:
                     nombres, DNS inverso (PTR) y puerto 25 de salida. No cambia nada. Código de
                     salida 1 si algo falla.
   --probar-acceso   Pide la dirección y la contraseña de un buzón (sin mostrarla ni
-                    guardarla) e inicia sesión desde el webmail: un único intento, porque
+                    guardarla) y accede con ellas desde el webmail: un único intento, porque
                     cada contraseña incorrecta cuenta para el bloqueo automático del motor.
   --emparejar       Repite solo el emparejado del panel con Skyway con la configuración de
                     deploy/.env: crea el administrador del panel si aún no existe, completa su
@@ -223,9 +223,9 @@ Opciones:
                     atrás. Pide escribir su nombre. Sin vuelta atrás.
   --activar-bulwark Activa Bulwark, el correo web «beta» que el panel ofrece por cliente
                     (Roundcube sigue siendo el predeterminado). Solo con Stalwart 0.16: con la
-                    0.15 se niega sin cambiar nada. Genera una vez sus dos secretos, levanta
-                    Bulwark y su pasarela (perfil «bulwark») y da al panel sus variables; el
-                    resto, como --actualizar. Ninguna actualización lo activa sola.
+                    0.15 termina sin cambiar nada. Genera una vez sus dos secretos, pone en
+                    marcha Bulwark y su pasarela (perfil «bulwark») y da al panel sus
+                    variables; el resto, como --actualizar. Ninguna actualización lo activa sola.
   --desactivar-bulwark
                     Lo desactiva: retira sus contenedores y las variables del panel (sus
                     clientes vuelven a Roundcube). Conserva sus volúmenes y sus secretos.
@@ -255,7 +255,7 @@ mientras dura la instalación. Léelos sin mostrarlos y pásalos por el entorno:
   sudo --preserve-env=CLOUDFLARE_API_TOKEN bash deploy/instalar.sh --actualizar
 
 Variables de entorno (ejecución desatendida):
-  MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. cuelgan de él).
+  MAILWAY_DOMINIO           Dominio base (mail., webmail. y panel. son sus subdominios).
   MAILWAY_MAIL_HOST         Nombre del servidor de correo (por defecto mail.<dominio>).
   MAILWAY_WEBMAIL_HOST      Nombre del webmail (por defecto webmail.<dominio>).
   MAILWAY_PANEL_HOST        Nombre del panel (por defecto panel.<dominio>).
@@ -285,9 +285,9 @@ Variables de entorno (ejecución desatendida):
   MAILWAY_TRAEFIK_PROVEEDOR 1 para ajustar el Traefik de Skyway sin preguntar, 0 para no tocarlo.
                             Con Skyway 0.34 o posterior no se instala ningún fichero: su Traefik ya
                             lee las rutas de Mailway a través de Skyway (Ajustes → Correo (Mailway)).
-  STALWART_ADMIN_PASSWORD   Contraseña del motor existente, si deploy/.env se perdió.
+  STALWART_ADMIN_PASSWORD   Contraseña del motor existente, si se ha perdido deploy/.env.
   MAILWAY_INTERNAL_SUBNET   Subred de la red interna (por defecto 10.203.53.0/24). Cámbiala si
-                            choca con otra red del servidor.
+                            se solapa con otra red del servidor.
   MAILWAY_MAIL_INTERNAL_IP  IP del motor en esa red (por defecto 10.203.53.10).
   MAILWAY_ESPERA_DNS        Segundos máximos de espera a que propague el DNS (por defecto 300).
   MAILWAY_DNS_REEMPLAZAR    1 = sin terminal, permite cambiar los registros A de mail., webmail. y
@@ -318,8 +318,8 @@ Variables de entorno (ejecución desatendida):
                             1 = --comprobar revisa solo el motor, el webmail y el extractor, sin el
                             panel, Traefik ni las comprobaciones desde Internet (prueba de la pila de la CI).
 
-Los nombres del servidor de correo, del webmail y del panel cuelgan directamente
-del dominio base (un solo nivel: correo.miempresa.com, no a.b.miempresa.com).
+Los nombres del servidor de correo, del webmail y del panel son subdominios
+directos del dominio base (un solo nivel: correo.miempresa.com, no a.b.miempresa.com).
 AYUDA
 }
 
@@ -656,14 +656,14 @@ motor_cambios() {
     # El motor no repite los valores en sus errores, pero el token de
     # Cloudflare nunca debe acabar en pantalla: se tapa por si acaso.
     if [ -n "$CF_TOKEN" ]; then respuesta=${respuesta//"$CF_TOKEN"/•••}; fi
-    aviso "El motor rechazó los ajustes: $respuesta"
+    aviso "El motor ha rechazado los ajustes: $respuesta"
     return 1
   fi
   respuesta=$(motor_api GET /api/reload) || return 1
   errores=$(printf '%s' "$respuesta" | jqr -r '(.data.errors // {}) | to_entries | map("\(.key): \(.value)") | join("; ")' 2>/dev/null || true)
   if [ -n "$CF_TOKEN" ]; then errores=${errores//"$CF_TOKEN"/•••}; fi
   if [ -n "$errores" ]; then
-    aviso "El motor recargó con errores: $errores"
+    aviso "El motor se ha recargado con errores: $errores"
     return 1
   fi
   return 0
@@ -831,8 +831,8 @@ comprobaciones_previas() {
   for cmd in docker curl od grep sed awk timeout; do
     if ! tiene "$cmd"; then falta+=" $cmd"; fi
   done
-  if [ -n "$falta" ]; then fallo "Faltan herramientas:$falta. Instálalas y vuelve a ejecutar."; fi
-  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  if [ -n "$falta" ]; then fallo "Faltan herramientas:$falta. Instálalas y vuelve a ejecutar el instalador."; fi
+  docker info >/dev/null 2>&1 || fallo "No se puede conectar con Docker. Ejecuta la orden como root (sudo) o con un usuario del grupo docker."
   docker compose version >/dev/null 2>&1 || fallo "Falta Docker Compose v2 («docker compose»). Instala el plugin docker-compose-plugin."
   ok "Docker y Docker Compose v2 disponibles."
 
@@ -866,7 +866,7 @@ comprobaciones_previas() {
     if puerto_ocupado_por_otro "$puerto"; then ocupados+=" $puerto"; fi
   done
   if [ -n "$ocupados" ]; then
-    fallo "Puertos de correo ocupados por otro programa:$ocupados. Libéralos (p. ej. postfix o exim del sistema) y vuelve a ejecutar."
+    fallo "Puertos de correo ocupados por otro programa:$ocupados. Libéralos (p. ej. postfix o exim del sistema) y vuelve a ejecutar el instalador."
   fi
   if tiene ss; then ok "Puertos 25, 465, 587, 993 y 4190 libres."; else aviso "Sin «ss» no se pueden comprobar los puertos."; fi
 
@@ -1077,7 +1077,7 @@ confirmar_cambio_de_nombres() {
     fi
   fi
   info "  - Los nombres nuevos necesitan su registro A hacia la IP del servidor (con Cloudflare, se crea solo)."
-  info "  - Ajustes del panel adopta los nombres nuevos, también si se cambiaron a mano."
+  info "  - Ajustes del panel adopta los nombres nuevos, también si se han cambiado manualmente."
   if [ "$INTERACTIVO" = 1 ]; then
     confirmar "¿Cambiar los nombres de la plataforma?" n ||
       fallo "No se ha cambiado nada. Para conservar los nombres actuales, vuelve a ejecutar el instalador y acepta el dominio propuesto."
@@ -1313,7 +1313,7 @@ preparar_secretos() {
       # para que nadie copie al panel una clave que no es la suya.
       MAILWAY_SECRET=""
       generar_clave=0
-      aviso "No se ha podido leer la clave maestra del panel (¿está parado?): sigue en su volumen /data y no se cambia."
+      aviso "No se ha podido leer la clave maestra del panel (puede que su contenedor esté detenido): sigue en su volumen /data y no se cambia."
     fi
     # Un panel anterior a la 1.0 guarda el token de Traefik en su base de
     # datos: uno nuevo en sus variables lo sustituiría y dejaría sin acceso a
@@ -1394,7 +1394,7 @@ migrar_instalacion_anterior() {
     confirmar "Se detendrán y recrearán los contenedores de Mailway conservando el correo. ¿Continuar?" s ||
       fallo "Migración cancelada."
     MIGRAR_CONTENEDORES=1
-    info "Se reutilizarán los volúmenes (${MAILWAY_MAIL_VOLUME:-sin volumen de correo}); los contenedores se recrean al levantar el servicio."
+    info "Se reutilizarán los volúmenes (${MAILWAY_MAIL_VOLUME:-sin volumen de correo}); los contenedores se recrean al poner en marcha el servicio."
   fi
 }
 
@@ -1433,7 +1433,7 @@ retirar_contenedores_anteriores() {
       for c in $conectados; do
         case "$c" in
           mailway-*) docker rm -f "$c" >/dev/null ;;
-          *) fallo "La red mailway-internal tiene conectado «$c», que no es de Mailway. Desconéctalo y vuelve a ejecutar." ;;
+          *) fallo "La red mailway-internal tiene conectado «$c», que no es de Mailway. Desconéctalo y vuelve a ejecutar el instalador." ;;
         esac
       done
       docker network rm mailway-internal >/dev/null
@@ -1491,7 +1491,7 @@ migrar_usuarios_webmail() {
   local salida="" resultado cambiados pendientes re='^([0-9]+) ([0-9]+)$'
   if [ -z "$anterior" ] || [ "$anterior" = "$SERVIDOR_WEBMAIL" ]; then return 0; fi
   if [ "$anterior" != "$MAIL_HOSTNAME" ]; then
-    info "El webmail anterior entraba al motor por $anterior, que no es $MAIL_HOSTNAME: sus usuarios no se trasladan."
+    info "El webmail anterior se conectaba al motor por $anterior, que no es $MAIL_HOSTNAME: sus usuarios no se trasladan."
     return 0
   fi
   if [ -z "$imagen" ] || ! docker volume inspect "$volumen" >/dev/null 2>&1; then return 0; fi
@@ -1505,8 +1505,8 @@ migrar_usuarios_webmail() {
     resultado=""
   fi
   if ! [[ $resultado =~ $re ]]; then
-    aviso "No se pudo trasladar a los usuarios del webmail al servidor $SERVIDOR_WEBMAIL: ${salida:0:300}"
-    aviso "Hasta hacerlo, los titulares verán el webmail sin sus contactos ni preferencias (sección 8.2 de docs/DESPLIEGUE-SKYWAY.md)."
+    aviso "No se ha podido trasladar a los usuarios del webmail al servidor $SERVIDOR_WEBMAIL: ${salida:0:300}"
+    aviso "Mientras no se trasladen, los titulares verán el webmail sin sus contactos ni preferencias (sección 8.2 de docs/DESPLIEGUE-SKYWAY.md)."
     return 0
   fi
   cambiados=${BASH_REMATCH[1]}
@@ -1515,7 +1515,7 @@ migrar_usuarios_webmail() {
     ok "Usuarios del webmail trasladados de $anterior a $SERVIDOR_WEBMAIL: $cambiados. Conservan sus contactos, identidades y preferencias."
   fi
   if [ "$pendientes" -gt 0 ]; then
-    aviso "Usuarios del webmail que ya habían entrado por $SERVIDOR_WEBMAIL y conservan ese usuario: $pendientes. Sus datos anteriores siguen en la base."
+    aviso "Usuarios del webmail que ya habían accedido por $SERVIDOR_WEBMAIL y conservan ese usuario: $pendientes. Sus datos anteriores siguen en la base."
   fi
   return 0
 }
@@ -1668,7 +1668,7 @@ cf_verificar_token() {
   if [ -z "$estado" ]; then
     cf_api GET "/zones?per_page=50"
     [ "$RESP_CODE" = "200" ] ||
-      fallo "Cloudflare rechazó el token: $(cf_primer_error). Comprueba que está activo y tiene los permisos Zona: Lectura y DNS: Edición."
+      fallo "Cloudflare ha rechazado el token: $(cf_primer_error). Comprueba que está activo y tiene los permisos Zona: Lectura y DNS: Edición."
     cuenta=$(campo_json '(.result // [])[0].account.id // empty')
     coincide "$cuenta" '^[A-Za-z0-9]{1,64}$' ||
       fallo "El token de Cloudflare no da acceso a ninguna zona. Añade la zona de $DOMINIO a sus permisos."
@@ -1696,7 +1696,7 @@ configurar_cloudflare() {
   fi
   preguntar_secreto CF_TOKEN "Token de API de Cloudflare" "${CLOUDFLARE_API_TOKEN:-}"
   if [ -z "$CF_TOKEN" ]; then
-    info "Sin token: crea a mano los registros A de $MAIL_HOSTNAME, $WEBMAIL_HOSTNAME y $PANEL_HOSTNAME hacia $IP_PUBLICA."
+    info "Sin token: crea manualmente los registros A de $MAIL_HOSTNAME, $WEBMAIL_HOSTNAME y $PANEL_HOSTNAME hacia $IP_PUBLICA."
     return 0
   fi
   cf_verificar_token
@@ -1706,10 +1706,10 @@ configurar_cloudflare() {
   local candidato="$DOMINIO" estado_zona
   while :; do
     cf_api GET "/zones?name=$candidato&per_page=5"
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudieron consultar las zonas de Cloudflare: $(cf_primer_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se han podido consultar las zonas de Cloudflare: $(cf_primer_error)."
     CF_ZONA_ID=$(campo_json '(.result // [])[0].id // empty')
     if [ -n "$CF_ZONA_ID" ]; then
-      coincide "$CF_ZONA_ID" '^[A-Za-z0-9]{1,64}$' || fallo "Cloudflare devolvió un identificador de zona inesperado."
+      coincide "$CF_ZONA_ID" '^[A-Za-z0-9]{1,64}$' || fallo "Cloudflare ha devuelto un identificador de zona inesperado. Vuelve a ejecutar el instalador."
       CF_ZONA_NOMBRE=$candidato
       estado_zona=$(campo_json '(.result // [])[0].status // empty')
       break
@@ -1749,7 +1749,7 @@ configurar_cloudflare() {
 cf_registro() {
   local tipo=$1 nombre=$2 contenido=$3 cambiar_def=$4 existente id actual proxied otro cuerpo total
   cf_api GET "/zones/$CF_ZONA_ID/dns_records?name=$nombre&per_page=100"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudieron leer los registros de $nombre: $(cf_primer_error)."
+  [ "$RESP_CODE" = "200" ] || fallo "No se han podido leer los registros de $nombre: $(cf_primer_error)."
   existente=$(campo_json --arg t "$tipo" 'first((.result // [])[] | select(.type == $t)) | "\(.id) \(.content) \(.proxied)"')
   total=$(campo_json --arg t "$tipo" '[(.result // [])[] | select(.type == $t)] | length')
   # Un CNAME no convive con ningún otro registro del mismo nombre; un A solo
@@ -1771,7 +1771,7 @@ cf_registro() {
   fi
   if [ -z "$existente" ]; then
     cf_api POST "/zones/$CF_ZONA_ID/dns_records" "$cuerpo"
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudo crear $tipo $nombre: $(cf_primer_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se ha podido crear $tipo $nombre: $(cf_primer_error)."
     ok "Creado $tipo $nombre → $contenido"
     return 0
   fi
@@ -1779,7 +1779,7 @@ cf_registro() {
     aviso "$nombre tiene $total registros $tipo: solo se ajusta el primero. Borra los demás en Cloudflare."
   fi
   read -r id actual proxied <<<"$existente"
-  coincide "$id" '^[A-Za-z0-9]{1,64}$' || fallo "Cloudflare devolvió un identificador de registro inesperado."
+  coincide "$id" '^[A-Za-z0-9]{1,64}$' || fallo "Cloudflare ha devuelto un identificador de registro inesperado. Vuelve a ejecutar el instalador."
   if [ "$actual" = "$contenido" ] && [ "$proxied" = "false" ]; then
     ok "$tipo $nombre → $contenido (ya correcto)"
     return 0
@@ -1817,7 +1817,7 @@ cf_registro() {
     return 0
   fi
   cf_api PUT "/zones/$CF_ZONA_ID/dns_records/$id" "$cuerpo"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudo actualizar $tipo $nombre: $(cf_primer_error)."
+  [ "$RESP_CODE" = "200" ] || fallo "No se ha podido actualizar $tipo $nombre: $(cf_primer_error)."
   ok "Actualizado $tipo $nombre → $contenido (sin proxy)"
 }
 
@@ -1840,7 +1840,7 @@ esperar_dns() {
     if [ -z "$CF_TOKEN" ] && [ "$INTERACTIVO" = 1 ] && [ "$t" = 0 ]; then
       info "Pendientes:$pendientes"
       info "Crea los registros A hacia $IP_PUBLICA en tu proveedor de DNS (sin proxy)."
-      if ! confirmar "¿Esperar a que propaguen?" s; then break; fi
+      if ! confirmar "¿Esperar a que se propaguen?" s; then break; fi
     fi
     if [ "$t" -ge "$max" ]; then break; fi
     if [ "$t" = 0 ]; then info "Esperando a que propague:$pendientes (hasta $((max / 60)) min)…"; fi
@@ -1933,7 +1933,7 @@ preparar_bulwark() {
     BULWARK_SESSION_SECRET=$(aleatorio_hex 32)
     ok "Secreto de sesión de Bulwark generado (se guarda en $ENV_FILE)."
   elif [ "${#BULWARK_SESSION_SECRET}" -lt 32 ] || tiene_control "$BULWARK_SESSION_SECRET"; then
-    aviso "BULWARK_SESSION_SECRET de $ENV_FILE tiene menos de 32 caracteres: Bulwark queda desactivado. Pon uno largo (openssl rand -hex 32) y repite con sudo mailway bulwark on (cambiarlo cierra las sesiones y deja ilegibles los ajustes sincronizados)."
+    aviso "BULWARK_SESSION_SECRET de $ENV_FILE tiene menos de 32 caracteres: Bulwark queda desactivado. Define uno de al menos 32 caracteres (openssl rand -hex 32) y repite con sudo mailway bulwark on (cambiarlo cierra las sesiones y deja ilegibles los ajustes sincronizados)."
     MAILWAY_BULWARK=0
     return 0
   fi
@@ -1949,7 +1949,7 @@ preparar_bulwark() {
       olvidar_admin_bulwark
     fi
   fi
-  ok "Bulwark activo: lo levanta el perfil «bulwark» y el panel recibe sus variables."
+  ok "Bulwark activo: lo pone en marcha el perfil «bulwark» y el panel recibe sus variables."
 }
 
 # ¿Existe el volumen y tiene algo dentro? (Se mira desde un contenedor
@@ -1983,7 +1983,7 @@ retirar_bulwark() {
   if compose_q --profile bulwark rm -s -f mailway-bulwark mailway-bulwark-gw; then
     ok "Bulwark desactivado: contenedores retirados; sus volúmenes (${BULWARK_VOLUMENES[*]}) y sus secretos se conservan."
   else
-    aviso "No se pudieron retirar los contenedores de Bulwark. A mano: docker rm -f mailway-bulwark mailway-bulwark-gw"
+    aviso "No se han podido retirar los contenedores de Bulwark. Retíralos manualmente: docker rm -f mailway-bulwark mailway-bulwark-gw"
   fi
 }
 
@@ -2213,7 +2213,7 @@ retirar_admin_del_arranque() {
   if [ -n "$(campo_json --arg i "$ids" '.methodResponses[0][1].destroyed // [] | map(select(. == $i)) | .[0] // empty')" ]; then
     ok "Retirada la cuenta admin@$MAIL_HOSTNAME que crea el primer arranque (Mailway usa el administrador de recuperación)."
   else
-    aviso "No se pudo retirar la cuenta admin@$MAIL_HOSTNAME que crea el primer arranque del motor ($(jmap_error)): no tiene uso y nadie conoce su contraseña."
+    aviso "No se ha podido retirar la cuenta admin@$MAIL_HOSTNAME que crea el primer arranque del motor ($(jmap_error)): no tiene uso y nadie conoce su contraseña."
   fi
 }
 
@@ -2229,7 +2229,7 @@ configurar_motor_016() {
   fi
   if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
     RESUMEN_CERT="SIN CERTIFICADO: no se encuentra el volumen de certificados de Traefik (TRAEFIK_ACME_VOLUME en deploy/.env)"
-    aviso "No se encontró el volumen de certificados de Traefik: sin él, el motor no tiene certificado para IMAP y SMTP. Indica TRAEFIK_ACME_VOLUME en deploy/.env y repite con --actualizar."
+    aviso "No se ha encontrado el volumen de certificados de Traefik: sin él, el motor no tiene certificado para IMAP y SMTP. Indica TRAEFIK_ACME_VOLUME en deploy/.env y repite con --actualizar."
     return 0
   fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
@@ -2255,7 +2255,7 @@ descargar_imagenes() {
   fi
   RESUMEN_IMAGENES="NO DESCARGADAS: el motor y el webmail siguen con las imágenes anteriores"
   aviso "No se han podido descargar las imágenes nuevas: el motor y el webmail siguen con las anteriores, que pueden no tener los últimos parches de seguridad."
-  aviso "El motivo está arriba (límite de descargas de Docker Hub, sin conexión…). Cuando se resuelva, repite con --actualizar."
+  aviso "El motivo está arriba (por ejemplo, el límite de descargas de Docker Hub o la falta de conexión). Cuando se resuelva, repite con --actualizar."
 }
 
 configurar_motor() {
@@ -2273,7 +2273,7 @@ configurar_motor() {
     "server.allowed-ip.$INTERNAL_SUBNET" ""; then
     ok "Nombre del servidor ($MAIL_HOSTNAME), proxy y exención de $INTERNAL_SUBNET aplicados."
   else
-    aviso "No se pudieron aplicar todos los ajustes; el panel permite repetirlo en Ajustes → Servidor de correo."
+    aviso "No se han podido aplicar todos los ajustes; el panel permite repetirlo en Ajustes → Servidor de correo."
   fi
 
   # Lo ya configurado (por el panel o por una ejecución anterior) se respeta,
@@ -2304,8 +2304,8 @@ configurar_motor() {
   fi
   if [ -z "$CF_TOKEN" ] && printf '%s' "$existentes" | grep -q '"certificate.default.cert"'; then
     CERT_CONFIGURADO=1
-    RESUMEN_CERT="certificado propio configurado a mano en el motor"
-    ok "El motor ya tiene un certificado configurado a mano; no se modifica."
+    RESUMEN_CERT="certificado propio configurado manualmente en el motor"
+    ok "El motor ya tiene un certificado configurado manualmente; no se modifica."
     if [ -n "$MAIL_HOSTNAME_ANTERIOR" ]; then
       RESUMEN_CERT+=" (comprueba que cubre $MAIL_HOSTNAME)"
       aviso "Con el nombre nuevo, comprueba que ese certificado cubre $MAIL_HOSTNAME: Ajustes → Servidor de correo o deploy/instalar.sh --comprobar."
@@ -2322,7 +2322,7 @@ configurar_motor() {
     # comodín (sin él, conservaría en memoria el exacto anterior).
     if ! printf '%s' "$existentes" | grep -q '"certificate.mailway.subjects.0"'; then
       motor_ajustes certificate.mailway.subjects.0 "$MAIL_HOSTNAME" ||
-        aviso "No se pudo añadir $MAIL_HOSTNAME como sujeto del certificado; el extractor funciona igualmente."
+        aviso "No se ha podido añadir $MAIL_HOSTNAME como sujeto del certificado; el extractor funciona igualmente."
     fi
     CERT_CONFIGURADO=1
     aplicar_extractor
@@ -2363,7 +2363,7 @@ configurar_motor() {
       extractor_con_acme "$con_volcado" "$volcado_antiguo"
       certificado_mailway_al_nombre_actual "$con_volcado" "$existentes"
     else
-      aviso "No se pudo configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
+      aviso "No se ha podido configurar la emisión del certificado; puede repetirse en Ajustes → Servidor de correo."
     fi
     return 0
   fi
@@ -2371,7 +2371,7 @@ configurar_motor() {
   # Sin Cloudflare: el extractor lleva al motor el certificado que Traefik
   # obtiene para el nombre del servidor de correo (y solo ese).
   if [ "$CON_SKYWAY" = 1 ] && [ -z "$TRAEFIK_ACME_VOLUME" ]; then
-    aviso "No se encontró el volumen de certificados de Traefik: emite el certificado desde Ajustes → Servidor de correo."
+    aviso "No se ha encontrado el volumen de certificados de Traefik: emite el certificado desde Ajustes → Servidor de correo."
     return 0
   fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
@@ -2380,7 +2380,7 @@ configurar_motor() {
   fi
   info "Extrayendo el certificado que obtiene Traefik para $MAIL_HOSTNAME…"
   if ! arrancar_extractor; then
-    aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+    aviso "No se ha podido arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
     return 0
   fi
   local ruta="/opt/stalwart/certs/$MAIL_HOSTNAME"
@@ -2401,7 +2401,7 @@ configurar_motor() {
     CERT_CONFIGURADO=1
     comprobar_extractor
   else
-    aviso "No se pudo configurar el certificado de Traefik en el motor; revisa Ajustes → Servidor de correo."
+    aviso "No se ha podido configurar el certificado de Traefik en el motor; revisa Ajustes → Servidor de correo."
   fi
 }
 
@@ -2446,7 +2446,7 @@ certificado_mailway_al_nombre_actual() {
     certificate.mailway.private-key "%{file:$ruta/key.pem}%" \
     certificate.mailway.subjects.0 "$MAIL_HOSTNAME"; then
     RESUMEN_CERT+="; certificate.mailway sigue con el de $anterior, que nadie renueva (vuelve a ejecutar con --actualizar)"
-    aviso "No se pudo pasar certificate.mailway al certificado de $MAIL_HOSTNAME: sigue con el de $anterior, que nadie renueva. Repite con --actualizar."
+    aviso "No se ha podido pasar certificate.mailway al certificado de $MAIL_HOSTNAME: sigue con el de $anterior, que nadie renueva. Repite con --actualizar."
     return 0
   fi
   motor_api GET /api/reload/certificate >/dev/null || true
@@ -2501,8 +2501,8 @@ acme_al_nombre_actual() {
     return 2
   fi
   CERT_CONFIGURADO=0
-  RESUMEN_CERT="PENDIENTE: no se pudo pasar el certificado del motor de $dominio a $MAIL_HOSTNAME"
-  aviso "No se pudo pasar el certificado del motor de $dominio a $MAIL_HOSTNAME: emítelo en Ajustes → Servidor de correo → certificado automático."
+  RESUMEN_CERT="PENDIENTE: no se ha podido pasar el certificado del motor de $dominio a $MAIL_HOSTNAME"
+  aviso "No se ha podido pasar el certificado del motor de $dominio a $MAIL_HOSTNAME: emítelo en Ajustes → Servidor de correo → certificado automático."
   return 1
 }
 
@@ -2571,8 +2571,8 @@ pasar_volcado_antiguo_al_extractor() {
     certificate.mailway.private-key "%{file:$ruta/key.pem}%" \
     certificate.mailway.default true \
     certificate.mailway.subjects.0 "$MAIL_HOSTNAME"),$OP_RETIRAR_CERT_ANTIGUO]"; then
-    RESUMEN_CERT="el de la instalación anterior, SIN RENOVACIÓN: no se pudo pasar al extractor (repite con --actualizar)"
-    aviso "No se pudo pasar el certificado al extractor: el motor sigue con el de la instalación anterior, que nadie renueva. Repite con --actualizar."
+    RESUMEN_CERT="el de la instalación anterior, SIN RENOVACIÓN: no se ha podido pasar al extractor (repite con --actualizar)"
+    aviso "No se ha podido pasar el certificado al extractor: el motor sigue con el de la instalación anterior, que nadie renueva. Repite con --actualizar."
     return 0
   fi
   motor_api GET /api/reload/certificate >/dev/null || true
@@ -2586,14 +2586,14 @@ retirar_certificado_antiguo() {
   if motor_cambios "[$OP_RETIRAR_CERT_ANTIGUO]"; then
     ok "Retirado certificate.default, el certificado de la instalación anterior: el motor pasa a usar el de Let's Encrypt."
   else
-    aviso "No se pudo retirar certificate.default, el certificado de la instalación anterior, que ya nadie renueva. Bórralo en la web del motor (Settings → TLS → Certificates)."
+    aviso "No se ha podido retirar certificate.default, el certificado de la instalación anterior, que ya nadie renueva. Bórralo en la web del motor (Settings → TLS → Certificates)."
   fi
 }
 
 aplicar_extractor() {
   if ! arrancar_extractor; then
     RESUMEN_CERT="el de Traefik, pero el extractor no arranca (docker logs mailway-certs-dumper)"
-    aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+    aviso "No se ha podido arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
     return 0
   fi
   comprobar_extractor
@@ -2612,7 +2612,7 @@ extractor_con_acme() {
     if arrancar_extractor; then
       info "El motor conserva además certificate.mailway: el extractor mantiene esos ficheros al día sin recargar el motor."
     else
-      aviso "No se pudo arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
+      aviso "No se ha podido arrancar el extractor del certificado. Revisa: docker logs mailway-certs-dumper"
     fi
     return 0
   fi
@@ -2624,7 +2624,7 @@ extractor_con_acme() {
   if compose_q --profile tls run --rm --no-deps -T certs-dumper python /app/extractor.py purgar; then
     ok "El motor usa su propio ACME: sin extractor del certificado y con el volumen de certificados limpio."
   else
-    aviso "No se pudo limpiar el volumen de certificados del motor. A mano: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
+    aviso "No se ha podido limpiar el volumen de certificados del motor. Límpialo manualmente: docker compose --env-file deploy/.env -f deploy/docker-compose.mail.yml --profile tls run --rm --no-deps certs-dumper python /app/extractor.py purgar"
   fi
 }
 
@@ -2736,7 +2736,7 @@ provisionar_motor() {
       aviso "El motor sigue pidiendo un reinicio después de reiniciarlo (${reinicio:0:300})."
       return 1
     fi
-    info "Se reinicia el motor para que abra lo nuevo y se repite."
+    info "Se reinicia el motor para que abra los puertos nuevos y se repite el paso."
     docker restart "$motor" >/dev/null
     if ! esperar_motor_016 "$motor" 150 ready; then
       aviso "El motor no vuelve después de reiniciarlo. Revisa: docker logs $motor"
@@ -2755,7 +2755,7 @@ aplicar_ajustes_mailway() {
   titulo "Ajustes de Mailway en el motor"
   if [ -z "$panel" ] || ! en_marcha "$panel" || ! esperar_sano "$panel" 180; then
     RESUMEN_AJUSTES="pendientes: el panel no está en marcha (repite con sudo mailway update -y --reaplicar)"
-    aviso "El panel${panel:+ ($panel)} no está en marcha: el motor sigue sin los ajustes de Mailway (envío por 587, exención de la red interna…). Repite cuando lo esté: sudo mailway update -y --reaplicar"
+    aviso "El panel${panel:+ ($panel)} no está en marcha: el motor sigue sin los ajustes de Mailway (entre ellos, el envío por 587 y la exención de la red interna). Repite cuando lo esté: sudo mailway update -y --reaplicar"
     return 0
   fi
   if ! panel_tiene_herramienta_motor "$panel"; then
@@ -3007,7 +3007,7 @@ detectar_panel_existente() {
   if [ "${#encontrados[@]}" -gt 1 ]; then
     aviso "Skyway despliega varios paneles de Mailway:"
     for par in "${encontrados[@]}"; do info "servicio ${par%% *} (contenedor ${par#* })"; done
-    fallo "Indica el de esta instalación con MAILWAY_PANEL_SERVICIO=<servicio> y vuelve a ejecutar."
+    fallo "Indica el de esta instalación con MAILWAY_PANEL_SERVICIO=<servicio> y vuelve a ejecutar el instalador."
   fi
 
   servicio=${encontrados[0]%% *}
@@ -3056,8 +3056,8 @@ localizar_panel_en_skyway() {
     sky_api GET "/api/services/$PANEL_EXISTENTE_SERVICIO"
     case "$RESP_CODE" in
       200) ;;
-      401) fallo "Skyway rechazó el token: no existe, ha caducado o se ha revocado." ;;
-      *) fallo "No se pudo leer el servicio del panel en Skyway ($PANEL_EXISTENTE_SERVICIO): $(sky_error)." ;;
+      401) fallo "Skyway ha rechazado el token: no existe, ha caducado o se ha revocado." ;;
+      *) fallo "No se ha podido leer el servicio del panel en Skyway ($PANEL_EXISTENTE_SERVICIO): $(sky_error)." ;;
     esac
     # Red de seguridad: detectar_panel_existente ya descarta los de clientes
     # cuando la API responde a tiempo. Solo se acepta si se indicó a mano.
@@ -3068,10 +3068,10 @@ localizar_panel_en_skyway() {
       local cliente_panel
       cliente_panel=$(campo_json '.project.client // empty')
       aviso "El proyecto «$(campo_json '.project.name // empty')» del panel está asignado a ${cliente_panel:+«$cliente_panel», }un cliente de Skyway."
-      info "Si ese cliente eres tú (nadie más entra en él), sigue con:"
+      info "Si ese cliente eres tú (nadie más accede a él), sigue con:"
       info "  MAILWAY_PANEL_SERVICIO=$PANEL_EXISTENTE_SERVICIO mailway update -y --reaplicar"
       info "Si es de otra persona, quítale el cliente al proyecto en Skyway y repite «mailway update -y --reaplicar»."
-      fallo "El panel detectado es de un proyecto de un cliente y no se toca. Si de verdad es el de esta instalación, indícalo con MAILWAY_PANEL_SERVICIO=$PANEL_EXISTENTE_SERVICIO."
+      fallo "El panel detectado es de un proyecto de un cliente y no se toca. Si realmente es el de esta instalación, indícalo con MAILWAY_PANEL_SERVICIO=$PANEL_EXISTENTE_SERVICIO."
     fi
     PANEL_ADOPTADO=$(campo_json '"\(.project.id) \(.project.slug) \(.service.id) \(.service.slug)"')
     return 0
@@ -3082,8 +3082,8 @@ localizar_panel_en_skyway() {
   sky_api GET /api/projects
   case "$RESP_CODE" in
     200) ;;
-    401) fallo "Skyway rechazó el token: no existe, ha caducado o se ha revocado." ;;
-    *) fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)." ;;
+    401) fallo "Skyway ha rechazado el token: no existe, ha caducado o se ha revocado." ;;
+    *) fallo "No se han podido leer los proyectos de Skyway: $(sky_error)." ;;
   esac
   proyectos=$(campo_json '(.projects // [])[] | select((.workspace_id // "") == "") | .id')
   for id in $proyectos; do
@@ -3102,7 +3102,7 @@ localizar_panel_en_skyway() {
     printf '%s' "$coincidencias" | while read -r _ proyecto id servicio; do
       if [ -n "$id" ]; then info "servicio «$servicio» del proyecto «$proyecto» (id $id)"; fi
     done
-    fallo "Indica el del panel con MAILWAY_PANEL_SERVICIO=<id del servicio> y vuelve a ejecutar."
+    fallo "Indica el del panel con MAILWAY_PANEL_SERVICIO=<id del servicio> y vuelve a ejecutar el instalador."
   fi
   [ "$n" = 1 ] || return 0
 
@@ -3113,7 +3113,7 @@ localizar_panel_en_skyway() {
   read -r _ p_slug s_id s_slug <<<"$candidato"
   id_simple "$s_id" || fallo "Respuesta inesperada de Skyway al leer los servicios."
   sky_api GET "/api/services/$s_id"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el servicio del panel en Skyway ($s_id): $(sky_error)."
+  [ "$RESP_CODE" = "200" ] || fallo "No se ha podido leer el servicio del panel en Skyway ($s_id): $(sky_error)."
   if [ "http://skyway-$p_slug-$s_slug:4100" != "$(leer_env MAILWAY_PANEL_INTERNAL_URL)" ] &&
     [ -z "$(campo_json --arg d "$(leer_env PANEL_HOSTNAME)" '(.service.config.domains // [])[] | select(. == $d and $d != "")')" ]; then
     info "Skyway despliega $repo en el servicio «$(campo_json '.service.name // empty')» del proyecto «$(campo_json '.project.name // empty')»."
@@ -3146,12 +3146,12 @@ desplegar_en_skyway() {
   if [ -z "$SKY_TOKEN_TEMPORAL_ID" ] && { [ -n "${SKYWAY_TOKEN:-}" ] || ! crear_token_temporal_skyway; }; then
     if [ "$INTERACTIVO" = 1 ] && [ -z "${SKYWAY_TOKEN:-}" ]; then
       info "Con un token de API de Skyway (Mi perfil → Tokens de API, «sky_…») se despliega el panel"
-      info "desde GitHub con su dominio, volumen y variables. Intro para hacerlo a mano después."
+      info "desde GitHub con su dominio, volumen y variables. Intro para omitirlo y crearlo manualmente después."
     fi
     preguntar_secreto SKYWAY_TOKEN "Token de API de Skyway" "${SKYWAY_TOKEN:-}"
   fi
   if [ -z "$SKYWAY_TOKEN" ]; then
-    info "Omitido. Variables del panel para crearlo a mano: consulta el final de deploy/.env.example."
+    info "Omitido. Variables del panel para crearlo manualmente: consulta el final de deploy/.env.example."
     return 0
   fi
   coincide "$SKYWAY_TOKEN" '^sky_[A-Za-z0-9_-]{8,200}$' ||
@@ -3168,7 +3168,7 @@ desplegar_en_skyway() {
     if [ -n "$SKY_TOKEN_TEMPORAL_ID" ]; then
       revocar_token_temporal_skyway
       RESUMEN_SKYWAY="omitido: Skyway no responde en $SKYWAY_URL"
-      aviso "Skyway no responde en $SKYWAY_URL: no se despliega el panel. Indica su API con SKYWAY_URL y repite con --actualizar, o crea el panel a mano (variables al final de deploy/.env.example)."
+      aviso "Skyway no responde en $SKYWAY_URL: no se despliega el panel. Indica su API con SKYWAY_URL y repite con --actualizar, o crea el panel manualmente (variables al final de deploy/.env.example)."
       return 0
     fi
     fallo "Skyway no responde en $SKYWAY_URL (variable SKYWAY_URL)."
@@ -3200,13 +3200,13 @@ desplegar_en_skyway() {
       fallo "Nombre de proyecto no válido (variable MAILWAY_PROYECTO): hasta 60 caracteres, sin caracteres de control."
     fi
     sky_api GET /api/projects
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudieron leer los proyectos de Skyway: $(sky_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se han podido leer los proyectos de Skyway: $(sky_error)."
     proyecto=$(campo_json --arg n "$nombre_proyecto" \
       'first((.projects // [])[] | select((.workspace_id // "") == "" and (.slug == $n or .name == $n))) | "\(.id) \(.slug)"')
     if [ -z "$proyecto" ]; then
       sky_api POST /api/projects "{\"name\":\"$(json_escape "$nombre_proyecto")\"}"
       [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
-        fallo "No se pudo crear el proyecto en Skyway: $(sky_error). Usa un token de un administrador o propietario."
+        fallo "No se ha podido crear el proyecto en Skyway: $(sky_error). Usa un token de un administrador o propietario."
       proyecto=$(campo_json '.project | "\(.id) \(.slug)"')
       ok "Proyecto «$nombre_proyecto» creado en Skyway."
     else
@@ -3217,14 +3217,14 @@ desplegar_en_skyway() {
       fallo "Respuesta inesperada de Skyway al leer el proyecto."
     fi
     sky_api GET "/api/projects/$proyecto_id"
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el proyecto de Skyway: $(sky_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se ha podido leer el proyecto de Skyway: $(sky_error)."
     # Un proyecto de un cliente nunca: se busca, y se vuelve a comprobar aquí.
     [ -z "$(campo_json '.project.workspace_id // empty')" ] ||
       fallo "El proyecto «$nombre_proyecto» de Skyway es de un cliente: elige otro con MAILWAY_PROYECTO=<nombre>."
     servicio=$(campo_json 'first((.services // [])[] | select(.name == "panel" and .type == "git")) | "\(.id) \(.slug)"')
     if [ -n "$servicio" ]; then
       if [ "${servicio%% *}" = "$PANEL_RECHAZADO" ]; then
-        fallo "El servicio «panel» del proyecto «$nombre_proyecto» es el que has dicho que no es de esta instalación: elige otro proyecto con MAILWAY_PROYECTO=<nombre>."
+        fallo "El servicio «panel» del proyecto «$nombre_proyecto» es el que has indicado que no es de esta instalación: elige otro proyecto con MAILWAY_PROYECTO=<nombre>."
       fi
       [ -n "$(campo_json --arg r "$repo" "$NORMALIZAR_REPO"'(.services // [])[] | select(.name == "panel" and .type == "git" and ((.config.repoUrl // "") | norm) == ($r | norm)) | .id')" ] ||
         fallo "El servicio «panel» del proyecto «$nombre_proyecto» no despliega $repo: elige otro proyecto con MAILWAY_PROYECTO=<nombre>."
@@ -3249,7 +3249,7 @@ desplegar_en_skyway() {
     "MAILWAY_WEBMAIL_URL=https://$WEBMAIL_HOSTNAME" \
     "MAILWAY_PANEL_URL=https://$PANEL_HOSTNAME" \
     "MAILWAY_ENGINE_TRUSTED_NETWORK=$INTERNAL_SUBNET")
-  [ -n "$variables" ] || fallo "No se pudieron preparar las variables del panel."
+  [ -n "$variables" ] || fallo "No se han podido preparar las variables del panel."
   # Bulwark: sus tres variables mientras está activo; desactivado, se quitan
   # (el panel deja de ofrecerlo y sus clientes vuelven a Roundcube).
   local bulwark=false
@@ -3258,7 +3258,7 @@ desplegar_en_skyway() {
     variables=$(printf '%s\n%s' "$variables" "$(env_json "MAILWAY_BULWARK_URL=$BULWARK_URL_PANEL" \
       "MAILWAY_BULWARK_ADMIN_PASSWORD=${BULWARK_ADMIN_PASSWORD:-$(leer_env BULWARK_ADMIN_PASSWORD)}" \
       "MAILWAY_BULWARK_BACKEND_URL=$BULWARK_DESTINO_TRAEFIK")" | jqr -s -c 'add' 2>/dev/null || true)
-    [ -n "$variables" ] || fallo "No se pudieron preparar las variables de Bulwark para el panel."
+    [ -n "$variables" ] || fallo "No se han podido preparar las variables de Bulwark para el panel."
   fi
 
   local despliegue_inicial
@@ -3268,7 +3268,7 @@ desplegar_en_skyway() {
       "$(json_escape "$repo")" "$(json_escape "$rama")" "$PANEL_HOSTNAME" "$variables")
     sky_api POST "/api/projects/$proyecto_id/services" "$cuerpo"
     [ "$RESP_CODE" = "201" ] || [ "$RESP_CODE" = "200" ] ||
-      fallo "No se pudo crear el servicio del panel: $(sky_error)."
+      fallo "No se ha podido crear el servicio del panel: $(sky_error)."
     servicio=$(campo_json '.service | "\(.id) \(.slug)"')
     despliegue_inicial=$(campo_json '.deployment.id // empty')
     # El alta despliega al instante, aún sin volumen: ese despliegue se
@@ -3280,7 +3280,7 @@ desplegar_en_skyway() {
     read -r servicio_id servicio_slug <<<"$servicio"
     id_simple "$servicio_id" || fallo "Respuesta inesperada de Skyway al leer el servicio del panel."
     sky_api GET "/api/services/$servicio_id/env"
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudieron leer las variables del panel: $(sky_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se han podido leer las variables del panel: $(sky_error)."
     local fusion retirar=false
     # Instalaciones anteriores desactivaban la verificación del certificado
     # del SMTP interno; con el certificado ya configurado deja de hacer falta.
@@ -3324,7 +3324,7 @@ desplegar_en_skyway() {
       info "El panel recibe las variables de Bulwark (MAILWAY_BULWARK_URL, MAILWAY_BULWARK_ADMIN_PASSWORD y MAILWAY_BULWARK_BACKEND_URL)."
     fi
     sky_api PUT "/api/services/$servicio_id/env" "$fusion"
-    [ "$RESP_CODE" = "200" ] || fallo "No se pudieron actualizar las variables del panel: $(sky_error)."
+    [ "$RESP_CODE" = "200" ] || fallo "No se han podido actualizar las variables del panel: $(sky_error)."
     ok "Servicio «$servicio_slug» ya existe: variables actualizadas."
     if [ "$cambios" = 1 ]; then escribir_env; fi
   fi
@@ -3344,7 +3344,7 @@ desplegar_en_skyway() {
   # devuelve los quitados (y solo así aplica su DNS automático a los nuevos).
   local parche
   sky_api GET "/api/services/$servicio_id"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudo leer el servicio del panel: $(sky_error)."
+  [ "$RESP_CODE" = "200" ] || fallo "No se ha podido leer el servicio del panel: $(sky_error)."
   parche=$(campo_json -c --arg d "$PANEL_HOSTNAME" '.service.config as $c | {config: {
       volumes: (($c.volumes // []) | map({containerPath}) | if any(.[]; .containerPath == "/data") then . else . + [{containerPath: "/data"}] end),
       healthcheckPath: ($c.healthcheckPath // "/api/health"),
@@ -3352,7 +3352,7 @@ desplegar_en_skyway() {
     }, domainsBase: ($c.domains // [])}')
   [ -n "$parche" ] || fallo "Respuesta inesperada de Skyway al leer el servicio del panel."
   sky_api PATCH "/api/services/$servicio_id" "$parche"
-  [ "$RESP_CODE" = "200" ] || fallo "No se pudo configurar el volumen del panel: $(sky_error)."
+  [ "$RESP_CODE" = "200" ] || fallo "No se ha podido configurar el volumen del panel: $(sky_error)."
   ok "Volumen /data, comprobación /api/health y dominio $PANEL_HOSTNAME configurados."
 
   sky_api GET /api/domains/config
@@ -3361,7 +3361,7 @@ desplegar_en_skyway() {
   fi
 
   sky_api POST "/api/services/$servicio_id/deploy" '{}'
-  [ "$RESP_CODE" = "202" ] || [ "$RESP_CODE" = "200" ] || fallo "No se pudo lanzar el despliegue del panel: $(sky_error)."
+  [ "$RESP_CODE" = "202" ] || [ "$RESP_CODE" = "200" ] || fallo "No se ha podido lanzar el despliegue del panel: $(sky_error)."
   local despliegue estado t=0
   despliegue=$(campo_json '.deployment.id // empty')
   id_simple "$despliegue" || fallo "Respuesta inesperada de Skyway al lanzar el despliegue."
@@ -3379,7 +3379,7 @@ desplegar_en_skyway() {
         ;;
       failed | canceled)
         RESUMEN_SKYWAY="despliegue fallido: revisa el registro en Skyway"
-        aviso "El despliegue del panel terminó en «$estado». Revisa el registro del despliegue en Skyway (¿acceso de Skyway al repositorio de GitHub?)."
+        aviso "El despliegue del panel ha terminado en «$estado». Revisa el registro del despliegue en Skyway (por ejemplo, si Skyway tiene acceso al repositorio de GitHub)."
         return 0
         ;;
     esac
@@ -3482,7 +3482,7 @@ revocar_token_temporal_skyway() {
   if docker exec skyway node server/dist/tools/token.js revocar --id "$id" </dev/null >/dev/null 2>&1; then
     ok "Token temporal de Skyway revocado."
   else
-    aviso "No se pudo revocar el token temporal de Skyway «Instalador de Mailway»: caduca en una hora, o revócalo en Skyway → Mi perfil → Tokens de API."
+    aviso "No se ha podido revocar el token temporal de Skyway «Instalador de Mailway»: caduca en una hora, o revócalo en Skyway → Mi perfil → Tokens de API."
   fi
 }
 
@@ -3709,8 +3709,8 @@ adoptar_identidad_en_panel() {
     return 0
   fi
   if ! panel_con_entorno_nuevo "$contenedor"; then
-    RESUMEN_IDENTIDAD="pendiente: el panel en marcha ($contenedor) aún arranca con los valores anteriores (¿despliegue fallido o en curso?); $repetir cuando arranque con los nuevos"
-    aviso "El panel en marcha ($contenedor) aún arranca con los valores anteriores (¿el despliegue ha fallado o sigue en curso?): no adopta nada ni se empareja con él. Cuando arranque con los nuevos, repite: sudo bash deploy/instalar.sh --actualizar"
+    RESUMEN_IDENTIDAD="pendiente: el panel en marcha ($contenedor) aún arranca con los valores anteriores (puede que el despliegue haya fallado o siga en curso); $repetir cuando arranque con los nuevos"
+    aviso "El panel en marcha ($contenedor) aún arranca con los valores anteriores (puede que el despliegue haya fallado o siga en curso): no adopta nada ni se empareja con él. Cuando arranque con los nuevos, repite: sudo bash deploy/instalar.sh --actualizar"
     return 0
   fi
   if ! docker exec "$contenedor" test -f server/dist/tools/identidad.js 2>/dev/null; then
@@ -3809,7 +3809,7 @@ emparejar_con_skyway() {
   # asistente del panel lo retoma al entrar y --emparejar lo vuelve a intentar.
   if [ "$HERRAMIENTA_CON_AVISOS" = 1 ]; then
     puesta="puesta en marcha del panel con avisos"
-    aviso "Puesta en marcha del panel completada con avisos (arriba) y token de gestión «Skyway» emitido. Lo pendiente se retoma al entrar en el panel o repitiendo: sudo bash deploy/instalar.sh --emparejar"
+    aviso "Puesta en marcha del panel completada con avisos (arriba) y token de gestión «Skyway» emitido. Lo pendiente se retoma al acceder al panel o al repetir: sudo bash deploy/instalar.sh --emparejar"
   else
     puesta=""
     ok "Puesta en marcha del panel completada con el entorno y token de gestión «Skyway» emitido."
@@ -3856,7 +3856,7 @@ aviso_identidad_sin_emparejar() {
 emparejar_solo() {
   [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
   tiene docker || fallo "Falta Docker."
-  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  docker info >/dev/null 2>&1 || fallo "No se puede conectar con Docker. Ejecuta la orden como root (sudo) o con un usuario del grupo docker."
   if [ "$(leer_env MAILWAY_INSTALACION)" = autonoma ]; then
     fallo "Esta instalación es autónoma (sin Skyway): no hay nada que emparejar."
   fi
@@ -3932,7 +3932,7 @@ recrear_traefik() {
   # de Skyway.
   if ! salida=$(cd "$SKYWAY_DIR" && env -u LETSENCRYPT_EMAIL docker compose up -d traefik 2>&1); then
     printf '%s\n' "$salida" >&2
-    aviso "Traefik no se pudo recrear. Ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
+    aviso "No se ha podido recrear Traefik. Ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
     return 1
   fi
 }
@@ -3971,11 +3971,11 @@ configurar_proveedor_traefik() {
     return 0
   fi
   if [ -z "$compose_skyway" ]; then
-    aviso "No se encontró la carpeta de Skyway: configura el proveedor con deploy/skyway-traefik-override.yml."
+    aviso "No se ha encontrado la carpeta de Skyway: configura el proveedor con deploy/skyway-traefik-override.yml."
     return 0
   fi
   if [ -f "$override" ]; then
-    aviso "Ya existe $override y no se modifica. Añade a mano las líneas de deploy/skyway-traefik-override.yml."
+    aviso "Ya existe $override y no se modifica. Añade manualmente las líneas de deploy/skyway-traefik-override.yml."
     return 0
   fi
   # El panel de una instalación anterior guarda su propio token de Traefik en
@@ -4014,7 +4014,7 @@ configurar_proveedor_traefik() {
   chmod 600 "$override"
   umask "$umask_previa"
   if ! recrear_traefik; then
-    fallo "Traefik no arrancó con $override. Bórralo y ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
+    fallo "Traefik no ha arrancado con $override. Bórralo y ejecuta «docker compose up -d traefik» en $SKYWAY_DIR."
   fi
   ok "Traefik consulta $endpoint."
 }
@@ -4032,7 +4032,7 @@ traefik_con_puente() {
         mv "$override" "$override.mailway-retirado"
         ok "Retirado $override (se conserva como $override.mailway-retirado)."
         if [[ $(head -n 1 "$override.mailway-retirado") != "$MARCA_OVERRIDE"* ]]; then
-          info "Si añadiste en él otros ajustes propios, recupéralos de esa copia."
+          info "Si habías añadido en él otros ajustes propios, recupéralos de esa copia."
         fi
         recrear_traefik || return 0
         argumentos=$(argumentos_traefik)
@@ -4075,7 +4075,7 @@ resumen_administrador() {
   if [ -n "$EMPAREJADO_ADMIN_PASSWORD" ]; then
     info "Contraseña:          $EMPAREJADO_ADMIN_PASSWORD"
     info "  Se muestra solo esta vez y no se guarda en ningún sitio: guárdala en un lugar seguro"
-    info "  o cámbiala al entrar en el panel (Mi cuenta → Cambiar contraseña)."
+    info "  o cámbiala al acceder al panel (Mi cuenta → Cambiar contraseña)."
     EMPAREJADO_ADMIN_PASSWORD=""
   fi
 }
@@ -4113,7 +4113,7 @@ resumen() {
     info "Emparejado con Skyway: $RESUMEN_EMPAREJADO"
   fi
   if [ "$CON_SKYWAY" = 0 ] && [ "$USAR_PROXY_PROPIO" = 0 ]; then
-    info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; ponles delante un proxy con TLS."
+    info "Sin proxy propio:    panel en 127.0.0.1:4100 y webmail en 127.0.0.1:8000; coloca delante de ellos un proxy con TLS."
   fi
   info "DNS de la plataforma: $RESUMEN_DNS"
   if [ -n "$RESUMEN_CF_PANEL" ]; then info "Cloudflare (panel):  $RESUMEN_CF_PANEL"; fi
@@ -4166,7 +4166,7 @@ resumen() {
   fi
   info "Siguientes pasos:"
   if [ -n "$EMPAREJADO_ADMIN_EMAIL" ]; then
-    info "  $((paso += 1)). Entra en el panel con la cuenta de administración de arriba."
+    info "  $((paso += 1)). Accede al panel con la cuenta de administración de arriba."
   else
     info "  $((paso += 1)). Abre el panel con el enlace de arriba y completa la puesta en marcha."
   fi
@@ -4202,7 +4202,7 @@ resumen() {
   fi
   if [ "$CON_SKYWAY" = 1 ] && [ "$EMPAREJADO_OK" = 0 ] && [ -n "$PANEL_CONTENEDOR" ] && ! identidad_pendiente; then
     info "  $((paso += 1)). Empareja Skyway con el panel: sudo bash deploy/instalar.sh --emparejar"
-    info "     (o a mano, en Skyway → Ajustes → Correo (Mailway): sección 4.1 de docs/DESPLIEGUE-SKYWAY.md)."
+    info "     (o manualmente, en Skyway → Ajustes → Correo (Mailway): sección 4.1 de docs/DESPLIEGUE-SKYWAY.md)."
   fi
 }
 
@@ -4425,7 +4425,7 @@ descargar_verificado() {
   local suma
   if ! curl -fsSL --max-time 180 -o "$3.parcial" "$1"; then
     rm -f "$3.parcial"
-    fallo "No se pudo descargar $1. Comprueba la conexión del servidor y vuelve a intentarlo."
+    fallo "No se ha podido descargar $1. Comprueba la conexión del servidor y vuelve a intentarlo."
   fi
   suma=$(sha256sum "$3.parcial" | cut -d' ' -f1)
   if [ "$suma" != "$2" ]; then
@@ -4494,12 +4494,12 @@ comprobaciones_migracion() {
   # automático), la de la cola de salida, que hace falta igualmente.
   case "$(docker inspect --type container -f '{{.Config.Image}}' mailway-mail 2>/dev/null || true)" in
     *stalwart:v0.15*) ;;
-    *) fallo "El contenedor mailway-mail no ejecuta Stalwart 0.15: no hay nada que migrar (o está a medias; revisa sudo mailway comprobar)." ;;
+    *) fallo "El contenedor mailway-mail no ejecuta Stalwart 0.15: no hay nada que migrar (o la migración está incompleta; revisa sudo mailway comprobar)." ;;
   esac
   [ "$(estado_contenedor mailway-mail)" = healthy ] ||
-    fallo "El motor 0.15 no está en marcha y sano: arréglalo antes de migrar (sudo mailway comprobar)."
+    fallo "El motor 0.15 no está en marcha y sano: corrígelo antes de migrar (sudo mailway comprobar)."
   docker image inspect "$IMAGEN_CURL" >/dev/null 2>&1 || docker pull -q "$IMAGEN_CURL" >/dev/null ||
-    fallo "No se pudo descargar la imagen $IMAGEN_CURL."
+    fallo "No se ha podido descargar la imagen $IMAGEN_CURL."
   RESP_BODY=$(motor_api GET '/api/queue/messages?page=1&limit=1&values=1' 2>/dev/null || true)
   cola=$(campo_json '.data.total // empty')
   if [ -z "$cola" ]; then
@@ -4535,10 +4535,10 @@ comprobaciones_migracion() {
   bloqueo=$(hm_campo '.bloqueo // empty')
   [ -z "$bloqueo" ] || fallo "$bloqueo No se ha cambiado nada."
   if [ "$(hm_campo '.mantenimiento.activo')" = true ]; then
-    aviso "El panel ya estaba en mantenimiento (¿una migración interrumpida?): se renueva y se quita al terminar."
+    aviso "El panel ya estaba en mantenimiento (posiblemente por una migración interrumpida): se renueva y se quita al terminar."
   fi
   comprobar_previas_ajenas_al_motor ||
-    fallo "Antes de migrar, arregla lo de arriba: la comprobación final lo exige y no depende del motor, así que la migración pararía el correo para acabar volviendo a la 0.15. No se ha cambiado nada (sudo mailway comprobar lo revisa)."
+    fallo "Antes de migrar, corrige lo indicado arriba: la comprobación final lo exige y no depende del motor, así que la migración pararía el correo para acabar volviendo a la 0.15. No se ha cambiado nada (sudo mailway comprobar lo revisa)."
 
   # Certificado: con la 0.16 sale siempre del Traefik (con el extractor).
   if [ "$CON_SKYWAY" = 1 ] && { [ -z "$TRAEFIK_ACME_VOLUME" ] || ! docker volume inspect "$TRAEFIK_ACME_VOLUME" >/dev/null 2>&1; }; then
@@ -4553,16 +4553,16 @@ comprobaciones_migracion() {
   # parte de la base de datos al arrancar).
   for imagen in "$IMAGEN_PYTHON" "$IMAGEN_016" "$IMAGEN_CLI"; do
     docker image inspect "$imagen" >/dev/null 2>&1 || docker pull -q "$imagen" >/dev/null ||
-      fallo "No se pudo descargar la imagen $imagen."
+      fallo "No se ha podido descargar la imagen $imagen."
   done
   ok "Imágenes descargadas: $IMAGEN_016, $IMAGEN_CLI y $IMAGEN_PYTHON."
   linea=$(docker run --rm --network none -v "$(volumen_015):/v:ro" "$IMAGEN_PYTHON" \
     sh -c 'du -sk /v/data | cut -f1; df -Pk /v | awk "NR == 2 {print \$4}"' 2>/dev/null | tr '\n' ' ' || true)
   read -r datos libre <<<"$linea"
-  case "$datos$libre" in '' | *[!0-9]*) fallo "No se pudo medir el volumen de la 0.15 ($(volumen_015)): ¿existe y tiene la carpeta data?" ;; esac
+  case "$datos$libre" in '' | *[!0-9]*) fallo "No se ha podido medir el volumen de la 0.15 ($(volumen_015)). Comprueba que existe y que tiene la carpeta data." ;; esac
   necesario=$((datos * 12 / 10 + 1048576))
   if [ "$libre" -lt "$necesario" ]; then
-    fallo "No hay espacio: los datos de la 0.15 ocupan $((datos / 1024)) MiB y la copia necesita unos $((necesario / 1024)) MiB libres; hay $((libre / 1024)) MiB."
+    fallo "No hay espacio suficiente: los datos de la 0.15 ocupan $((datos / 1024)) MiB y la copia necesita unos $((necesario / 1024)) MiB libres; hay $((libre / 1024)) MiB."
   fi
   ok "Espacio: datos de $((datos / 1024)) MiB y $((libre / 1024)) MiB libres."
 
@@ -4598,7 +4598,7 @@ comprobaciones_migracion() {
 
 confirmar_migracion() {
   titulo "Qué va a pasar"
-  info "1. El panel entra en mantenimiento y copia la contraseña de cada buzón (la 0.15 sigue en marcha)."
+  info "1. El panel pasa a modo mantenimiento y copia la contraseña de cada buzón (la 0.15 sigue en marcha)."
   info "2. Se vuelcan y convierten los datos del motor con el script oficial de Stalwart."
   info "3. Ventana sin correo (unos minutos; la copia de los datos es lo más largo): se paran el webmail"
   info "   y la 0.15, cuyo volumen ($(volumen_015)) no se toca: es la copia de seguridad y la vuelta atrás."
@@ -4616,7 +4616,7 @@ confirmar_migracion() {
 
 activar_mantenimiento() {
   herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos "${MAILWAY_MIGRACION_MINUTOS:-120}" ||
-    fallo "El panel no ha podido entrar en mantenimiento: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada."
+    fallo "El panel no ha podido pasar a modo mantenimiento: $(hm_campo '.error // "sin detalle"'). No se ha cambiado nada."
   [ "$(hm_campo '.activo')" = true ] || fallo "El panel no confirma el modo mantenimiento. No se ha cambiado nada."
   MIG_MANTENIMIENTO=1
   ok "Panel en mantenimiento: mientras dura, nada del panel cambia el motor. Se quita al terminar; si la orden se cortara, caduca solo (ahora, a las $(hora_de_ms "$(hm_campo '.hasta // empty')"))."
@@ -4629,7 +4629,7 @@ activar_mantenimiento() {
 renovar_mantenimiento() {
   [ "$MIG_MANTENIMIENTO" = 1 ] || return 0
   herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos "${MAILWAY_MIGRACION_MINUTOS:-120}" >/dev/null 2>&1 ||
-    aviso "No se pudo prolongar el mantenimiento del panel (caduca a la hora prevista)."
+    aviso "No se ha podido prolongar el mantenimiento del panel (caduca a la hora prevista)."
   return 0
 }
 
@@ -4649,7 +4649,7 @@ desactivar_mantenimiento() {
 
 capturar_contrasenas() {
   local codigo=0 fallidos
-  info "Copiando en el panel la contraseña (hash) de cada buzón: la 0.16 ya no las devuelve…"
+  info "Copiando en el panel la contraseña (hash) de cada buzón, que la 0.16 ya no devuelve…"
   herramienta_motor "$PANEL_MOTOR" 3600 capturar || codigo=$?
   fallidos=$(hm_campo '(.fallidos // []) | length')
   if [ "$codigo" != 0 ] || [ "$(hm_campo '.ok')" != true ] || [ "${fallidos:-0}" != 0 ]; then
@@ -4706,7 +4706,7 @@ copiar_datos_015() {
   for par in "mailway-stalwart-etc $MIG_ETC" "mailway-stalwart-data $MIG_DATOS"; do
     docker volume create --label com.docker.compose.project=mailway \
       --label "com.docker.compose.volume=${par% *}" "${par#* }" >/dev/null ||
-      fallo "No se pudo crear el volumen ${par#* }."
+      fallo "No se ha podido crear el volumen ${par#* }."
   done
   info "Copiando $(volumen_015) a $MIG_DATOS…"
   docker run --rm --network none -v "$(volumen_015):/origen:ro" -v "$MIG_DATOS:/destino" -v "$MIG_ETC:/etc-destino" \
@@ -4750,10 +4750,10 @@ arrancar_motor_temporal() {
     -v "$MIG_ETC:/etc/stalwart" -v "$MIG_DATOS:/var/lib/stalwart" \
     --network mailway-internal --ip "$MAIL_INTERNAL_IP" --network-alias mailway-mail \
     --label "mailway.migracion=$modo" "$IMAGEN_016" >/dev/null ||
-    fallo "No se pudo arrancar el motor 0.16 temporal ($nombre)."
+    fallo "No se ha podido arrancar el motor 0.16 temporal ($nombre)."
   # El panel (junto a Skyway) llega al motor por la red de Traefik.
   docker network connect --alias mailway-mail "$RED_BORDE" "$nombre" >/dev/null 2>&1 ||
-    fallo "No se pudo conectar $nombre a la red $RED_BORDE."
+    fallo "No se ha podido conectar $nombre a la red $RED_BORDE."
 }
 
 recuperacion_016() {
@@ -4780,7 +4780,7 @@ recuperacion_016() {
   fi
   ok "Directorio de la 0.16 creado: dominios, buzones (con su contraseña), alias y firmas DKIM."
   ayudante recuperacion --url http://mailway-mail:8080 ||
-    fallo "No se pudo dejar el registro de eventos del motor en la salida estándar: $(hm_campo '.error // "sin detalle"')."
+    fallo "No se ha podido dejar el registro de eventos del motor en la salida estándar: $(hm_campo '.error // "sin detalle"')."
   docker stop -t 60 "$CONTENEDOR_RECUPERACION" >/dev/null || true
   docker rm -f "$CONTENEDOR_RECUPERACION" >/dev/null 2>&1 || true
 }
@@ -4802,9 +4802,9 @@ previo_016() {
     fallo "El panel no ha dejado la 0.16 con los ajustes de Mailway (detalle arriba)."
 
   titulo "Certificado de IMAP y SMTP en la 0.16"
-  info "El extractor lleva a la 0.16 el certificado de Traefik para $MAIL_HOSTNAME…"
+  info "Llevando a la 0.16, con el extractor, el certificado de Traefik para $MAIL_HOSTNAME…"
   compose_q --profile tls up -d --no-deps --force-recreate certs-dumper ||
-    fallo "No se pudo arrancar el extractor del certificado."
+    fallo "No se ha podido arrancar el extractor del certificado."
   if esperar_extractor 240; then
     ok "El extractor confirma el certificado servido por la 0.16."
   elif [ "$MIG_CERT_015" = 1 ]; then
@@ -4847,7 +4847,7 @@ definitivo_016() {
   ok "Stalwart 0.16 en marcha con los puertos de correo ($MIG_HORA_APERTURA)."
   provisionar_motor "$PANEL_MOTOR" mailway-mail || fallo "El panel no confirma los ajustes de Mailway en el motor definitivo."
   compose_q up -d --remove-orphans || fallo "Compose no ha podido arrancar el webmail."
-  compose_q --profile tls up -d certs-dumper || fallo "No se pudo arrancar el extractor del certificado."
+  compose_q --profile tls up -d certs-dumper || fallo "No se ha podido arrancar el extractor del certificado."
   esperar_sano mailway-webmail 180 || fallo "El webmail no vuelve a estar sano. Revisa: docker logs mailway-webmail"
   # La pasarela arranca con el «up» de arriba: hasta que su comprobación de
   # salud pasa, la comprobación final la daría por caída y volvería atrás.
@@ -4878,7 +4878,7 @@ volver_a_015() {
     if cp -p "$MIG_ENV_ANTES" "$ENV_FILE.vuelta" && mv "$ENV_FILE.vuelta" "$ENV_FILE"; then
       ok "deploy/.env como estaba antes de migrar."
     else
-      aviso "No se pudo devolver deploy/.env a como estaba: su copia está en $MIG_ENV_ANTES (cópiala a $ENV_FILE)."
+      aviso "No se ha podido devolver deploy/.env a como estaba: su copia está en $MIG_ENV_ANTES (cópiala a $ENV_FILE)."
       MIG_ENV_CONSERVAR=1
       fallos=$((fallos + 1))
     fi
@@ -4906,7 +4906,7 @@ volver_a_015() {
   limpiar_trabajo_migracion
   printf '\n'
   if [ "$abierto" = 1 ]; then
-    aviso "La 0.16 llegó a abrir los puertos a las $MIG_HORA_APERTURA: el correo que llegara desde entonces está en su volumen ($MIG_DATOS), no en la 0.15."
+    aviso "La 0.16 ha llegado a abrir los puertos a las $MIG_HORA_APERTURA: el correo que haya llegado desde entonces está en su volumen ($MIG_DATOS), no en la 0.15."
   fi
   info "Lo creado por este intento se conserva para revisarlo (volúmenes $MIG_ETC y $MIG_DATOS) y nunca se reutiliza."
   info "Para borrarlo cuando ya no haga falta: docker volume rm $MIG_ETC $MIG_DATOS"
@@ -4916,7 +4916,7 @@ volver_a_015() {
     return 0
   fi
   aviso "La migración no se ha completado y la vuelta a la 0.15 tampoco del todo ($fallos incidencias arriba)."
-  aviso "El volumen de la 0.15 está intacto. A mano: sudo bash deploy/instalar.sh --actualizar (con MAILWAY_MOTOR=$MOTOR_015 en deploy/.env) y sudo mailway comprobar."
+  aviso "El volumen de la 0.15 está intacto. Completa la vuelta atrás manualmente: sudo bash deploy/instalar.sh --actualizar (con MAILWAY_MOTOR=$MOTOR_015 en deploy/.env) y sudo mailway comprobar."
   return 1
 }
 
@@ -4976,7 +4976,7 @@ revertir_motor() {
     fallo "Esta instalación no viene de una migración (empezó con Stalwart 0.16): no hay una 0.15 a la que volver."
   vol=$(volumen_015)
   docker volume inspect "$vol" >/dev/null 2>&1 ||
-    fallo "Ya no existe el volumen de la 0.15 ($vol): se retiró y no se puede volver a ella."
+    fallo "Ya no existe el volumen de la 0.15 ($vol): se ha retirado y no se puede volver a ella."
   tomar_cerrojo_motor
   preparar_registro_motor revertir-motor
   titulo "Vuelta a Stalwart 0.15"
@@ -4992,7 +4992,7 @@ revertir_motor() {
     if herramienta_motor "$PANEL_MOTOR" 120 mantenimiento on --minutos 60 && [ "$(hm_campo '.activo')" = true ]; then
       MIG_MANTENIMIENTO=1
     else
-      aviso "El panel no ha entrado en mantenimiento: se sigue igualmente."
+      aviso "El panel no ha pasado a modo mantenimiento: se sigue igualmente."
     fi
   else
     aviso "El panel ($PANEL_MOTOR) no está en marcha o no tiene la herramienta del motor: al terminar, repite con él en marcha «provisionar» y «tras-migrar» (docker exec -u node <panel> node server/dist/tools/motor.js …)."
@@ -5023,7 +5023,7 @@ revertir_motor() {
     :
   else
     # Si la 0.15 usa su propio ACME, el extractor no hace nada.
-    arrancar_extractor || aviso "No se pudo arrancar el extractor del certificado."
+    arrancar_extractor || aviso "No se ha podido arrancar el extractor del certificado."
   fi
   esperar_sano mailway-webmail 180 || aviso "El webmail aún no está sano. Revisa: docker logs mailway-webmail"
   esperar_sano mailway-mail-gw 60 || aviso "La pasarela del motor aún no está sana. Revisa: docker logs mailway-mail-gw"
@@ -5071,7 +5071,7 @@ retirar_motor_anterior() {
       [ "${MAILWAY_RETIRAR_VOLUMEN:-}" = "$vol" ] ||
         fallo "Con -y hay que indicar también el volumen: MAILWAY_RETIRAR_VOLUMEN=$vol"
     else
-      [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal: -y y MAILWAY_RETIRAR_VOLUMEN=$vol."
+      [ "$INTERACTIVO" = 1 ] || fallo "Sin terminal no se puede confirmar: añade -y y MAILWAY_RETIRAR_VOLUMEN=$vol."
       read -r -p "   Escribe el nombre del volumen para borrarlo ($vol): " respuesta || true
       [ "$respuesta" = "$vol" ] || fallo "No coincide: no se ha borrado nada."
     fi
@@ -5102,7 +5102,7 @@ retirar_motor_anterior() {
 cargar_datos_instalacion() {
   [ -f "$ENV_FILE" ] || fallo "No existe $ENV_FILE: Mailway no está instalado aquí (sudo bash deploy/instalar.sh)."
   tiene docker || fallo "Falta Docker."
-  docker info >/dev/null 2>&1 || fallo "No se puede hablar con Docker. Ejecuta como root (sudo) o con un usuario del grupo docker."
+  docker info >/dev/null 2>&1 || fallo "No se puede conectar con Docker. Ejecuta la orden como root (sudo) o con un usuario del grupo docker."
   case "$(leer_env MAILWAY_INSTALACION)" in
     autonoma) CON_SKYWAY=0 ;;
     '') if docker inspect --type container mailway-panel >/dev/null 2>&1; then CON_SKYWAY=0; fi ;;
@@ -5215,7 +5215,7 @@ INCIDENCIAS_INTERNET=0
 comprobar_desde_internet() {
   local nombre r incidencias=0
   if ! ipv4_valida "$IP_PUBLICA"; then
-    aviso "deploy/.env no guarda la IP pública (MAILWAY_PUBLIC_IP): no se comprueban el DNS ni el PTR. Repite el instalador."
+    aviso "deploy/.env no guarda la IP pública (MAILWAY_PUBLIC_IP): no se comprueban el DNS ni el PTR. Vuelve a ejecutar el instalador."
     incidencias=$((incidencias + 1))
   else
     for nombre in "$MAIL_HOSTNAME" "$WEBMAIL_HOSTNAME" "$PANEL_HOSTNAME"; do
@@ -5296,7 +5296,7 @@ comprobar_motor_016() {
       ;;
   esac
   if [ -n "$(jmap_error)" ]; then
-    aviso "El motor rechazó la consulta de sus ajustes: $(jmap_error)."
+    aviso "El motor ha rechazado la consulta de sus ajustes: $(jmap_error)."
     return 1
   fi
   nombre=$(campo_json '.methodResponses[0][1].list[0].defaultHostname // empty')
@@ -5429,7 +5429,7 @@ comprobar_instalacion() {
       elif printf '%s' "$respuesta" | grep -q '"certificate.mailway.cert"'; then
         info "Certificado: el de Traefik, que mantiene el extractor (perfil tls)."
       elif printf '%s' "$respuesta" | grep -q '"certificate.default.cert"'; then
-        info "Certificado: configurado a mano en el motor."
+        info "Certificado: configurado manualmente en el motor."
       else
         aviso "El motor no tiene ningún certificado configurado y sirve uno autofirmado (sección 5 de docs/DESPLIEGUE-SKYWAY.md)."
         fallos=$((fallos + 1))
@@ -5453,7 +5453,7 @@ comprobar_instalacion() {
     titulo "Webmail"
     ejecutar_comprobacion docker exec -u www-data mailway-webmail php "$COMPROBAR_PHP" conexion ||
       fallos=$((fallos + 1))
-    info "Inicio de sesión real con un buzón: sudo bash deploy/instalar.sh --probar-acceso"
+    info "Prueba de acceso real con un buzón: sudo bash deploy/instalar.sh --probar-acceso"
     if [ "$solo_motor" = 0 ]; then
       titulo "Panel"
       comprobar_enlace_panel || fallos=$((fallos + 1))
@@ -5653,7 +5653,7 @@ main() {
   USAR_PROXY_PROPIO=0
   if [ "$CON_SKYWAY" = 0 ]; then
     if puerto_ocupado_por_otro 80 || puerto_ocupado_por_otro 443; then
-      aviso "Los puertos 80/443 están ocupados: no se levanta el Traefik propio."
+      aviso "Los puertos 80/443 están ocupados: no se pone en marcha el Traefik propio."
     else
       USAR_PROXY_PROPIO=1
     fi

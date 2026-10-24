@@ -222,7 +222,7 @@ retirar
 
 seccion "Imágenes ($MOTOR)"
 for imagen in "$IMAGEN_MOTOR" "$IMAGEN_NGINX" "$IMAGEN_TRAEFIK" "$IMAGEN_PYTHON" "$IMAGEN_CURL"; do
-  traer "$imagen" || detener "No se pudo descargar $imagen."
+  traer "$imagen" || detener "No se ha podido descargar $imagen."
   ok "imagen $imagen"
 done
 
@@ -233,12 +233,12 @@ openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=mail.m
   -keyout "$TMP/tls/servidor.key" -out "$TMP/tls/servidor.csr" >/dev/null 2>&1
 printf 'subjectAltName=DNS:mail.mwp.test,DNS:crudo.mwp.test,DNS:eco.mwp.test\nextendedKeyUsage=serverAuth\n' >"$TMP/tls/ext.cnf"
 openssl x509 -req -in "$TMP/tls/servidor.csr" -CA "$TMP/tls/ca.pem" -CAkey "$TMP/tls/ca.key" -CAcreateserial \
-  -days 2 -extfile "$TMP/tls/ext.cnf" -out "$TMP/tls/servidor.pem" >/dev/null 2>&1 || detener 'No se pudo crear el certificado.'
+  -days 2 -extfile "$TMP/tls/ext.cnf" -out "$TMP/tls/servidor.pem" >/dev/null 2>&1 || detener 'No se ha podido crear el certificado.'
 chmod 644 "$TMP/tls/"*
 
 crear_red() {
   docker network create --label "$ETIQUETA" --subnet "$2" "$1" >/dev/null 2>"$TMP/red.err" ||
-    detener "No se pudo crear la red $1 ($2): $(cat "$TMP/red.err"). Cambia MWP_SUBRED_*."
+    detener "No se ha podido crear la red $1 ($2): $(cat "$TMP/red.err"). Cambia MWP_SUBRED_*."
 }
 crear_red "${P}interna" "$SUBRED_INTERNA"
 crear_red "${P}borde" "$SUBRED_BORDE"
@@ -266,7 +266,7 @@ if [ "$MOTOR" = stalwart-0.16 ]; then
   esperar 'el motor (tras el arranque inicial)' curl -fsS "http://127.0.0.1:$PUERTO_MOTOR/healthz/ready"
   R=$(jmap '[["x:Domain/set",{"create":{"d":{"name":"mwp.test"}}},"a"]]')
   DOMINIO=$(sed -n 's/.*"created":{"d":{"id":"\([^"]*\)".*/\1/p' <<<"$R")
-  [ -n "$DOMINIO" ] || detener "No se pudo crear el dominio: $R"
+  [ -n "$DOMINIO" ] || detener "No se ha podido crear el dominio: $R"
   R=$(jmap "[[\"x:Account/set\",{\"create\":{\"u\":{\"@type\":\"User\",\"name\":\"ana\",\"domainId\":\"$DOMINIO\",\"description\":\"Ana\",\"credentials\":{\"0\":{\"@type\":\"Password\",\"secret\":\"$HASH_ANA\"}}}}},\"a\"]]")
   contiene "buzón ana@mwp.test con hash \$6\$" "$R" '"created":{"u"'
   # Como lo dejan los ajustes de Mailway: IP real de X-Forwarded-For y la red
@@ -314,7 +314,7 @@ exec /usr/local/bin/stalwart --config /opt/stalwart/etc/config.toml'
   contiene "motor: X-Forwarded-For, red exenta y umbral de $UMBRAL fallos" "$R" '"data"'
   api GET /api/reload >/dev/null
 fi
-docker network connect --alias mailway-mail "${P}borde" "${P}motor" || detener 'No se pudo conectar el motor a la red de Traefik.'
+docker network connect --alias mailway-mail "${P}borde" "${P}motor" || detener 'No se ha podido conectar el motor a la red de Traefik.'
 
 # ----------------------------------------------- Pasarela, eco y Traefik --
 

@@ -339,7 +339,7 @@ ejecutar_mailway PRUEBA_FALLA_APLICAR=1.3.1 update --auto
 comprobar "termina con 1" igual "$CODIGO" 1
 comprobar "no comprueba una versión que no se aplicó" no_contiene "$REGISTRO" "instalar --comprobar 1.3.1"
 comprobar "vuelve a la anterior" igual "$(cabeza)" "$V130"
-comprobar "avisa con el motivo" contiene "$REGISTRO" "terminó con código 1"
+comprobar "avisa con el motivo" contiene "$REGISTRO" "ha terminado con código 1"
 
 echo "# El panel deja de responder con la versión nueva: vuelve a la anterior"
 nuevo_escenario
@@ -479,8 +479,8 @@ ejecutar_mailway auto-update status
 comprobar "termina con 0" igual "$CODIGO" 0
 comprobar "dice la hora" contiene "$SALIDA" "cada día a las 03:15"
 comprobar "y la próxima ejecución" contiene "$SALIDA" "Próxima ejecución: Sat 2026-10-10 04:52:31 CEST"
-comprobar "el último resultado" contiene "$SALIDA" "falló y el servidor volvió a la versión anterior · 1.3.0 → 1.3.1"
-comprobar "la versión que falló" contiene "$SALIDA" "Versión que falló: ${V130:0:8} (1 de 2 intentos automáticos)"
+comprobar "el último resultado" contiene "$SALIDA" "ha fallado y el servidor ha vuelto a la versión anterior · 1.3.0 → 1.3.1"
+comprobar "la versión que falló" contiene "$SALIDA" "Versión que ha fallado: ${V130:0:8} (1 de 2 intentos automáticos)"
 comprobar "y el registro" contiene "$REGISTRO" "journalctl -u mailway-auto-update -n 30 --no-pager"
 
 echo "# auto-update off: retira el temporizador"

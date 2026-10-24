@@ -113,7 +113,7 @@ Uso: mailway <orden> [opciones]
   auto-update status         Si está activo, la próxima ejecución, el último
                              resultado y el registro (journalctl).
   comprobar                  Diagnóstico de solo lectura (instalar.sh --comprobar).
-  probar-acceso              Inicia sesión con un buzón desde el webmail
+  probar-acceso              Prueba el acceso a un buzón desde el webmail
                              (instalar.sh --probar-acceso).
   migrar-motor [-y]          Pasa el motor de Stalwart 0.15 a 0.16: comprueba
                              antes, convierte los datos con las herramientas
@@ -140,7 +140,7 @@ Ni «update» ni «update --auto» cambian de motor: con Stalwart 0.15 (fin de
 su soporte de seguridad: 1 de diciembre de 2026) avisan de cómo migrar. Ni
 activan Bulwark: solo «mailway bulwark on».
 
-Los secretos que acepta el instalador (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN…)
+Los secretos que acepta el instalador (CLOUDFLARE_API_TOKEN, SKYWAY_TOKEN, etc.)
 se pasan igual que con instalar.sh, por el entorno y nunca en la orden. Lo
 mismo MAILWAY_PANEL_SERVICIO, si el instalador lo pide:
   MAILWAY_PANEL_SERVICIO=svc_… mailway update -y --reaplicar
@@ -467,7 +467,7 @@ actualizar() {
       -y|--yes|--si) si=1 ;;
       --reaplicar) reaplicar=1 ;;
       --auto) MODO_AUTO=1 ;;
-      *) fallo "Opción desconocida para update: $1 (mira «mailway ayuda»)." ;;
+      *) fallo "Opción desconocida para update: $1 (consulta «mailway ayuda»)." ;;
     esac
     shift
   done
@@ -487,7 +487,7 @@ actualizar() {
       info "Ya hay otra actualización de Mailway en curso: esta no hace nada."
       exit 0
     fi
-    fallo "Ya hay otra actualización de Mailway en curso (¿la automática?). Espera a que termine y vuelve a intentarlo."
+    fallo "Ya hay otra actualización de Mailway en curso (posiblemente la automática). Espera a que termine y vuelve a intentarlo."
   fi
 
   local rama upstream
@@ -501,10 +501,10 @@ actualizar() {
   local locales
   locales=$(git_mw status --porcelain --untracked-files=no)
   if [ -n "$locales" ]; then
-    aviso "Hay cambios hechos a mano en la copia de Mailway:"
+    aviso "Hay cambios manuales en la copia de Mailway:"
     printf '%s\n' "$locales" | sed 's/^/    /'
     parar cambios-locales "Guárdalos o descártalos antes de actualizar (por ejemplo «git -C $RAIZ stash»)." \
-      "Hay cambios hechos a mano en ficheros de la copia de Mailway ($RAIZ): no se actualiza para no perderlos. Guárdalos o descártalos (por ejemplo «git -C $RAIZ stash»)."
+      "Hay cambios manuales en ficheros de la copia de Mailway ($RAIZ): no se actualiza para no perderlos. Guárdalos o descártalos (por ejemplo «git -C $RAIZ stash»)."
   fi
 
   info "Buscando novedades de Mailway ($upstream)…"
@@ -539,7 +539,7 @@ actualizar() {
   if [ "$nuevos" = 0 ]; then
     ok "Mailway ya está al día (versión ${actual:-desconocida})."
     if [ "$reanudar" = 1 ]; then
-      aviso "La actualización automática anterior no llegó a terminar: se aplica de nuevo y se comprueba."
+      aviso "La actualización automática anterior no ha llegado a terminar: se aplica de nuevo y se comprueba."
     elif [ "$reaplicar" = 0 ]; then
       if [ "$MODO_AUTO" = 0 ]; then info "Para volver a aplicar la configuración igualmente: mailway update --reaplicar"; fi
       return 0
@@ -571,7 +571,7 @@ actualizar() {
     git_mw merge --ff-only --quiet "$upstream" \
       || fallo "La copia de $RAIZ se ha separado de GitHub y no se puede avanzar sin mezclar. Revísala con «git -C $RAIZ status»."
     ok "Código actualizado a la versión $(version_en HEAD)."
-    info "Versión anterior: ${actual:-desconocida} ($(corto "$anterior")). Para volver a ella a mano:"
+    info "Versión anterior: ${actual:-desconocida} ($(corto "$anterior")). Para volver a ella manualmente:"
     info "  sudo git -C $RAIZ reset --hard $anterior && sudo bash $RAIZ/deploy/instalar.sh --actualizar"
   fi
   # Quien actualiza a mano decide: lo que dejó la automática (una versión que
@@ -612,8 +612,8 @@ actualizar_auto() {
   if en_marcha "$(contenedor_panel)"; then VIGILAR_PANEL=1; fi
 
   if [ "$reanudar" = 0 ] && [ "$intentos" -ge "$MAX_INTENTOS" ]; then
-    info "La versión ${version_objetivo:-nueva} ($sha_nueva) ya ha fallado $intentos veces y el servidor volvió a la anterior: no se reintenta sola."
-    info "Se intentará con la próxima versión que llegue; para aplicarla ya, a mano: sudo mailway update -y"
+    info "La versión ${version_objetivo:-nueva} ($sha_nueva) ya ha fallado $intentos veces y el servidor ha vuelto a la anterior: no se reintenta sola."
+    info "Se intentará con la próxima versión que llegue; para aplicarla ya manualmente: sudo mailway update -y"
     exit 0
   fi
   # Antes de tocar nada, el servidor debe estar sano: con un fallo que ya
@@ -621,11 +621,11 @@ actualizar_auto() {
   # retomar una actualización interrumpida no se exige (puede haberla dejado
   # a medias), pero sí lo que el instalador necesita para empezar: si falta,
   # se queda como estaba y la próxima ejecución lo vuelve a intentar.
-  info "Comprobación previa (antes de tocar nada)…"
+  info "Comprobación previa (antes de cambiar nada)…"
   if ! servidor_listo || { [ "$reanudar" = 0 ] && ! esperar_salud 30; }; then
     aviso "El servidor no supera la comprobación previa: no se aplica la versión nueva."
     notificar aviso "actualizacion:previa:$sha_nueva" "Actualización automática pendiente" \
-      "Hay una versión nueva de Mailway (${version_objetivo:-?}, $sha_nueva), pero el servidor no supera la comprobación previa, así que no se ha tocado nada.
+      "Hay una versión nueva de Mailway (${version_objetivo:-?}, $sha_nueva), pero el servidor no supera la comprobación previa, así que no se ha cambiado nada.
 Detalle: $SALUD_DETALLE" \
       "Corrige lo que indique «sudo mailway comprobar»; la próxima ejecución lo intentará de nuevo."
     exit 1
@@ -662,7 +662,7 @@ Detalle: $SALUD_DETALLE" \
     motivo="no ha superado la comprobación tras aplicarse"
     detalle=$SALUD_DETALLE
   else
-    motivo="no se ha podido aplicar (instalar.sh --actualizar terminó con código $codigo)"
+    motivo="no se ha podido aplicar (instalar.sh --actualizar ha terminado con código $codigo)"
     detalle="Revisa la salida del instalador en el registro (sudo mailway auto-update status)."
   fi
 
@@ -673,9 +673,9 @@ Detalle: $SALUD_DETALLE" \
     guardar_estado RESULTADO=revertida FALLIDA="$objetivo" INTENTOS="$intentos"
     ok "El servidor ha vuelto a la versión ${version_anterior:-anterior} ($sha_anterior) y la supera."
     if [ "$intentos" -lt "$MAX_INTENTOS" ]; then
-      resto="Se volverá a intentar en la próxima ejecución, por si el fallo fue pasajero."
+      resto="Se volverá a intentar en la próxima ejecución, por si el fallo ha sido pasajero."
     else
-      resto="No se volverá a intentar sola: se intentará con la próxima versión, o aplícala a mano con «sudo mailway update -y» cuando lo hayas revisado."
+      resto="No se volverá a intentar sola: se intentará con la próxima versión, o aplícala manualmente con «sudo mailway update -y» cuando lo hayas revisado."
     fi
     notificar aviso "actualizacion:revertida:$sha_nueva" "Actualización automática revertida" \
       "La versión ${version_objetivo:-nueva} de Mailway ($sha_nueva) $motivo, así que el servidor ha vuelto solo a la ${version_anterior:-anterior} ($sha_anterior), que sí supera la comprobación.
@@ -684,11 +684,11 @@ Detalle: $detalle" \
     exit 1
   fi
   guardar_estado RESULTADO=sin-revertir FALLIDA="$objetivo" INTENTOS="$intentos"
-  aviso "La vuelta a la versión anterior tampoco ha funcionado. Hay que revisarlo a mano: sudo mailway comprobar"
+  aviso "La vuelta a la versión anterior tampoco ha funcionado. Revisa el servidor: sudo mailway comprobar"
   notificar critico "actualizacion:sin-revertir:$sha_nueva" "Actualización automática fallida: el servidor necesita revisión" \
     "La versión ${version_objetivo:-nueva} de Mailway ($sha_nueva) $motivo, y la vuelta a la ${version_anterior:-anterior} ($sha_anterior) tampoco ha funcionado.
 Detalle: $SALUD_DETALLE" \
-    "Entra en el servidor y ejecuta «sudo mailway comprobar»; el registro está en «sudo mailway auto-update status». No se ha tocado ningún volumen ni dato del correo."
+    "Accede al servidor y ejecuta «sudo mailway comprobar»; el registro está en «sudo mailway auto-update status». No se ha tocado ningún volumen ni dato del correo."
   exit 2
 }
 
@@ -748,7 +748,7 @@ activar_auto() {
         shift
         ;;
       --hora=*) hora=${1#--hora=} ;;
-      *) fallo "Opción desconocida para auto-update on: $1 (mira «mailway ayuda»)." ;;
+      *) fallo "Opción desconocida para auto-update on: $1 (consulta «mailway ayuda»)." ;;
     esac
     shift
   done
@@ -787,17 +787,17 @@ desactivar_auto() {
   else
     info "La actualización automática no estaba activada."
   fi
-  info "Una actualización que estuviera en curso termina sola. A mano: sudo mailway update"
+  info "Una actualización que estuviera en curso termina sola. Para actualizar manualmente: sudo mailway update"
 }
 
 texto_resultado() {
   case "$1" in
     actualizada) printf 'aplicada y comprobada' ;;
-    revertida) printf 'falló y el servidor volvió a la versión anterior' ;;
-    sin-revertir) printf 'falló y la vuelta atrás también: hay que revisarlo a mano' ;;
+    revertida) printf 'ha fallado y el servidor ha vuelto a la versión anterior' ;;
+    sin-revertir) printf 'ha fallado y la vuelta atrás también: hay que revisarlo manualmente' ;;
     en-curso) printf 'en curso o interrumpida (la próxima ejecución la retoma)' ;;
-    manual) printf 'aplicada a mano (mailway update)' ;;
-    no-aplicada) printf 'no se pudo aplicar (sin cambios)' ;;
+    manual) printf 'aplicada manualmente (mailway update)' ;;
+    no-aplicada) printf 'no se ha podido aplicar (sin cambios)' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -819,7 +819,7 @@ estado_auto() {
   fi
   fallida=$(leer_estado FALLIDA)
   if [ -n "$fallida" ]; then
-    info "Versión que falló: $(corto "$fallida") ($(numero "$(leer_estado INTENTOS)") de $MAX_INTENTOS intentos automáticos). Con otra versión se vuelve a intentar; a mano: sudo mailway update -y"
+    info "Versión que ha fallado: $(corto "$fallida") ($(numero "$(leer_estado INTENTOS)") de $MAX_INTENTOS intentos automáticos). Con otra versión se vuelve a intentar; para aplicarla manualmente: sudo mailway update -y"
   fi
   info "Registro de las últimas ejecuciones (journalctl -u $UNIDAD):"
   journalctl -u "$UNIDAD" -n 30 --no-pager 2>/dev/null || info "  (sin registro disponible)"
@@ -829,7 +829,7 @@ auto_actualizacion() {
   local accion=${1:-status}
   [ $# -eq 0 ] || shift
   # Escribe en /etc/systemd/system y lee el registro del sistema.
-  [ "$(id -u)" = 0 ] || fallo "Hace falta ser root: sudo mailway auto-update $accion"
+  [ "$(id -u)" = 0 ] || fallo "Ejecuta la orden como root: sudo mailway auto-update $accion"
   case "$accion" in
     on|activar) activar_auto "$@" ;;
     off|desactivar) desactivar_auto ;;
@@ -861,7 +861,7 @@ main() {
     migrar-motor | revertir-motor | retirar-motor-anterior)
       como_root "$orden" "$@"
       # -y es lo único que pasa al instalador: el resto, por el entorno.
-      case "$#:${1:-}" in 0: | 1:-y | 1:--si) ;; *) fallo "La orden $orden solo admite -y (mira «mailway ayuda»)." ;; esac
+      case "$#:${1:-}" in 0: | 1:-y | 1:--si) ;; *) fallo "La orden $orden solo admite -y (consulta «mailway ayuda»)." ;; esac
       exec bash "$RAIZ/deploy/instalar.sh" "--$orden" "$@"
       ;;
     bulwark)

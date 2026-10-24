@@ -194,7 +194,7 @@ comprobar "con el nombre del servidor como sujeto" contiene <(cuerpos_post) '["c
 comprobar "y borra certificate.default después, en la misma petición" contiene <(cuerpos_post) "\"assert_empty\":false},$OP_CLEAR]"
 comprobar "arranca el extractor (retira las claves ajenas del volumen)" contiene "$REGISTRO" "compose_q --profile tls up -d --force-recreate certs-dumper"
 comprobar "espera a que compruebe el certificado servido" contiene "$REGISTRO" "docker exec mailway-certs-dumper python /app/extractor.py estado"
-comprobar "no lo trata como un certificado propio" no_contiene "$SALIDA" "configurado a mano"
+comprobar "no lo trata como un certificado propio" no_contiene "$SALIDA" "configurado manualmente"
 comprobar "el motor queda con certificado" contiene "$SALIDA" "CERT_CONFIGURADO=1"
 comprobar "el resumen dice que lo mantiene el extractor" contiene "$SALIDA" "RESUMEN_CERT=el de Traefik, aplicado por el extractor"
 
@@ -206,7 +206,7 @@ comprobar "pasa al extractor" contiene "$REGISTRO" "compose_q --profile tls up -
 echo "# Certificado propio con otras rutas: se respeta"
 FAKE_AJUSTES='{"data":{"certificate.default.cert":"%{file:/etc/stalwart/propio/cert.pem}%","certificate.default.private-key":"%{file:/etc/stalwart/propio/key.pem}%"}}'
 probar_motor
-comprobar "lo explica" contiene "$SALIDA" "El motor ya tiene un certificado configurado a mano; no se modifica"
+comprobar "lo explica" contiene "$SALIDA" "El motor ya tiene un certificado configurado manualmente; no se modifica"
 comprobar "no crea certificate.mailway" no_contiene <(cuerpos_post) "certificate.mailway"
 comprobar "no borra certificate.default" no_contiene <(cuerpos_post) "clear"
 comprobar "no arranca el extractor" no_contiene "$REGISTRO" "compose_q"
@@ -214,20 +214,20 @@ comprobar "no arranca el extractor" no_contiene "$REGISTRO" "compose_q"
 echo "# Las rutas del volcado, pero de otro nombre de servidor: se respeta"
 FAKE_AJUSTES='{"data":{"certificate.default.cert":"%{file:/opt/stalwart/certs/mail.otro.test/cert.pem}%","certificate.default.private-key":"%{file:/opt/stalwart/certs/mail.otro.test/key.pem}%"}}'
 probar_motor
-comprobar "lo trata como propio" contiene "$SALIDA" "configurado a mano"
+comprobar "lo trata como propio" contiene "$SALIDA" "configurado manualmente"
 comprobar "no borra certificate.default" no_contiene <(cuerpos_post) "clear"
 
 echo "# El certificado del volcado con una clave de otro sitio: se respeta"
 FAKE_AJUSTES="{\"data\":{\"certificate.default.cert\":\"%{file:$RUTA/cert.pem}%\",\"certificate.default.private-key\":\"%{file:/etc/stalwart/clave.pem}%\"}}"
 probar_motor
-comprobar "lo trata como propio" contiene "$SALIDA" "configurado a mano"
+comprobar "lo trata como propio" contiene "$SALIDA" "configurado manualmente"
 
 echo "# El motor rechaza el cambio: avisa sin interrumpir y no da el certificado por renovado"
 FAKE_AJUSTES="{\"data\":{$DEFAULT_VOLCADO}}"
 FAKE_RECHAZO="certificate.mailway.cert"
 probar_motor
 comprobar "termina bien" igual "$CODIGO" 0
-comprobar "lo explica" contiene "$SALIDA" "No se pudo pasar el certificado al extractor"
+comprobar "lo explica" contiene "$SALIDA" "No se ha podido pasar el certificado al extractor"
 comprobar "el resumen lo recoge" contiene "$SALIDA" "SIN RENOVACIÓN"
 comprobar "no arranca el extractor" no_contiene "$REGISTRO" "compose_q"
 FAKE_RECHAZO=""
@@ -254,7 +254,7 @@ FAKE_DEFAULT_ROTO=1
 rm -f "$DEFAULT_RETIRADO"
 probar_motor
 comprobar "da el certificado por configurado" contiene "$SALIDA" "CERT_CONFIGURADO=1"
-comprobar "sin avisar de que no se pudo" no_contiene "$SALIDA" "No se pudo configurar la emisión del certificado"
+comprobar "sin avisar de que no se ha podido" no_contiene "$SALIDA" "No se ha podido configurar la emisión del certificado"
 FAKE_DEFAULT_ROTO=0
 rm -f "$DEFAULT_RETIRADO"
 CF_TOKEN=""
@@ -506,7 +506,7 @@ if php -m 2>/dev/null | grep -qix pdo_sqlite; then
   comprobar "y su usuario anterior sigue en la base" contiene "$TMP/usuarios" "2 luis@ejemplo.test mail.ejemplo.test"
   comprobar "no toca otros servidores" contiene "$TMP/usuarios" "5 raro@ejemplo.test imap.otro.test"
   comprobar "dice cuántos se trasladan" contiene "$SALIDA" "Usuarios del webmail trasladados de mail.ejemplo.test a mailway-mail: 2."
-  comprobar "y cuántos no" contiene "$SALIDA" "Usuarios del webmail que ya habían entrado por mailway-mail y conservan ese usuario: 1."
+  comprobar "y cuántos no" contiene "$SALIDA" "Usuarios del webmail que ya habían accedido por mailway-mail y conservan ese usuario: 1."
 
   echo "# Repetirlo no cambia nada"
   : >"$REGISTRO"
@@ -555,7 +555,7 @@ FAKE_PHP_FALLA=1
 probar_retirada
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "y la retirada sigue hasta el final" contiene "$SALIDA" "RETIRADA_TERMINADA"
-comprobar "lo explica" contiene "$SALIDA" "No se pudo trasladar a los usuarios del webmail"
+comprobar "lo explica" contiene "$SALIDA" "No se ha podido trasladar a los usuarios del webmail"
 comprobar "con el motivo" contiene "$SALIDA" "no such table: users"
 FAKE_PHP_FALLA=0
 
@@ -564,13 +564,13 @@ FAKE_WEBMAIL_ENV=$'ROUNDCUBEMAIL_DEFAULT_HOST=ssl://mailway-mail\nROUNDCUBEMAIL_
 probar_retirada
 comprobar "termina bien" igual "$CODIGO" 0
 comprobar "no ejecuta nada sobre la base" no_contiene "$REGISTRO" "docker run"
-comprobar "ni dice nada de sus usuarios" no_contiene "$SALIDA" "entraba al motor por"
+comprobar "ni dice nada de sus usuarios" no_contiene "$SALIDA" "se conectaba al motor por"
 
 echo "# Webmail con otro servidor IMAP: no se toca su base"
 FAKE_WEBMAIL_ENV=$'ROUNDCUBEMAIL_DEFAULT_HOST=ssl://imap.otro.test:993'
 probar_retirada
 comprobar "no ejecuta nada sobre la base" no_contiene "$REGISTRO" "docker run"
-comprobar "lo explica" contiene "$SALIDA" "entraba al motor por imap.otro.test"
+comprobar "lo explica" contiene "$SALIDA" "se conectaba al motor por imap.otro.test"
 
 echo "# Sin migración de contenedores ni webmail: no se ejecuta nada sobre la base"
 FAKE_WEBMAIL_ENV=""
@@ -588,7 +588,7 @@ comprobar "termina bien" igual "$CODIGO" 0
 comprobar "y la retirada sigue hasta el final" contiene "$SALIDA" "RETIRADA_TERMINADA"
 comprobar "no lee su entorno (con secretos)" no_contiene "$REGISTRO" "Config.Env"
 comprobar "ni retira contenedores" no_contiene "$REGISTRO" "docker rm"
-comprobar "lo explica" contiene "$SALIDA" "No se pudo trasladar a los usuarios del webmail"
+comprobar "lo explica" contiene "$SALIDA" "No se ha podido trasladar a los usuarios del webmail"
 FAKE_PHP_FALLA=0
 MIGRAR_CONTENEDORES=1
 
