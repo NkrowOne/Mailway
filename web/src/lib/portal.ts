@@ -208,7 +208,7 @@ export async function copiarTexto(texto: string): Promise<boolean> {
 export async function descargarFichero(url: string, nombrePorDefecto: string): Promise<void> {
   const res = await fetch(url, { credentials: 'same-origin' });
   if (!res.ok) {
-    let mensaje = `Error ${res.status} del servidor.`;
+    let mensaje = `El servidor ha respondido con un error (${res.status}). Vuelve a intentarlo.`;
     let code = 'error';
     try {
       const data = (await res.json()) as { error?: string; code?: string };

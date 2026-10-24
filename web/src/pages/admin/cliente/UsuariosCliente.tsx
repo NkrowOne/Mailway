@@ -45,7 +45,7 @@ export default function UsuariosCliente({ contexto }: { contexto: ContextoClient
       <CabeceraVista
         enPestana
         title="Usuarios"
-        meta={`Personas que entran en el panel de ${cliente.name} para gestionar sus dominios, buzones, alias y claves de API.`}
+        meta={`Personas que acceden al panel de ${cliente.name} para gestionar sus dominios, buzones, alias y claves de API.`}
         actions={
           <>
             <Button variant="perfil" onClick={() => setAnadir(true)}>
@@ -63,7 +63,7 @@ export default function UsuariosCliente({ contexto }: { contexto: ContextoClient
           {usuarios.length === 0 ? (
             <Vacio
               icono={UserRound}
-              title="Sin usuarios de acceso"
+              title="Todavía no hay usuarios"
               action={
                 <>
                   <Button variant="perfil" disabled={cliente.suspended} onClick={() => enviarEnlace()}>
@@ -75,7 +75,7 @@ export default function UsuariosCliente({ contexto }: { contexto: ContextoClient
                 </>
               }
             >
-              {cliente.name} aún no puede entrar en su panel. Con un enlace de bienvenida, la persona de contacto crea
+              {cliente.name} aún no puede acceder a su panel. Con un enlace de bienvenida, la persona de contacto crea
               su propio acceso y pone en marcha el correo paso a paso.
             </Vacio>
           ) : (
@@ -128,20 +128,20 @@ function ResultadoEnlace({ enlace }: { enlace: EnlaceRestablecer }) {
     <div className="flex flex-col gap-4">
       {enlace.status === 'sent' ? (
         <p className="text-base text-tinta-2">
-          Se ha enviado a <span className="valor break-all text-tinta">{enlace.to}</span> el enlace para elegir una
+          Se ha enviado a <span className="valor text-tinta [overflow-wrap:anywhere]">{enlace.to}</span> el enlace para elegir una
           contraseña nueva. Vale hasta el {fechaLarga(enlace.expiresAt)}.
         </p>
       ) : (
         <BandaError>
-          {enlace.error ? `${mayuscula(enlace.error.replace(/[.\s]+$/, ''))}. ` : ''}Copia el enlace y envíaselo tú a{' '}
-          <span className="valor break-all">{enlace.to}</span>. Vale hasta el {fechaLarga(enlace.expiresAt)}.
+          {enlace.error ? `${mayuscula(enlace.error.replace(/[.\s]+$/, ''))}. ` : ''}Copia el enlace y envíalo a{' '}
+          <span className="valor [overflow-wrap:anywhere]">{enlace.to}</span>. Vale hasta el {fechaLarga(enlace.expiresAt)}.
         </BandaError>
       )}
       <Muestra rotulo={enlace.status === 'sent' ? 'Enlace (por si no le llega el correo)' : 'Enlace'} copiar={enlace.url}>
         <p className="codigo break-all text-sm text-tinta">{enlace.url}</p>
       </Muestra>
       <p className="text-sm text-tinta-3">
-        Es personal y sirve una sola vez. Entrará con <span className="valor break-all">{enlace.email}</span> y la
+        Es personal y sirve una sola vez. Accederá con <span className="valor [overflow-wrap:anywhere]">{enlace.email}</span> y la
         contraseña que elija.
       </p>
     </div>
@@ -205,7 +205,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
       return;
     }
     if (!esCorreoValido(email)) {
-      setError('Indica un correo válido: será el usuario con el que entrará en el panel.');
+      setError('Indica un correo válido: será su usuario para acceder al panel.');
       return;
     }
     if (modo === 'propia' && password.length < 10) {
@@ -227,7 +227,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
     <Dialogo
       open
       onClose={onClose}
-      title={creado ? 'Usuario creado' : 'Añadir usuario del panel'}
+      title={creado ? 'Usuario creado' : 'Crear usuario del panel'}
       confirmarCierre={creado ? CONFIRMAR_CONTRASENA : null}
       pie={
         creado ? (
@@ -244,7 +244,7 @@ function AnadirUsuario({ clientId, clientName, onClose }: { clientId: string; cl
       ) : (
         <form onSubmit={submit} noValidate className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            Este usuario entrará en el panel de {clientName} y podrá gestionar sus dominios, buzones, alias y
+            Este usuario accederá al panel de {clientName} y podrá gestionar sus dominios, buzones, alias y
             claves de API, dentro de los límites del plan.
           </p>
           <Input label="Nombre" maxLength={80} value={name} onChange={(e) => limpiar(setName)(e.target.value)} />
@@ -392,7 +392,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
           {user.disabled && <MarcaFondo veredicto="fuera">Deshabilitado</MarcaFondo>}
         </p>
         <p className="text-sm text-tinta-3">
-          <span className="valor break-all">{user.email}</span> · último acceso{' '}
+          <span className="valor [overflow-wrap:anywhere]">{user.email}</span> · último acceso{' '}
           <span className="valor">{formatDate(user.lastLoginAt)}</span>
         </p>
       </div>
@@ -442,7 +442,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
         ) : (
           <form onSubmit={restablecer} noValidate className="flex flex-col gap-4">
             <p className="text-base text-tinta-2">
-              Usuario del panel: <span className="valor break-all text-tinta">{user.email}</span>
+              Usuario del panel: <span className="valor text-tinta [overflow-wrap:anywhere]">{user.email}</span>
             </p>
             <fieldset className="flex flex-col gap-2.5">
               <legend className="rotulo mb-2">Cómo restablecerla</legend>
@@ -454,7 +454,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
                   setModo('enlace');
                 }}
                 label="Enviar un enlace por correo"
-                help="Elige su contraseña nueva él mismo. El enlace vale 24 horas y sirve una sola vez."
+                help="El usuario elige su contraseña nueva. El enlace vale 24 horas y sirve una sola vez."
               />
               <Opcion
                 name={`restablecer-modo-${user.id}`}
@@ -464,7 +464,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
                   setModo('generar');
                 }}
                 label="Generar una contraseña ahora"
-                help="Se mostrará una sola vez y tendrás que entregársela tú."
+                help="Se mostrará una sola vez y debes entregársela por un canal seguro."
               />
             </fieldset>
             {modo === 'enlace' && (
@@ -477,7 +477,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
                     setError('');
                     setDestino('propio');
                   }}
-                  label={<span className="valor break-all">{user.email}</span>}
+                  label={<span className="valor [overflow-wrap:anywhere]">{user.email}</span>}
                   help="Su correo de acceso al panel."
                 />
                 <Opcion
@@ -488,7 +488,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
                     setDestino('otro');
                   }}
                   label="Otro correo"
-                  help="Útil si no puede leer el correo de su cuenta."
+                  help="Por si no puede leer el correo de su cuenta."
                 />
                 {destino === 'otro' && (
                   <Input
@@ -525,7 +525,7 @@ function FilaUsuario({ clientId, user }: { clientId: string; user: ClientUser })
       <Dialogo open={dialogo === 'eliminar'} onClose={cerrar} title="Eliminar usuario">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            <span className="valor break-all">{user.email}</span> dejará de poder entrar en el panel y se cerrarán
+            <span className="valor [overflow-wrap:anywhere]">{user.email}</span> dejará de poder acceder al panel y se cerrarán
             sus sesiones. Los buzones y dominios del cliente no se modifican.
           </p>
           {error && <BandaError>{error}</BandaError>}

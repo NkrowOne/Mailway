@@ -159,8 +159,8 @@ function Estado({ datos }: { datos: EstadoCorreoWebGeneral }) {
     <div className="flex flex-col gap-3 px-4 py-4">
       <p className="max-w-[75ch] text-base text-tinta-2">
         La alternativa a Roundcube para los webmail propios de los clientes: interfaz actual, calendario y
-        contactos, aplicación instalable y la marca de cada cliente. Cada cliente se cambia en su tarjeta «Correo
-        web» de Marca blanca; aquí se elige lo que vale para todos.
+        contactos, aplicación instalable y la marca de cada cliente. Cada cliente se cambia en la tarjeta «Correo
+        web» de su «Marca blanca»; aquí se elige lo que se aplica a todos.
       </p>
       <div role="status" className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <Marca veredicto={veredicto}>{etiqueta}</Marca>
@@ -203,9 +203,8 @@ function ParaNuevos({ datos }: { datos: EstadoCorreoWebGeneral }) {
           Correo web de los clientes nuevos
         </h3>
         <p className="mt-0.5 max-w-[75ch] text-sm text-tinta-3">
-          Con el que empieza cada cliente que se da de alta; los que ya existen conservan el suyo. Elegir el nuevo
-          abre antes, si hace falta, el acceso al servidor de correo desde el navegador (CORS), como al elegirlo
-          para un cliente.
+          El que tendrá cada cliente que se dé de alta; los que ya existen conservan el suyo. Si se elige el correo
+          web nuevo, antes se abre, si hace falta, el acceso al servidor de correo desde el navegador (CORS).
         </p>
       </div>
       {ajustes.paraNuevos === 'bulwark' && !estado.enServicio && (
@@ -306,8 +305,8 @@ function PasarTodos({ datos }: { datos: EstadoCorreoWebGeneral }) {
           Pasar a todos los clientes
         </h3>
         <p className="mt-0.5 max-w-[75ch] text-sm text-tinta-3">
-          Cambia de una vez el correo web de los clientes que ya existen. Después, cada uno se puede cambiar en su
-          tarjeta «Correo web» de Marca blanca. El de los clientes nuevos no cambia.
+          Cambia a la vez el correo web de todos los clientes que ya existen. Después, cada uno se puede cambiar en
+          la tarjeta «Correo web» de su «Marca blanca». No afecta a los clientes nuevos.
         </p>
       </div>
       {clientes.total === 0 ? (
@@ -355,7 +354,7 @@ function PasarTodos({ datos }: { datos: EstadoCorreoWebGeneral }) {
                   ? 'El cliente que usa Roundcube pasa'
                   : `Los ${conRoundcube} clientes que usan Roundcube pasan`}{' '}
                 al correo web nuevo: sus webmail propios lo abrirán en unos segundos y quien tenga Roundcube abierto
-                tendrá que volver a entrar. El correo, el calendario y los contactos siguen en el servidor.
+                tendrá que volver a acceder. El correo, el calendario y los contactos siguen en el servidor.
               </p>
               {clientes.conBulwark === 0 && (
                 <p>
@@ -375,7 +374,7 @@ function PasarTodos({ datos }: { datos: EstadoCorreoWebGeneral }) {
               servidor.
             </p>
           )}
-          <p>Después, cada cliente se puede cambiar en su tarjeta «Correo web» de Marca blanca.</p>
+          <p>Después, cada cliente se puede cambiar en la tarjeta «Correo web» de su «Marca blanca».</p>
           <AvisoEspera activo={pasar.isPending && confirmar === 'bulwark'}>{ESPERA_CORS}</AvisoEspera>
           {error && <AvisoError>{error}</AvisoError>}
         </div>
@@ -464,7 +463,7 @@ function FormularioFunciones({ ajustes }: { ajustes: AjustesCorreoWeb }) {
           value={campos.relePush}
           placeholder="https://"
           onChange={(e) => cambiar('relePush', e.target.value)}
-          help="Opcional. Entrega los avisos del navegador a quien los active. Vacío: el relé que aloja Bulwark."
+          help="Opcional. Entrega las notificaciones del navegador a quien las active. Si se deja vacío, se usa el relé que aloja Bulwark."
         />
       </div>
       {error && <AvisoError>{error}</AvisoError>}

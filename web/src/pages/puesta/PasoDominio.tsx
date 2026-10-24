@@ -77,7 +77,7 @@ function AltaDominio({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<H
       const pedido = hayCloudflare && autoDns;
       const aviso = avisoAltaDominio(data, pedido);
       // El aviso genérico habla de «la ficha»; aquí la ficha es este mismo paso.
-      toast(aviso.tono, pedido ? aviso.texto : 'Dominio añadido. Ahora falta su DNS.');
+      toast(aviso.tono, pedido ? aviso.texto : 'Dominio añadido. Ahora hay que configurar su DNS.');
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'No se ha podido añadir el dominio.'),
   });
@@ -94,14 +94,14 @@ function AltaDominio({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<H
 
   return (
     <>
-      <CabeceraPaso ref={tituloRef} titulo="¿Cuál es el dominio de tu empresa?">
-        Es lo que va detrás de la @ en vuestras direcciones de correo. Con él se crean los buzones de
-        todo el equipo.
+      <CabeceraPaso ref={tituloRef} titulo="Indica el dominio de tu empresa">
+        Es lo que va detrás de la @ en las direcciones de correo de tu empresa. Con él se crean los
+        buzones de todo el equipo.
       </CabeceraPaso>
 
       {sinPlazas && (
         <AvisoError>
-          Tu plan no admite más dominios. Pide a tu proveedor que lo amplíe para continuar.
+          Tu plan no admite más dominios. Para continuar, solicita a tu proveedor una ampliación del plan.
         </AvisoError>
       )}
 
@@ -122,7 +122,7 @@ function AltaDominio({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<H
             }}
             placeholder="tuempresa.com"
             error={error || undefined}
-            help="Tiene que ser vuestro y poder cambiar su DNS donde lo gestionáis (IONOS, GoDaddy, DonDominio, Cloudflare…)."
+            help="Debe ser de tu empresa y tienes que poder cambiar su DNS en el proveedor donde se gestiona (IONOS, GoDaddy, DonDominio, Cloudflare…)."
           />
           {limpio && limpio !== texto.trim().toLowerCase() && !error && (
             <p className="-mt-2 text-sm text-tinta-2">
@@ -137,7 +137,7 @@ function AltaDominio({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRef: Ref<H
                 label="Configurar el DNS automáticamente en Cloudflare"
                 help={`Si la zona está en una de tus cuentas conectadas (${(cuentas.data?.accounts ?? [])
                   .map((c) => c.label)
-                  .join(', ')}), se crean los registros que faltan sin tocar lo que ya existe.`}
+                  .join(', ')}), se crean los registros que faltan sin modificar los que ya existen.`}
               />
             </div>
           )}
@@ -219,7 +219,7 @@ function DnsDominio({
       } else if (propiedadPendiente(d)) {
         toast(
           'error',
-          'Todavía no se ve el registro de verificación. Si acabas de crearlo, espera unos minutos: se vuelve a comprobar solo.',
+          'Todavía no se encuentra el registro de verificación. Si acabas de crearlo, espera unos minutos: se comprueba automáticamente.',
         );
       } else if (medicionIlegible(d)) {
         toast('error', 'No se ha podido consultar el DNS ahora mismo. Vuelve a comprobarlo en unos minutos.');
@@ -281,19 +281,20 @@ function DnsDominio({
     ? `${visible} está listo`
     : pendientePropiedad
       ? `Conecta ${visible}`
-      : `Termina el DNS de ${visible}`;
+      : `Completa el DNS de ${visible}`;
 
   const bloqueCloudflare = <BloqueCloudflare dominio={dominio} isAdmin={false} />;
 
   return (
     <>
-      <CabeceraPaso ref={tituloRef} titulo={<span className="break-all">{titulo}</span>}>
+      <CabeceraPaso ref={tituloRef} titulo={<span className="[overflow-wrap:anywhere]">{titulo}</span>}>
         {todoBien ? (
           'El dominio ya puede enviar y recibir correo. Sigue con los buzones de tu equipo.'
         ) : (
           <>
-            El DNS le dice a Internet que el correo de tu dominio llega a este servidor. Se cambia en el
-            panel de la empresa donde gestionas el dominio, en el apartado «DNS» o «Zona DNS».
+            Los registros DNS indican a Internet que el correo de tu dominio se entrega en este servidor.
+            Se cambian en el panel del proveedor donde gestionas el dominio, en el apartado «DNS» o «Zona
+            DNS».
           </>
         )}
       </CabeceraPaso>
@@ -321,20 +322,20 @@ function DnsDominio({
         <FilaEstado
           concepto="Registros para enviar y recibir correo"
           veredicto={!medido || ilegible ? 'sin-dato' : correctos >= total ? 'normal' : 'vigilar'}
-          estado={!medido ? 'Sin comprobar' : ilegible ? 'Sin dato' : `${correctos} de ${total} correctos`}
+          estado={!medido ? 'Sin comprobar' : ilegible ? 'Sin datos' : `${correctos} de ${total} correctos`}
           nota={
             todoBien
               ? undefined
               : ilegible
-                ? 'No se ha podido consultar el DNS. Se vuelve a intentar solo.'
-                : 'Hasta que estén todos, el correo no llega ni sale. Puedes ir creando los buzones mientras tanto.'
+                ? 'No se ha podido consultar el DNS. Se volverá a intentar automáticamente.'
+                : 'Hasta que estén todos, no se puede enviar ni recibir correo. Mientras tanto, puedes crear los buzones.'
           }
         />
         {!todoBien && (
           <p className="border-t border-regla px-4 py-2.5 text-sm text-tinta-3" aria-live="polite">
             {comprobandoSolo
               ? 'Comprobando el DNS…'
-              : 'Se comprueba solo cada minuto mientras tengas esta página abierta. Los cambios de DNS pueden tardar unos minutos en verse.'}
+              : 'Se comprueba automáticamente cada minuto mientras esta página esté abierta. Los cambios de DNS pueden tardar unos minutos en aplicarse.'}
           </p>
         )}
       </Hoja>
@@ -355,15 +356,15 @@ function DnsDominio({
           titulo="Primero, demuestra que el dominio es tuyo"
           explicacion={
             <p>
-              Crea este registro TXT en el DNS de tu dominio y pulsa «Verificar». No cambia nada del correo
-              que ya funcione. También queda comprobado en cuanto el registro MX de la lista de abajo apunte a
-              este servidor.
+              Crea este registro TXT en el DNS de tu dominio y pulsa «Verificar». No afecta al correo que ya
+              funcione. La propiedad también queda comprobada en cuanto el registro MX de la lista de abajo
+              apunte a este servidor.
             </p>
           }
           pie={
             <p className="max-w-[75ch] text-sm text-tinta-3">
-              En la mayoría de proveedores: «Añadir registro», tipo TXT, el nombre y el valor tal cual. Si el
-              proveedor añade el dominio al nombre por su cuenta, escribe solo la parte de delante.
+              En la mayoría de proveedores: «Añadir registro», tipo TXT, y el nombre y el valor tal como
+              aparecen. Si el proveedor añade el dominio al nombre automáticamente, escribe solo la primera parte.
             </p>
           }
         />
@@ -372,15 +373,15 @@ function DnsDominio({
       {!todoBien && (
         <Hoja
           title="Registros que hay que crear"
-          meta={ilegible ? 'Sin dato' : `${correctos} de ${total} correctos`}
+          meta={ilegible ? 'Sin datos' : `${correctos} de ${total} correctos`}
           flush
         >
           {obligatorios.length === 0 ? (
             ficha.isFetching ? (
-              <Cargando label="Leyendo los registros del dominio…" />
+              <Cargando label="Cargando los registros del dominio…" />
             ) : (
               <p className="px-4 py-3.5 text-base text-tinta-2">
-                Aún no hay lectura del DNS. Pulsa «Comprobar ahora» para ver los registros que hay que crear.
+                Todavía no se ha comprobado el DNS. Pulsa «Comprobar ahora» para ver los registros que hay que crear.
               </p>
             )
           ) : (
@@ -419,7 +420,7 @@ function DnsDominio({
           pendientePropiedad
             ? 'Para continuar falta comprobar que el dominio es tuyo.'
             : !todoBien
-              ? 'Puedes seguir: los buzones ya se pueden crear. El correo funcionará cuando estén todos los registros.'
+              ? 'Puedes continuar: los buzones ya se pueden crear. El correo funcionará cuando estén todos los registros.'
               : undefined
         }
       />

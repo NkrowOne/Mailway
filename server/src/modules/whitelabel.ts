@@ -767,7 +767,7 @@ export async function checkHttpsDetrasDeCloudflare(
     return {
       ok: false,
       detail:
-        'Este servidor responde con 404 para el dominio: su ruta aún no está publicada. Si acaba de entrar, espera unos segundos; si no, revisa la conexión de Traefik con Mailway en Ajustes.',
+        'Este servidor responde con 404 para el dominio: su ruta aún no está publicada. Si se acaba de añadir, espera unos segundos; si no, revisa la conexión de Traefik con Mailway en Ajustes.',
     };
   }
   if (origen.status < 200 || origen.status >= 400) {
@@ -778,7 +778,7 @@ export async function checkHttpsDetrasDeCloudflare(
   if ('error' in publico) {
     return {
       ok: true,
-      detail: 'HTTPS responde en este servidor. No se ha podido comprobar el camino a través de Cloudflare en este momento.',
+      detail: 'HTTPS responde en este servidor. En este momento no se ha podido comprobar el acceso a través de Cloudflare.',
     };
   }
   if (publico.status >= 300 && publico.status < 400 && redirigeASiMismo(hostname, publico.location)) {
@@ -795,7 +795,7 @@ export async function checkHttpsDetrasDeCloudflare(
     return {
       ok: true,
       detail:
-        'HTTPS responde en este servidor. Cloudflare aplica su protección a esta comprobación automática, así que no se ha comprobado su camino; los visitantes pasan por esa protección.',
+        'HTTPS responde en este servidor. Cloudflare aplica su protección a esta comprobación automática, así que no se ha comprobado el acceso a través de Cloudflare; los visitantes pasan por esa protección.',
     };
   }
   if (publico.status === 526 || publico.status === 525) {
@@ -960,8 +960,8 @@ export async function refreshClientDomain(id: string): Promise<ClientDomain> {
       )
       .get(
         padre
-          ? 'Todavía no se ha comprobado la propiedad del dominio de correo del que cuelga este nombre: no se publica hasta comprobarla.'
-          : 'Este nombre ya no cuelga de ningún dominio de correo de este cliente, así que no se publica. Elimínalo o vuelve a dar de alta su dominio de correo.',
+          ? 'Todavía no se ha comprobado la propiedad del dominio de correo al que pertenece este nombre: no se publica hasta comprobarla.'
+          : 'Este nombre ya no pertenece a ningún dominio de correo de este cliente, así que no se publica. Elimínalo o vuelve a dar de alta su dominio de correo.',
         now(),
         id,
       ) as DomainRow;

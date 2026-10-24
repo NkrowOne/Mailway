@@ -83,8 +83,8 @@ export default function Actividad({ clienteFijo }: { clienteFijo?: string } = {}
           ) : (
             <>
               <p>
-                Registro de auditoría: cada acción queda anotada con su autor, su fecha y, si la
-                realizó una integración, el token que utilizó.
+                Cada acción queda registrada con su autor, su fecha y, si la hizo una integración, el
+                token que usó.
               </p>
               {cargadas && <p className="mt-1 text-sm text-tinta-3">{cargadas}</p>}
             </>
@@ -117,24 +117,24 @@ export default function Actividad({ clienteFijo }: { clienteFijo?: string } = {}
         flush
       >
         {registro.isPending ? (
-          <Cargando label="Cargando el registro de actividad…" />
+          <Cargando label="Cargando la actividad…" />
         ) : errorInicial ? (
           <div className="px-4 py-4">
             <AvisoError onRetry={() => void registro.refetch()} retrying={registro.isFetching}>
-              No se ha podido leer el registro de actividad.{' '}
-              {mensajeDe(registro.error, 'Comprueba la conexión con el servidor.')}
+              No se ha podido cargar la actividad.{' '}
+              {mensajeDe(registro.error, 'Comprueba la conexión y vuelve a intentarlo.')}
             </AvisoError>
           </div>
         ) : anotaciones.length === 0 ? (
-          <Vacio icono={History} title="No hay actividad registrada">
+          <Vacio icono={History} title="Todavía no hay actividad">
             {filtro
-              ? 'No constan acciones sobre este cliente.'
+              ? 'No hay acciones registradas sobre este cliente.'
               : 'Las acciones sobre clientes, dominios, buzones y claves aparecerán aquí a medida que se realicen.'}
           </Vacio>
         ) : (
           <>
             {/* Cabecera de columnas: la fecha y el detalle van en cifras. */}
-            <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 sm:flex">
+            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-2 sm:flex">
               <span className="rotulo w-32 shrink-0">Fecha</span>
               <span className="rotulo min-w-0 grow basis-40">Acción</span>
               <span className="rotulo shrink-0 basis-44">Autor</span>
@@ -151,7 +151,7 @@ export default function Actividad({ clienteFijo }: { clienteFijo?: string } = {}
               <div className="flex flex-col items-start gap-3 border-t border-regla px-4 py-3">
                 {registro.isFetchNextPageError && (
                   <AvisoError className="w-full">
-                    No se han podido leer más anotaciones.{' '}
+                    No se han podido cargar más anotaciones.{' '}
                     {mensajeDe(registro.error, 'Vuelve a intentarlo.')}
                   </AvisoError>
                 )}

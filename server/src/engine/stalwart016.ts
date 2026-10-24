@@ -527,7 +527,7 @@ export class Stalwart016Engine implements MailEngine {
     if (!id) {
       throw new ErrorDeObjetoJmap(
         502,
-        `El dominio ${nombre} no existe en el motor de correo.`,
+        `El dominio ${nombre} no existe en el servidor de correo.`,
         'engine_not_found',
         'notFound',
         { type: 'notFound' },
@@ -572,7 +572,7 @@ export class Stalwart016Engine implements MailEngine {
     if (!id) {
       throw new ErrorDeObjetoJmap(
         502,
-        `El buzón ${email.trim().toLowerCase()} no existe en el motor de correo.`,
+        `El buzón ${email.trim().toLowerCase()} no existe en el servidor de correo.`,
         'engine_not_found',
         'notFound',
         { type: 'notFound' },
@@ -643,7 +643,7 @@ export class Stalwart016Engine implements MailEngine {
       if (!ofreceGestion(sesion)) {
         // Stalwart 0.15 también sirve /jmap/session, pero sin la gestión.
         throw new RutaDeGestionAusente(
-          `El motor de correo responde en ${this.jmap.base}, pero sin la API de gestión de Stalwart 0.16 (${CAPACIDAD_STALWART}).`,
+          `El servidor de correo responde en ${this.jmap.base}, pero sin la API de gestión de Stalwart 0.16 (${CAPACIDAD_STALWART}).`,
         );
       }
       // La sesión la da cualquier cuenta; los ajustes, solo la administración.
@@ -682,7 +682,7 @@ export class Stalwart016Engine implements MailEngine {
       // también choca y ese no es suyo.
       if (!(await this.buscarDominio(nombre, false))) {
         throw upstream(
-          `El motor de correo no puede dar de alta ${nombre}: ese nombre ya lo usa otro dominio del motor como alias.`,
+          `El servidor de correo no puede dar de alta ${nombre}: ese nombre ya lo usa otro dominio como alias.`,
           'engine_exists',
         );
       }
@@ -726,7 +726,7 @@ export class Stalwart016Engine implements MailEngine {
       }
       throw errorDeObjeto(error, que);
     }
-    throw upstream(`El motor de correo no ha terminado de borrar ${que}. Vuelve a intentarlo.`, 'engine_error');
+    throw upstream(`El servidor de correo no ha terminado de borrar ${que}. Vuelve a intentarlo.`, 'engine_error');
   }
 
   async ensureDkim(domain: string, _selector: string): Promise<void> {
@@ -891,7 +891,7 @@ export class Stalwart016Engine implements MailEngine {
       if (existente?.object !== 'Account') {
         // La dirección es de un alias (o de otra cosa): no es un buzón huérfano.
         throw upstream(
-          `El motor de correo no puede crear el buzón ${email}: la dirección ya la usa un alias del motor.`,
+          `El servidor de correo no puede crear el buzón ${email}: la dirección ya la usa un alias.`,
           'engine_exists',
         );
       }
@@ -1012,7 +1012,7 @@ export class Stalwart016Engine implements MailEngine {
       if (!esDuplicado(err)) throw err;
       const existente = err.objeto;
       if (existente?.object !== 'MailingList') {
-        throw upstream(`El motor de correo no puede crear ${que}: la dirección ya es un buzón del motor.`, 'engine_exists');
+        throw upstream(`El servidor de correo no puede crear ${que}: la dirección ya es un buzón.`, 'engine_exists');
       }
       // La búsqueda por texto no la encontró (u otra petición la creó a la
       // vez): el propio duplicado dice cuál es, y se actualiza esa.
@@ -1524,7 +1524,7 @@ export class Stalwart016Engine implements MailEngine {
       const error = res.notCreated?.k ?? { type: 'desconocido' };
       if (error.type === 'overQuota') {
         throw upstream(
-          `El motor de correo no admite más contraseñas de aplicación en el buzón ${email}${error.description ? ` (${error.description})` : ''}. Aplica los ajustes recomendados del motor para subir el límite o retira alguna que ya no se use.`,
+          `El servidor de correo no admite más contraseñas de aplicación en el buzón ${email}${error.description ? ` (${error.description})` : ''}. Revoca alguna que ya no se use; la administración puede subir el límite con los ajustes recomendados del servidor de correo.`,
           'engine_error',
         );
       }
@@ -1746,7 +1746,7 @@ export class Stalwart016Engine implements MailEngine {
     // La principal es el nombre de la cuenta: no se quita ni se mueve aquí.
     if (!fusion.includes(p.direccion)) {
       throw upstream(
-        `El motor de correo no puede quitar ${p.direccion}: es el nombre de esa cuenta. Hay que cambiarle antes el nombre.`,
+        `El servidor de correo no puede quitar ${p.direccion}: es el nombre de esa cuenta. Hay que cambiarle antes el nombre.`,
         'engine_error',
       );
     }

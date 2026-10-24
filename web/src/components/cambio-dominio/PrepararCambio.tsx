@@ -227,7 +227,7 @@ export function PrepararCambio({
       >
         <p>
           Se quitarán las direcciones de {hacia} de los buzones y alias. {desde} sigue igual.
-          {vista.creoDestino ? ` ${hacia} se eliminará de esta plataforma.` : ''}
+          {vista.creoDestino ? ` ${hacia} se eliminará del panel.` : ''}
         </p>
       </DialogoConfirmar>
 
@@ -244,7 +244,7 @@ export function PrepararCambio({
         onConfirmar={() => cambiarMx.mutate()}
         onClose={() => setConfirmar(null)}
       >
-        <p>El correo de {hacia} dejará de llegar a su proveedor actual y entrará en estos buzones.</p>
+        <p>El correo de {hacia} dejará de llegar a su proveedor actual y llegará a estos buzones.</p>
       </DialogoConfirmar>
 
       <DialogoVolver vista={vista} open={confirmar === 'volver'} onClose={() => setConfirmar(null)} />

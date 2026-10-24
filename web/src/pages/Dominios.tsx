@@ -127,7 +127,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
         setAvisoWww({ mensaje: err.message, sugerido: sugerenciaSinWww(domainName) });
         return;
       }
-      setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta.');
+      setError(err instanceof ApiError ? err.message : 'No se ha podido dar de alta el dominio. Vuelve a intentarlo.');
     },
   });
 
@@ -184,8 +184,8 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
           ) : (
             <>
               {isAdmin && 'Dominios de todos los clientes. '}
-              Un dominio no puede enviar ni recibir correo hasta que sus registros DNS coinciden con los
-              valores que se indican en su ficha.
+              Un dominio no puede enviar ni recibir correo hasta que sus registros DNS coincidan con los
+              que indica su ficha.
               {recuento && <span className="valor mt-1 block text-sm text-tinta-3">{recuento}</span>}
             </>
           )
@@ -200,9 +200,9 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
       {/* La administración ya ve la suspensión en la cabecera de la ficha del cliente. */}
       {!isAdmin && clienteContexto?.suspended && (
         <div className="mb-4">
-          <BandaAviso titulo="Servicio suspendido">
-            Mientras el servicio esté suspendido no se pueden añadir dominios. Ponte en contacto con el
-            administrador.
+          <BandaAviso titulo="Cuenta suspendida">
+            Mientras la cuenta esté suspendida no se pueden añadir dominios. Ponte en contacto con tu
+            proveedor.
           </BandaAviso>
         </div>
       )}
@@ -213,7 +213,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
             Se ha alcanzado el máximo de dominios del plan ({plural(clienteContexto.plan.maxDomains, 'dominio', 'dominios')}).
             {isAdmin
               ? ' Para añadir otro, elimina alguno o cambia el plan del cliente en «Resumen».'
-              : ' Para añadir otro, elimina alguno o solicita una ampliación del plan.'}
+              : ' Para añadir otro, elimina alguno o solicita a tu proveedor una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
@@ -244,12 +244,12 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
       ) : (
         <Hoja flush>
           {/* Cabecera de columnas: en móvil cada valor lleva su propio rótulo. */}
-          <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+          <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 sm:flex">
             <span className="rotulo min-w-0 flex-1">Dominio</span>
             {verCliente && <span className="rotulo shrink-0 basis-40">Cliente</span>}
             <span className="rotulo shrink-0 basis-24">Obligatorios</span>
             <span className="rotulo shrink-0 basis-32">Comprobado</span>
-            <span className="rotulo shrink-0 basis-28 text-right">Veredicto</span>
+            <span className="rotulo shrink-0 basis-28 text-right">Estado</span>
           </div>
 
           <ul>
@@ -277,7 +277,7 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
                       <span className="rotulo ml-2 whitespace-nowrap text-vigilar">Propiedad pendiente</span>
                     )}
                     {visible !== domain.domain && (
-                      <span className="valor block break-all text-sm text-tinta-3">{domain.domain}</span>
+                      <span className="valor block text-sm text-tinta-3 [overflow-wrap:anywhere]">{domain.domain}</span>
                     )}
                     {domain.migracion && (
                       <span className="block text-sm text-tinta-2 [overflow-wrap:anywhere]">
@@ -381,10 +381,10 @@ export default function Dominios({ isAdmin, clienteFijo }: { isAdmin: boolean; c
               <p className="mt-1 max-w-[70ch] text-sm text-tinta-2">
                 La zona del dominio debe estar en una cuenta conectada (
                 {utilizables.map((c) => c.label).join(', ')}). Solo se crean los registros que
-                faltan: lo que ya existe (también un SPF que habría que completar) no se
-                modifica y podrás revisarlo y aplicarlo en la ficha del dominio. Si el correo del
-                dominio llega hoy a otro proveedor, tampoco se crean el SPF ni el DMARC: se crean
-                junto con el MX cuando hagas el cambio desde la ficha.
+                faltan; los que ya existen (también un SPF que haya que completar) no se modifican
+                y se pueden revisar y aplicar en la ficha del dominio. Si el correo del dominio
+                llega ahora a otro proveedor, el SPF y el DMARC se crean junto con el MX cuando
+                hagas el cambio desde la ficha.
               </p>
             </div>
           )}

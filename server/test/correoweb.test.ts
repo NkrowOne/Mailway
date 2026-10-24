@@ -532,7 +532,7 @@ describe('sincronización con Bulwark', () => {
     const entrada = marca.find((e) => e.host === hosts[0])!;
     assert.equal(entrada.appName, (db.prepare('SELECT name FROM clients WHERE id = ?').get(clientId) as { name: string }).name);
     assert.equal(entrada.loginCompanyName, 'Empresa Uno S.L.');
-    assert.equal(entrada.appDescription, 'Correo web de Empresa Uno S.L.');
+    assert.equal(entrada.appDescription, 'Correo de Empresa Uno S.L.');
     assert.equal(entrada.loginImprintUrl, 'https://uno.test/aviso');
     assert.equal(entrada.loginWebsiteUrl, `${PANEL}/mi-buzon`);
     // El logotipo claro también para el oscuro y para la pantalla de acceso; el icono, aparte.

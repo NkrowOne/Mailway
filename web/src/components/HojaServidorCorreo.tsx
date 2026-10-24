@@ -50,7 +50,7 @@ export function HojaServidorCorreo() {
     onSettled: () => setConfirmarAplicar(false),
     onSuccess: (res) => {
       if (res.errors.length > 0) {
-        toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
+        toast('error', `El motor ha rechazado parte de los ajustes: ${res.errors[0]}`);
       } else if (res.restartRequired && res.restartRequired.length > 0) {
         // Guardado, pero un puerto nuevo solo se abre al reiniciar el contenedor.
         toast('error', `Ajustes guardados. Reinicia el motor para aplicar: ${res.restartRequired.join('; ')}.`);
@@ -93,12 +93,10 @@ export function HojaServidorCorreo() {
           texto={
             estado.error instanceof ApiError
               ? estado.error.message
-              : 'No se ha podido leer el estado del servidor de correo. Comprueba que Mailway sigue en marcha.'
+              : 'No se ha podido cargar el estado del servidor de correo. Comprueba que el servicio está en marcha y vuelve a intentarlo.'
           }
+          onRetry={() => void estado.refetch()}
         />
-        <Button variant="perfil" className="mt-3" onClick={() => void estado.refetch()}>
-          Reintentar
-        </Button>
       </Hoja>
     );
   }
@@ -136,7 +134,7 @@ export function HojaServidorCorreo() {
           <BandaAviso>
             <strong className="font-semibold">El servidor de correo se está actualizando.</strong> Hasta que termine
             {data.maintenance.until ? ` (como muy tarde, ${formatDate(data.maintenance.until)})` : ''} no se pueden
-            hacer cambios en dominios, buzones, alias ni contraseñas, y el vigilante no avisa de que el motor no responde.
+            hacer cambios en dominios, buzones, alias ni contraseñas, y no se avisa si el motor deja de responder.
           </BandaAviso>
         </div>
       )}
@@ -149,15 +147,15 @@ export function HojaServidorCorreo() {
         <div className="px-4 pt-4">
           <BandaAviso>
             <strong className="font-semibold">El motor necesita reiniciarse</strong> para aplicar lo que tiene guardado:{' '}
-            {data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo, «docker restart mailway-mail») y
-            pulsa «Comprobar de nuevo».
+            {data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo,{' '}
+            <code className="codigo text-sm">docker restart mailway-mail</code>) y pulsa «Comprobar de nuevo».
           </BandaAviso>
         </div>
       )}
 
       <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 pb-1.5 pt-3 sm:flex">
         <span className="rotulo min-w-0 flex-1">Concepto</span>
-        <span className="rotulo shrink-0">Veredicto</span>
+        <span className="rotulo shrink-0">Estado</span>
       </div>
       <div>
         {filas.map((fila) => (
@@ -202,9 +200,10 @@ export function HojaServidorCorreo() {
       )}
       {!data.acmeSupported && (
         <p className="max-w-[75ch] border-t border-regla px-4 py-3 text-sm text-tinta-2">
-          Con Stalwart 0.16 el certificado del servidor de correo lo obtiene Traefik y el extractor lo copia al motor,
-          que lo recarga a diario: el motor ya no lo emite por sí mismo. Si caduca o aparece como autofirmado, revisa el
-          extractor («docker logs mailway-certs-dumper») o ejecuta «sudo bash deploy/instalar.sh --comprobar».
+          Con Stalwart 0.16, Traefik obtiene el certificado del servidor de correo y el extractor lo copia al motor, que
+          lo recarga a diario: el motor ya no lo emite por sí mismo. Si caduca o aparece como autofirmado, revisa el
+          extractor (<code className="codigo text-sm">docker logs mailway-certs-dumper</code>) o ejecuta{' '}
+          <code className="codigo text-sm">sudo bash deploy/instalar.sh --comprobar</code>.
         </p>
       )}
       {cambiaNombre && (
@@ -266,7 +265,7 @@ function construirFilas(data: EngineStatus): Fila[] {
   // los registros de los dominios (el destino de su MX).
   filas.push({
     concepto: 'Nombre en ejecución',
-    valor: data.hostname.running ?? 'Sin dato',
+    valor: data.hostname.running ?? 'Sin datos',
     veredicto: veredictoEnEjecucion(data),
     nota: notaEnEjecucion(data),
   });
@@ -372,7 +371,7 @@ export function FilaEstado({ concepto, valor, veredicto, nota }: Fila) {
   return (
     <div className={`regla-fila flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-2.5 ${fondo}`}>
       <span className="min-w-0 flex-1 basis-40 text-base text-tinta">{concepto}</span>
-      <span className="valor min-w-0 break-all text-sm text-tinta">{valor}</span>
+      <span className="valor min-w-0 text-sm text-tinta [overflow-wrap:anywhere]">{valor}</span>
       <span className="shrink-0 basis-28 text-right">
         <Marca veredicto={veredicto} />
       </span>
@@ -425,7 +424,7 @@ function EmisionCertificado({
       }),
     onSuccess: (res) => {
       if (res.errors.length > 0) {
-        toast('error', `El motor aceptó la configuración con errores: ${res.errors[0]}`);
+        toast('error', `El motor ha aceptado la configuración, pero con errores: ${res.errors[0]}`);
       } else {
         toast(
           'ok',
@@ -465,18 +464,18 @@ function EmisionCertificado({
       <h3 className="rotulo mb-2">Emitir certificado con Let’s Encrypt mediante Cloudflare</h3>
       <p className="mb-3 max-w-[75ch] text-sm text-tinta-2">
         El motor solicita el certificado de {estado.hostname.expected} con un registro DNS temporal
-        en Cloudflare y lo renueva solo 30 días antes de caducar. No depende de Traefik ni del puerto
+        en Cloudflare y lo renueva automáticamente 30 días antes de que caduque. No depende de Traefik ni del puerto
         80, y sirve para IMAP y SMTP.
       </p>
 
       {cuentas.isPending ? (
-        <Cargando label="Leyendo las cuentas de Cloudflare…" />
+        <Cargando label="Cargando las cuentas de Cloudflare…" />
       ) : cuentas.isError ? (
         <BandaError
           texto={
             cuentas.error instanceof ApiError
-              ? `No se han podido leer las cuentas de Cloudflare: ${cuentas.error.message}`
-              : 'No se han podido leer las cuentas de Cloudflare.'
+              ? `No se han podido cargar las cuentas de Cloudflare: ${cuentas.error.message}`
+              : 'No se han podido cargar las cuentas de Cloudflare.'
           }
         />
       ) : instancia.length === 0 ? (
@@ -485,7 +484,7 @@ function EmisionCertificado({
           <Link to="/conexiones" className="font-semibold text-petroleo underline underline-offset-2">
             Conectar una cuenta en Conexiones
           </Link>{' '}
-          con permisos de Zona: Lectura y DNS: Edición sobre la zona de {estado.hostname.expected}.
+          con los permisos «Zone · Zone · Read» y «Zone · DNS · Edit» sobre la zona de {estado.hostname.expected}.
         </p>
       ) : (
         <form onSubmit={enviar} noValidate className="flex flex-col gap-3">

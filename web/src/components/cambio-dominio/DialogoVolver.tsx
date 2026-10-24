@@ -42,7 +42,7 @@ export function DialogoVolver({
     >
       <p>
         El correo volverá a salir como @{vista.desde.domain}. Quien ya haya actualizado sus dispositivos seguirá
-        entrando con su usuario de {vista.hacia.domain}.
+        accediendo con su usuario de {vista.hacia.domain}.
       </p>
     </DialogoConfirmar>
   );

@@ -110,7 +110,7 @@ export function ElegirDominio({ dominio, isAdmin }: { dominio: DominioCorreo; is
       <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
         <p className="max-w-[75ch] text-base text-tinta-2 [overflow-wrap:anywhere]">
           Pasa los buzones, alias, contraseñas, claves de API y formularios de {desde} a un dominio nuevo. El
-          correo que llegue a {desde} seguirá entrando en los mismos buzones hasta que lo des de baja.
+          correo que llegue a {desde} seguirá llegando a los mismos buzones hasta que lo des de baja.
         </p>
         <div className="max-w-md">
           <Input
@@ -262,12 +262,12 @@ function Fila({ de, a, children }: { de: string; a: string; children?: ReactNode
   return (
     <li className="regla-fila px-3 py-2 last:border-b-0">
       <p className="flex flex-wrap items-baseline gap-x-2 text-base">
-        <span className="valor min-w-0 break-all text-tinta-2">{de}</span>
+        <span className="valor min-w-0 text-tinta-2 [overflow-wrap:anywhere]">{de}</span>
         <span aria-hidden className="text-tinta-3">
           →
         </span>
         <span className="sr-only">pasa a</span>
-        <span className="valor min-w-0 break-all text-tinta">{a}</span>
+        <span className="valor min-w-0 text-tinta [overflow-wrap:anywhere]">{a}</span>
       </p>
       {children}
     </li>

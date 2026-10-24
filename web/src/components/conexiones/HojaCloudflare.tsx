@@ -129,20 +129,20 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         {cuentas.isPending ? (
-          <Cargando label="Consultando las cuentas de Cloudflare…" />
+          <Cargando label="Cargando las cuentas de Cloudflare…" />
         ) : cuentas.isError ? (
           <div className="px-4 py-3">
             <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
-              {mensaje(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
+              {mensaje(cuentas.error, 'No se han podido cargar las cuentas de Cloudflare.')}
             </BandaError>
           </div>
         ) : lista.length === 0 ? (
           <Vacio icono={Cloud} title="Todavía no hay ninguna cuenta conectada">
-            Sigue los tres pasos siguientes: crear el token en Cloudflare, pegarlo aquí y conectar.
+            Sigue estos tres pasos: crea el token en Cloudflare, pégalo aquí y conecta la cuenta.
           </Vacio>
         ) : (
           <>
-            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 sm:flex">
               <span className="rotulo min-w-0 flex-1">Cuenta</span>
               {isAdmin && <span className="rotulo shrink-0 basis-40">Ámbito</span>}
               <span className="rotulo shrink-0 basis-16">Zonas</span>
@@ -187,7 +187,7 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
                       </MarcaFondo>
                     </span>
                     <span className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
-                      <Button variant="plano" onClick={() => pedirBorrado(cuenta)}>
+                      <Button variant="peligro" onClick={() => pedirBorrado(cuenta)}>
                         Eliminar
                       </Button>
                     </span>
@@ -248,14 +248,14 @@ export function HojaCloudflare({ isAdmin }: { isAdmin: boolean }) {
               El motor lo usa para renovar el certificado de IMAP y SMTP (Let’s Encrypt). Eliminar la
               cuenta de Mailway no lo cambia, pero no revoques el token en Cloudflare: la siguiente
               renovación fallaría y, al caducar el certificado, los programas de correo dejarían de
-              conectar. Para dejar de usarlo, emite antes el certificado con otra cuenta en Ajustes →
-              Servidor de correo.
+              conectar. Para dejar de usarlo, emite antes el certificado con otra cuenta en «Ajustes» →
+              «Servidor de correo».
             </BandaAviso>
           )}
           {usadaPorElMotor === null && (
             <BandaAviso titulo="No se ha podido comprobar el servidor de correo">
               No se sabe si el motor usa este token para renovar su certificado. Antes de revocarlo en
-              Cloudflare, compruébalo en Ajustes → Servidor de correo.
+              Cloudflare, compruébalo en «Ajustes» → «Servidor de correo».
             </BandaAviso>
           )}
           {borrar.isError && <BandaError>{mensaje(borrar.error, 'No se ha podido eliminar la cuenta.')}</BandaError>}
@@ -369,7 +369,7 @@ function FormularioConexion({
                 help={
                   ambito
                     ? 'El cliente podrá usarla para sus dominios.'
-                    : 'Sirve para cualquier dominio cuya zona esté en esta cuenta de Cloudflare, siempre a petición del administrador.'
+                    : 'Sirve para cualquier dominio cuya zona esté en esta cuenta de Cloudflare, siempre a petición de la administración.'
                 }
               >
                 <option value="">Toda la instancia</option>
@@ -481,7 +481,7 @@ function HojaDnsPlataforma({ hayInstancia }: { hayInstancia: boolean }) {
         <RevisionCambios
           plan={plan.data}
           cargando={(!plan.data && !plan.isError) || (plan.isFetching && plan.dataUpdatedAt < abiertoEn)}
-          error={plan.isError ? mensaje(plan.error, 'No se ha podido leer la zona en Cloudflare.') : null}
+          error={plan.isError ? mensaje(plan.error, 'No se ha podido consultar la zona en Cloudflare.') : null}
           reemplazar={reemplazar}
           onReemplazar={setReemplazar}
           aplicando={aplicar.isPending}

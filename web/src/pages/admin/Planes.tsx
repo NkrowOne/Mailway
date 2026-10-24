@@ -70,7 +70,7 @@ export default function Planes() {
 
       {plans.isPending ? (
         <Hoja flush>
-          <Cargando label="Leyendo los planes…" />
+          <Cargando label="Cargando los planes…" />
         </Hoja>
       ) : plans.isError ? (
         <BandaError onRetry={() => void plans.refetch()}>
@@ -79,14 +79,14 @@ export default function Planes() {
       ) : list.length === 0 ? (
         <Hoja flush>
           <Vacio icono={ClipboardList}
-            title="No hay planes"
+            title="Todavía no hay planes"
             action={
               <Button variant="perfil" onClick={() => setEditor({ modo: 'crear' })}>
                 Crear el primero
               </Button>
             }
           >
-            Sin al menos un plan no es posible dar de alta clientes.
+            Para dar de alta clientes hace falta al menos un plan.
           </Vacio>
         </Hoja>
       ) : (
@@ -154,7 +154,7 @@ export default function Planes() {
                 {toDelete.clientCount === 1 ? 'lo usa 1 cliente' : `lo usan ${toDelete.clientCount} clientes`}.
                 Asígnales otro plan desde su ficha en «Clientes» y vuelve a intentarlo.
               </BandaAviso>
-              <ul className="border border-regla">
+              <ul className="overflow-hidden rounded-lg border border-regla">
                 {clientList
                   .filter((c) => c.planId === toDelete.id)
                   .map((c) => (
@@ -167,14 +167,14 @@ export default function Planes() {
               </ul>
               <Botonera>
                 <Button variant="principal" onClick={() => setToDelete(null)}>
-                  Entendido
+                  Cerrar
                 </Button>
               </Botonera>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
               <p className="text-base text-tinta-2">
-                Se eliminará el plan «{toDelete.name}». Ningún cliente lo usa, así que no afecta a nadie.
+                Se eliminará el plan «{toDelete.name}». Ningún cliente lo usa.
               </p>
               <Botonera>
                 <Button variant="plano" onClick={() => setToDelete(null)}>
@@ -411,7 +411,7 @@ function FormularioPlan({ editor, clientes, onClose }: { editor: Editor; cliente
             value={campos.apiPerMinuteLimit}
             onChange={set('apiPerMinuteLimit')}
             error={errorCampo('apiPerMinuteLimit')}
-            help="Protege la reputación del servidor ante ráfagas."
+            help="Limita los envíos en ráfaga para proteger la reputación del servidor."
           />
         </div>
         <Textarea label="Notas (opcional)" maxLength={500} value={campos.notes} onChange={set('notes')} placeholder="Para quién es este plan" />

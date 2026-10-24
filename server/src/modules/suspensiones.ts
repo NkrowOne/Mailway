@@ -294,7 +294,7 @@ async function intentar(): Promise<ResultadoReparacion> {
         skipped: resultado.omitidos,
       });
       registro?.info(
-        `Corrección aplicada en el motor: ${buzones(resultado.buzones)} y ${resultado.alias} alias. Los buzones suspendidos siguen sin poder iniciar sesión y su correo ya no se devuelve al remitente.`,
+        `Corrección aplicada en el motor: ${buzones(resultado.buzones)} y ${resultado.alias} alias. Los buzones suspendidos siguen sin poder acceder y su correo ya no se devuelve al remitente.`,
       );
     }
     return { ...resultado, estado: 'hecha' };

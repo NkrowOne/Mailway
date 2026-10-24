@@ -79,7 +79,7 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
     nota:
       dominios.total === 0
         ? 'Todavía no hay dominios: ningún MX que cambiar.'
-        : `Con el MX medido hacia ${actual || 'el nombre actual'}: ${dominios.conMxAlActual} de ${dominios.total}. Con el nombre aplicado en el motor, ${
+        : `Con el MX hacia ${actual || 'el nombre actual'}: ${dominios.conMxAlActual} de ${dominios.total}. Con el nombre aplicado en el motor, ${
             dominios.total === 1 ? 'el dominio pasará' : 'todos pasarán'
           } a exigir el MX hacia ${nuevo} y ${dominios.total === 1 ? 'figurará' : 'figurarán'} como pendiente${
             dominios.total === 1 ? '' : 's'
@@ -89,7 +89,7 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
   filas.push({
     concepto: `Registro A de ${nuevo}`,
     ...(registroA.ips === null
-      ? { veredicto: 'sin-dato' as const, marca: 'Sin dato', nota: 'No se ha podido consultar el DNS.' }
+      ? { veredicto: 'sin-dato' as const, marca: 'Sin datos', nota: 'No se ha podido consultar el DNS.' }
       : registroA.ips.length === 0
         ? {
             veredicto: 'fuera' as const,
@@ -109,12 +109,12 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
     filas.push({
       concepto: `Registro inverso (PTR) de ${ptr.ip}`,
       ...(ptr.coincide === null
-        ? { veredicto: 'sin-dato' as const, marca: 'Sin dato', nota: 'No se ha podido consultar.' }
+        ? { veredicto: 'sin-dato' as const, marca: 'Sin datos', nota: 'No se ha podido consultar.' }
         : ptr.coincide
           ? { veredicto: 'normal' as const, marca: 'Correcto', nota: `Devuelve ${nuevo}.` }
           : {
               veredicto: 'fuera' as const,
-              marca: 'Cambiar',
+              marca: 'No coincide',
               nota: `Devuelve ${(ptr.nombres ?? []).join(', ') || 'nada'} y debe devolver ${nuevo}. Se cambia en el panel del proveedor del servidor; sin él, Gmail y Outlook rechazan el correo.`,
             }),
     });
@@ -123,7 +123,7 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
   filas.push({
     concepto: 'Certificado del servidor de correo',
     veredicto: certificado.cubre === null ? 'sin-dato' : certificado.cubre ? 'normal' : 'fuera',
-    marca: certificado.cubre === null ? 'Sin dato' : certificado.cubre ? 'Lo cubre' : 'No lo cubre',
+    marca: certificado.cubre === null ? 'Sin datos' : certificado.cubre ? 'Lo cubre' : 'No lo cubre',
     nota: certificado.detalle,
   });
 
@@ -131,7 +131,7 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
     <div className="flex flex-col gap-4">
       <p className="text-base text-tinta-2">
         {accion === 'guardar'
-          ? `Al guardar ${nuevo}, los datos de conexión que ven los titulares (portal, perfiles y enlaces de configuración) cambian al momento. El motor, el certificado y Traefik siguen con ${actual || 'el nombre actual'} hasta que se actualicen.`
+          ? `Al guardar ${nuevo}, los datos de conexión que ven los titulares («Mi buzón», perfiles y enlaces de configuración) cambian al momento. El motor, el certificado y Traefik siguen con ${actual || 'el nombre actual'} hasta que se actualicen.`
           : `El motor pasará a anunciarse como ${nuevo}: los registros que se exigen a cada dominio cambian con él.`}
       </p>
       <ul className="border-y border-regla">
@@ -156,7 +156,7 @@ function Consecuencias({ impacto, accion }: { impacto: ImpactoCambioNombre; acci
         </Muestra>
         {impacto.cambiaDominioBase && (
           <p className="text-sm text-tinta-3">
-            El nombre nuevo cuelga de otro dominio base: el instalador también traslada a ese dominio los
+            El nombre nuevo pertenece a otro dominio base: el instalador también traslada a ese dominio los
             nombres del webmail y del panel.
           </p>
         )}

@@ -121,9 +121,10 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
     } else if (resultado.applied) {
       toast('ok', `Nombre del servidor ${resultado.hostname} aplicado en el motor.`);
     } else {
+      const motivo = resultado.error || resultado.errors[0];
       toast(
         'error',
-        `El motor no aceptó los ajustes recomendados: ${resultado.error || resultado.errors[0] || 'sin detalle'}. Puedes repetirlo en Ajustes → Servidor de correo.`,
+        `El motor no ha aceptado los ajustes recomendados${motivo ? `: ${motivo}` : ''}. Puedes repetirlo en «Ajustes» → «Servidor de correo».`,
       );
     }
   }
@@ -271,11 +272,11 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
               Mailway
             </span>
           }
-          meta="Primera puesta en marcha. Cada apartado se cierra antes de abrir el siguiente."
+          meta="Primera puesta en marcha. Completa cada paso para pasar al siguiente."
         />
 
         <div className="flex flex-col gap-4">
-          <Hoja title="Apartados" meta={`${step + 1} de ${apartados.length}`} flush>
+          <Hoja title="Pasos" meta={`${step + 1} de ${apartados.length}`} flush>
             <ol>
               {apartados.map((apartado, i) => {
                 const hecho = i < step;
@@ -428,7 +429,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                     {engineKind === 'demo' && (
                       <p className="text-sm text-tinta-3">
                         El modo demostración permite recorrer el panel sin servidor de correo. El motor
-                        real se conecta más tarde en Ajustes → Motor de correo.
+                        real se conecta más tarde en «Ajustes» → «Motor de correo».
                       </p>
                     )}
                     {engineKind === 'stalwart' && (
@@ -456,7 +457,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                             autoComplete="off"
                             value={enginePassword}
                             onChange={(e) => setEnginePassword(e.target.value)}
-                            help="La de STALWART_ADMIN_PASSWORD en deploy/.env"
+                            help="La de STALWART_ADMIN_PASSWORD en deploy/.env."
                           />
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
@@ -499,8 +500,8 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
             {step === 2 && (
               <form onSubmit={submitInstance} noValidate className="flex flex-col gap-4">
                 <p className="text-base text-tinta-2">
-                  Estos datos alimentan las recomendaciones de DNS, la entregabilidad y los datos de
-                  conexión de los buzones. Se pueden cambiar después en Ajustes.
+                  Estos datos se usan en las recomendaciones de DNS, la entregabilidad y los datos de
+                  conexión de los buzones. Se pueden cambiar después en «Ajustes».
                 </p>
                 <Input
                   label="Nombre del servicio"
@@ -555,7 +556,7 @@ export default function Setup({ status, user }: { status: SetupStatus; user: Use
                   value={webmailUrl}
                   onChange={(e) => setWebmailUrl(e.target.value)}
                   placeholder="https://webmail.miempresa.com"
-                  help="El enlace al webmail que verán los clientes. Vacío si no hay webmail."
+                  help="Enlace al webmail que verán los clientes. Déjalo vacío si no hay webmail."
                 />
                 {error && <BandaError texto={error} />}
                 <Button type="submit" variant="principal" busy={busy} className="self-start">
@@ -605,7 +606,7 @@ function sugerir(status: SetupStatus): { mailHostname: string; panelUrl: string;
 
 /* --------------------------- Comprobación final --------------------------- */
 
-const PASO_CLOUDFLARE = 'Conexiones → Cloudflare: conecta una cuenta para publicar el DNS de los dominios con un clic.';
+const PASO_CLOUDFLARE = '«Conexiones» → «Cloudflare»: conecta una cuenta para publicar el DNS de los dominios con un clic.';
 
 /**
  * Con una cuenta de la instancia ya conectada (la que deja el instalador con
@@ -615,15 +616,15 @@ const PASO_CLOUDFLARE = 'Conexiones → Cloudflare: conecta una cuenta para publ
 function pasoCloudflare(cuentas: CuentaCloudflare[] | undefined): string {
   const deInstancia = (cuentas ?? []).filter((c) => c.clientId === null);
   if (deInstancia.length === 0) return PASO_CLOUDFLARE;
-  return `Conexiones → Cloudflare: comprueba la cuenta de la instancia (${deInstancia
+  return `«Conexiones» → «Cloudflare»: comprueba la cuenta de la instancia (${deInstancia
     .map((c) => `«${c.label}»`)
     .join(', ')}). Los dominios que des de alta configurarán su DNS en Cloudflare automáticamente.`;
 }
 
 const PASOS_SIGUIENTES = [
-  'Ajustes → Servidor de correo: emite el certificado de Let’s Encrypt si aún es autofirmado.',
-  'Clientes → Nuevo cliente: crea el primer cliente, su dominio y sus buzones.',
-  'Entregabilidad: revisa el PTR y las listas negras antes de enviar en volumen.',
+  '«Ajustes» → «Servidor de correo»: emite el certificado de Let’s Encrypt si aún es autofirmado.',
+  '«Clientes» → «Dar de alta un cliente»: crea el primer cliente, su dominio y sus buzones.',
+  '«Entregabilidad»: revisa el PTR y las listas negras antes de enviar en volumen.',
 ];
 
 const ROLES: Record<string, string> = {
@@ -663,7 +664,7 @@ function Comprobacion({
   const aplicar = useMutation({
     mutationFn: () => api.post<RecommendedResult>('/api/engine/recommended'),
     onSuccess: (res) => {
-      if (res.errors.length > 0) toast('error', `El motor rechazó parte de los ajustes: ${res.errors[0]}`);
+      if (res.errors.length > 0) toast('error', `El motor ha rechazado parte de los ajustes: ${res.errors[0]}`);
       else if (res.restartRequired && res.restartRequired.length > 0) {
         toast('error', `Ajustes guardados. Reinicia el motor para aplicar: ${res.restartRequired.join('; ')}.`);
       } else if (res.running && res.running !== res.hostname) {
@@ -703,7 +704,7 @@ function Comprobacion({
       if (m.hostname.runningOk === false) {
         filas.push({
           concepto: 'Nombre en ejecución',
-          valor: m.hostname.running ?? 'Sin dato',
+          valor: m.hostname.running ?? 'Sin datos',
           veredicto: veredictoEnEjecucion(m),
           nota: notaEnEjecucion(m),
         });
@@ -717,7 +718,7 @@ function Comprobacion({
           : m.tls.ok
             ? undefined
             : m.acmeSupported
-              ? 'Emítelo desde Ajustes → Servidor de correo; hasta entonces los programas de correo muestran un aviso de seguridad.'
+              ? 'Emítelo desde «Ajustes» → «Servidor de correo»; hasta entonces los programas de correo muestran un aviso de seguridad.'
               : 'Con Stalwart 0.16 lo copia al motor el extractor de Traefik; hasta entonces los programas de correo muestran un aviso de seguridad.',
       });
     }
@@ -759,17 +760,17 @@ function Comprobacion({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-base text-tinta-2">
-        Medición de la instalación tal y como la verán los clientes. Lo pendiente se puede resolver
+        Estado de la instalación tal y como lo verán los clientes. Lo pendiente se puede resolver
         después desde el panel.
       </p>
 
       {cargando ? (
-        <Cargando label="Cargando la instalación…" />
+        <Cargando label="Comprobando la instalación…" />
       ) : (
         <div className="-mx-4 border-y border-regla">
           <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 pb-1.5 pt-2.5 sm:flex">
             <span className="rotulo min-w-0 flex-1">Concepto</span>
-            <span className="rotulo shrink-0">Veredicto</span>
+            <span className="rotulo shrink-0">Estado</span>
           </div>
           {filas.map((fila) => (
             <FilaEstado key={fila.concepto} {...fila} />
@@ -778,14 +779,14 @@ function Comprobacion({
       )}
 
       {fallo && (
-        <BandaError texto="Parte de la comprobación no se ha podido completar. Puedes repetirla o continuar y revisarla en Ajustes." />
+        <BandaError texto="Parte de la comprobación no se ha podido completar. Puedes repetirla o continuar y revisarla en «Ajustes»." />
       )}
 
       {motor.data && motor.data.restartRequired.length > 0 && (
         <BandaAviso>
           <strong className="font-semibold">El motor necesita reiniciarse</strong> para aplicar lo que tiene guardado:{' '}
-          {motor.data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo, «docker restart mailway-mail») y
-          pulsa «Comprobar de nuevo».
+          {motor.data.restartRequired.join('; ')}. Reinicia su contenedor (por ejemplo,{' '}
+          <code className="codigo text-sm">docker restart mailway-mail</code>) y pulsa «Comprobar de nuevo».
         </BandaAviso>
       )}
 
@@ -828,7 +829,7 @@ function Comprobacion({
       {error && <BandaError texto={error} />}
       <div className="flex flex-wrap gap-2">
         <Button variant="principal" busy={busy} onClick={onFinish}>
-          Entrar al panel
+          Acceder al panel
         </Button>
         <Button variant="plano" disabled={busy} onClick={onVolver}>
           Revisar la identidad del servidor

@@ -247,7 +247,7 @@ function FichaDominio({ id }: { id: string }) {
       // Un borrado parcial ya ha retirado parte de los buzones: las listas
       // deben reflejarlo aunque la operación no haya terminado.
       await invalidarTodo();
-      toast('error', err instanceof ApiError ? err.message : 'No se ha podido eliminar.');
+      toast('error', err instanceof ApiError ? err.message : 'No se ha podido eliminar el dominio.');
     },
   });
 
@@ -277,7 +277,7 @@ function FichaDominio({ id }: { id: string }) {
           <p role="alert" className="text-base text-tinta-2">
             <span className="text-fuera">No se ha encontrado el dominio.</span>{' '}
             <Link className="text-petroleo underline" to="/dominios">
-              Volver a dominios
+              Volver a Dominios
             </Link>
           </p>
         ) : (
@@ -329,7 +329,7 @@ function FichaDominio({ id }: { id: string }) {
       </EnlaceVolver>
       <Membrete
         title={
-          <span className="break-all">
+          <span className="[overflow-wrap:anywhere]">
             {visible}
           </span>
         }
@@ -343,7 +343,7 @@ function FichaDominio({ id }: { id: string }) {
             )}
             <span className="text-tinta-3">Última comprobación: {formatDate(record.lastCheckedAt)}</span>
             {visible !== record.domain && (
-              <span className="valor break-all text-tinta-3">{record.domain}</span>
+              <span className="valor text-tinta-3 [overflow-wrap:anywhere]">{record.domain}</span>
             )}
             {migracion && (
               // El asistente está al final de la ficha: desde aquí se llega sin desplazarse a ciegas.
@@ -373,8 +373,8 @@ function FichaDominio({ id }: { id: string }) {
         {checks.length === 0 ? (
           <Hoja title="DNS sin comprobar">
             <p className="max-w-[75ch] text-base text-tinta-2">
-              Aún no hay lectura del DNS. Pulsa «Comprobar el DNS ahora» para obtener los registros
-              que debes crear.
+              Todavía no se ha comprobado el DNS. Pulsa «Comprobar el DNS ahora» para ver los
+              registros que hay que crear.
             </p>
           </Hoja>
         ) : (
@@ -452,13 +452,13 @@ function FichaDominio({ id }: { id: string }) {
         {checks.length > 0 && (
           <Hoja
             title="Registros obligatorios"
-            meta={ilegible ? 'Sin dato' : `${requiredOk} de ${requiredTotal} correctos`}
+            meta={ilegible ? 'Sin datos' : `${requiredOk} de ${requiredTotal} correctos`}
             flush
           >
             <p className="regla-fila px-4 py-3 text-sm text-tinta-2">
               Para crearlos manualmente, copia cada valor en el panel DNS de tu
-              proveedor. Los cambios pueden tardar de minutos a horas en propagarse; vuelve a comprobarlo
-              cuando estén creados.
+              proveedor. Los cambios pueden tardar desde unos minutos hasta horas en propagarse; cuando
+              estén creados, vuelve a comprobar el DNS.
             </p>
             <ul>
               {porVeredicto(required).map((check) => (
@@ -525,7 +525,7 @@ function FichaDominio({ id }: { id: string }) {
               {migracion
                 ? // El servidor lo rechaza (domain_migrating): se dice antes de pulsar.
                   `${visible} está en un cambio de dominio. Gestiónalo desde el asistente.`
-                : 'Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca blanca que cuelgan de él. Los registros DNS no se modifican.'}
+                : 'Se eliminan el dominio, sus buzones con su correo, sus alias y los dominios de marca blanca que dependen de él. Los registros DNS no se modifican.'}
             </p>
             <Button variant="peligro" onClick={abrirEliminar} disabled={Boolean(migracion)}>
               Eliminar el dominio
@@ -538,9 +538,9 @@ function FichaDominio({ id }: { id: string }) {
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
             Se eliminarán el dominio, <strong className="text-tinta">todos sus buzones con su
-            correo</strong> y sus alias, tanto de Mailway como del servidor de correo. Las claves de
+            correo</strong> y sus alias, tanto del panel como del servidor de correo. Las claves de
             API que envían desde estos buzones dejarán de funcionar, los alias de otros dominios
-            que reenvían a ellos dejarán de hacerlo y los dominios de marca blanca que cuelgan de él
+            que reenvían a ellos dejarán de hacerlo y los dominios de marca blanca que dependen de él
             (por ejemplo, webmail.{visible}) dejarán de publicarse. Esta acción no se puede deshacer.
             Los registros DNS no se modifican.
           </p>
@@ -553,7 +553,7 @@ function FichaDominio({ id }: { id: string }) {
           />
           {remove.isError && (
             <AvisoError>
-              {remove.error instanceof ApiError ? remove.error.message : 'No se ha podido eliminar.'}
+              {remove.error instanceof ApiError ? remove.error.message : 'No se ha podido eliminar el dominio.'}
             </AvisoError>
           )}
           <div className="flex flex-wrap justify-end gap-2">
@@ -603,7 +603,7 @@ const NIVELES = [
 async function descargarZona(url: string, nombre: string): Promise<void> {
   const res = await fetch(url, { credentials: 'same-origin' });
   if (!res.ok) {
-    let mensaje = `Error ${res.status} del servidor.`;
+    let mensaje = `No se ha podido descargar el fichero (error ${res.status}). Vuelve a intentarlo.`;
     try {
       const data = (await res.json()) as { error?: string };
       if (data.error) mensaje = data.error;
@@ -687,8 +687,8 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       <p className="max-w-[75ch] text-base text-tinta-2">
         Para otros proveedores, o para importarlo manualmente en Cloudflare:{' '}
         <span className="valor">DNS → Records → Import and Export → Import</span>. Al terminar,
-        comprueba que los registros quedan en <strong>gris (DNS only)</strong>: con la nube naranja
-        el correo no funciona.
+        comprueba que los registros quedan en <strong>gris (DNS only)</strong>: con el proxy activado
+        (nube naranja), el correo no funciona.
       </p>
 
       <fieldset className="mt-4">
@@ -721,7 +721,7 @@ function DescargaZona({ domainId, domain }: { domainId: string; domain: string }
       </fieldset>
 
       <p className="mt-3 text-sm text-tinta-3">
-        El fichero se llamará <span className="valor break-all">{nombre}</span> e incluye las
+        El fichero se llamará <span className="valor [overflow-wrap:anywhere]">{nombre}</span> e incluye las
         instrucciones y los avisos.
       </p>
     </Hoja>

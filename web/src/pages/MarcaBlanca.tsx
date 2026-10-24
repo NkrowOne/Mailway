@@ -41,7 +41,7 @@ const estadoMeta: Record<WhitelabelStatus, { veredicto: Veredicto; etiqueta: str
   pending_dns: {
     veredicto: 'vigilar',
     etiqueta: 'Esperando DNS',
-    pista: 'Crea en tu proveedor de DNS el registro que se indica a continuación.',
+    pista: 'Crea en el proveedor de DNS el registro que se indica a continuación.',
   },
   issuing: {
     veredicto: 'vigilar',
@@ -163,14 +163,14 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
         enPestana={Boolean(clienteFijo)}
         meta={
           clienteFijo
-            ? 'El webmail en el dominio del cliente, con su propio certificado. El nombre debe ser un subdominio de uno de sus dominios de correo con la propiedad comprobada.'
+            ? 'El webmail en el dominio del cliente, con certificado propio. El nombre debe ser un subdominio de uno de sus dominios de correo con la propiedad comprobada.'
             : isAdmin || !me.isSuccess
-              ? 'El webmail en el dominio de cada cliente, con su propio certificado. El nombre debe ser un subdominio de un dominio de correo del cliente con la propiedad comprobada.'
-              : 'Tu webmail en tu propio dominio, con certificado. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
+              ? 'El webmail en el dominio de cada cliente, con certificado propio. El nombre debe ser un subdominio de uno de los dominios de correo del cliente con la propiedad comprobada.'
+              : 'Tu webmail en tu propio dominio, con certificado propio. El nombre debe ser un subdominio de uno de tus dominios de correo con la propiedad comprobada.'
         }
         actions={
           <Button variant="principal" onClick={() => setAbierto(true)} disabled={!me.isSuccess}>
-            Añadir dominio
+            Añadir dominio propio
           </Button>
         }
       />
@@ -223,16 +223,16 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
       ) : lista.length === 0 ? (
         <Hoja>
           <Vacio icono={Tag}
-            title="No hay dominios propios"
+            title="Todavía no hay dominios propios"
             action={
               <Button variant="perfil" onClick={() => setAbierto(true)}>
                 Añadir el primero
               </Button>
             }
           >
-            Por omisión, el webmail se abre en la dirección general del servidor. Con un dominio
-            propio —por ejemplo <span className="valor">webmail.{ejemploDominio}</span>, si{' '}
-            <span className="valor">{ejemploDominio}</span> es un dominio de correo con la propiedad comprobada— se abre
+            De forma predeterminada, el webmail está en la dirección general del servidor. Con un dominio
+            propio (por ejemplo, <span className="valor">webmail.{ejemploDominio}</span>, si{' '}
+            <span className="valor">{ejemploDominio}</span> es un dominio de correo con la propiedad comprobada) se muestra
             {isAdmin
               ? ` con la marca del cliente. Máximo ${MAX_DOMINIOS_PROPIOS} por cliente.`
               : ` con tu marca. Máximo ${MAX_DOMINIOS_PROPIOS}.`}
@@ -241,8 +241,8 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
       ) : (
         <>
           <p className="mb-4 max-w-[75ch] text-base text-tinta-2">
-            El webmail principal es el que se abre desde el resumen, los datos de conexión de los buzones y
-            los enlaces de configuración. Si no se elige ninguno, se usa el primer dominio que entró en
+            El webmail principal es el que se enlaza desde el resumen, los datos de conexión de los buzones y
+            los enlaces de configuración. Si no se elige ninguno, se usa el primer dominio que quedó en
             servicio y, si no hay ninguno en servicio, la dirección general del webmail.
           </p>
           <div className="flex flex-col gap-4">
@@ -286,9 +286,11 @@ export default function MarcaBlanca({ isAdmin, clienteFijo }: { isAdmin: boolean
               .map((i) => (
                 <RegistroDns key={i.type} instruccion={i} />
               ))}
-            <Button variant="principal" onClick={() => setNuevo(null)}>
-              Aceptar
-            </Button>
+            <div className="flex justify-end">
+              <Button variant="principal" onClick={() => setNuevo(null)}>
+                Aceptar
+              </Button>
+            </div>
           </div>
         )}
       </Dialogo>
@@ -406,7 +408,7 @@ function DialogoAlta({
           <Cargando label="Cargando los dominios de correo…" />
         ) : dominiosCorreo.isError ? (
           <AvisoError onRetry={() => void dominiosCorreo.refetch()} retrying={dominiosCorreo.isFetching}>
-            No se han podido leer los dominios de correo del cliente.
+            No se han podido cargar los dominios de correo.
           </AvisoError>
         ) : verificados.length === 0 ? (
           <div className="flex flex-col gap-2 text-base text-tinta-2">
@@ -454,7 +456,7 @@ function DialogoAlta({
               </Select>
             </div>
             <Muestra rotulo="Dirección del webmail">
-              <span className="valor break-all text-base text-tinta">
+              <span className="valor text-base text-tinta [overflow-wrap:anywhere]">
                 {hostname ? `https://${hostname}` : '—'}
               </span>
             </Muestra>
@@ -613,12 +615,12 @@ function FichaDominio({
           puede quedar comprimido por las acciones. */}
       <div className="regla-cabecera mb-3 flex flex-col gap-3 pb-3 sm:flex-row sm:items-baseline sm:justify-between">
         <div className="min-w-0">
-          <span className="valor block break-all text-md text-tinta">{domain.hostname}</span>
+          <span className="valor block text-md text-tinta [overflow-wrap:anywhere]">{domain.hostname}</span>
           {cliente && <span className="block text-sm text-tinta-3">{cliente}</span>}
           {domain.automatico && <span className="block text-sm text-tinta-3">Creado automáticamente</span>}
           {principal && (
             <span className="mt-1 block text-sm text-tinta-2">
-              {domain.isPrimary ? 'Webmail principal' : 'Webmail principal: el primero que entró en servicio'}
+              {domain.isPrimary ? 'Webmail principal' : 'Webmail principal: el primero que quedó en servicio'}
             </span>
           )}
         </div>
@@ -643,7 +645,7 @@ function FichaDominio({
           <Button variant="perfil" busy={comprobar.isPending} onClick={() => comprobar.mutate()}>
             Comprobar
           </Button>
-          <Button variant="plano" onClick={() => setConfirmar(true)}>
+          <Button variant="peligro" onClick={() => setConfirmar(true)}>
             Eliminar
           </Button>
         </div>
@@ -668,7 +670,7 @@ function FichaDominio({
         </p>
       ) : detalle.isError ? (
         <AvisoError className="mt-3" onRetry={() => void detalle.refetch()} retrying={detalle.isFetching}>
-          No se han podido leer las instrucciones de DNS de este dominio.
+          No se han podido cargar las instrucciones de DNS de este dominio.
         </AvisoError>
       ) : (
         instrucciones.length > 0 && (
@@ -689,10 +691,10 @@ function FichaDominio({
       <Dialogo open={confirmar} onClose={() => setConfirmar(false)} title="Eliminar dominio propio">
         <div className="flex flex-col gap-4">
           <p className="text-base text-tinta-2">
-            Se eliminará <span className="valor break-all">{domain.hostname}</span>. El webmail dejará de
+            Se eliminará <span className="valor [overflow-wrap:anywhere]">{domain.hostname}</span>. El webmail dejará de
             responder en esa dirección en unos segundos; los buzones y el correo no se ven afectados.
             {principal &&
-              ' Es el webmail principal: los accesos pasarán al siguiente dominio en servicio o, si no hay ninguno, a la dirección general del webmail.'}
+              ' Es el webmail principal: los enlaces pasarán a usar el siguiente dominio en servicio o, si no hay ninguno, la dirección general del webmail.'}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="plano" onClick={() => setConfirmar(false)}>

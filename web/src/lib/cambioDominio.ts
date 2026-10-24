@@ -269,7 +269,7 @@ export function nombresApps(apps: string[]): string {
 /** Texto que sustituye a «Actualizar ahora» cuando el buzón lo usa una aplicación de Skyway. */
 export function textoUsadoPorApp(apps: string[]): string {
   const nombres = nombresApps(apps);
-  return `La usa una aplicación para enviar${nombres ? ` (${nombres})` : ''}. Actualízalo desde Skyway.`;
+  return `Lo usa una aplicación para enviar${nombres ? ` (${nombres})` : ''}. Actualízalo desde Skyway.`;
 }
 
 /**
@@ -282,8 +282,8 @@ export function textoUsadoPorApp(apps: string[]): string {
 export function textoAppsManuales(apps: string[], email: string): string {
   const nombres = [...new Set(apps)].join(', ');
   return apps.length === 1
-    ? `Contraseña de aplicación creada a mano: ${nombres}. La aplicación que la usa tendrá que entrar con ${email}.`
-    : `Contraseñas de aplicación creadas a mano: ${nombres}. Las aplicaciones que las usan tendrán que entrar con ${email}.`;
+    ? `Contraseña de aplicación creada manualmente: ${nombres}. La aplicación que la usa tendrá que acceder con ${email}.`
+    : `Contraseñas de aplicación creadas manualmente: ${nombres}. Las aplicaciones que las usan tendrán que acceder con ${email}.`;
 }
 
 /** Confirmación de «Actualizar ahora» (panel). */
@@ -316,7 +316,7 @@ export function textoMensajeEquipo(
   enlaces: { email: string; url: string; nombre?: string }[],
 ): string {
   const lineas = [
-    `Nuestra dirección de correo pasa a ser @${hacia} y ya recibes en las dos. Para que tu móvil y tu ordenador sigan conectando, abre tu enlace y pulsa «Actualizar mis dispositivos». Tu contraseña no cambia.`,
+    `Nuestra dirección de correo pasa a ser @${hacia} y ya recibes correo en las dos. Para que tu móvil y tu ordenador sigan conectando, abre tu enlace y pulsa «Actualizar mis dispositivos». Tu contraseña no cambia.`,
     '',
     ...enlaces.map((e) => `${personaEnMensaje(e.email, e.nombre)}: ${e.url}`),
     '',

@@ -1,5 +1,5 @@
 /*
- * Botón «Entrar con llave de acceso»: añade al enlace la zona horaria del
+ * Botón «Usar llave de acceso»: añade al enlace la zona horaria del
  * navegador.
  *
  * El formulario de acceso de Roundcube la manda en el campo _timezone y, con

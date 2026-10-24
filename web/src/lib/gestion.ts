@@ -132,10 +132,10 @@ export const REMITENTE_CONFIGURACION = 'configuration';
 export function errorNombreBuzon(local: string): string | null {
   if (!local) return 'Falta el nombre.';
   if (local.toLowerCase() === REMITENTE_CONFIGURACION) {
-    return 'configuration@ está reservada: desde ella se envían las configuraciones de correo.';
+    return 'La dirección configuration@ está reservada para enviar las configuraciones de correo.';
   }
   if (!LOCAL_PART_RE.test(local)) {
-    return 'Solo letras sin tilde, números, puntos, guiones y guiones bajos; sin símbolo al principio ni al final.';
+    return 'Usa solo letras sin tilde, números, puntos, guiones y guiones bajos, sin símbolos al principio ni al final.';
   }
   if (local.includes('..')) return 'No puede contener dos puntos seguidos.';
   return null;

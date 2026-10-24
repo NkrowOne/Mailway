@@ -181,7 +181,7 @@ export function FichaBuzon({
             ) : (
               // Ya actualizado (desde otra pestaña, el portal o la baja): no queda nada que hacer.
               <p className="text-base text-tinta-2">
-                <span className="valor break-all">{mailbox.email}</span> ya entra con su dirección.
+                El buzón <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> ya usa su dirección como usuario.
               </p>
             ))}
         </div>
@@ -229,15 +229,15 @@ function Resumen({
       {mailbox.loginPending && (
         <LineaUsuarioPendiente login={mailbox.login} onActualizar={() => onVista('usuario')} className="-mt-2 px-1" />
       )}
-      <div className="border border-regla">
+      <div className="rounded-lg border border-regla">
         <FilaDato rotulo="Nombre visible">{mailbox.displayName || <span className="text-tinta-3">Sin nombre visible</span>}</FilaDato>
         <FilaDato rotulo="Ocupación">
           <span className="valor text-sm">
-            {mailbox.usedBytes === null ? 'Sin dato' : formatBytes(mailbox.usedBytes)} de {formatQuota(mailbox.quotaMb)}
+            {mailbox.usedBytes === null ? 'Sin datos' : formatBytes(mailbox.usedBytes)} de {formatQuota(mailbox.quotaMb)}
           </span>{' '}
           {veredicto !== 'normal' && (
             <MarcaFondo veredicto={veredicto}>
-              {veredicto === 'fuera' ? 'Lleno' : veredicto === 'vigilar' ? 'Casi lleno' : 'Sin dato'}
+              {veredicto === 'fuera' ? 'Lleno' : veredicto === 'vigilar' ? 'Casi lleno' : 'Sin datos'}
             </MarcaFondo>
           )}
         </FilaDato>
@@ -261,13 +261,13 @@ function Resumen({
         </BandaError>
       )}
 
-      <div className="border border-regla">
+      <div className="rounded-lg border border-regla">
         {/* La configuración de los buzones es del cliente: se hace en su
             puesta en marcha (enviar la configuración, copiar el enlace,
             reiniciar), con todo su equipo a la vista, no buzón a buzón. */}
         <Accion
           titulo={`Configuración del titular · ${lectura.rotulo}`}
-          detalle="Se envía, se copia o se reinicia desde la puesta en marcha del cliente, junto al resto de su equipo."
+          detalle="Se envía, se copia o se reinicia desde la puesta en marcha, junto al resto del equipo."
           boton="Abrir"
           onClick={irAPuesta}
         />
@@ -293,15 +293,15 @@ function Resumen({
           titulo={mailbox.status === 'active' ? 'Suspender' : 'Reactivar'}
           detalle={
             mailbox.status === 'active'
-              ? 'Impide iniciar sesión sin eliminar el correo.'
-              : 'Permite de nuevo iniciar sesión.'
+              ? 'Impide acceder al buzón sin eliminar el correo.'
+              : 'Permite volver a acceder al buzón.'
           }
           boton={mailbox.status === 'active' ? 'Suspender' : 'Reactivar'}
           onClick={() => onVista('estado')}
         />
         <Accion
           titulo="Eliminar"
-          detalle="Borra el buzón y todo su correo."
+          detalle="Elimina el buzón y todo su correo."
           boton="Eliminar"
           peligro
           onClick={() => onVista('eliminar')}
@@ -372,7 +372,7 @@ function Credenciales({
         </>
       ) : (
         <p className="text-base text-tinta-2">
-          El buzón <span className="valor break-all">{mailbox.email}</span> está listo.
+          El buzón <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> está listo.
         </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-regla pt-4">
@@ -445,10 +445,10 @@ function Editar({ mailbox, planQuotaMb, onHecho }: { mailbox: Mailbox; planQuota
         url={`/api/mailboxes/${mailbox.id}/photo`}
         nombre={mailbox.displayName}
         rotulo="Foto"
-        ayuda="Se guarda al elegirla. En el correo web la ven los buzones del mismo cliente."
+        ayuda="Se guarda al elegirla. En el webmail la ven los demás buzones del mismo cliente."
         onCambio={async (cambio) => {
           await queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
-          toast('ok', cambio === 'subida' ? `Foto de ${mailbox.email} guardada.` : `Foto de ${mailbox.email} quitada.`);
+          toast('ok', cambio === 'subida' ? `Foto de ${mailbox.email} guardada.` : `Foto de ${mailbox.email} eliminada.`);
         }}
       />
       {/* Sin validación nativa: el globo del navegador (en su idioma) tapaba los
@@ -552,7 +552,7 @@ function Restablecer({
         return;
       }
       if (propia !== repetida) {
-        setError('Las dos contraseñas no coinciden.');
+        setError('Las contraseñas no coinciden.');
         return;
       }
     }
@@ -657,9 +657,9 @@ function Estado({
     <>
       {suspender ? (
         <p className="text-base text-tinta-2">
-          Mientras esté suspendido, el titular de <span className="valor break-all">{mailbox.email}</span> no
-          podrá iniciar sesión en ningún programa, móvil ni en el webmail. El correo guardado se conserva y el
-          buzón se puede reactivar en cualquier momento.
+          Mientras esté suspendido, el titular de <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> no
+          podrá acceder a su correo desde ningún programa, móvil ni desde el webmail. El correo guardado se
+          conserva y el buzón se puede reactivar en cualquier momento.
         </p>
       ) : clienteSuspendido ? (
         <BandaAviso>
@@ -667,8 +667,8 @@ function Estado({
         </BandaAviso>
       ) : (
         <p className="text-base text-tinta-2">
-          El titular de <span className="valor break-all">{mailbox.email}</span> podrá volver a iniciar sesión
-          con su contraseña actual.
+          El titular de <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> podrá volver a acceder a su
+          correo con su contraseña actual.
         </p>
       )}
       {error && <BandaError>{error}</BandaError>}
@@ -741,13 +741,13 @@ function Eliminar({
           {seActualizan.length > 0 && (
             <p>
               Dejarán de reenviar a este buzón:{' '}
-              <span className="valor break-all">{seActualizan.map((a) => a.email).join(', ')}</span>.
+              <span className="valor [overflow-wrap:anywhere]">{seActualizan.map((a) => a.email).join(', ')}</span>.
             </p>
           )}
           {seEliminan.length > 0 && (
             <p>
               Se eliminarán porque no tienen otros destinos:{' '}
-              <span className="valor break-all">{seEliminan.map((a) => a.email).join(', ')}</span>.
+              <span className="valor [overflow-wrap:anywhere]">{seEliminan.map((a) => a.email).join(', ')}</span>.
             </p>
           )}
         </BandaAviso>

@@ -829,19 +829,19 @@ function crearSesionBuzon(req: FastifyRequest, reply: FastifyReply, mailboxId: s
 
 function sesionBuzon(req: FastifyRequest): { titular: Titular; tokenHash: string } {
   const token = req.cookies?.[COOKIE_BUZON];
-  if (!token) throw unauthorized('Inicia sesión en «Mi buzón» para continuar.', 'portal_unauthorized');
+  if (!token) throw unauthorized('Accede a «Mi buzón» para continuar.', 'portal_unauthorized');
   const tokenHash = hashToken(token);
   const row = db
     .prepare('SELECT mailbox_id, expires_at FROM mailbox_sessions WHERE token_hash = ?')
     .get(tokenHash) as { mailbox_id: string; expires_at: number } | undefined;
   if (!row || row.expires_at <= now()) {
     if (row) db.prepare('DELETE FROM mailbox_sessions WHERE token_hash = ?').run(tokenHash);
-    throw unauthorized('La sesión ha caducado. Vuelve a iniciar sesión.', 'portal_unauthorized');
+    throw unauthorized('Tu sesión ha caducado. Vuelve a acceder.', 'portal_unauthorized');
   }
   const titular = buzonPorId(row.mailbox_id);
   if (!titular) {
     db.prepare('DELETE FROM mailbox_sessions WHERE token_hash = ?').run(tokenHash);
-    throw unauthorized('La sesión ha caducado. Vuelve a iniciar sesión.', 'portal_unauthorized');
+    throw unauthorized('Tu sesión ha caducado. Vuelve a acceder.', 'portal_unauthorized');
   }
   // Suspender el buzón o el cliente corta también las sesiones ya abiertas.
   if (!titular.activo) {
@@ -1375,7 +1375,7 @@ export function registerPortalRoutes(app: FastifyInstance): void {
     // acabaría en un enlace que cualquiera podría haber preparado.
     if (cuerpo.webmail !== undefined && !(cuerpo.estado && ESTADO_RE.test(cuerpo.estado))) {
       throw badRequest(
-        'Vuelve al webmail y pulsa de nuevo «Entrar con llave de acceso».',
+        'Vuelve a la pantalla de acceso de tu correo y pulsa de nuevo «Usar llave de acceso».',
         'passkey_state',
       );
     }

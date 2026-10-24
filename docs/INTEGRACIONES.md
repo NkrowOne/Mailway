@@ -1480,7 +1480,7 @@ o formulario; sin secreto configurado, `404`; secreto incorrecto, `401`):
   es un buzón del mismo cliente que `user`**; si no, `404`. La foto de un
   empleado nunca se muestra a otra empresa alojada en la misma instancia.
 
-El complemento `mailway_llave` (entrar con llave de acceso, ver
+El complemento `mailway_llave` (acceso al webmail con una llave de acceso, ver
 `deploy/roundcube/README.md`) usa tres rutas con el mismo secreto:
 
 - `GET /api/webmail/llave/portal?host=` → `{ portal }`: origen de «Mi buzón» al

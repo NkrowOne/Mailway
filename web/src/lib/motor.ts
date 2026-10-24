@@ -178,7 +178,7 @@ export const textoDns: Record<PlatformDnsRecord['status'], string> = {
   ok: 'Correcto',
   missing: 'No existe',
   mismatch: 'Otra IP',
-  unknown: 'Sin dato',
+  unknown: 'Sin datos',
 };
 
 /** GET /api/settings/mail-hostname/impact: lo que arrastra cambiar el nombre del servidor. */

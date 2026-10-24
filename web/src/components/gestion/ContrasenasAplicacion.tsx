@@ -170,13 +170,13 @@ export function ContrasenasAplicacion({
       </form>
       {error && <BandaError>{error}</BandaError>}
 
-      <div className="border border-regla">
+      <div className="rounded-lg border border-regla">
         <div className="regla-cabecera flex items-baseline justify-between gap-3 px-3 py-2">
           <span className="rotulo">Contraseñas creadas</span>
           {list.isSuccess && <span className="rotulo">{plural(activas, 'activa', 'activas')}</span>}
         </div>
         {list.isPending ? (
-          <Cargando label="Consultando las contraseñas de aplicación…" />
+          <Cargando label="Cargando las contraseñas de aplicación…" />
         ) : list.isError ? (
           <div className="p-3">
             <BandaError onRetry={() => void list.refetch()}>
@@ -230,7 +230,7 @@ export function ContrasenasAplicacion({
                     ) : (
                       <MarcaFondo veredicto="normal">Activa</MarcaFondo>
                     )}
-                    <Button variant="plano" className="px-2" onClick={() => setARevocar(item.id)}>
+                    <Button variant="peligro" className="px-2" onClick={() => setARevocar(item.id)}>
                       Revocar
                     </Button>
                   </div>

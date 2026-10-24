@@ -9,7 +9,7 @@
  *
  * 1. Pantalla de acceso (gancho loginform_content): si el panel dice que este
  *    nombre es un webmail Roundcube de la instancia (GET
- *    /api/webmail/llave/portal?host=…), se añade el botón «Entrar con llave de
+ *    /api/webmail/llave/portal?host=…), se añade el botón «Usar llave de
  *    acceso» debajo del de entrar. Si el panel no responde o no lo conoce, no
  *    hay botón y el acceso es el de siempre.
  * 2. Acción plugin.mailway_llave_ir: genera un «estado» aleatorio, lo guarda en
@@ -157,7 +157,7 @@ class mailway_llave extends rcube_plugin
         return $args;
     }
 
-    /** Botón «Entrar con llave de acceso» debajo del de entrar, si el panel lo admite. */
+    /** Botón «Usar llave de acceso» debajo del de entrar, si el panel lo admite. */
     public function loginform_content($contenido)
     {
         $host = self::hostActual();

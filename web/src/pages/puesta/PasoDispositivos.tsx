@@ -63,7 +63,7 @@ function DispositivosDelCliente({ ctx, tituloRef }: { ctx: ContextoPuesta; titul
             </Button>
           }
         >
-          En «Tu equipo» ves quién lo tiene ya configurado y envías la configuración por correo a quien le falte.
+          En «Tu equipo» se ve quién lo tiene ya configurado y se envía la configuración por correo a quien le falte.
         </Vacio>
       </Hoja>
       <PieDePaso
@@ -124,15 +124,15 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
   return (
     <>
       <CabeceraPaso ref={tituloRef} titulo="Tu correo en tus dispositivos">
-        Configura tu buzón en el móvil y en el ordenador. Con tu enlace se hace solo: abres, eliges el dispositivo y
-        sigues los pasos.
+        Configura tu buzón en el móvil y en el ordenador. Con tu enlace es automático: ábrelo, elige el dispositivo y
+        sigue los pasos.
       </CabeceraPaso>
 
       {ctx.buzones.length === 0 ? (
         <Hoja>
           <Vacio
             icono={Inbox}
-            title="Primero, tu buzón"
+            title="Primero se necesita tu buzón"
             action={
               <Button variant="perfil" onClick={() => ctx.irA('equipo')}>
                 Ir a «Tu equipo»
@@ -154,7 +154,7 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
               </div>
             )}
             <Select
-              label="¿Cuál es tu buzón?"
+              label="Tu buzón"
               value={elegido ?? ''}
               onChange={(e) => {
                 setElegido(e.target.value);
@@ -176,7 +176,7 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
             <Hoja title="Prepara tu enlace">
               <div className="flex flex-col gap-3">
                 <p className="max-w-[68ch] text-base text-tinta-2">
-                  Se generará una contraseña nueva para <span className="break-all font-medium text-tinta">{buzon.email}</span>{' '}
+                  Se generará una contraseña nueva para <span className="font-medium text-tinta [overflow-wrap:anywhere]">{buzon.email}</span>{' '}
                   y un enlace que la incluye, para que no tengas que escribirla. Si ya usas este buzón en algún
                   dispositivo, tendrás que volver a configurarlo con el enlace.
                 </p>
@@ -196,23 +196,23 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
             </Hoja>
           ) : null}
 
-          <Hoja title="Sin configurar nada">
+          <Hoja title="Sin configurar dispositivos">
             <div className="flex flex-col gap-3 text-base text-tinta-2">
               {webmail ? (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="min-w-0 max-w-[60ch] flex-1 basis-60">
-                    Desde cualquier navegador puedes leer y enviar correo con el webmail: entra con tu dirección y tu
+                    Desde cualquier navegador puedes leer y enviar correo con el webmail: accede con tu dirección y tu
                     contraseña.
                   </p>
                   <a href={webmail} target="_blank" rel="noreferrer noopener" className={estiloBoton('perfil')}>
-                    Abrir el webmail
+                    Acceder a tu correo
                     <ExternalLink className="h-4 w-4" aria-hidden />
                   </a>
                 </div>
               ) : null}
               <p className="max-w-[68ch]">
-                En <span className="valor break-all text-tinta">{panel}/mi-buzon</span> cada persona de tu equipo puede
-                cambiar su contraseña y consultar los datos de conexión de su buzón.
+                En «Mi buzón» (<span className="valor text-tinta [overflow-wrap:anywhere]">{panel}/mi-buzon</span>), cada persona de tu
+                equipo puede cambiar su contraseña y consultar los datos de conexión de su buzón.
               </p>
             </div>
           </Hoja>
@@ -224,7 +224,7 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
         onAtras={() => ctx.irA('obligatorias')}
         saltar={
           <Button variant="plano" onClick={() => ctx.irA('listo')}>
-            Lo haré más tarde
+            Saltar por ahora
           </Button>
         }
         principal={
@@ -275,7 +275,7 @@ function EnlacePropio({ enlace }: { enlace: EnlaceGuardado }) {
             {enlace.correoPersonal && (
               <a href={mailtoEnlacePersona(enlace)} className={estiloBoton('plano')}>
                 <Mail className="h-4 w-4" aria-hidden />
-                Enviármelo por correo
+                Enviar a mi correo
               </a>
             )}
           </div>

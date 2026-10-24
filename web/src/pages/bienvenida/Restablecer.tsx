@@ -88,7 +88,7 @@ export default function Restablecer() {
             <p className="mt-2 text-base text-tinta-2">{final.texto(marca)}</p>
           </div>
           <Link to="/login" className={`w-full ${claseEnlaceBoton('principal')}`}>
-            Iniciar sesión
+            Acceder al panel
           </Link>
         </div>
       </Portada>
@@ -144,9 +144,9 @@ function Formulario({
   const errores = {
     clave:
       clave.length < MINIMO_CONTRASENA
-        ? `Necesita al menos ${MINIMO_CONTRASENA} caracteres${clave.length ? ` (llevas ${clave.length})` : ''}.`
+        ? `Debe tener al menos ${MINIMO_CONTRASENA} caracteres${clave.length ? ` (ahora tiene ${clave.length})` : ''}.`
         : clave.length > MAXIMO_CONTRASENA
-          ? `Como máximo ${MAXIMO_CONTRASENA} caracteres.`
+          ? `Debe tener como máximo ${MAXIMO_CONTRASENA} caracteres.`
           : '',
     repetida: repetida.length === 0 ? 'Repite la contraseña.' : repetida !== clave ? 'Las contraseñas no coinciden.' : '',
   };
@@ -195,7 +195,7 @@ function Formulario({
           <p className="break-words text-sm font-medium text-tinta-2">{datos.clientName}</p>
           <h1 className="mt-1 text-xl font-semibold text-tinta">Elige una contraseña nueva</h1>
           <p className="mt-1 text-base text-tinta-2">
-            Desde ahora entrarás en el panel con tu correo y esta contraseña. Se cerrarán las sesiones abiertas con la
+            Desde ahora accederás al panel con tu correo y esta contraseña. Se cerrarán las sesiones abiertas con la
             anterior.
           </p>
         </div>
@@ -204,7 +204,7 @@ function Formulario({
         <input type="email" name="username" autoComplete="username" value={datos.email} readOnly hidden />
 
         <div className="flex flex-col gap-1.5">
-          <span className="rotulo">Usuario</span>
+          <span className="rotulo">Correo electrónico</span>
           <p className="valor [overflow-wrap:anywhere] rounded-lg border border-regla bg-hoja-2 px-3 py-2 text-base text-tinta">
             {datos.email}
           </p>
@@ -223,7 +223,7 @@ function Formulario({
             setError('');
             setClave(e.target.value);
           }}
-          help={`Al menos ${MINIMO_CONTRASENA} caracteres. Una frase que recuerdes con facilidad funciona bien.`}
+          help={`Al menos ${MINIMO_CONTRASENA} caracteres. Puedes usar una frase fácil de recordar.`}
           error={intentado ? errores.clave || undefined : undefined}
         />
         <CampoContrasena
@@ -244,7 +244,7 @@ function Formulario({
         {error && <AvisoError>{error}</AvisoError>}
 
         <Button type="submit" variant="principal" busy={enviando} className={`w-full ${TACTIL}`}>
-          Guardar y entrar
+          Guardar y acceder
         </Button>
         <p className="text-center text-sm text-tinta-3">
           Este enlace es personal y es válido hasta el {fechaLarga(datos.expiresAt)}.

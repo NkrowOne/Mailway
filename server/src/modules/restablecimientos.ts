@@ -149,9 +149,9 @@ export function componerCorreoRestablecimiento(datos: DatosCorreoRestablecimient
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
   const cliente = enUnaLinea(datos.clientName);
   const marca = enUnaLinea(datos.brandName);
-  const intro = `Hemos recibido una solicitud para restablecer tu contraseña del panel de correo de ${cliente}. Tu usuario es ${datos.email}.`;
+  const intro = `Se ha recibido una solicitud para restablecer tu contraseña del panel de correo de ${cliente}. Tu usuario es ${datos.email}.`;
   const instrucciones = 'Para elegir una contraseña nueva, abre este enlace:';
-  const validez = `El enlace es personal, solo se puede usar una vez y vale hasta el ${fechaLargaConfiguracion(datos.expiresAt)}.`;
+  const validez = `El enlace es personal, solo se puede usar una vez y es válido hasta el ${fechaLargaConfiguracion(datos.expiresAt)}.`;
   const ignorar = 'Si no has pedido este cambio, ignora este mensaje: tu contraseña actual seguirá funcionando.';
   const firma = marca ? `Te lo envía ${marca}.` : '';
 
@@ -174,7 +174,7 @@ export function componerCorreoRestablecimiento(datos: DatosCorreoRestablecimient
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#ffffff;border:1px solid #dde4e4;border-radius:8px;">
 <tr><td style="padding:32px 32px 8px 32px;${fuente}font-size:16px;line-height:24px;color:#1c2727;">
 <p style="margin:0 0 16px 0;">${e(saludo)}</p>
-<p style="margin:0 0 16px 0;">Hemos recibido una solicitud para restablecer tu contraseña del panel de correo de ${e(cliente)}. Tu usuario es <strong>${e(datos.email)}</strong>.</p>
+<p style="margin:0 0 16px 0;">Se ha recibido una solicitud para restablecer tu contraseña del panel de correo de ${e(cliente)}. Tu usuario es <strong>${e(datos.email)}</strong>.</p>
 <p style="margin:0 0 24px 0;">${e(instrucciones)}</p>
 </td></tr>
 <tr><td align="center" style="padding:0 32px 24px 32px;">
@@ -305,7 +305,7 @@ export function registerPasswordResetRoutes(app: FastifyInstance): void {
     ).c;
     if (recientes >= MAX_RESTABLECIMIENTOS_POR_USUARIO) {
       throw tooMany(
-        `Ya se han enviado ${MAX_RESTABLECIMIENTOS_POR_USUARIO} enlaces a este usuario en la última hora. Espera un poco antes de enviar otro.`,
+        `Ya se han enviado ${MAX_RESTABLECIMIENTOS_POR_USUARIO} enlaces a este usuario en la última hora. Vuelve a intentarlo más tarde.`,
       );
     }
 

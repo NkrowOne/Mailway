@@ -67,8 +67,8 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
         <div className="mb-4">
           <BandaAviso>
             No se ha podido aplicar el cambio en {plural(fallosSuspension.length, 'buzón', 'buzones')} del servidor
-            de correo ({fallosSuspension.map((f) => f.email).join(', ')}). Comprueba el estado del motor y vuelve a
-            aplicar el cambio desde «Estado del servicio».
+            de correo ({fallosSuspension.map((f) => f.email).join(', ')}). Comprueba que el servidor de correo
+            responde y vuelve a aplicar el cambio desde «Estado del servicio».
           </BandaAviso>
         </div>
       )}
@@ -109,7 +109,7 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
             <FilaDato rotulo="Nombre">{data.name}</FilaDato>
             <FilaDato rotulo="Correo de contacto">
               {data.contactEmail ? (
-                <span className="valor break-all text-sm">{data.contactEmail}</span>
+                <span className="valor text-sm [overflow-wrap:anywhere]">{data.contactEmail}</span>
               ) : (
                 <span className="text-tinta-3">Sin indicar</span>
               )}
@@ -131,7 +131,7 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
             {data.externalRef && (
               <FilaDato rotulo="Vínculo externo">
                 {vinculadoConSkyway(data.externalRef) ? 'Vinculado con Skyway' : 'Vinculado'}{' '}
-                <span className="valor block break-all text-sm text-tinta-3">{data.externalRef}</span>
+                <span className="valor block text-sm text-tinta-3 [overflow-wrap:anywhere]">{data.externalRef}</span>
               </FilaDato>
             )}
             <div className="px-4 py-2.5">
@@ -186,7 +186,7 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
         <div className="flex min-w-0 flex-col gap-4">
           <Hoja
             title="Estado de los dominios"
-            meta={domains.isPending ? 'cargando…' : plural(domainList.length, 'dominio', 'dominios')}
+            meta={domains.isPending ? 'Cargando…' : plural(domainList.length, 'dominio', 'dominios')}
             actions={
               domainList.length > 0 ? (
                 <Link
@@ -228,7 +228,7 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
                         className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5 transition-colors duration-100 hover:bg-hoja-2"
                       >
                         <span className="min-w-0 basis-full sm:basis-0 sm:grow">
-                          <span className="valor break-all text-base text-tinta">{nombreVisible(domain)}</span>
+                          <span className="valor text-base text-tinta [overflow-wrap:anywhere]">{nombreVisible(domain)}</span>
                           <span className="block text-sm text-tinta-3">
                             Comprobado: {formatDate(domain.lastCheckedAt)}
                           </span>
@@ -261,7 +261,7 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
                 <p className="text-sm text-tinta-3">
                   {data.suspended
                     ? 'Sus buzones vuelven a funcionar, salvo los que se suspendieron individualmente.'
-                    : 'Sus buzones dejan de poder iniciar sesión y se bloquean las altas y los envíos por API. No se borra nada.'}
+                    : 'Los titulares de sus buzones dejan de poder acceder y se bloquean las altas y los envíos por API. No se borra nada.'}
                 </p>
               </div>
               <Button variant={data.suspended ? 'perfil' : 'peligro'} onClick={() => setDialogo('suspender')}>
@@ -273,9 +273,9 @@ export default function ResumenCliente({ contexto }: { contexto: ContextoCliente
                 <p className="text-base text-tinta">Eliminar el cliente</p>
                 <p className="text-sm text-tinta-3">
                   {domainList.length === 1
-                    ? 'Antes es necesario eliminar su dominio (y con él sus buzones).'
+                    ? 'Antes hay que eliminar su dominio (y con él, sus buzones).'
                     : domainList.length > 1
-                      ? `Antes es necesario eliminar sus ${domainList.length} dominios (y con ellos sus buzones).`
+                      ? `Antes hay que eliminar sus ${domainList.length} dominios (y con ellos, sus buzones).`
                       : 'Se eliminan el cliente y sus usuarios del panel.'}
                 </p>
               </div>
@@ -478,7 +478,7 @@ function Suspender({
               <li>
                 {buzonesActivos === 0
                   ? 'No tiene buzones activos que suspender.'
-                  : `Se suspenderán ${plural(buzonesActivos, 'buzón', 'buzones')} en el servidor de correo: sus titulares no podrán iniciar sesión en ningún programa, móvil ni en el webmail.`}
+                  : `Se suspenderán ${plural(buzonesActivos, 'buzón', 'buzones')} en el servidor de correo: sus titulares no podrán acceder desde ningún programa, móvil ni webmail.`}
               </li>
               <li>No se podrán crear dominios, buzones ni alias, ni enviar por la API.</li>
               <li>No se borra nada: el correo y la configuración se conservan.</li>
@@ -590,7 +590,7 @@ function EstadoPuesta({ clientId, buzones }: { clientId: string; buzones: Mailbo
             </p>
             <p className="mt-1 max-w-[68ch] text-base text-tinta-2">
               {configurados} de {plural(activos.length, 'buzón configurado', 'buzones configurados')} por su titular.
-              {sinConfigurar > 0 && ' A quien le falta se le envía la configuración desde la puesta en marcha del cliente.'}
+              {sinConfigurar > 0 && ' Desde «Puesta en marcha» se envía la configuración a quien le falte.'}
             </p>
           </div>
           <Link to={rutaCliente(clientId, 'puesta-en-marcha')} className={estiloBoton(sinConfigurar > 0 ? 'principal' : 'perfil')}>

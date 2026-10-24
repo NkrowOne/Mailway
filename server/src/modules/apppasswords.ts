@@ -161,17 +161,19 @@ export function createAppPassword(
   mailboxId: string,
   name: string,
   createdBy: string | null,
+  viewerIsAdmin?: boolean,
 ): Promise<{ appPassword: AppPasswordInfo; password: string }> {
-  return withLock(`contrasenas-app:${mailboxId}`, () => createAppPasswordNow(mailboxId, name, createdBy));
+  return withLock(`contrasenas-app:${mailboxId}`, () => createAppPasswordNow(mailboxId, name, createdBy, viewerIsAdmin));
 }
 
 async function createAppPasswordNow(
   mailboxId: string,
   name: string,
   createdBy: string | null,
+  viewerIsAdmin?: boolean,
 ): Promise<{ appPassword: AppPasswordInfo; password: string }> {
   const mailbox = getMailbox(mailboxId);
-  assertClientActive(mailbox.clientId);
+  assertClientActive(mailbox.clientId, viewerIsAdmin);
   if (mailbox.status === 'suspended') {
     throw badRequest(
       `El buzón ${mailbox.email} está suspendido. Reactívalo antes de crear contraseñas de aplicación.`,
@@ -277,7 +279,7 @@ export function registerAppPasswordRoutes(app: FastifyInstance): void {
         'app_password_name_reserved',
       );
     }
-    const result = await createAppPassword(id, body.name, user.id);
+    const result = await createAppPassword(id, body.name, user.id, user.role === 'admin');
     audit(req, 'mailbox.app_password_created', {
       mailboxId: id,
       email: mailbox.email,

@@ -47,7 +47,7 @@ const adminSchema = z.object({
   setupToken: z.string().trim().max(200).optional(),
 });
 
-const ENGINE_URL_HELP = 'La URL del motor no es válida (ej.: http://mailway-mail:8080).';
+const ENGINE_URL_HELP = 'La URL del motor no es válida (p. ej. http://mailway-mail:8080).';
 
 /**
  * URL de la API de gestión del motor: solo http(s) y sin credenciales
@@ -66,7 +66,7 @@ const engineUrlSchema = z
     } catch {
       return false;
     }
-  }, 'La URL del motor debe empezar por http:// o https:// y no puede incluir usuario ni contraseña (ej.: http://mailway-mail:8080).');
+  }, 'La URL del motor debe empezar por http:// o https:// y no puede incluir usuario ni contraseña (p. ej. http://mailway-mail:8080).');
 
 const engineSchema = z.object({
   kind: z.enum(['stalwart', 'demo']),
@@ -105,16 +105,16 @@ export const instanceSchema = z.object({
     .max(253)
     .refine(
       (value) => value === '' || isValidHostname(value),
-      'El nombre del servidor de correo no es válido: escribe un nombre completo, no una dirección IP (ej.: mail.miempresa.com).',
+      'El nombre del servidor de correo no es válido: escribe un nombre completo, no una dirección IP (p. ej. mail.miempresa.com).',
     )
     .optional(),
   publicIp: z
     .string()
     .trim()
-    .regex(/^$|^(\d{1,3}\.){3}\d{1,3}$/, 'La IP debe tener formato IPv4, ej.: 203.0.113.10')
+    .regex(/^$|^(\d{1,3}\.){3}\d{1,3}$/, 'La IP debe tener formato IPv4 (p. ej. 203.0.113.10).')
     .optional(),
-  webmailUrl: httpUrl('La URL del webmail no es válida (ej.: https://webmail.miempresa.com).').or(z.literal('')).optional(),
-  panelUrl: httpUrl('La URL del panel no es válida (ej.: https://panel.miempresa.com).').or(z.literal('')).optional(),
+  webmailUrl: httpUrl('La URL del webmail no es válida (p. ej. https://webmail.miempresa.com).').or(z.literal('')).optional(),
+  panelUrl: httpUrl('La URL del panel no es válida (p. ej. https://panel.miempresa.com).').or(z.literal('')).optional(),
   systemFrom: z.string().email().or(z.literal('')).optional(),
 });
 
@@ -288,7 +288,7 @@ export async function connectEngine(settings: EngineSettings): Promise<Recommend
     const result = await testEngine(settings);
     if (!result.ok) {
       throw badRequest(
-        `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}. Revisa la URL y las credenciales.`,
+        `No se ha podido conectar con el motor: ${result.detail || 'sin detalle'}. Revisa la URL y las credenciales.`,
         'engine_test_failed',
       );
     }
@@ -414,7 +414,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
   /** Paso 1: crear la cuenta de administrador (solo si no existe ninguna). */
   app.post('/api/setup/admin', async (req, reply) => {
     if (countUsers() > 0) {
-      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.', 'admin_exists');
+      throw forbidden('Ya existe un administrador. Accede con esa cuenta.', 'admin_exists');
     }
     const body = adminSchema.parse(req.body);
     if (config.setupToken) {
@@ -453,7 +453,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       const env = engineFromEnv();
       if (!env) {
         throw badRequest(
-          'El servidor no tiene un motor definido en su entorno (STALWART_URL y STALWART_ADMIN_PASSWORD). Indica los datos a mano.',
+          'El servidor no tiene un motor definido en su entorno (STALWART_URL y STALWART_ADMIN_PASSWORD). Indica los datos manualmente.',
           'engine_env_missing',
         );
       }
@@ -596,7 +596,7 @@ export function registerSetupRoutes(app: FastifyInstance): void {
       const result = await testEngine(body);
       if (!result.ok) {
         throw badRequest(
-          `No se pudo conectar con el motor: ${result.detail || 'sin detalle'}.`,
+          `No se ha podido conectar con el motor: ${result.detail || 'sin detalle'}.`,
           'engine_test_failed',
         );
       }

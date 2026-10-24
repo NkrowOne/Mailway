@@ -194,7 +194,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
       if (nuevo) setCodigo({ form, recienCreado: true });
       else toast('ok', 'Formulario guardado.');
     },
-    onError: (err) => setError(mensajeDe(err, 'No se ha podido guardar el formulario. Inténtalo de nuevo.')),
+    onError: (err) => setError(mensajeDe(err, 'No se ha podido guardar el formulario. Vuelve a intentarlo.')),
   });
 
   const eliminar = useMutation({
@@ -271,7 +271,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
         }
         actions={
           <Button variant="principal" disabled={activos.length === 0} onClick={abrirNuevo}>
-            Nuevo formulario
+            Crear formulario
           </Button>
         }
       />
@@ -279,7 +279,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
       <div className="flex flex-col gap-4">
         {mailboxes.isError && (
           <AvisoError onRetry={() => void mailboxes.refetch()} retrying={mailboxes.isFetching}>
-            No se han podido leer los buzones: sin ellos no se pueden crear formularios.
+            No se han podido cargar los buzones. Sin ellos no se pueden crear formularios.
           </AvisoError>
         )}
 
@@ -289,12 +289,12 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
           </Hoja>
         ) : forms.isError ? (
           <AvisoError onRetry={() => void forms.refetch()} retrying={forms.isFetching}>
-            No se han podido leer los formularios.
+            No se han podido cargar los formularios.
           </AvisoError>
         ) : lista.length === 0 ? (
           <Hoja>
             <Vacio icono={FormInput}
-              title="Sin formularios"
+              title="Todavía no hay formularios"
               action={
                 activos.length === 0 ? (
                   <Link
@@ -317,7 +317,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
           </Hoja>
         ) : (
           <Hoja flush>
-            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 md:flex">
+            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 md:flex">
               <span className="rotulo min-w-0 flex-1">Formulario y destino</span>
               <span className="rotulo min-w-0 flex-1">Webs permitidas</span>
               <span className="rotulo shrink-0 basis-36">Mensajes</span>
@@ -327,9 +327,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
               {lista.map((form) => (
                 <li
                   key={form.id}
-                  className={`regla-fila flex flex-wrap items-start gap-x-4 gap-y-2.5 px-4 py-3 last:border-b-0 ${
-                    form.enabled ? '' : 'fila-fuera'
-                  }`}
+                  className="regla-fila flex flex-wrap items-start gap-x-4 gap-y-2.5 px-4 py-3 last:border-b-0"
                 >
                   <div className="min-w-0 basis-full md:basis-0 md:grow">
                     <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-base font-medium text-tinta">
@@ -370,7 +368,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
                     <Button variant="plano" onClick={() => abrirEdicion(form)}>
                       Editar
                     </Button>
-                    <Button variant="plano" onClick={() => setAEliminar(form)}>
+                    <Button variant="peligro" onClick={() => setAEliminar(form)}>
                       Eliminar
                     </Button>
                   </div>
@@ -389,8 +387,8 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
                 también sin JavaScript.
               </li>
               <li>
-                Cada mensaje sale de tu propio buzón hacia ti; la dirección que escribe el visitante va en «Responder a»,
-                así que basta con contestar.
+                Cada mensaje sale de tu buzón y llega a él. La dirección del visitante va en «Responder a», así que
+                basta con responder.
               </li>
             </ol>
             <div>
@@ -399,7 +397,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
                 {[
                   'Solo se aceptan envíos desde las webs permitidas (https).',
                   'Un campo trampa invisible descarta los envíos automáticos.',
-                  `Como máximo ${plural(LIMITE_IP, 'envío', 'envíos')} por visitante cada 10 minutos, y ${LIMITE_HORA} mensajes por hora y ${LIMITE_DIA} al día en cada formulario. No gastan el límite diario de envíos por API del plan: un formulario atacado no deja sin servicio a tus aplicaciones.`,
+                  `Como máximo ${plural(LIMITE_IP, 'envío', 'envíos')} por visitante cada 10 minutos, y ${LIMITE_HORA} mensajes por hora y ${LIMITE_DIA} al día en cada formulario. No cuentan en el límite diario de envíos por API del plan: un ataque a un formulario no deja sin envíos a tus aplicaciones.`,
                   'Opcional: Cloudflare Turnstile para comprobar que quien envía es una persona.',
                 ].map((texto) => (
                   <li key={texto} className="regla-fila py-2 text-sm text-tinta-2 last:border-b-0">
@@ -416,7 +414,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
       <Dialogo
         open={editando !== null}
         onClose={() => setEditando(null)}
-        title={edicion ? `Editar «${edicion.name}»` : 'Nuevo formulario'}
+        title={edicion ? `Editar «${edicion.name}»` : 'Crear formulario'}
         ancho="amplio"
       >
         <form onSubmit={enviar} noValidate className="flex flex-col gap-4">
@@ -457,7 +455,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
                 elegible && !borrador.clientId
                   ? 'Selecciona primero el cliente: solo se ofrecen sus buzones.'
                   : elegible && buzonesCliente.isPending
-                    ? 'Leyendo los buzones del cliente…'
+                    ? 'Cargando los buzones del cliente…'
                     : candidatos.length === 0
                       ? 'No hay buzones activos. Crea uno en «Buzones».'
                       : 'Los mensajes salen de este buzón y llegan a él, con la firma de tu dominio.'
@@ -483,7 +481,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
             {variantesWww(listaOrigenes(borrador.origins)).map((variante) => (
               <p key={variante} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-tinta-2">
                 <span>
-                  ¿Añadir también <span className="valor break-all text-tinta">{variante}</span>? Si la web
+                  ¿Añadir también <span className="valor text-tinta [overflow-wrap:anywhere]">{variante}</span>? Si la web
                   redirige a esa dirección, sin ella se rechazan los envíos.
                 </span>
                 <Button
@@ -507,7 +505,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
               checked={borrador.enabled}
               onChange={(enabled) => cambiar({ enabled })}
               label="Formulario activo"
-              help="Desactivado, la web recibe un aviso y no llega ningún mensaje."
+              help="Si se desactiva, la web recibe un aviso y no llega ningún mensaje."
             />
           )}
 
@@ -547,7 +545,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
 
           {elegible && editando === 'nuevo' && buzonesCliente.isError && (
             <AvisoError onRetry={() => void buzonesCliente.refetch()} retrying={buzonesCliente.isFetching}>
-              No se han podido leer los buzones del cliente.
+              No se han podido cargar los buzones del cliente.
             </AvisoError>
           )}
           {error && <AvisoError>{error}</AvisoError>}
@@ -561,7 +559,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
               busy={guardar.isPending}
               disabled={editando === 'nuevo' && !remitente}
             >
-              {edicion ? 'Guardar' : 'Crear formulario'}
+              {edicion ? 'Guardar cambios' : 'Crear formulario'}
             </Button>
           </Botonera>
         </form>
@@ -585,7 +583,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
               Pega este código en tu web donde quieras que aparezca el formulario. Puedes cambiar los textos, el diseño y
               los campos: todos llegan en el mensaje, y el campo <code className="codigo text-sm">email</code> se usa para
               responder. La clave <span className="codigo text-sm text-tinta">{codigo.form.publicKey}</span> es pública:
-              no hace falta protegerla. Puedes volver a ver este código cuando quieras.
+              no hace falta protegerla. Este código se puede volver a consultar desde «Código».
             </p>
             <Muestra rotulo="Código HTML" copiar={codigo.form.embedHtml}>
               <pre className="valor whitespace-pre-wrap text-sm leading-relaxed text-tinta [overflow-wrap:anywhere]">
@@ -616,7 +614,7 @@ export default function Formularios({ user, clienteFijo }: { user: User; cliente
                 Cancelar
               </Button>
               <Button variant="peligro" busy={eliminar.isPending} onClick={() => eliminar.mutate(aEliminar)}>
-                Eliminar
+                Eliminar formulario
               </Button>
             </Botonera>
           </div>

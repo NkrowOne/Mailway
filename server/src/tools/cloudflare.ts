@@ -150,7 +150,7 @@ async function conectar(argv: readonly string[], io: EntradaSalidaCloudflare): P
       auditar: (accion, detalle) => auditSystem(accion, { ...detalle, origen: ORIGEN }, null),
     });
     if (!creada && cuenta.lastError) {
-      io.err(`Aviso: La cuenta «${cuenta.label}» ya estaba conectada, pero Cloudflare no la ha aceptado ahora: ${cuenta.lastError}`);
+      io.err(`Aviso: la cuenta «${cuenta.label}» ya estaba conectada, pero Cloudflare no la ha aceptado ahora: ${cuenta.lastError}`);
     }
     io.out(
       JSON.stringify({ ok: true, id: cuenta.id, label: cuenta.label, zones: cuenta.zonesTotal ?? 0, creada, sustituida }),

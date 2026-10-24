@@ -85,7 +85,7 @@ export function TablaCambios({
         return (
           <li key={`${c.type}-${c.name}-${i}`} className={`regla-fila px-3 py-2.5 ${tinte}`}>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="valor min-w-0 basis-full break-all text-sm text-tinta sm:basis-0 sm:grow">
+              <span className="valor min-w-0 basis-full text-sm text-tinta sm:basis-0 sm:grow [overflow-wrap:anywhere]">
                 {apex ? nombreCorto(c.name, apex) : c.name}
                 {c.zone && <span className="ml-2 text-tinta-3">({c.zone})</span>}
               </span>
@@ -106,7 +106,7 @@ export function TablaCambios({
             {c.current && (
               <p className="mt-1 flex flex-wrap items-baseline gap-x-2">
                 <span className="rotulo shrink-0">{c.action === 'keep' ? 'Existente' : 'Ahora'}</span>
-                <span className="valor min-w-0 break-all text-sm text-tinta-3">{c.current}</span>
+                <span className="valor min-w-0 text-sm text-tinta-3 [overflow-wrap:anywhere]">{c.current}</span>
               </p>
             )}
             <p className="mt-1 max-w-[75ch] text-sm text-tinta-2">{c.reason}</p>
@@ -163,7 +163,7 @@ export function ResultadoCloudflare({ resultado, apex }: { resultado: ResultadoA
             {resultado.applied.map((a, i) => (
               <li key={`${a.type}-${a.name}-${i}`} className="text-sm text-tinta-2">
                 <span className="rotulo mr-1.5">{textoAplicado[a.action] ?? a.action}</span>
-                <span className="valor break-all">
+                <span className="valor [overflow-wrap:anywhere]">
                   {a.type} {nombre(a.name)}
                 </span>
               </li>
@@ -181,7 +181,7 @@ export function ResultadoCloudflare({ resultado, apex }: { resultado: ResultadoA
           <ul className="mt-1 flex flex-col gap-1">
             {resultado.errors.map((e, i) => (
               <li key={`${e.type}-${e.name}-${i}`}>
-                <span className="valor break-all">
+                <span className="valor [overflow-wrap:anywhere]">
                   {e.type} {nombre(e.name)}
                 </span>
                 : {e.error}
@@ -197,7 +197,7 @@ export function ResultadoCloudflare({ resultado, apex }: { resultado: ResultadoA
           <ul className="flex flex-col gap-1">
             {omitidos.map((s, i) => (
               <li key={`${s.type}-${s.name}-${i}`}>
-                <span className="valor break-all">
+                <span className="valor [overflow-wrap:anywhere]">
                   {s.type} {nombre(s.name)}
                 </span>
                 : {s.reason}

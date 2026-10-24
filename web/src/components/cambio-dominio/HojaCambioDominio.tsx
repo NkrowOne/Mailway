@@ -188,8 +188,8 @@ export function CambioTerminado({ vista }: { vista: CambioDominioVista }) {
         {desde} se ha dado de baja. El correo de tu equipo funciona en {hacia}.
       </p>
       <p className="max-w-[75ch] text-sm text-tinta-2 [overflow-wrap:anywhere]">
-        Mantén {desde} registrado al menos uno o dos años: quien lo registrara recibiría el correo que aún se envíe a
-        las direcciones antiguas.
+        Mantén {desde} registrado al menos uno o dos años: si otra persona lo registrara, recibiría el correo que aún
+        se envíe a las direcciones antiguas.
       </p>
     </Seccion>
   );

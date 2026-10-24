@@ -460,12 +460,12 @@ export function calcularEstadoDeseado(conDatos = false): EstadoDeseadoCorreoWeb 
           rutas[f.hueco] = recurso.ruta;
           delCliente.push({ nombre: recurso.nombre, hueco, tipo: f.mime, sha256: f.sha256, datos: f.data ?? null });
         }
-        const nombre = datos.nombre || datos.nombrePorDefecto || 'Correo web';
+        const nombre = datos.nombre || datos.nombrePorDefecto || 'Correo';
         const empresa = datos.empresa || undefined;
         const base: Omit<WebmailConMarca, 'host'> = {
           nombre,
           nombreCorto: datos.nombreCorto || undefined,
-          descripcion: `Correo web de ${empresa ?? nombre}`,
+          descripcion: `Correo de ${empresa ?? nombre}`,
           empresa,
           logoClaroUrl: rutas.logoClaro,
           logoOscuroUrl: rutas.logoOscuro,
@@ -705,7 +705,7 @@ function registrarFallo(
       title: 'No se puede aplicar la marca del correo web nuevo',
       message: `Mailway lleva ${fallos} intentos sin poder aplicar en Bulwark la marca de los clientes y la política del correo web nuevo. Último error: ${error.mensaje}`,
       remedy:
-        'Mientras tanto, los webmail de esos clientes muestran la marca de la instancia. Comprueba que el contenedor mailway-bulwark está en marcha y que MAILWAY_BULWARK_URL y MAILWAY_BULWARK_ADMIN_PASSWORD del panel coinciden con los de Bulwark (deploy/bulwark/README.md, «Secretos»). Se reintenta solo.',
+        'Mientras tanto, los webmail de esos clientes muestran la marca de la instancia. Comprueba que el contenedor mailway-bulwark está en marcha y que MAILWAY_BULWARK_URL y MAILWAY_BULWARK_ADMIN_PASSWORD del panel coinciden con los de Bulwark (deploy/bulwark/README.md, «Secretos»). Se volverá a intentar automáticamente.',
     });
   }
   return { estado: 'error', error, reintentarDesde: ahora + espera };
@@ -932,8 +932,8 @@ async function prepararMotorParaBulwark(
   if (api !== 'jmap016') {
     throw conflict(
       api === 'demo'
-        ? 'El correo web nuevo necesita Stalwart 0.16: no funciona con el motor de demostración.'
-        : 'El correo web nuevo necesita Stalwart 0.16 y el servidor de correo es una versión anterior. Actualiza el motor antes de elegirlo.',
+        ? 'El correo web nuevo necesita Stalwart 0.16: no funciona en el modo demostración.'
+        : 'El correo web nuevo necesita Stalwart 0.16 y el servidor de correo es una versión anterior. Actualiza el servidor de correo antes de elegirlo.',
       'bulwark_requires_016',
     );
   }
@@ -942,7 +942,7 @@ async function prepararMotorParaBulwark(
     const resultado = await applyRecommendedEngineSettings(getInstanceSettings().mailHostname, motor, { permissiveCors: true });
     if (!(await corsAbierto(motor))) {
       throw upstream(
-        `No se ha podido abrir el CORS del motor de correo, que necesita el correo web nuevo${resultado.errors.length ? `: ${resultado.errors.join('; ')}` : '.'} ${siFalla}`,
+        `No se ha podido abrir el CORS del servidor de correo, que necesita el correo web nuevo${resultado.errors.length ? `: ${resultado.errors.join('; ')}` : '.'} ${siFalla}`,
         'bulwark_cors_failed',
       );
     }
@@ -1023,7 +1023,7 @@ function estadoGeneral() {
       // Disponible pero sin servir: el motor no es (o no se sabe si es) 0.16.
       motivoServicio:
         estado.disponible && !enServicio
-          ? 'El correo web nuevo necesita Stalwart 0.16. Migra el motor con sudo mailway migrar-motor.'
+          ? 'El correo web nuevo necesita Stalwart 0.16. Actualiza el servidor de correo con «sudo mailway migrar-motor».'
           : null,
     },
     ajustes: ajustesCorreoWeb(),
@@ -1053,7 +1053,7 @@ export function registerCorreoWebRoutes(app: FastifyInstance): void {
       // Los clientes nuevos irán directos al nuevo: tiene que poder servirse
       // ya, con el CORS del motor abierto (prepararMotorParaBulwark lo abre).
       const aplicados = await withLock(CERROJO_CORS, () =>
-        prepararMotorParaBulwark('Los clientes nuevos siguen naciendo con Roundcube.'),
+        prepararMotorParaBulwark('Los clientes nuevos se siguen creando con Roundcube.'),
       );
       if (aplicados) audit(req, 'engine.recommended_applied', { ...aplicados, permissiveCors: true });
     }

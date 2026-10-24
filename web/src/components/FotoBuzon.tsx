@@ -247,7 +247,9 @@ export function FotoBuzon({
       setAnuncio('Se ha guardado la foto.');
       await avisarCambio('subida');
     } catch (err) {
-      setError(err instanceof ErrorFoto ? err.message : mensajeError(err, 'No se ha podido subir la foto.'));
+      setError(
+        err instanceof ErrorFoto ? err.message : mensajeError(err, 'No se ha podido subir la foto. Vuelve a intentarlo.'),
+      );
     } finally {
       setEstado('reposo');
     }
@@ -263,7 +265,7 @@ export function FotoBuzon({
       setAnuncio('Se ha quitado la foto.');
       await avisarCambio('quitada');
     } catch (err) {
-      setError(mensajeError(err, 'No se ha podido quitar la foto.'));
+      setError(mensajeError(err, 'No se ha podido quitar la foto. Vuelve a intentarlo.'));
     } finally {
       setEstado('reposo');
     }

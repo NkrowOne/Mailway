@@ -185,7 +185,7 @@ contraseña sigue valiendo. Código en `server/src/modules/llaves.ts`
   distintos).
 
 **Webmail (Roundcube) con llave.** Roundcube entra en IMAP con usuario y
-contraseña. El botón «Entrar con llave de acceso» del acceso al webmail
+contraseña. El botón «Usar llave de acceso» del acceso al webmail
 (complemento `mailway_llave`) guarda un estado aleatorio en la sesión de
 Roundcube y lleva al titular a `/mi-buzon/correo-web` del «Mi buzón» que
 corresponde a ese webmail (el panel de marca blanca del cliente o el de la

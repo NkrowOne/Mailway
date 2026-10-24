@@ -235,7 +235,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
       setRevealed({ key: data.key, snippets: data.snippets ?? [] });
     },
     onError: (err) =>
-      setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Inténtalo de nuevo.'),
+      setError(err instanceof ApiError ? err.message : 'No se ha podido crear la clave. Vuelve a intentarlo.'),
   });
 
   const revoke = useMutation({
@@ -311,7 +311,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
         }
         actions={
           <Button variant="principal" disabled={activos.length === 0} onClick={abrir}>
-            Nueva clave
+            Crear clave
           </Button>
         }
       />
@@ -319,7 +319,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
       <div className="flex flex-col gap-4">
         {mailboxes.isError && (
           <AvisoError onRetry={() => void mailboxes.refetch()} retrying={mailboxes.isFetching}>
-            No se han podido leer los buzones remitentes: sin ellos no se pueden crear claves.
+            No se han podido cargar los buzones remitentes. Sin ellos no se pueden crear claves.
           </AvisoError>
         )}
 
@@ -329,12 +329,12 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
           </Hoja>
         ) : keys.isError ? (
           <AvisoError onRetry={() => void keys.refetch()} retrying={keys.isFetching}>
-            No se han podido leer las claves de API.
+            No se han podido cargar las claves de API.
           </AvisoError>
         ) : keyList.length === 0 ? (
           <Hoja>
             <Vacio icono={KeyRound}
-              title="Sin claves de API"
+              title="Todavía no hay claves de API"
               action={
                 activos.length === 0 ? (
                   <Link
@@ -357,7 +357,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
           </Hoja>
         ) : (
           <Hoja flush>
-            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+            <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 sm:flex">
               <span className="rotulo min-w-0 flex-1">Clave y remitente</span>
               <span className="rotulo shrink-0 basis-52">Envíos de hoy</span>
               <span className="rotulo shrink-0 basis-20 text-right">Acción</span>
@@ -405,7 +405,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
 
                   <div className="ml-auto shrink-0 sm:ml-0 sm:basis-20 sm:text-right">
                     {!key.revokedAt && (
-                      <Button variant="plano" onClick={() => setToRevoke(key)}>
+                      <Button variant="peligro" onClick={() => setToRevoke(key)}>
                         Revocar
                       </Button>
                     )}
@@ -520,7 +520,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
           ) : messages.isError ? (
             <div className="p-4">
               <AvisoError onRetry={() => void messages.refetch()} retrying={messages.isFetching}>
-                No se ha podido leer el historial de envíos.
+                No se ha podido cargar el historial de envíos.
               </AvisoError>
             </div>
           ) : messageList.length === 0 ? (
@@ -529,11 +529,11 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
             </Vacio>
           ) : (
             <>
-              <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-3 px-4 py-1.5 sm:flex">
+              <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-1.5 sm:flex">
                 <span className="rotulo min-w-0 flex-1">Para</span>
                 <span className="rotulo min-w-0 flex-1">Asunto</span>
                 <span className="rotulo shrink-0 basis-28">Fecha</span>
-                <span className="rotulo shrink-0 basis-24 text-right">Veredicto</span>
+                <span className="rotulo shrink-0 basis-24 text-right">Estado</span>
               </div>
               <ul>
                 {messageList.map((message) => {
@@ -582,7 +582,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
       </div>
 
       {/* Crear clave */}
-      <Dialogo open={open} onClose={() => setOpen(false)} title="Nueva clave de API">
+      <Dialogo open={open} onClose={() => setOpen(false)} title="Crear clave de API">
         <form onSubmit={submit} noValidate className="flex flex-col gap-4">
           {elegible && (
             <Select
@@ -625,10 +625,10 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
               elegible && !clientId
                 ? 'Selecciona primero el cliente: solo se ofrecen sus buzones.'
                 : elegible && buzonesCliente.isPending
-                  ? 'Leyendo los buzones del cliente…'
+                  ? 'Cargando los buzones del cliente…'
                   : senderOptions.length === 0
-                    ? 'Este cliente no tiene buzones activos. Crea uno en «Buzones».'
-                    : 'Los mensajes saldrán con esta dirección. Recomendado: noreply@tu-dominio.com.'
+                    ? 'No hay buzones activos. Crea uno en «Buzones».'
+                    : 'Los mensajes saldrán desde esta dirección. Se recomienda una como noreply@tu-dominio.com.'
             }
           >
             {senderOptions.length === 0 && <option value="">Sin buzones disponibles</option>}
@@ -650,14 +650,14 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
             }}
             placeholder="Límite del plan"
             error={limiteInvalido ? 'Indica un número entero mayor que cero.' : undefined}
-            help="Los límites del plan (diario y por minuto) se aplican al total del cliente, sumando todas sus claves. Este límite, opcional, restringe además solo esta clave y no puede superar el del plan."
+            help="Los límites del plan (diario y por minuto) cuentan los envíos de todas las claves del cliente. Este límite se aplica además solo a esta clave y no puede superar el del plan."
           />
           {elegible && buzonesCliente.isError && (
             <AvisoError
               onRetry={() => void buzonesCliente.refetch()}
               retrying={buzonesCliente.isFetching}
             >
-              No se han podido leer los buzones del cliente.
+              No se han podido cargar los buzones del cliente.
             </AvisoError>
           )}
           {error && <AvisoError>{error}</AvisoError>}
@@ -732,7 +732,7 @@ export default function ApiKeys({ user, clienteFijo }: { user: User; clienteFijo
                 busy={revoke.isPending}
                 onClick={() => revoke.mutate(toRevoke)}
               >
-                Revocar
+                Revocar clave
               </Button>
             </div>
           </div>

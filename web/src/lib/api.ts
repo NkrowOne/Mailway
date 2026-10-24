@@ -32,7 +32,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     const err = data as { error?: string; code?: string } | null;
     throw new ApiError(
       res.status,
-      err?.error || `Error ${res.status} del servidor.`,
+      err?.error || `No se ha podido completar la operación (error ${res.status}). Vuelve a intentarlo.`,
       err?.code || 'error',
     );
   }

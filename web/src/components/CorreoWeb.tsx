@@ -192,10 +192,10 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
             : `Se aplica a ${enServicio.map((w) => w.hostname).join(', ')}. La dirección general del webmail sigue siendo Roundcube.`}
         </p>
         <p className="max-w-[75ch] text-sm text-tinta-3">
-          El correo web de los clientes nuevos y las funciones del nuevo, iguales para todos los clientes, se
-          eligen en{' '}
+          El correo web de los clientes nuevos y las funciones del correo web nuevo (comunes a todos los clientes)
+          se eligen en{' '}
           <Link to={RUTA_AJUSTES_CORREO_WEB} className="text-petroleo underline underline-offset-2 hover:text-tinta">
-            «Correo web nuevo» de Ajustes
+            «Ajustes» → «Correo web nuevo»
           </Link>
           .
         </p>
@@ -225,7 +225,7 @@ function HojaEleccion({ clientId, estado }: { clientId: string; estado: EstadoCo
             <>
               <p>
                 Los webmail propios del cliente abrirán el correo web nuevo en unos segundos y quien lo tenga abierto
-                tendrá que volver a entrar. El correo, el calendario y los contactos siguen en el servidor.
+                tendrá que volver a acceder. El correo, el calendario y los contactos siguen en el servidor.
               </p>
               <p>
                 Si es el primer cliente que lo usa, se aplican también los ajustes recomendados del servidor de
@@ -304,8 +304,8 @@ function HojaMarca({ clientId, estado, isAdmin }: { clientId: string; estado: Es
           <BandaAviso>
             No se ha podido aplicar la marca en el correo web. {sincronizacion.error.mensaje}{' '}
             {sincronizacion.reintentarDesde
-              ? `Se reintenta solo a partir de ${formatDate(sincronizacion.reintentarDesde)}.`
-              : 'Se reintenta solo.'}
+              ? `Se volverá a intentar automáticamente a partir de ${formatDate(sincronizacion.reintentarDesde)}.`
+              : 'Se volverá a intentar automáticamente.'}
           </BandaAviso>
         )}
         {!isAdmin && (
@@ -315,7 +315,10 @@ function HojaMarca({ clientId, estado, isAdmin }: { clientId: string; estado: Es
           </p>
         )}
         {!isAdmin && estado.enServicio !== 'bulwark' && (
-          <BandaAviso>Ahora mismo tu correo web se sirve con Roundcube. La marca se verá en cuanto vuelva el nuevo.</BandaAviso>
+          <BandaAviso>
+            Ahora tu correo web se sirve con Roundcube. La marca se mostrará cuando el correo web nuevo vuelva a estar
+            disponible.
+          </BandaAviso>
         )}
 
         {/* Se vuelve a montar cuando la marca guardada cambia (al guardar o
@@ -325,8 +328,8 @@ function HojaMarca({ clientId, estado, isAdmin }: { clientId: string; estado: Es
         <div>
           <p className="rotulo">Imágenes</p>
           <p className="mt-0.5 max-w-[75ch] text-sm text-tinta-3">
-            PNG, JPEG o WebP de hasta 512 KB y entre 16 y 4096 píxeles por lado. Los SVG no se admiten: en el
-            correo web serían código, no una imagen.
+            PNG, JPEG o WebP de hasta 512 KB y entre 16 y 4096 píxeles por lado. No se admiten SVG: en el correo
+            web serían código, no una imagen.
           </p>
           <ul className="mt-2 overflow-hidden rounded-lg border border-regla">
             {HUECOS_IMAGEN.map((hueco) => (
@@ -398,7 +401,7 @@ function FormularioMarca({ clientId, marca }: { clientId: string; marca: MarcaCo
           value={campos.nombre}
           placeholder={marca.nombrePorDefecto}
           onChange={(e) => cambiar('nombre', e.target.value)}
-          help={`Título de la pestaña y de la pantalla de acceso. Vacío: «${marca.nombrePorDefecto}».`}
+          help={`Título de la pestaña y de la pantalla de acceso. Si se deja vacío, «${marca.nombrePorDefecto}».`}
         />
         <Input
           label="Nombre corto"
@@ -426,7 +429,7 @@ function FormularioMarca({ clientId, marca }: { clientId: string; marca: MarcaCo
           maxLength={80}
           value={campos.empresa}
           onChange={(e) => cambiar('empresa', e.target.value)}
-          help="Opcional. Firma la pantalla de acceso."
+          help="Opcional. Aparece al pie de la pantalla de acceso."
         />
         <Input
           label="Política de privacidad"
@@ -503,7 +506,7 @@ function FilaImagen({ clientId, hueco, imagen }: { clientId: string; hueco: Huec
     if (!archivo) return;
     setError('');
     if (archivo.type && !TIPOS_IMAGEN.includes(archivo.type)) {
-      setError('Elige una imagen PNG, JPEG o WebP. Los SVG no se admiten.');
+      setError('Elige una imagen PNG, JPEG o WebP. No se admiten SVG.');
       return;
     }
     if (archivo.size > MAX_IMAGEN_BYTES) {

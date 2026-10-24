@@ -123,7 +123,7 @@ export default function Bienvenida() {
 const PASOS: { titulo: string; texto: string }[] = [
   {
     titulo: 'Conectar tu dominio',
-    texto: 'Te indicamos qué registros DNS hay que añadir y comprobamos que todo esté en orden.',
+    texto: 'Se indica qué registros DNS hay que añadir y se comprueba que todo esté en orden.',
   },
   {
     titulo: 'Elegir quién recibe los avisos',
@@ -175,9 +175,9 @@ function Acogida({
       clave.length === 0
         ? `Elige una contraseña de al menos ${MINIMO_CONTRASENA} caracteres.`
         : clave.length < MINIMO_CONTRASENA
-          ? `Necesita al menos ${MINIMO_CONTRASENA} caracteres (llevas ${clave.length}).`
+          ? `Debe tener al menos ${MINIMO_CONTRASENA} caracteres (ahora tiene ${clave.length}).`
           : clave.length > MAXIMO_CONTRASENA
-            ? `Como máximo ${MAXIMO_CONTRASENA} caracteres.`
+            ? `Debe tener como máximo ${MAXIMO_CONTRASENA} caracteres.`
             : '',
     repetida: repetida.length === 0 ? 'Repite la contraseña.' : repetida !== clave ? 'Las contraseñas no coinciden.' : '',
   };
@@ -258,8 +258,8 @@ function Acogida({
             </h1>
             <p className="mt-3 max-w-[60ch] text-base text-tinta-2">
               {datos.existingUser
-                ? `${datos.brandName} te invita a la puesta en marcha del correo de ${datos.clientName}. Elige una contraseña nueva y te guiaremos paso a paso hasta dejarlo funcionando para todo tu equipo.`
-                : `${datos.brandName} ha preparado el correo de ${datos.clientName}. Crea tu acceso al panel y te guiaremos paso a paso hasta dejarlo funcionando para todo tu equipo.`}
+                ? `${datos.brandName} te invita a la puesta en marcha del correo de ${datos.clientName}. Elige una contraseña nueva y el panel te guiará paso a paso hasta dejarlo funcionando para todo tu equipo.`
+                : `${datos.brandName} ha preparado el correo de ${datos.clientName}. Crea tu acceso y el panel te guiará paso a paso hasta dejarlo funcionando para todo tu equipo.`}
             </p>
 
             <h2 className="mt-8 text-md font-semibold text-tinta">Lo que vas a hacer</h2>
@@ -297,8 +297,8 @@ function Acogida({
                 </h2>
                 <p className="mt-1 text-base text-tinta-2">
                   {datos.existingUser
-                    ? `Ya tienes acceso al panel de ${datos.clientName}: desde ahora entrarás con tu correo y esta contraseña.`
-                    : `Con tu correo y esta contraseña entrarás en el panel de ${datos.clientName}.`}
+                    ? `Ya tienes acceso al panel de ${datos.clientName}: desde ahora accederás con tu correo y esta contraseña.`
+                    : `Con tu correo y esta contraseña accederás al panel de ${datos.clientName}.`}
                 </p>
               </div>
 
@@ -341,7 +341,7 @@ function Acogida({
                   setClave(e.target.value);
                 }}
                 onBlur={() => tocar('clave')}
-                help={`Al menos ${MINIMO_CONTRASENA} caracteres. Una frase que recuerdes con facilidad funciona bien.`}
+                help={`Al menos ${MINIMO_CONTRASENA} caracteres. Puedes usar una frase fácil de recordar.`}
                 error={mostrar.clave ? errores.clave || undefined : undefined}
               />
               <CampoContrasena
@@ -363,13 +363,13 @@ function Acogida({
               {otraSesion && (
                 <p className="rounded-lg border border-regla bg-hoja-2 px-3 py-2 text-sm text-tinta-2">
                   Ahora tienes abierta la sesión de <span className="valor [overflow-wrap:anywhere]">{otraSesion.email}</span>. Al
-                  crear tu acceso, en este navegador entrarás con la cuenta nueva.
+                  crear tu acceso, en este navegador pasarás a usar la cuenta nueva.
                 </p>
               )}
               {error && <AvisoError>{error}</AvisoError>}
 
               <Button type="submit" variant="principal" busy={enviando} className={`w-full ${TACTIL}`}>
-                {datos.existingUser ? 'Guardar y empezar' : 'Crear mi acceso y empezar'}
+                {datos.existingUser ? 'Guardar y empezar' : 'Crear acceso y empezar'}
               </Button>
               <p className="text-center text-sm text-tinta-3">
                 Este enlace es personal y es válido hasta el {fechaLarga(datos.expiresAt)}.
@@ -424,7 +424,7 @@ function Desenlace({
     </Link>
   ) : (
     <Link to={IR_A_LOGIN} className={`w-full ${claseEnlaceBoton('principal')}`}>
-      Iniciar sesión
+      Acceder al panel
     </Link>
   );
 
@@ -439,9 +439,9 @@ function Desenlace({
       ),
       nota: (
         <>
-          ¿Ya creaste tu acceso?{' '}
-          <Link to={IR_A_LOGIN} className="text-petroleo underline underline-offset-2 hover:text-tinta">
-            Inicia sesión
+          ¿Ya has creado tu acceso?{' '}
+          <Link to={IR_A_LOGIN} className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
+            Accede al panel
           </Link>
           .
         </>
@@ -451,7 +451,7 @@ function Desenlace({
       titulo: 'Este enlace ya se ha usado',
       texto: usuario
         ? `Tu acceso al panel ya está creado y tienes la sesión abierta como ${usuario.email}.`
-        : 'Tu acceso al panel ya está creado. Inicia sesión con tu correo y la contraseña que elegiste.',
+        : 'Tu acceso al panel ya está creado. Accede con tu correo y la contraseña que elegiste.',
       accion,
       nota: 'Si no recuerdas la contraseña, pide a tu proveedor de correo que la restablezca.',
     },
@@ -459,11 +459,11 @@ function Desenlace({
       titulo: 'Ya tienes acceso al panel',
       texto: email ? (
         <>
-          Ya hay un usuario del panel con el correo <span className="valor [overflow-wrap:anywhere] text-tinta">{email}</span>. Inicia
-          sesión con él para continuar.
+          Ya hay un usuario del panel con el correo <span className="valor [overflow-wrap:anywhere] text-tinta">{email}</span>.
+          Accede con él para continuar.
         </>
       ) : (
-        'Ya hay un usuario del panel con tu correo. Inicia sesión con él para continuar.'
+        'Ya hay un usuario del panel con tu correo. Accede con él para continuar.'
       ),
       accion,
       nota: 'Si no recuerdas la contraseña, pide a tu proveedor de correo que la restablezca.',

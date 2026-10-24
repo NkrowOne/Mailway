@@ -14,7 +14,7 @@ export function badRequest(message: string, code = 'bad_request'): HttpError {
   return new HttpError(400, message, code);
 }
 
-export function unauthorized(message = 'Es necesario iniciar sesión.', code = 'unauthorized'): HttpError {
+export function unauthorized(message = 'Accede al panel para continuar.', code = 'unauthorized'): HttpError {
   return new HttpError(401, message, code);
 }
 

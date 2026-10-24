@@ -195,15 +195,15 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
         enPestana={Boolean(clienteFijo)}
         meta={
           clienteFijo ? (
-            (recuento ?? 'Cuentas de correo del cliente, cada una con su contraseña y su cuota.')
+            (recuento ?? 'Buzones del cliente, cada uno con su contraseña y su cuota.')
           ) : (
             <>
               {/* Para la administración es el listado de toda la instancia: se dice, para
                   no confundirlo con la pestaña «Buzones» de la ficha de un cliente. */}
               <p>
                 {isAdmin
-                  ? 'Cuentas de correo de todos los clientes, con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.'
-                  : 'Cuentas de correo con IMAP, SMTP y webmail. Cada buzón tiene su propia contraseña y cuota.'}
+                  ? 'Buzones de todos los clientes, con acceso por IMAP, SMTP y webmail. Cada uno tiene su contraseña y su cuota.'
+                  : 'Las direcciones de correo de tu equipo, con acceso por IMAP, SMTP y webmail. Cada buzón tiene su contraseña y su cuota.'}
               </p>
               {recuento && <p className="mt-1 text-sm text-tinta-3">{recuento}</p>}
             </>
@@ -232,7 +232,7 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
             Se ha alcanzado el máximo de buzones del plan ({clienteContexto.plan.maxMailboxes}). Para crear más,
             {isAdmin
               ? ' elimina alguno o cambia el plan del cliente en «Resumen».'
-              : ' elimina alguno o solicita una ampliación del plan.'}
+              : ' elimina alguno o solicita a tu proveedor una ampliación del plan.'}
           </BandaAviso>
         </div>
       )}
@@ -240,8 +240,8 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
       {!isAdmin && clienteContexto?.suspended && (
         <div className="mb-4">
           <BandaError>
-            La cuenta está suspendida: sus buzones no pueden iniciar sesión y no es posible crear buzones
-            nuevos. Ponte en contacto con tu proveedor.
+            La cuenta está suspendida: no se puede acceder a los buzones ni crear buzones nuevos. Ponte en
+            contacto con tu proveedor.
           </BandaError>
         </div>
       )}
@@ -293,14 +293,14 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
             }
           >
             {pendientesPropiedad.length === 1
-              ? 'Antes de crear buzones es necesario comprobar la propiedad del dominio: basta con que su registro MX apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.'
-              : `Antes de crear buzones es necesario comprobar la propiedad de los dominios (${pendientesPropiedad.length} pendientes): basta con que el registro MX de cada uno apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.`}
+              ? 'Para crear buzones hay que comprobar antes la propiedad del dominio. Basta con que su registro MX apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.'
+              : `Para crear buzones hay que comprobar antes la propiedad de los dominios (${pendientesPropiedad.length} pendientes). Basta con que el registro MX de cada uno apunte a este servidor o con publicar el registro TXT de verificación que indica su ficha.`}
           </Vacio>
         </Hoja>
       ) : all.length === 0 ? (
         <Hoja flush>
           <Vacio icono={Inbox}
-            title="Aún no hay buzones"
+            title="Todavía no hay buzones"
             action={
               <div className="flex flex-wrap justify-center gap-2">
                 <Button variant="perfil" disabled={altaBloqueada} onClick={() => setCreateOpen(true)}>
@@ -312,7 +312,7 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
               </div>
             }
           >
-            Crea cuentas como hola@{domainList[0]?.domain}. La contraseña se genera automáticamente y se muestra
+            Crea buzones como hola@{domainList[0]?.domain}. La contraseña se genera automáticamente y se muestra
             una sola vez.
           </Vacio>
         </Hoja>
@@ -371,7 +371,7 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
           ) : (
             <>
               {/* Cabecera de columnas: en pantalla estrecha cada dato lleva su rótulo. */}
-              <div className="regla-cabecera hidden items-baseline gap-x-4 px-4 py-2 lg:flex">
+              <div className="regla-cabecera hidden items-baseline gap-x-4 bg-hoja-2 px-4 py-2 lg:flex">
                 <span className="rotulo min-w-0 grow basis-0">Buzón</span>
                 {verCliente && <span className="rotulo w-28 shrink-0">Cliente</span>}
                 <span className="rotulo w-32 shrink-0">Ocupación</span>
@@ -382,7 +382,7 @@ export default function Buzones({ clienteFijo }: { clienteFijo?: string } = {}) 
               {grouped.map(([domainName, group]) => (
                 <div key={domainName}>
                   <div className="regla-fila flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 bg-hoja-3 px-4 py-1.5">
-                    <span className="valor break-all text-sm font-medium text-tinta">{domainName}</span>
+                    <span className="valor text-sm font-medium text-tinta [overflow-wrap:anywhere]">{domainName}</span>
                     <span className="rotulo">{plural(group.length, 'buzón', 'buzones')}</span>
                   </div>
                   {group.map((mailbox) => (
@@ -657,7 +657,7 @@ function CrearBuzon({
               placeholder="hola"
             />
           </div>
-          <span className="valor break-all pb-2.5 text-sm text-tinta-3">
+          <span className="valor pb-2.5 text-sm text-tinta-3 [overflow-wrap:anywhere]">
             @{domains.find((d) => d.id === domainId)?.domain || '…'}
           </span>
         </div>

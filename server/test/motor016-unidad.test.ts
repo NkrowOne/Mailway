@@ -950,7 +950,7 @@ describe('transporte JMAP', () => {
     const cliente = new ClienteJmap({ url: motorFalso.url, usuario: 'admin', clave: CLAVE, timeoutMs: 50 });
     await assert.rejects(cliente.peticion([['x:Domain/query', {}, 'c']]), (err: HttpError) => {
       assert.equal(err.code, 'engine_unreachable');
-      assert.match(err.message, /no respondió/);
+      assert.match(err.message, /no ha respondido/);
       return true;
     });
   });

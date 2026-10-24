@@ -68,7 +68,7 @@ export function restablecerContrasena(correo: string, password: string, generada
     // hasta el próximo arranque.
     if (usuario && correoConContrasenaDelEntorno() === email) {
       throw new ErrorRestablecer(
-        `La contraseña de ${email} la fija la variable MAILWAY_ADMIN_PASSWORD del panel: es la que vale para entrar. Para cambiarla, edita esa variable (en Skyway, las variables del servicio del panel) y vuelve a desplegarlo.`,
+        `La contraseña de ${email} la fija la variable MAILWAY_ADMIN_PASSWORD del panel: es la que sirve para acceder. Para cambiarla, edita esa variable (en Skyway, las variables del servicio del panel) y vuelve a desplegarlo.`,
       );
     }
     if (!usuario) {
@@ -138,7 +138,7 @@ async function main(): Promise<number> {
     );
     return 0;
   } catch (err) {
-    const mensaje = err instanceof ErrorRestablecer ? err.message : `No se pudo restablecer la contraseña: ${(err as Error)?.message || String(err)}`;
+    const mensaje = err instanceof ErrorRestablecer ? err.message : `No se ha podido restablecer la contraseña: ${(err as Error)?.message || String(err)}`;
     process.stderr.write(`${mensaje}\n`);
     return 1;
   }

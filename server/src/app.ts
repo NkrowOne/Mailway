@@ -66,7 +66,7 @@ function csrfGuard(req: FastifyRequest, reply: FastifyReply, done: () => void): 
     }
   }
   reply.status(403).send({
-    error: 'Petición rechazada: no procede de este panel.',
+    error: 'Se ha rechazado la petición porque no procede de este panel.',
     code: 'cross_site_request',
   });
 }
@@ -144,7 +144,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return;
     }
     if ((err as { statusCode?: number }).statusCode === 429) {
-      reply.status(429).send({ error: 'Demasiadas peticiones.', code: 'rate_limited' });
+      reply.status(429).send({ error: 'Se han realizado demasiadas peticiones. Espera un minuto y vuelve a intentarlo.', code: 'rate_limited' });
       return;
     }
     const statusCode = (err as { statusCode?: number }).statusCode;
@@ -156,7 +156,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     req.log.error({ err }, 'Error no controlado');
     reply.status(500).send({
-      error: 'Error interno del servidor. Revisa los registros de Mailway.',
+      error: 'Se ha producido un error interno. Vuelve a intentarlo y, si se repite, revisa los registros de Mailway.',
       code: 'internal',
     });
   });

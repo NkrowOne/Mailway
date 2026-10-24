@@ -134,7 +134,7 @@ export const TIPOS_IMAGEN = ['image/png', 'image/jpeg', 'image/webp'];
 export const IMAGENES: Record<HuecoImagen, { titulo: string; ayuda: string; fondoOscuro?: boolean }> = {
   logoClaro: {
     titulo: 'Logotipo',
-    ayuda: 'En la pantalla de acceso y en la barra del correo web. Mejor apaisado y con fondo transparente.',
+    ayuda: 'En la pantalla de acceso y en la barra del correo web. Preferiblemente apaisado y con fondo transparente.',
   },
   logoOscuro: {
     titulo: 'Logotipo para el modo oscuro',
@@ -182,14 +182,14 @@ export function motivoSinServicio(estado: EstadoCorreoWeb): string {
 export const SE_GANA = [
   'Interfaz actual, con hilos, plantillas y envío programado.',
   'Calendario y contactos del servidor, compartidos con el móvil y el ordenador.',
-  'Aplicación instalable y avisos al momento.',
+  'Aplicación instalable y notificaciones inmediatas.',
   'La marca del cliente en su webmail: nombre, logotipos e iconos.',
 ];
 
 export const SE_PIERDE = [
   'El cierre de la sesión por inactividad y el aviso claro de contraseña cambiada.',
   'El cambio de contraseña dentro del correo web: se hace en «Mi buzón».',
-  'Las libretas, identidades y firmas de Roundcube, que no pasan solas.',
+  'Las libretas, identidades y firmas de Roundcube, que no se trasladan automáticamente.',
   'El español por defecto en navegadores configurados en otro idioma.',
 ];
 

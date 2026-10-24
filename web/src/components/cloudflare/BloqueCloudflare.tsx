@@ -225,27 +225,27 @@ export function BloqueCloudflare({
   if (cuentas.isPending && !gestionado) {
     return (
       <Hoja title={titulo}>
-        <Cargando label="Consultando las cuentas de Cloudflare…" />
+        <Cargando label="Cargando las cuentas de Cloudflare…" />
       </Hoja>
     );
   }
 
   if (!posible && delAdministrador) {
     return (
-      <Hoja title={titulo} meta="Gestionado por el administrador">
+      <Hoja title={titulo} meta="Gestionado por la administración">
         {cuentas.isError && (
           <div className="mb-3">
             <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
-              {mensajeError(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
+              {mensajeError(cuentas.error, 'No se han podido cargar las cuentas de Cloudflare.')}
             </BandaError>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-[75ch] text-base text-tinta-2">
-            El DNS de este dominio lo configuró el administrador de la plataforma con su propia cuenta
-            de Cloudflare, que solo utiliza el administrador. Para revisarlo o cambiarlo desde aquí,
-            conecta una cuenta de Cloudflare propia que contenga la zona; si no, solicita los cambios
-            al administrador.
+            La administración configuró el DNS de este dominio con una cuenta de Cloudflare de la
+            instancia, que solo puede usar ella. Para revisarlo o cambiarlo desde aquí, conecta una
+            cuenta de Cloudflare propia que contenga la zona; si no, solicita los cambios a la
+            administración.
           </p>
           <Link to="/conexiones" className={claseEnlacePerfil}>
             Conectar Cloudflare
@@ -261,7 +261,7 @@ export function BloqueCloudflare({
         {cuentas.isError && (
           <div className="mb-3">
             <BandaError onRetry={() => void cuentas.refetch()} retrying={cuentas.isFetching}>
-              {mensajeError(cuentas.error, 'No se han podido consultar las cuentas de Cloudflare.')}
+              {mensajeError(cuentas.error, 'No se han podido cargar las cuentas de Cloudflare.')}
             </BandaError>
           </div>
         )}
@@ -299,7 +299,7 @@ export function BloqueCloudflare({
           {bloqueo && (
             <BandaAviso titulo="Pendiente del servidor de correo">
               Mientras el servidor de correo anuncie un MX interno no se aplica nada en Cloudflare:
-              el registro rompería el correo del dominio. Antes hay que corregir el nombre del
+              el registro dejaría al dominio sin recibir correo. Antes hay que corregir el nombre del
               servidor.
             </BandaAviso>
           )}
@@ -308,10 +308,10 @@ export function BloqueCloudflare({
           ) : alta?.autoDns && alta.cloudflareReason ? (
             <BandaAviso titulo="No se ha aplicado el DNS automáticamente">{alta.cloudflareReason}</BandaAviso>
           ) : resumenAutomatico && plan.isPending ? (
-            <Cargando label="Leyendo la zona en Cloudflare…" />
+            <Cargando label="Consultando la zona en Cloudflare…" />
           ) : resumenAutomatico && plan.isError ? (
             <BandaError onRetry={() => void plan.refetch()} retrying={plan.isFetching}>
-              {mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.')}
+              {mensajeError(plan.error, 'No se ha podido consultar la zona en Cloudflare.')}
             </BandaError>
           ) : resumen ? (
             <p className="max-w-[75ch] text-base text-tinta-2">
@@ -384,7 +384,7 @@ export function BloqueCloudflare({
         <RevisionCambios
           plan={plan.data}
           cargando={(!plan.data && !plan.isError) || (plan.isFetching && plan.dataUpdatedAt < abiertoEn)}
-          error={plan.isError ? mensajeError(plan.error, 'No se ha podido leer la zona en Cloudflare.') : null}
+          error={plan.isError ? mensajeError(plan.error, 'No se ha podido consultar la zona en Cloudflare.') : null}
           apex={dominio.domain}
           seleccion={seleccion}
           onSeleccion={setSeleccion}
@@ -458,7 +458,7 @@ function ProgresoSondeo({
         <span className="text-base text-tinta">Comprobando la propagación del DNS</span>
         <span className="valor text-sm text-tinta-3">
           <span role="status">
-            comprobación {sondeo.medicion + 1} de {MAX_MEDICIONES}
+            Comprobación {sondeo.medicion + 1} de {MAX_MEDICIONES}
           </span>
           <span aria-hidden> · {segundos} s</span>
         </span>
@@ -469,7 +469,7 @@ function ProgresoSondeo({
         aria-valuemin={0}
         aria-valuemax={MAX_MEDICIONES}
         aria-valuenow={sondeo.medicion}
-        className="h-1.5 bg-hoja-3"
+        className="h-1.5 overflow-hidden rounded-full bg-hoja-3"
       >
         <div
           className="h-full bg-tinta-3 transition-[width] duration-500"

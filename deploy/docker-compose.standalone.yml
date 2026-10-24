@@ -191,7 +191,7 @@ services:
       # Cambio de dominio: entrar con la dirección vieja o la nueva y conservar
       # contactos, firmas y preferencias (ver roundcube/README.md).
       - ./roundcube/mailway_cuentas:/var/www/html/plugins/mailway_cuentas:ro
-      # Entrar con llave de acceso desde «Mi buzón». Va antes que mailway_cuentas
+      # Acceso con llave de acceso desde «Mi buzón». Va antes que mailway_cuentas
       # y mailway_sesion en ROUNDCUBEMAIL_PLUGINS (ver roundcube/README.md).
       - ./roundcube/mailway_llave:/var/www/html/plugins/mailway_llave:ro
       # Diagnóstico de instalar.sh --comprobar y --probar-acceso (fuera de la

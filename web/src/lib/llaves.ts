@@ -74,10 +74,10 @@ export function motivoSinLlaves(): string {
   if (typeof window !== 'undefined' && !window.isSecureContext) {
     return 'Las llaves de acceso solo funcionan con una conexión segura (HTTPS).';
   }
-  return 'Este navegador no admite llaves de acceso. Usa uno actualizado para añadirlas o entrar con ellas.';
+  return 'Este navegador no admite llaves de acceso. Usa uno actualizado para añadirlas o usarlas.';
 }
 
-export const TEXTO_LLAVE_CANCELADA = 'Se ha cancelado o ha caducado. Vuelve a intentarlo.';
+export const TEXTO_LLAVE_CANCELADA = 'Se ha cancelado la solicitud de la llave de acceso o ha caducado. Vuelve a intentarlo.';
 
 /**
  * Texto para cualquier fallo de una operación con llave. Los errores del
@@ -90,14 +90,14 @@ export function mensajeErrorLlave(err: unknown, operacion: 'registrar' | 'entrar
   // NotAllowedError: la persona cerró el diálogo, no eligió ninguna llave o
   // se agotó el tiempo; el navegador no distingue entre los tres casos.
   if (nombre === 'NotAllowedError' || nombre === 'AbortError') return TEXTO_LLAVE_CANCELADA;
-  if (nombre === 'InvalidStateError' && operacion === 'registrar') return 'Esta llave ya está registrada.';
+  if (nombre === 'InvalidStateError' && operacion === 'registrar') return 'Ya has añadido esta llave de acceso.';
   if (nombre === 'SecurityError') return 'Esta dirección no admite llaves de acceso.';
   if (nombre === 'NotSupportedError' || nombre === 'ConstraintError') {
     return 'Este dispositivo o gestor de contraseñas no admite este tipo de llave de acceso.';
   }
   return operacion === 'registrar'
     ? 'No se ha podido añadir la llave de acceso. Comprueba la conexión y vuelve a intentarlo.'
-    : 'No se ha podido entrar con la llave de acceso. Comprueba la conexión y vuelve a intentarlo.';
+    : 'No se ha podido acceder con la llave de acceso. Comprueba la conexión y vuelve a intentarlo.';
 }
 
 /**

@@ -104,7 +104,9 @@ export default function ClienteDetalle({ user }: { user: User }) {
       <>
         {volver}
         <BandaError onRetry={noExiste ? undefined : () => void client.refetch()}>
-          {noExiste ? 'Cliente no encontrado.' : mensajeDe(client.error, 'No se ha podido cargar la ficha del cliente.')}
+          {noExiste
+            ? 'Este cliente no existe o se ha eliminado.'
+            : mensajeDe(client.error, 'No se ha podido cargar la ficha del cliente.')}
         </BandaError>
       </>
     );
@@ -149,7 +151,7 @@ export default function ClienteDetalle({ user }: { user: User }) {
             </MarcaFondo>
             {plan && <span className="text-sm text-tinta-3">Plan «{plan.name}»</span>}
             {data.contactEmail && (
-              <span className="valor min-w-0 break-all text-sm text-tinta-3">{data.contactEmail}</span>
+              <span className="valor min-w-0 text-sm text-tinta-3 [overflow-wrap:anywhere]">{data.contactEmail}</span>
             )}
             {vinculadoConSkyway(data.externalRef) && <span className="text-sm text-tinta-3">Vinculado con Skyway</span>}
           </span>
@@ -167,8 +169,8 @@ export default function ClienteDetalle({ user }: { user: User }) {
       {data.suspended && (
         <div className="mb-4">
           <BandaError>
-            Cliente suspendido: sus buzones no pueden iniciar sesión y no es posible crear dominios, buzones ni
-            alias ni enviar por la API. Se reactiva desde «Resumen».
+            Cliente suspendido: los titulares de sus buzones no pueden acceder y no se pueden crear dominios,
+            buzones ni alias, ni enviar por la API. Se reactiva desde «Resumen».
           </BandaError>
         </div>
       )}
@@ -261,7 +263,7 @@ function EditarDatos({ client, onClose }: { client: Client; onClose: () => void 
             setError('');
             setNotes(e.target.value);
           }}
-          help="Solo las ve el administrador."
+          help="Solo las ve la administración."
         />
         {error && <BandaError>{error}</BandaError>}
         <Botonera>

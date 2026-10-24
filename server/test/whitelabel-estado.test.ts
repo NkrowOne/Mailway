@@ -177,5 +177,5 @@ test('red de seguridad: un webmail que ya no cuelga de un dominio de correo del 
   db.prepare("DELETE FROM domains WHERE domain = 'huerfano.test'").run();
   const domain = await refreshClientDomain('w-huerfano');
   assert.equal(domain.status, 'pending_dns', 'fuera de Traefik y de los datos de conexión');
-  assert.match(domain.detail, /ya no cuelga de ningún dominio de correo de este cliente/);
+  assert.match(domain.detail, /ya no pertenece a ningún dominio de correo de este cliente/);
 });

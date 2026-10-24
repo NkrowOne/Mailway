@@ -31,10 +31,10 @@ export function PasoListo({
 
   return (
     <>
-      <CabeceraPaso ref={tituloRef} titulo={todo ? 'Tu correo está en marcha' : 'Falta poco'}>
+      <CabeceraPaso ref={tituloRef} titulo={todo ? 'Tu correo está en marcha' : 'Quedan pasos por completar'}>
         {todo
-          ? 'Todo lo esencial está configurado. A partir de aquí, tu panel te avisa si algo necesita atención.'
-          : 'Ya tienes buena parte hecha. Esto es lo que queda; puedes terminarlo ahora o cuando quieras desde tu panel.'}
+          ? 'Todo lo esencial está configurado. A partir de ahora, el panel indica si algo necesita atención.'
+          : 'Esto es lo que queda por hacer. Puedes completarlo ahora o más adelante desde tu panel.'}
       </CabeceraPaso>
 
       <Hoja title="Resumen" flush>
@@ -42,7 +42,7 @@ export function PasoListo({
           concepto={
             dominio ? (
               <>
-                Dominio <span className="valor break-all font-medium">{nombreVisible(dominio)}</span>
+                Dominio <span className="valor font-medium [overflow-wrap:anywhere]">{nombreVisible(dominio)}</span>
               </>
             ) : (
               'Dominio'
@@ -56,7 +56,7 @@ export function PasoListo({
               : dnsActivo
                 ? undefined
                 : estados.dominio.hecho
-                  ? 'Faltan registros del DNS: hasta que estén todos, el correo no llega ni sale.'
+                  ? 'Faltan registros del DNS: hasta que estén todos, no se puede enviar ni recibir correo.'
                   : 'Falta comprobar que el dominio es tuyo.'
           }
           accion={!dnsActivo ? revisar('dominio') : undefined}
@@ -69,7 +69,7 @@ export function PasoListo({
             ctx.buzones.length === 0
               ? 'Crea al menos uno para empezar a usar el correo.'
               : estados.equipo.veredicto === 'fuera'
-                ? 'A alguien aún no le ha llegado su configuración: envíasela por correo o copia su enlace.'
+                ? 'Hay personas que aún no han recibido su configuración: envíasela por correo o copia su enlace.'
                 : estados.equipo.veredicto === 'vigilar'
                   ? 'Hay personas con la configuración enviada que aún no la han terminado.'
                   : undefined
@@ -100,11 +100,11 @@ export function PasoListo({
         <ul className="flex flex-col gap-2.5 text-base text-tinta-2">
           <li className="max-w-[68ch]">
             <span className="font-medium text-tinta">Más personas:</span> pulsa «Añadir buzones» arriba en esta
-            página o ve a{' '}
+            página o ve a «
             <Link to="/buzones" className={enlace}>
               Buzones
             </Link>
-            . Después, envía a cada una su configuración desde «Tu equipo».
+            ». Después, envía a cada una su configuración desde «Tu equipo».
           </li>
           <li className="max-w-[68ch]">
             <span className="font-medium text-tinta">Direcciones compartidas</span> como info@ o ventas@: créalas como{' '}
@@ -115,11 +115,11 @@ export function PasoListo({
           </li>
           <li className="max-w-[68ch]">
             <span className="font-medium text-tinta">Correo automático</span> desde tu web o tus aplicaciones (avisos,
-            facturas, códigos de acceso): crea una clave en{' '}
+            facturas, códigos de acceso): crea una clave en «
             <Link to="/api-envio" className={enlace}>
               API de envío
             </Link>
-            .
+            ».
           </li>
         </ul>
       </Hoja>

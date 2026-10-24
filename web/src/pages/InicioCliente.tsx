@@ -91,7 +91,7 @@ export default function InicioCliente() {
           Publica en el proveedor del dominio los registros que figuran en la ficha del
           dominio. Si el dominio está en Cloudflare,{' '}
           <Link to="/conexiones" className={enlacePista}>
-            conecta tu cuenta en Conexiones
+            conecta tu cuenta en «Conexiones»
           </Link>{' '}
           y los registros se crearán automáticamente.
           {onboarding.ownershipVerified && !onboarding.hasMailbox && (
@@ -106,7 +106,7 @@ export default function InicioCliente() {
       label: 'Crear los buzones',
       done: onboarding.hasMailbox,
       to: '/puesta-en-marcha?paso=equipo',
-      hint: 'Las cuentas de correo de tu equipo, todas de una vez y cada una con su enlace de configuración.',
+      hint: 'Los buzones de tu equipo, todos a la vez y cada uno con su enlace de configuración.',
       obligatorio: true,
     },
     {
@@ -114,7 +114,7 @@ export default function InicioCliente() {
       label: 'Crear postmaster@ y abuse@',
       done: onboarding.hasEssentialAddresses,
       to: '/puesta-en-marcha?paso=obligatorias',
-      hint: 'Las exigen los estándares del correo: ahí llegan los avisos de entrega y las quejas por abuso. No cuentan para tu plan.',
+      hint: 'Los estándares del correo las exigen: reciben los avisos de entrega y las quejas por abuso. No cuentan en tu plan.',
       obligatorio: true,
     },
     {
@@ -124,9 +124,9 @@ export default function InicioCliente() {
       to: '/puesta-en-marcha?paso=equipo',
       hint: (
         <>
-          En la puesta en marcha ves quién tiene ya su correo configurado y envías la
-          configuración por correo a quien le falte. También puede entrar en{' '}
-          <span className="valor text-sm text-tinta">{portal}</span> con su dirección y contraseña.
+          En la puesta en marcha se ve quién tiene ya su correo configurado y se envía la
+          configuración por correo a quien le falte. Cada persona también puede acceder a «Mi buzón» en{' '}
+          <span className="valor text-sm text-tinta [overflow-wrap:anywhere]">{portal}</span> con su dirección y su contraseña.
         </>
       ),
       obligatorio: false,
@@ -190,12 +190,12 @@ export default function InicioCliente() {
             <Tesela icono={ListChecks} />
             <div className="min-w-0 flex-1 basis-64">
               <p className="text-md font-semibold text-tinta">
-                {hechos === 0 ? 'Pon en marcha el correo de tu empresa' : 'Tu correo aún no está listo del todo'}
+                {hechos === 0 ? 'Pon en marcha el correo de tu empresa' : 'Faltan pasos para terminar la puesta en marcha'}
               </p>
               <p className="max-w-[68ch] text-base text-tinta-2">
                 {hechos === 0
-                  ? 'Dominio, buzones de todo el equipo y dispositivos, paso a paso. Se guarda solo: puedes dejarlo y seguir más tarde.'
-                  : `Siguiente: ${siguiente.label.charAt(0).toLowerCase()}${siguiente.label.slice(1)}. La puesta en marcha te guía y sigue donde lo dejaste.`}
+                  ? 'Dominio, buzones del equipo y dispositivos, paso a paso. El progreso se guarda y puedes continuar más tarde.'
+                  : `Siguiente paso: ${siguiente.label.charAt(0).toLowerCase()}${siguiente.label.slice(1)}. La puesta en marcha continúa donde lo dejaste.`}
               </p>
             </div>
             <Link to="/puesta-en-marcha" className={estiloBoton('principal', 'w-full sm:w-auto')}>
@@ -264,7 +264,7 @@ export default function InicioCliente() {
           </ol>
         </Hoja>
 
-        <Hoja title="Uso de tu plan" meta="Recursos disponibles">
+        <Hoja title="Uso de tu plan" meta="Usado frente al límite">
           <div className="flex flex-col gap-4">
             {/* El dominio anterior de un cambio abierto no cuenta en el plan. */}
             <Escala label="Dominios" usado={dominiosQueCuentan(usage.domains, domains)} maximo={plan.maxDomains} />
@@ -272,17 +272,17 @@ export default function InicioCliente() {
             <Escala label="Alias" usado={usage.aliases} maximo={plan.maxAliases} />
             <div className="border-t border-regla pt-3">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-base text-tinta-2">Envíos por API · 7 días</span>
+                <span className="text-base text-tinta-2">Envíos por API en los últimos 7 días</span>
                 <span className="valor text-md font-medium text-tinta">{messages.last7d}</span>
               </div>
               {messages.failed7d > 0 ? (
                 <p className="mt-1 text-sm text-fuera">
                   {plural(messages.failed7d, 'envío fallido', 'envíos fallidos')}. Consulta el
-                  detalle en{' '}
+                  detalle en «
                   <Link to="/api-envio" className="underline underline-offset-2 hover:text-tinta">
                     API de envío
                   </Link>
-                  .
+                  ».
                 </p>
               ) : onboarding.hasApiKey && !onboarding.hasSentMessage ? (
                 <p className="mt-1 text-sm text-tinta-3">
@@ -312,7 +312,7 @@ export default function InicioCliente() {
                             : ''
                       }`}
                   >
-                    <span className="valor min-w-0 break-all text-base text-tinta">{domain.domain}</span>
+                    <span className="valor min-w-0 text-base text-tinta [overflow-wrap:anywhere]">{domain.domain}</span>
                     <MarcaFondo veredicto={estado.veredicto}>{estado.etiqueta}</MarcaFondo>
                   </Link>
                 </li>

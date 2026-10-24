@@ -120,7 +120,7 @@ export function useDireccionPanel(opciones: { clientId?: string | null; user?: U
 }
 
 /**
- * Los accesos rápidos del resumen («Alta de cliente», «Añadir dominio»,
+ * Los accesos rápidos del resumen («Dar de alta un cliente», «Añadir dominio»,
  * «Crear buzón») enlazan a la vista con `?nuevo=1`: la vista abre su alta y
  * quita el parámetro, para que recargar o volver atrás no la reabra. Con
  * `listo` a false se espera a tener los datos que deciden si se puede crear.

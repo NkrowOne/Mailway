@@ -62,12 +62,12 @@ function dominioDe(direccion: string): string {
 
 /** Mismo formato que los «notFound» del driver de Stalwart. */
 function noEncontrado(item: string): HttpError {
-  return new HttpError(502, `El motor de correo no encuentra el elemento (${item}).`, 'engine_not_found');
+  return new HttpError(502, `El servidor de correo no encuentra el elemento (${item}).`, 'engine_not_found');
 }
 
 /** Mismo formato que los «fieldAlreadyExists» del driver de Stalwart. */
 function yaExiste(valor: string): HttpError {
-  return new HttpError(502, `El motor de correo ya tiene ese elemento «${valor}».`, 'engine_exists');
+  return new HttpError(502, `El servidor de correo ya tiene ese elemento «${valor}».`, 'engine_exists');
 }
 
 /**
@@ -174,7 +174,7 @@ export class DemoEngine implements MailEngine {
     this.fallos.splice(i, 1);
     throw new HttpError(
       502,
-      `El motor de correo rechazó la operación (fallo inyectado en ${metodo}${nombre ? ` de ${nombre}` : ''}).`,
+      `El servidor de correo ha rechazado la operación (fallo inyectado en ${metodo}${nombre ? ` de ${nombre}` : ''}).`,
       'engine_error',
     );
   }
@@ -266,7 +266,7 @@ export class DemoEngine implements MailEngine {
     } catch (err) {
       return { ok: false, api: 'demo', detail: (err as Error).message };
     }
-    return { ok: true, api: 'demo', version: 'demo', detail: 'Modo demostración: sin motor de correo real.' };
+    return { ok: true, api: 'demo', version: 'demo', detail: 'Modo demostración: sin servidor de correo real.' };
   }
 
   async createDomain(domain: string): Promise<void> {
@@ -369,7 +369,7 @@ export class DemoEngine implements MailEngine {
     const existente = this.buscar(nombre);
     if (existente) {
       if (existente.type !== 'list') {
-        throw new HttpError(502, `El motor de correo rechazó la operación: «${alias}» no es una lista.`, 'engine_error');
+        throw new HttpError(502, `El servidor de correo ha rechazado la operación: «${alias}» no es una lista.`, 'engine_error');
       }
       // Solo los miembros: las direcciones de la lista (p. ej. la pre-recepción) se conservan.
       existente.members = miembros;

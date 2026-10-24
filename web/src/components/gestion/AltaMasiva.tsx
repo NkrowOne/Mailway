@@ -66,6 +66,7 @@ export function AltaMasiva({
   motivoBloqueo?: MotivoBloqueoDominio;
 }) {
   const queryClient = useQueryClient();
+  const esAdmin = useUsuario()?.role === 'admin';
   const [domainId, setDomainId] = useState(() => dominioInicialDisponible(domains, dominioInicial, motivoBloqueo));
   const [texto, setTexto] = useState('');
   const [revision, setRevision] = useState<BulkPreview | null>(null);
@@ -155,7 +156,7 @@ export function AltaMasiva({
         onClose();
       }}
     >
-      {conEnlacesCreados ? 'He guardado los enlaces' : conCredenciales ? 'He guardado las credenciales' : 'Cerrar'}
+      {conEnlacesCreados ? 'Ya he guardado los enlaces' : conCredenciales ? 'Ya he guardado las credenciales' : 'Cerrar'}
     </Button>
   ) : undefined;
 
@@ -187,11 +188,12 @@ export function AltaMasiva({
           {revision.exceedsPlan && !revision.ownershipPending && (
             <BandaError>
               El plan permite crear {revision.capacity.remaining} buzones más y la lista contiene{' '}
-              {revision.valid} válidos. Reduce la lista o amplía el plan del cliente; no se creará ninguno
-              mientras no quepan todos.
+              {revision.valid} válidos. Reduce la lista o{' '}
+              {esAdmin ? 'amplía el plan del cliente' : 'solicita a tu proveedor una ampliación del plan'}; no se
+              creará ninguno hasta que quepan todos.
             </BandaError>
           )}
-          <div className="max-h-80 overflow-y-auto border border-regla">
+          <div className="max-h-80 overflow-y-auto rounded-lg border border-regla">
             {revision.results.map((r, i) => (
               <div
                 key={`${r.localPart}-${i}`}
@@ -281,7 +283,7 @@ export function AltaMasiva({
             </p>
           )}
           {lineas.some((l) => l.error) && (
-            <ul className="max-h-32 overflow-y-auto border border-regla text-sm">
+            <ul className="max-h-32 overflow-y-auto rounded-lg border border-regla text-sm">
               {lineas
                 .filter((l) => l.error)
                 .map((l) => (
@@ -366,12 +368,12 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
               Descargar contraseñas (CSV)
             </Button>
           </div>
-          <ul className="max-h-[28rem] overflow-y-auto border border-regla">
+          <ul className="max-h-[28rem] overflow-y-auto rounded-lg border border-regla">
             {personas.map((p) => (
               <FilaEnlace key={p.email} persona={p} firma={firma}>
                 <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                   <span className="rotulo">Contraseña</span>
-                  <span className="codigo break-all text-tinta">{p.password}</span>
+                  <span className="codigo text-tinta [overflow-wrap:anywhere]">{p.password}</span>
                   <BotonCopiar text={p.password} />
                 </p>
               </FilaEnlace>
@@ -399,8 +401,8 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
             </Button>
             <BotonCopiar text={textoCopia} label="Copiar todo" />
           </div>
-          <div className="max-h-80 overflow-y-auto border border-regla">
-            <div className="regla-cabecera hidden items-baseline gap-x-3 px-3 py-1.5 sm:flex">
+          <div className="max-h-80 overflow-y-auto rounded-lg border border-regla">
+            <div className="regla-cabecera hidden items-baseline gap-x-3 bg-hoja-2 px-3 py-1.5 sm:flex">
               <span className="rotulo min-w-0 grow basis-0">Dirección</span>
               <span className="rotulo w-60 shrink-0">Contraseña</span>
             </div>
@@ -409,7 +411,7 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
                 <p className="valor min-w-0 grow basis-full break-all text-sm text-tinta sm:basis-0">{r.email}</p>
                 <div className="flex items-center gap-2 sm:w-60 sm:shrink-0">
                   <span className="rotulo sm:hidden">Contraseña</span>
-                  <span className="codigo break-all text-sm text-tinta">{r.password}</span>
+                  <span className="codigo text-sm text-tinta [overflow-wrap:anywhere]">{r.password}</span>
                   <BotonCopiar text={r.password!} />
                 </div>
               </div>
@@ -418,7 +420,7 @@ function Resultado({ dominio, respuesta }: { dominio: string; respuesta: BulkRes
         </>
       )}
       {fallidos.length > 0 && (
-        <div className="border border-regla">
+        <div className="overflow-hidden rounded-lg border border-regla">
           <p className="rotulo regla-cabecera px-3 py-1.5">No creados</p>
           {fallidos.map((r, i) => (
             <div key={`${r.email}-${i}`} className="regla-fila fila-fuera px-3 py-2 last:border-b-0">

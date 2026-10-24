@@ -274,7 +274,7 @@ function probeTls(host: string, servername: string, via: 'publico' | 'interno'):
       // Con el detalle se obtiene la cadena: un autofirmado es su propio emisor.
       const cert = socket.getPeerCertificate(true);
       if (!cert || Object.keys(cert).length === 0) {
-        finish(emptyTls(host, 'El servidor no presentó ningún certificado.'));
+        finish(emptyTls(host, 'El servidor no ha presentado ningún certificado.'));
         return;
       }
       const authError = socket.authorizationError ? String(socket.authorizationError) : null;
@@ -366,7 +366,7 @@ export async function certificadoParaNombre(
     ? { cubre: true, detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) ya cubre ${nombre}.` }
     : {
         cubre: false,
-        detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) no cubre ${nombre}: los programas de correo rechazarían la conexión hasta emitir uno nuevo.`,
+        detalle: `El certificado actual (${estado.subject ?? 'sin nombre'}) no cubre ${nombre}: los programas de correo rechazarían la conexión hasta que se emita uno nuevo.`,
       };
 }
 
@@ -406,12 +406,12 @@ export function evaluateTlsAlerts(status: EngineTlsStatus, mailHostname: string)
   } else if (status.hostnameMatches === false) {
     critical = {
       title: `El certificado del servidor de correo no corresponde a ${host}`,
-      message: `El motor presenta un certificado para «${status.subject ?? 'otro nombre'}». Los programas de correo muestran un aviso de seguridad.`,
+      message: `El servidor de correo presenta un certificado para «${status.subject ?? 'otro nombre'}». Los programas de correo muestran un aviso de seguridad.`,
     };
   } else if (status.authorizationError) {
     critical = {
       title: 'El certificado del servidor de correo no es de confianza',
-      message: `La cadena del certificado de ${host} no se pudo validar (${status.authorizationError}).`,
+      message: `La cadena del certificado de ${host} no se ha podido validar (${status.authorizationError}).`,
     };
   } else if (days !== null && days < TLS_CRITICAL_DAYS) {
     critical = {
@@ -545,7 +545,7 @@ export function evaluateHostnameAlert(expected: string, running: string | null):
       primerPaso +
       'Si el motor ya tiene guardado el nombre correcto y sigue anunciándose con otro, ' +
       'lo fija su configuración local (config.toml o las variables del contenedor): corrígela y reinicia el motor. ' +
-      'Los dominios se vuelven a medir con la frecuencia habitual del vigilante; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
+      'Mailway vuelve a medir los dominios con la frecuencia habitual; para hacerlo ya, pulsa «Medir el DNS ahora» en su ficha.',
   });
 }
 
@@ -603,7 +603,7 @@ async function findCloudflareZone(token: string, hostname: string): Promise<Clou
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      throw upstream(`No se pudo contactar con Cloudflare: ${(err as Error).message}`, 'cloudflare_unreachable');
+      throw upstream(`No se ha podido contactar con Cloudflare: ${(err as Error).message}`, 'cloudflare_unreachable');
     }
     const body = (await res.json().catch(() => null)) as {
       success?: boolean;
@@ -615,11 +615,11 @@ async function findCloudflareZone(token: string, hostname: string): Promise<Clou
       const detail = first ? `${first.message ?? ''} (código ${first.code ?? '?'})` : `HTTP ${res.status}`;
       if (res.status === 401 || res.status === 403 || first?.code === 1000 || first?.code === 10000) {
         throw badRequest(
-          `Cloudflare rechazó el token de esta cuenta: ${detail}. Revisa la cuenta en Conexiones → Cloudflare.`,
+          `Cloudflare ha rechazado el token de esta cuenta: ${detail}. Revisa la cuenta en Conexiones → Cloudflare.`,
           'cloudflare_token_rejected',
         );
       }
-      throw upstream(`Cloudflare respondió con un error: ${detail}`, 'cloudflare_error');
+      throw upstream(`Cloudflare ha respondido con un error: ${detail}`, 'cloudflare_error');
     }
     const zone = body.result?.[0];
     if (zone) return { id: zone.id, name: zone.name, status: zone.status };
@@ -865,7 +865,7 @@ export function registerEngineOpsRoutes(app: FastifyInstance): void {
       token = decryptSecret(row.token_enc);
     } catch {
       throw badRequest(
-        'No se pudo leer el token guardado de esa cuenta. Vuelve a conectarla en Conexiones → Cloudflare.',
+        'No se ha podido leer el token guardado de esa cuenta. Vuelve a conectarla en Conexiones → Cloudflare.',
         'cloudflare_token_unreadable',
       );
     }

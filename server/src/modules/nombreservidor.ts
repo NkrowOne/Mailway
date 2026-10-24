@@ -43,7 +43,7 @@ const consultaSchema = z.object({
     .string({ required_error: 'Indica el nombre nuevo del servidor de correo.' })
     .trim()
     .max(253)
-    .refine(isValidHostname, 'El nombre del servidor de correo no es válido (ej.: mail.miempresa.com).'),
+    .refine(isValidHostname, 'El nombre del servidor de correo no es válido (p. ej. mail.miempresa.com).'),
 });
 
 /** Dominio base del instalador: todo menos la primera etiqueta (mail.x.com → x.com). */

@@ -53,7 +53,7 @@ export default function Cuenta() {
       setError(
         err instanceof ApiError
           ? err.message
-          : 'No se ha podido cambiar la contraseña. Comprueba la conexión e inténtalo de nuevo.',
+          : 'No se ha podido cambiar la contraseña. Comprueba la conexión y vuelve a intentarlo.',
       );
     } finally {
       setBusy(false);
@@ -62,7 +62,7 @@ export default function Cuenta() {
 
   return (
     <>
-      <Membrete title="Mi cuenta" meta="Datos de acceso al panel." />
+      <Membrete title="Mi cuenta" meta="Tus datos de acceso al panel." />
       <div className="flex max-w-2xl flex-col gap-4">
         {user && (
           <Hoja title="Identidad" flush>
@@ -85,11 +85,11 @@ export default function Cuenta() {
               <p>
                 La contraseña de esta cuenta es la de la variable{' '}
                 <span className="codigo text-sm text-tinta">MAILWAY_ADMIN_PASSWORD</span> del panel, y es siempre la que
-                vale para entrar.
+                se usa para acceder.
               </p>
               <p>
-                Para cambiarla, edita esa variable en las variables del servicio del panel (en Skyway) y vuelve a
-                desplegarlo. Si la quitas, podrás cambiarla aquí.
+                Para cambiarla, edita la variable en el servicio del panel (en Skyway) y vuelve a desplegarlo. Si la
+                eliminas, podrás cambiar la contraseña aquí.
               </p>
             </div>
           </Hoja>

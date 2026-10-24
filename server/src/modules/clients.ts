@@ -145,11 +145,17 @@ export function clientForViewer(client: Client, viewerIsAdmin: boolean): Client 
  * Un cliente suspendido no crea nada: ni recursos del plan ni credenciales
  * nuevas (claves de API, contraseñas de aplicación) que seguirían vivas al
  * reactivarlo sin que nadie las hubiera pedido con el cliente en regla.
+ *
+ * `viewerIsAdmin === false`: quien lo lee es un usuario del propio cliente,
+ * que no puede reactivarlo; se le dice a quién acudir. Sin indicarlo (vías sin
+ * usuario del panel), el mensaje es el de la administración.
  */
-export function assertClientActive(clientId: string): void {
+export function assertClientActive(clientId: string, viewerIsAdmin?: boolean): void {
   if (getClient(clientId).suspended) {
     throw badRequest(
-      'Este cliente está suspendido. No es posible crear recursos ni credenciales hasta que se reactive.',
+      viewerIsAdmin === false
+        ? 'Tu cuenta está suspendida: no es posible crear recursos ni credenciales. Ponte en contacto con tu proveedor.'
+        : 'Este cliente está suspendido. No es posible crear recursos ni credenciales hasta que se reactive.',
       'client_suspended',
     );
   }
@@ -793,7 +799,7 @@ export function assertWithinLimit(
   adding = 1,
   viewerIsAdmin = false,
 ): void {
-  assertClientActive(clientId);
+  assertClientActive(clientId, viewerIsAdmin);
   const client = getClient(clientId);
   const plan = getPlan(client.planId);
   const usage = getClientUsage(clientId);
@@ -810,7 +816,7 @@ export function assertWithinLimit(
       adding === 1
         ? // El administrador no tiene a quién pedir la ampliación: la hace él.
           `Se ha alcanzado el máximo de ${limit.label} del plan «${plan.name}» (${limit.max}). ${
-            viewerIsAdmin ? 'Amplía el plan del cliente en su ficha.' : 'Solicita una ampliación del plan.'
+            viewerIsAdmin ? 'Amplía el plan del cliente en su ficha.' : 'Solicita a tu proveedor una ampliación del plan.'
           }`
         : `El plan «${plan.name}» permite ${limit.max} ${limit.label} y ya hay ${limit.used}: no es posible crear ${adding} más (quedan ${remaining}). No se ha creado ninguno.`,
       'plan_limit_reached',

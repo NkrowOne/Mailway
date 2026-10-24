@@ -75,7 +75,7 @@ export default function Entregabilidad() {
     return (
       <>
         {membrete}
-        <Cargando label="Consultando PTR y listas negras…" />
+        <Cargando label="Consultando el PTR, el registro A y las listas negras…" />
       </>
     );
   }
@@ -84,7 +84,7 @@ export default function Entregabilidad() {
       <>
         {membrete}
         <AvisoError onRetry={() => void health.refetch()} retrying={health.isFetching}>
-          No se ha podido ejecutar la comprobación de entregabilidad. Vuelve a intentarlo en unos
+          No se ha podido completar la comprobación de entregabilidad. Vuelve a intentarlo en unos
           segundos.
         </AvisoError>
       </>
@@ -255,7 +255,7 @@ export default function Entregabilidad() {
                   </Link>
                 }
               >
-                Configura la IP pública del servidor en Ajustes para comprobar las listas negras.
+                Configura la IP pública del servidor en «Ajustes» para comprobar las listas negras.
               </Vacio>
             ) : (
               <ul>
@@ -300,7 +300,7 @@ export default function Entregabilidad() {
           {acciones.length === 0 && !completa ? (
             <Vacio icono={CircleDashed} title="Comprobación incompleta">
               No se ha podido consultar todo lo necesario para proponer un plan de acción. Vuelve a
-              medir en unos minutos.
+              comprobarlo en unos minutos.
             </Vacio>
           ) : acciones.length === 0 ? (
             <Vacio icono={CircleCheck} title="Sin acciones pendientes">

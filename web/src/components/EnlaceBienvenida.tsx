@@ -138,7 +138,7 @@ export function DialogoBienvenida({
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!esCorreoValido(email)) {
-      setError('Indica un correo válido: será el usuario con el que la persona entrará en el panel.');
+      setError('Indica un correo válido: será el usuario con el que la persona accederá al panel.');
       return;
     }
     setError('');
@@ -287,7 +287,7 @@ function FormularioBienvenida({
         onValidez={onValidez}
       />
       <p className="text-sm text-tinta-3">
-        Si ya había un enlace pendiente para este correo, se anula: solo vale el último que crees.
+        Si ya había un enlace pendiente para este correo, se anula: solo es válido el último que se cree.
       </p>
       {error && <BandaError>{error}</BandaError>}
       {pie}
@@ -408,7 +408,7 @@ export function HojaInvitaciones({
                           busy={revocar.isPending}
                           onClick={() => revocar.mutate(inv.id, { onSettled: () => setARevocar(null) })}
                         >
-                          Confirmar
+                          Revocar enlace
                         </Button>
                         <Button variant="plano" className="px-2" onClick={() => setARevocar(null)}>
                           Cancelar
@@ -426,7 +426,7 @@ export function HojaInvitaciones({
                             Volver a enviar
                           </Button>
                         )}
-                        <Button variant="plano" className="px-2" onClick={() => setARevocar(inv.id)}>
+                        <Button variant="peligro" className="px-2" onClick={() => setARevocar(inv.id)}>
                           Revocar
                         </Button>
                       </>
@@ -495,7 +495,7 @@ export function SiguientePasoBienvenida({
         {vigente && estado ? (
           <>
             <p className="max-w-[75ch] text-base text-tinta-2">
-              {clientName} aún no ha creado su acceso. El enlace de bienvenida está enviado a{' '}
+              {clientName} aún no ha creado su acceso. El enlace de bienvenida se ha enviado a{' '}
               <span className="valor [overflow-wrap:anywhere] text-tinta">{vigente.email}</span>
               {estado.etiqueta === 'Abierto'
                 ? `: lo abrió el ${formatDate(vigente.openedAt)}, pero todavía no ha terminado.`
@@ -523,7 +523,7 @@ export function SiguientePasoBienvenida({
         ) : (
           <>
             <p className="max-w-[75ch] text-base text-tinta-2">
-              {clientName} aún no puede entrar en su panel. Envía un enlace de bienvenida a la persona de contacto:
+              {clientName} aún no puede acceder a su panel. Envía un enlace de bienvenida a la persona de contacto:
               creará su propio acceso y pondrá en marcha el correo paso a paso (dominio, direcciones obligatorias,
               buzones del equipo y sus dispositivos).
             </p>

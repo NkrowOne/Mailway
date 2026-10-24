@@ -110,7 +110,7 @@ export default function Login({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
-      setError('Indica el correo electrónico y la contraseña.');
+      setError('Introduce tu correo electrónico y tu contraseña.');
       return;
     }
     setBusy(true);
@@ -124,7 +124,7 @@ export default function Login({
           ? TEXTO_CREDENCIALES_INCORRECTAS
           : err instanceof ApiError
             ? err.message
-            : 'No se ha podido iniciar sesión. Comprueba la conexión y vuelve a intentarlo.',
+            : 'No se ha podido acceder. Comprueba la conexión y vuelve a intentarlo.',
       );
       setBusy(false);
     }
@@ -146,7 +146,7 @@ export default function Login({
               <LayoutDashboard className="h-4 w-4" aria-hidden />
               Panel de gestión
             </span>
-            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.015em] text-tinta">Iniciar sesión</h1>
+            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.015em] text-tinta">Acceder al panel</h1>
             <p className="mt-2 text-base text-tinta-2">Dominios, buzones y envíos de tu servicio de correo.</p>
 
             <form onSubmit={submit} noValidate className="mt-8 flex flex-col gap-5">
@@ -181,7 +181,7 @@ export default function Login({
               />
               {error && <AvisoError>{error}</AvisoError>}
               <Button type="submit" variant="principal" busy={busy} className="mt-1 min-h-11 w-full sm:min-h-0">
-                Iniciar sesión
+                Acceder
               </Button>
             </form>
 
@@ -191,11 +191,11 @@ export default function Login({
               <p>
                 ¿Buscas tu buzón de correo?{' '}
                 <Link to="/mi-buzon" className="font-medium text-petroleo underline underline-offset-2 hover:text-tinta">
-                  Entra en «Mi buzón»
+                  Accede a «Mi buzón»
                 </Link>
                 .
               </p>
-              <p>¿Has olvidado la contraseña? Ponte en contacto con quien administra tu servicio de correo.</p>
+              <p>Si no recuerdas tu contraseña, ponte en contacto con quien administra tu servicio de correo.</p>
             </div>
           </div>
         </div>

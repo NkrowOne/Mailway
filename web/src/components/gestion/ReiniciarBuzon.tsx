@@ -102,7 +102,7 @@ export function ReiniciarBuzon({
     return (
       <>
         <p className="text-base text-tinta-2">
-          <span className="valor break-all">{mailbox.email}</span> está listo para el titular. Envíale este
+          <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> está listo para el titular. Envíale este
           enlace: al abrirlo verá las instrucciones para su dispositivo
           {hecho.link.hasPassword ? ' y la contraseña del buzón' : ''}.
         </p>
@@ -146,7 +146,7 @@ export function ReiniciarBuzon({
   return (
     <>
       <p className="text-base text-tinta-2">
-        Deja <span className="valor break-all">{mailbox.email}</span> como recién creado para entregárselo al
+        Deja <span className="valor [overflow-wrap:anywhere]">{mailbox.email}</span> como recién creado para entregárselo al
         titular, por ejemplo después de haberlo probado. El correo que contiene no se modifica.
       </p>
       <ul className="flex list-disc flex-col gap-1.5 pl-5 text-base text-tinta-2">

@@ -87,7 +87,7 @@ export function CuentasEquipo({
             <strong className="font-semibold text-fuera">
               {sinConfigurar.length === 1 ? '1 buzón sin configurar.' : `${sinConfigurar.length} buzones sin configurar.`}
             </strong>{' '}
-            Envía a cada persona su configuración por correo o copia su enlace y pásaselo.
+            Envía a cada persona su configuración por correo o copia su enlace y compártelo con ella.
           </p>
           {porEnviar.length > 0 && (
             <Button variant="principal" onClick={() => onEnviar(porEnviar.map((b) => b.id))} disabled={ctx.suspendido}>
@@ -186,7 +186,7 @@ function FilaCuenta({
       ]);
       setAccion(null);
       await invalidarCorreo(queryClient);
-      toast('ok', `${buzon.displayName || buzon.email} empieza de cero: envíale la configuración o copia su enlace.`);
+      toast('ok', `Se ha reiniciado ${buzon.displayName || buzon.email}. Envíale la configuración o copia su enlace.`);
     },
   });
 
@@ -195,7 +195,7 @@ function FilaCuenta({
     onSuccess: async () => {
       setAccion(null);
       await invalidarCorreo(queryClient);
-      toast('ok', `${buzon.displayName || buzon.email} queda como configurado.`);
+      toast('ok', `${buzon.displayName || buzon.email} se ha marcado como configurado.`);
     },
   });
 
@@ -215,7 +215,7 @@ function FilaCuenta({
       </div>
       <p className="mt-1 max-w-[68ch] text-sm text-tinta-2">
         {buzon.status !== 'active'
-          ? 'Buzón suspendido: no se puede configurar mientras lo esté.'
+          ? 'El buzón está suspendido y no se puede configurar.'
           : mio && lectura.estado !== 'configurado'
             ? 'Es tu buzón: configúralo en tus dispositivos en el paso 4.'
             : lectura.nota}
@@ -277,7 +277,7 @@ function FilaCuenta({
       {accion === 'enlace' && (
         <div className="revelar mt-2.5 flex flex-col gap-2.5 rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
           <p className="max-w-[68ch] text-sm text-tinta">
-            Se generará una contraseña nueva para <span className="break-all font-medium">{buzon.email}</span> y un
+            Se generará una contraseña nueva para <span className="font-medium [overflow-wrap:anywhere]">{buzon.email}</span> y un
             enlace que la incluye. Si ya usa este buzón en algún dispositivo, tendrá que volver a configurarlo con el
             enlace.
           </p>
@@ -296,9 +296,10 @@ function FilaCuenta({
       {accion === 'reiniciar' && (
         <div className="revelar mt-2.5 flex flex-col gap-2.5 rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5">
           <p className="max-w-[68ch] text-sm text-tinta">
-            <span className="break-all font-medium">{buzon.email}</span> empezará de cero, como tras una prueba:
-            contraseña nueva, fuera sus enlaces anteriores, las sesiones de «Mi buzón» y la foto, y quedará sin
-            configurar con un enlace nuevo. Su correo no se toca; donde ya esté configurado habrá que volver a hacerlo.
+            <span className="font-medium [overflow-wrap:anywhere]">{buzon.email}</span> volverá al estado inicial, como tras una
+            prueba: se genera una contraseña nueva, se anulan sus enlaces anteriores, se cierran las sesiones de «Mi
+            buzón», se elimina la foto y queda sin configurar con un enlace nuevo. El correo guardado se conserva; en los
+            dispositivos donde ya esté configurado habrá que volver a configurarlo.
           </p>
           {reiniciar.isError && <AvisoError>{mensajeDe(reiniciar.error, 'No se ha podido reiniciar el buzón.')}</AvisoError>}
           <div className="flex flex-wrap gap-2">
@@ -316,10 +317,10 @@ function FilaCuenta({
         <div className="revelar mt-2.5 flex flex-col gap-2.5 rounded-lg border border-regla bg-hoja-2 px-3 py-2.5">
           <p className="max-w-[68ch] text-sm text-tinta">
             Márcalo solo si {buzon.displayName ? buzon.displayName.split(/\s+/)[0] : 'su titular'} ya lee y envía correo
-            con este buzón (por ejemplo, si lo configuró escribiendo los datos a mano). Se marcará solo cuando
-            termine su enlace o entre en el webmail.
+            con este buzón (por ejemplo, si lo configuró escribiendo los datos manualmente). Se marca automáticamente
+            cuando completa su enlace o accede al webmail.
           </p>
-          {marcar.isError && <AvisoError>{mensajeDe(marcar.error, 'No se ha podido marcar.')}</AvisoError>}
+          {marcar.isError && <AvisoError>{mensajeDe(marcar.error, 'No se ha podido marcar como configurado.')}</AvisoError>}
           <div className="flex flex-wrap gap-2">
             <Button variant="perfil" busy={marcar.isPending} onClick={() => marcar.mutate()}>
               Marcar como configurado
@@ -387,7 +388,7 @@ export function EnviarConfiguracion({
   function errorDe(b: Mailbox): string | null {
     const v = (para[b.id] ?? '').trim();
     if (!v) return 'Escribe el correo donde la recibirá.';
-    if (!esCorreoValido(v)) return 'Este correo no parece válido.';
+    if (!esCorreoValido(v)) return 'Este correo no es válido.';
     if (v.toLowerCase() === b.email.toLowerCase()) return 'Escribe otro correo de esta persona: este buzón aún no está configurado.';
     return null;
   }
@@ -444,7 +445,7 @@ export function EnviarConfiguracion({
       pie={
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>*]:min-h-11 [&>*]:w-full sm:[&>*]:min-h-0 sm:[&>*]:w-auto">
           <Button variant={terminado ? 'principal' : 'plano'} onClick={onClose} disabled={enviando}>
-            {terminado ? 'Hecho' : 'Cancelar'}
+            {terminado ? 'Cerrar' : 'Cancelar'}
           </Button>
           {!terminado && (
             <Button variant="principal" busy={enviando} disabled={marcadosVisibles === 0} onClick={() => void enviar()}>
@@ -458,7 +459,7 @@ export function EnviarConfiguracion({
       <div className="flex flex-col gap-4">
         <p className="max-w-[68ch] text-base text-tinta-2">
           Cada persona recibe un correo de <span className="font-medium text-tinta">«Configura tu correo»</span>{' '}
-          <span className="valor break-all text-sm text-tinta">&lt;{remitente}&gt;</span> con su enlace personal. Envíalo
+          <span className="valor text-sm text-tinta [overflow-wrap:anywhere]">&lt;{remitente}&gt;</span> con su enlace personal. Envíalo
           a un correo que ya use, como el personal: su buzón nuevo aún no está en ningún dispositivo.
         </p>
         {dominio.status !== 'active' && (
@@ -466,8 +467,8 @@ export function EnviarConfiguracion({
             role="note"
             className="rounded-lg border border-[rgb(var(--vigilar)/0.45)] bg-vigilar-fondo px-3 py-2.5 text-sm text-tinta"
           >
-            El DNS de tu dominio aún no está completo: estos correos podrían llegar a la carpeta de spam. Si alguien no
-            lo recibe, copia su enlace y pásaselo por otra vía.
+            El DNS de tu dominio aún no está completo: estos correos podrían llegar a la carpeta de correo no deseado. Si
+            alguien no lo recibe, copia su enlace y envíaselo por otra vía.
           </div>
         )}
 
@@ -504,7 +505,7 @@ export function EnviarConfiguracion({
                         </span>
                         <Marca veredicto={lectura.veredicto}>{lectura.rotulo}</Marca>
                       </span>
-                      {b.displayName && <span className="block break-all text-sm text-tinta-2">{b.email}</span>}
+                      {b.displayName && <span className="block text-sm text-tinta-2 [overflow-wrap:anywhere]">{b.email}</span>}
                     </span>
                   </label>
                   {marcado && estado.fase !== 'enviado' && (
@@ -533,7 +534,7 @@ export function EnviarConfiguracion({
                   {estado.fase === 'enviado' && (
                     <p className="mt-2 flex items-center gap-1.5 pl-7 text-sm font-medium text-normal" role="status">
                       <Check className="h-4 w-4" aria-hidden />
-                      Enviada a <span className="break-all">{estado.para}</span>
+                      Enviada a <span className="[overflow-wrap:anywhere]">{estado.para}</span>
                     </p>
                   )}
                   {estado.fase === 'error' && (

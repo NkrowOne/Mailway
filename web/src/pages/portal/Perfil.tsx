@@ -96,7 +96,7 @@ export function HojaPerfil({
           </AvisoHecho>
         )}
         {guardar.isError && (
-          <AvisoError>{mensajeError(guardar.error, 'No se ha podido guardar tu nombre.')}</AvisoError>
+          <AvisoError>{mensajeError(guardar.error, 'No se ha podido guardar tu nombre. Vuelve a intentarlo.')}</AvisoError>
         )}
         <div className="border-t border-regla pt-4">
           <FotoBuzon
@@ -105,7 +105,7 @@ export function HojaPerfil({
             nombre={displayName}
             tactil
             rotulo="Tu foto"
-            ayuda="Se recorta en cuadrado. La verán las personas de tu organización en el correo web."
+            ayuda="Se recorta en cuadrado. La verán las personas de tu organización cuando usen el correo en el navegador."
             onCambio={onCambio}
           />
         </div>

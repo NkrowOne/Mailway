@@ -135,7 +135,7 @@ export class Stalwart015Engine implements MailEngine {
       });
     } catch (err) {
       throw upstream(
-        `No se pudo conectar con el motor de correo (${this.baseUrl}): ${(err as Error).message}`,
+        `No se ha podido conectar con el servidor de correo (${this.baseUrl}): ${(err as Error).message}`,
         'engine_unreachable',
       );
     }
@@ -156,14 +156,14 @@ export class Stalwart015Engine implements MailEngine {
         // recibiendo correo y aceptando contraseñas. La fachada lo usa para
         // volver a averiguar la versión del motor.
         throw new RutaDeGestionAusente(
-          `El motor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revisa la URL del motor en Ajustes: debe ser la de la API de gestión de Stalwart.`,
+          `El servidor de correo no reconoce la ruta de gestión ${path.split('?')[0]} (HTTP 404). Revisa la URL en Ajustes: debe ser la de la API de gestión de Stalwart.`,
         );
       }
       if (res.status === 401) throw credencialesRechazadas();
       // Errores en formato RFC 7807 (application/problem+json)
       const problem = parsed as { detail?: string; title?: string } | null;
       const detail = problem?.detail || problem?.title || text.slice(0, 300) || res.statusText;
-      throw new HttpError(502, `El motor de correo respondió ${res.status}: ${detail}`, 'engine_error');
+      throw new HttpError(502, `El servidor de correo ha respondido ${res.status}: ${detail}`, 'engine_error');
     }
     // Stalwart 0.15 devuelve los errores de gestión con HTTP 200 y un cuerpo
     // { error: "notFound" | "fieldAlreadyExists" | "other" | … } sin "data".
@@ -437,7 +437,7 @@ export class Stalwart015Engine implements MailEngine {
     const data = await this.request<PrincipalLeido | null>('GET', `/api/principal/${encodeURIComponent(email)}`);
     // Una lista o un dominio con ese nombre no es un buzón.
     if (data?.type !== undefined && data.type !== 'individual') {
-      throw new HttpError(502, `El motor de correo no tiene un buzón ${email}.`, 'engine_not_found');
+      throw new HttpError(502, `El servidor de correo no tiene un buzón ${email}.`, 'engine_not_found');
     }
     const raw = data?.secrets;
     const secrets = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : [];
@@ -750,7 +750,7 @@ export class Stalwart015Engine implements MailEngine {
     if (resultado.errors.length > 0) {
       throw new HttpError(
         502,
-        `El motor de correo no pudo recargar su configuración: ${resultado.errors.slice(0, 3).join('; ')}`,
+        `El servidor de correo no ha podido recargar su configuración: ${resultado.errors.slice(0, 3).join('; ')}`,
         'engine_error',
       );
     }
@@ -802,7 +802,7 @@ interface PrincipalUpdate {
 export function credencialesRechazadas(): HttpError {
   return new HttpError(
     502,
-    'El motor de correo ha rechazado el usuario o la contraseña de administración (HTTP 401). Revisa las credenciales en Ajustes → Motor de correo.',
+    'El servidor de correo ha rechazado el usuario o la contraseña de administración (HTTP 401). Revisa las credenciales de administración en Ajustes.',
     'engine_auth_failed',
   );
 }
@@ -851,7 +851,7 @@ function principalLeido(data: PrincipalLeido | null, name: string): EnginePrinci
 
 /** «notFound» de un principal, con el mismo formato que los que devuelve el motor. */
 function noEncontrado(item: string): HttpError {
-  return new EngineProblem(502, `El motor de correo no encuentra el elemento (${item}).`, 'engine_not_found', item);
+  return new EngineProblem(502, `El servidor de correo no encuentra el elemento (${item}).`, 'engine_not_found', item);
 }
 
 const PREFIJO_FIRMA = 'signature.';
@@ -909,19 +909,19 @@ function engineProblem(problem: {
     const item = typeof problem.item === 'string' ? problem.item : null;
     return new EngineProblem(
       502,
-      `El motor de correo no encuentra el elemento${item ? ` (${item})` : ''}.`,
+      `El servidor de correo no encuentra el elemento${item ? ` (${item})` : ''}.`,
       'engine_not_found',
       item,
     );
   }
   if (kind === 'fieldAlreadyExists') {
     const value = typeof problem.value === 'string' ? ` «${problem.value}»` : '';
-    return new HttpError(502, `El motor de correo ya tiene ese elemento${value}.`, 'engine_exists');
+    return new HttpError(502, `El servidor de correo ya tiene ese elemento${value}.`, 'engine_exists');
   }
   const detail = [problem.details, problem.reason].filter((v) => typeof v === 'string' && v).join(': ');
   return new HttpError(
     502,
-    `El motor de correo rechazó la operación (${kind})${detail ? `: ${detail}` : ''}.`,
+    `El servidor de correo ha rechazado la operación (${kind})${detail ? `: ${detail}` : ''}.`,
     'engine_error',
   );
 }

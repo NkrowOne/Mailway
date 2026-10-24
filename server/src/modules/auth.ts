@@ -246,7 +246,7 @@ export function sessionHook(req: FastifyRequest, _reply: FastifyReply, done: () 
 export function requireAuth(req: FastifyRequest): AuthedUser {
   if (!req.user) {
     throw unauthorized(
-      req.authError?.message ?? 'Es necesario iniciar sesión.',
+      req.authError?.message ?? 'Accede al panel para continuar.',
       req.authError?.code ?? 'unauthorized',
     );
   }
@@ -262,7 +262,7 @@ export function requireSession(req: FastifyRequest): AuthedUser {
   const user = requireAuth(req);
   if (req.authVia?.kind !== 'session') {
     throw forbidden(
-      'Esta operación requiere iniciar sesión en el panel; no está disponible con un token de gestión.',
+      'Esta operación solo está disponible al acceder al panel con tu usuario, no con un token de gestión.',
       'session_required',
     );
   }
@@ -332,7 +332,7 @@ function checkLoginRate(ip: string, email: string): void {
       .get(emailKey, since) as { count: number }
   ).count;
   if (ipCount >= MAX_ATTEMPTS_PER_IP || emailCount >= MAX_ATTEMPTS_PER_EMAIL) {
-    throw tooMany('Demasiados intentos de inicio de sesión. Espera unos minutos y vuelve a intentarlo.');
+    throw tooMany('Se han producido demasiados intentos de acceso. Espera unos minutos y vuelve a intentarlo.');
   }
 }
 
@@ -393,7 +393,7 @@ export function createInitialAdmin(input: {
 }): AuthedUser {
   return db.transaction(() => {
     if (countUsers() > 0) {
-      throw forbidden('Ya existe un administrador. Inicia sesión con esa cuenta.', 'admin_exists');
+      throw forbidden('Ya existe un administrador. Accede con esa cuenta.', 'admin_exists');
     }
     return createUser({ ...input, role: 'admin' });
   })();
