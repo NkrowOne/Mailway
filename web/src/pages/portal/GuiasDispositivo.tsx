@@ -469,7 +469,7 @@ export function BotonWebmail({ url, variante = 'perfil' }: { url: string; varian
   }
   return (
     <a href={url} target="_blank" rel="noreferrer noopener" className={`${claseEnlaceBoton(variante)} self-stretch sm:self-start`}>
-      Acceder a tu correo
+      Accede a tu correo
     </a>
   );
 }

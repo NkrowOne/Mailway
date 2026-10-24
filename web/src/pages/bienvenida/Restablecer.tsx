@@ -88,7 +88,7 @@ export default function Restablecer() {
             <p className="mt-2 text-base text-tinta-2">{final.texto(marca)}</p>
           </div>
           <Link to="/login" className={`w-full ${claseEnlaceBoton('principal')}`}>
-            Acceder al panel
+            Accede al panel
           </Link>
         </div>
       </Portada>

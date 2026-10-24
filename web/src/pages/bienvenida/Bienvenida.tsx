@@ -424,7 +424,7 @@ function Desenlace({
     </Link>
   ) : (
     <Link to={IR_A_LOGIN} className={`w-full ${claseEnlaceBoton('principal')}`}>
-      Acceder al panel
+      Accede al panel
     </Link>
   );
 

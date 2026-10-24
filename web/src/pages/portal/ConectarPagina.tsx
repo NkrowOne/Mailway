@@ -290,7 +290,7 @@ export default function ConectarPagina() {
             perder el móvil no obligue a cambiar la de todos los demás.
           </p>
           <a href={datos.portalUrl || '/mi-buzon'} className={`${claseEnlaceBoton('perfil')} self-stretch sm:self-start`}>
-            Acceder a «Mi buzón»
+            Accede a «Mi buzón»
           </a>
         </div>
       </Hoja>

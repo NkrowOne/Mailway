@@ -205,7 +205,7 @@ function DispositivosPropios({ ctx, tituloRef }: { ctx: ContextoPuesta; tituloRe
                     contraseña.
                   </p>
                   <a href={webmail} target="_blank" rel="noreferrer noopener" className={estiloBoton('perfil')}>
-                    Acceder a tu correo
+                    Accede a tu correo
                     <ExternalLink className="h-4 w-4" aria-hidden />
                   </a>
                 </div>

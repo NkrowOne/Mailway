@@ -185,7 +185,7 @@ function AccesoPortal({ aviso }: { aviso?: string }) {
         />
         {error && <AvisoError>{error}</AvisoError>}
         <Button type="submit" variant="principal" busy={busy} className={`w-full ${TACTIL}`}>
-          Acceder
+          Accede
         </Button>
         <EntrarConLlave onEntrar={entrarConLlaveDeAcceso} onEmpezar={() => setError('')} />
       </form>

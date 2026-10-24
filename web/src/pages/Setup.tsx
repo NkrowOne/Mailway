@@ -829,7 +829,7 @@ function Comprobacion({
       {error && <BandaError texto={error} />}
       <div className="flex flex-wrap gap-2">
         <Button variant="principal" busy={busy} onClick={onFinish}>
-          Acceder al panel
+          Accede al panel
         </Button>
         <Button variant="plano" disabled={busy} onClick={onVolver}>
           Revisar la identidad del servidor

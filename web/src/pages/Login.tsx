@@ -146,7 +146,7 @@ export default function Login({
               <LayoutDashboard className="h-4 w-4" aria-hidden />
               Panel de gestión
             </span>
-            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.015em] text-tinta">Acceder al panel</h1>
+            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.015em] text-tinta">Accede al panel</h1>
             <p className="mt-2 text-base text-tinta-2">Dominios, buzones y envíos de tu servicio de correo.</p>
 
             <form onSubmit={submit} noValidate className="mt-8 flex flex-col gap-5">
@@ -181,7 +181,7 @@ export default function Login({
               />
               {error && <AvisoError>{error}</AvisoError>}
               <Button type="submit" variant="principal" busy={busy} className="mt-1 min-h-11 w-full sm:min-h-0">
-                Acceder
+                Accede
               </Button>
             </form>
 

@@ -65,7 +65,7 @@ export default function EntrarCorreoWeb() {
   const marca = setup.data?.instance?.brandName || 'Correo';
 
   useEffect(() => {
-    document.title = 'Acceder a tu correo';
+    document.title = 'Accede a tu correo';
   }, []);
 
   // Al volver con «Atrás» desde el webmail, el navegador puede restaurar la
@@ -135,7 +135,7 @@ export default function EntrarCorreoWeb() {
             <Mail className="h-4 w-4" aria-hidden />
             Tu correo
           </span>
-          <h1 className="mt-3 text-2xl font-semibold text-tinta">Acceder a tu correo</h1>
+          <h1 className="mt-3 text-2xl font-semibold text-tinta">Accede a tu correo</h1>
           <p className="mt-1 text-base text-tinta-2">
             Usa tu llave de acceso para acceder a tu correo en{' '}
             <span className="font-medium text-tinta [overflow-wrap:anywhere]">{destino}</span> sin escribir la
@@ -166,7 +166,7 @@ export default function EntrarCorreoWeb() {
           href={enlaceContrasena}
           className={`${claseEnlaceBoton(puedeEntrar ? 'perfil' : 'principal')} w-full`}
         >
-          Acceder con contraseña
+          Accede con contraseña
         </a>
       </div>
     </MarcoAccesoPortal>

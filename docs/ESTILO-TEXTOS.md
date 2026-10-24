@@ -20,7 +20,8 @@ terminología de Mailway.
 - Construcciones **impersonales** cuando no haga falta dirigirse a nadie:
   «No se ha podido guardar», «Se ha enviado el enlace».
 - Botones y menús en **infinitivo**, con mayúscula solo en la primera palabra:
-  «Guardar cambios», «Añadir buzón», «Usar llave de acceso».
+  «Guardar cambios», «Añadir buzón», «Usar llave de acceso». Excepción: el
+  acceso va en imperativo («Accede al panel», ver «Acceso»).
 - Frases completas, con punto en descripciones y mensajes; sin punto en
   etiquetas, botones y títulos.
 - Sin primera persona del sistema, sin exclamaciones, sin emojis, sin
@@ -37,13 +38,15 @@ terminología de Mailway.
 
 ## Acceso (regla fija)
 
-- El verbo es **acceder**. Nunca «entrar» en la interfaz.
-  - Botón de un formulario de acceso: **«Acceder»**.
+- El verbo es **acceder**, en **imperativo** («Accede…») en botones, títulos
+  y enlaces de acceso. Nunca «entrar» ni «iniciar sesión», ni el infinitivo
+  «Acceder…». Es la excepción a la regla de los botones en infinitivo.
+  - Botón de un formulario de acceso: **«Accede»**.
   - Llave de acceso: **«Usar llave de acceso»** (nunca «Entrar con llave de
     acceso»).
-  - Ir al correo del titular: **«Acceder a tu correo»** (nunca «entrar en el
+  - Ir al correo del titular: **«Accede a tu correo»** (nunca «entrar en el
     correo web», «abrir el webmail»).
-  - «Acceder al panel», «Acceder a «Mi buzón»», «Vuelve a acceder».
+  - «Accede al panel», «Accede a «Mi buzón»», «Accede con contraseña».
   - En descripciones: «Accede con tu dirección y tu contraseña», «No se ha
     podido acceder», «Tu sesión ha caducado. Vuelve a acceder.»
 - **«Cerrar sesión»** para salir.
@@ -74,9 +77,10 @@ servidor de correo, «Mi buzón», Actividad, Avisos, Ajustes.
 ## Ejemplos
 
 - ✗ «Entrar con llave de acceso» → ✓ «Usar llave de acceso»
-- ✗ «Entrar en el correo web» → ✓ «Acceder a tu correo»
-- ✗ «Entrar en mi buzón» → ✓ «Acceder»
-- ✗ «Abrir el correo web» (titular) → ✓ «Acceder a tu correo»
+- ✗ «Entrar en el correo web» → ✓ «Accede a tu correo»
+- ✗ «Entrar en mi buzón» → ✓ «Accede»
+- ✗ «Acceder al panel» → ✓ «Accede al panel»
+- ✗ «Abrir el correo web» (titular) → ✓ «Accede a tu correo»
 - ✗ «No se ha podido entrar» → ✓ «No se ha podido acceder»
 - ✗ «Inicia sesión en «Mi buzón» para continuar» → ✓ «Accede a «Mi buzón» para continuar»
 - ✓ «Tu sesión ha caducado. Vuelve a acceder.» · «El buzón está suspendido. Ponte en contacto con quien administra tu correo.»
