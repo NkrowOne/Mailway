@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
  * API de administración de Bulwark falsa, para probar el cliente del panel
  * (bulwark.test.ts) y la sincronización (correoweb.test.ts) sin contenedores.
  *
- * Copia independiente de lo que hace Bulwark 1.17.1 (no de nuestro módulo):
+ * Copia independiente de lo que hace Bulwark 1.17.2 (no de nuestro módulo):
  * - lib/admin/domain-branding.ts: parseDomainBranding (nombre, comodín,
  *   repetidos, campos conocidos y no vacíos);
  * - app/api/admin/config: PATCH sustituye la clave y responde 400 si el
