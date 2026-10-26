@@ -138,6 +138,12 @@ updates:
         update-types: ['version-update:semver-minor', 'version-update:semver-major']
       - dependency-name: 'ghcr.io/bulwarkmail/webmail'
         update-types: ['version-update:semver-minor', 'version-update:semver-major']
+      # El extractor de certificados (python:3.14.x-alpine) solo recibe
+      # parches: una versión menor de Python (3.15) no aporta nada al script y
+      # cambia la imagen entera. Se sube a mano cuando la 3.14 deje de recibir
+      # parches de seguridad.
+      - dependency-name: python
+        update-types: ['version-update:semver-minor']
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
 
