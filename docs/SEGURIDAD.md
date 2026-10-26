@@ -396,6 +396,14 @@ suya.
   `127.0.0.1`. Si tuviera que quedar accesible desde fuera, indica en su lugar
   la IP o la red del proxy (`MAILWAY_TRUST_PROXY=172.18.0.0/16`, p. ej.): así
   esas cabeceras solo valen cuando llegan de él.
+- **Tamaño de los cuerpos**: 5 MB por petición (20 MB en `/v1/send`) y, como
+  máximo, 20 000 elementos entre todas sus listas y las claves de sus objetos
+  (`superaTopeElementos`, en `preValidation` para todas las rutas). zod 3
+  valida cada elemento de una lista aunque pase de su `.max()` (aviso
+  GHSA-mrhx-c7xc-m3w5): un cuerpo de 5 MB lleno de elementos ocupaba unos
+  700 MB de memoria antes de responder. Se rechaza con
+  `400 demasiados_elementos` antes de llegar a la ruta, así que tampoco gasta
+  cupo de envío.
 
 ## 6. Secretos
 
