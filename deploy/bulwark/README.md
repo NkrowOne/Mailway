@@ -12,8 +12,8 @@ quien opera el servidor, el resumen está en la sección 11.1 de
 [docs/DESPLIEGUE-SKYWAY.md](../../docs/DESPLIEGUE-SKYWAY.md), y el modelo de
 seguridad en [docs/SEGURIDAD.md](../../docs/SEGURIDAD.md) (sección 7).
 
-- Versión fijada: **1.17.1**
-  (`ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958`).
+- Versión fijada: **1.17.2**
+  (`ghcr.io/bulwarkmail/webmail:1.17.2@sha256:395232a8b62c371619c3692f63c42ee26bd0258faa5d60d4c9132948c8418729`).
   En Docker Hub no hay imagen oficial: solo copias de terceros.
 - Necesita **Stalwart 0.16.6 o posterior** (ensayado con 0.16.25). Con el motor
   0.15.5 no funciona.
@@ -123,7 +123,7 @@ el instalador solo lo añade con Bulwark activo.
 
 | | `mailway-bulwark` | `mailway-bulwark-gw` |
 |---|---|---|
-| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.1@sha256:4a766a3f966b0ee382a68475b59aea91b334e633644196eac4aada07c8fd4958` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
+| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.2@sha256:395232a8b62c371619c3692f63c42ee26bd0258faa5d60d4c9132948c8418729` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
 | Redes | `mailway-internal` (el motor, desde la subred exenta) y la de Traefik (la pasarela y el panel) | la de Traefik |
 | Puertos publicados | ninguno | ninguno |
 | Sistema de ficheros | solo lectura; tmpfs en `/tmp` y `/app/.next/cache` | solo lectura (usuario 101); tmpfs en `/tmp` |
@@ -431,8 +431,10 @@ Comprobados en el ensayo salvo que se diga otra cosa:
    `PATCH /api/admin/config` y `PUT /api/admin/policy`. Cada versión nueva pasa
    por el ensayo.
 7. **Madurez**: versiones semanales, avisos de seguridad recientes (XSS por
-   correo HTML corregido en 1.10.0) y la contraseña del buzón en la memoria de
-   la pestaña: un XSS la expone. La CSP con nonce lo mitiga.
+   correo HTML corregido en 1.10.0; XSS en los borradores reabiertos, por la
+   cita y la firma sin sanear, corregido en 1.17.2: GHSA-g35q-3gpc-x2rr) y la
+   contraseña del buzón en la memoria de la pestaña: un XSS la expone. La CSP
+   con nonce lo mitiga.
 8. **Licencia AGPL-3.0**: imagen sin modificar y configurada; cualquier
    parche obligaría a ofrecer el código (`SOURCE_CODE_URL`).
 

@@ -11,8 +11,8 @@ import { HttpError, badRequest } from '../core/errors';
  * lo pueden usar el vigilante, las rutas y el ensayo con contenedores reales
  * (deploy/bulwark/prueba.sh) sin arrancar el panel.
  *
- * Contrato comprobado en el código de Bulwark 1.13.0 y 1.17.1 y contra su
- * contenedor:
+ * Contrato comprobado en el código de Bulwark 1.13.0, 1.17.1 y 1.17.2 y
+ * contra su contenedor:
  * - POST /api/admin/auth {password} → cookie admin_session (Max-Age 3600).
  *   Cada intento cuenta para su límite (5 por IP y 50 en total cada 15
  *   minutos), también los correctos: la sesión se reutiliza mientras dure.
@@ -358,6 +358,9 @@ export function politicaBulwark(opciones: OpcionesPoliticaBulwark = {}): Politic
       // dirección sea del buzón o de sus alias. Como hasta ahora, sí.
       customFromEnabled: true,
       archiveActionEnabled: true,
+      // Etiquetas por encima de los buzones compartidos en la barra lateral
+      // (1.17.2): solo cambia el orden. Como en Bulwark, no.
+      tagsAboveSharedEnabled: false,
     },
     // Los favicons de los remitentes los pide el servidor de Bulwark a cada
     // dominio que escribe. Bulwark 1.13 guarda «defaults» pero aún no los

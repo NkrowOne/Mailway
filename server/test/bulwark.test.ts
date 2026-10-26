@@ -167,6 +167,8 @@ test('politicaBulwark: interruptores de Mailway y «Mi buzón» en la barra late
   assert.equal(politica.features.filesEnabled, false);
   assert.equal(politica.features.calendarEnabled, true);
   assert.equal(politica.features.contactsEnabled, true);
+  // Interruptor de la 1.17.2, explícito como los demás.
+  assert.equal(politica.features.tagsAboveSharedEnabled, false);
   assert.deepEqual(politica.defaults, { senderFavicons: false });
   assert.deepEqual(politica.defaultSidebarApps, [
     {
@@ -555,7 +557,7 @@ test('imágenes fijadas: README, entorno y ensayo usan las mismas', () => {
   const ensayo = leer('deploy/bulwark/prueba.sh');
   const readme = leer('deploy/bulwark/README.md');
   for (const imagen of [
-    /ghcr\.io\/bulwarkmail\/webmail:1\.17\.1@sha256:[0-9a-f]{64}/,
+    /ghcr\.io\/bulwarkmail\/webmail:1\.17\.2@sha256:[0-9a-f]{64}/,
     /nginx:1\.30\.5-alpine@sha256:[0-9a-f]{64}/,
   ]) {
     const enEnsayo = imagen.exec(ensayo)?.[0];
