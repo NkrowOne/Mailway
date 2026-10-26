@@ -265,7 +265,7 @@ services:
   # docs/DESPLIEGUE-SKYWAY.md.
   # --------------------------------------------------------------------------
   certs-dumper:
-    image: python:3.14.8-alpine
+    image: python:3.15.0-alpine
     container_name: mailway-certs-dumper
     restart: unless-stopped
     profiles: ['tls']
