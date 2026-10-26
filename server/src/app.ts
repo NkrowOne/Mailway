@@ -5,7 +5,8 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { ZodError } from 'zod';
 import { config } from './config';
-import { HttpError, isUniqueViolation } from './core/errors';
+import { HttpError, badRequest, isUniqueViolation } from './core/errors';
+import { superaTopeElementos } from './core/elementos';
 import { sessionHook } from './modules/auth';
 import { registerAuthRoutes } from './modules/auth';
 import { registerAuditRoutes } from './modules/audit';
@@ -93,6 +94,22 @@ function ignorarTipoSinCuerpo(req: FastifyRequest, _reply: FastifyReply, done: (
   done();
 }
 
+/**
+ * Rechaza los cuerpos con demasiados elementos antes de que los vea zod (ver
+ * `core/elementos.ts`): zod 3 recorre una lista entera aunque pase de su
+ * `.max()`, y un cuerpo de pocos MB lleno de elementos cuesta cientos de MB
+ * de memoria y segundos de CPU. En preValidation, con el cuerpo ya leído y
+ * antes de cualquier manejador, también el de `/v1/send`, que comprueba la
+ * clave dentro de la ruta.
+ */
+function limitarElementosCuerpo(req: FastifyRequest, _reply: FastifyReply, done: (err?: Error) => void): void {
+  if (superaTopeElementos(req.body)) {
+    done(badRequest('La petición incluye demasiados elementos.', 'demasiados_elementos'));
+    return;
+  }
+  done();
+}
+
 export interface BuildAppOptions {
   /** Registro de Fastify; en las pruebas se desactiva para no ensuciar la salida. */
   logger?: boolean;
@@ -118,6 +135,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook('onRequest', ignorarTipoSinCuerpo);
   app.addHook('onRequest', csrfGuard);
   app.addHook('onRequest', sessionHook);
+  // En la raíz y antes de las rutas: así alcanza a todas, también a las de
+  // los ámbitos encapsulados (formularios, autoconfiguración, webmail).
+  app.addHook('preValidation', limitarElementosCuerpo);
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {

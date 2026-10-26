@@ -76,8 +76,9 @@ proyecto y publica sus rutas de Traefik) o de forma autónoma.
   - `src/core/`: base de datos y migraciones (`db.ts`), cifrado, DNS,
     cliente de Cloudflare, cerrojos (`locks.ts`), errores, avisos,
     sha512-crypt, imágenes (`imagenes.ts`: tipo y dimensiones por el
-    contenido), prueba del puerto 25 (`puerto25.ts`) y detección de la IP
-    pública (`ippublica.ts`).
+    contenido), prueba del puerto 25 (`puerto25.ts`), detección de la IP
+    pública (`ippublica.ts`) y tope de elementos del cuerpo de las
+    peticiones (`elementos.ts`).
   - `src/tools/reset-password.ts`: restablecer la contraseña de un usuario
     del panel desde la terminal; `src/tools/emparejar.ts`: emparejado con
     Skyway (administrador, puesta en marcha con el entorno y token «Skyway»;
@@ -246,7 +247,10 @@ prueba que lo reproduce.
   solo arregla la versión nueva): todas las versiones mayores de npm, que
   Dependabot ya no propone. Las que más pesan, con su motivo en
   `.github/dependabot.yml`: TypeScript 6/7, React 19, Tailwind 4, zod 4 y
-  vite 7/8 con `@vitejs/plugin-react` 5/6.
+  vite 7/8 con `@vitejs/plugin-react` 5/6. El aviso GHSA-mrhx-c7xc-m3w5 de
+  zod 3 (valida cada elemento de una lista aunque pase de su `.max()`) lo
+  cubre el tope de elementos del cuerpo de `app.ts`
+  (`superaTopeElementos`, en `core/elementos.ts`: `400 demasiados_elementos`).
 
 ## Seguridad (imprescindible)
 
