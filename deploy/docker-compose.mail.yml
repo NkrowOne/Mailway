@@ -108,7 +108,7 @@ services:
   # rangos de Cloudflare) y el motor solo recibe esa. Va solo en skyway-edge:
   # nunca entra al motor por la red interna, la exenta del bloqueo.
   mailway-mail-gw:
-    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     container_name: mailway-mail-gw
     restart: unless-stopped
     command: ['nginx', '-c', '/etc/nginx/mailway/nginx.conf', '-g', 'daemon off;']
@@ -353,7 +353,7 @@ services:
   # para el tráfico público, IP real, límite de comprobaciones de contraseña,
   # HSTS y registro sin secretos.
   mailway-bulwark-gw:
-    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     container_name: mailway-bulwark-gw
     restart: unless-stopped
     profiles: ['bulwark']
