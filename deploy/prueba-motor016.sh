@@ -718,6 +718,10 @@ env_intacto() { cmp -s "$ENV_FILE" "$TMP/env-original"; }
 sin_borrar_volumenes() { no_contiene "$REGISTRO" "docker volume rm"; }
 
 echo "# Migración completa: pasos en orden, la 0.16 con sus volúmenes y la 0.15 intacta"
+# La imagen de la CLI sale del compose de la 0.16, como en el instalador:
+# escrita aquí, cada parche que propone Dependabot rompía esta comprobación.
+IMAGEN_CLI_COMPOSE=$(imagen_compose "$AQUI/motor/stalwart-0.16/compose.yml" 'stalwartlabs/cli:')
+comprobar "la imagen de la CLI sale del compose de la 0.16" test -n "$IMAGEN_CLI_COMPOSE"
 preparar_migracion
 migrar
 comprobar "termina bien" igual "$CODIGO" 0
@@ -727,7 +731,7 @@ comprobar "pasos en orden" en_orden "$REGISTRO" \
   "docker stop -t 30 mailway-certs-dumper" "docker stop -t 120 mailway-mail" \
   "docker volume create --label com.docker.compose.project=mailway --label com.docker.compose.volume=mailway-stalwart-etc mailway-stalwart-etc-20261009-120001" \
   "docker volume create --label com.docker.compose.project=mailway --label com.docker.compose.volume=mailway-stalwart-data mailway-stalwart-data-20261009-120001" \
-  "-v mailway-mail-data:/origen:ro" "docker run -d --name mailway-mail-016-recuperacion" "stalwartlabs/cli:1.0.13 apply --stdin" \
+  "-v mailway-mail-data:/origen:ro" "docker run -d --name mailway-mail-016-recuperacion" "$IMAGEN_CLI_COMPOSE apply --stdin" \
   "migracion.py recuperacion" "docker rm -f mailway-mail-016-recuperacion" "docker run -d --name mailway-mail-016-previo" \
   "motor.js provisionar" "--profile tls up -d --no-deps --force-recreate certs-dumper" "migracion.py tls" \
   "migracion.py comprobar" "docker rm -f mailway-mail-016-previo" "docker compose[stalwart-0.16] --env-file" \
