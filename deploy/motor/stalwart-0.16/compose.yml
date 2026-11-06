@@ -107,5 +107,5 @@ services:
   # CLI oficial de Stalwart que usa «mailway migrar-motor» (stalwart-cli
   # apply) para que Dependabot la proponga y la CI la pruebe como las demás.
   stalwart-cli:
-    image: stalwartlabs/cli:1.0.13
+    image: stalwartlabs/cli:1.0.14
     profiles: ['herramientas']
