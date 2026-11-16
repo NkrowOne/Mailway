@@ -154,7 +154,7 @@ services:
       retries: 3
 
   mailway-webmail:
-    image: roundcube/roundcubemail:1.7.5-apache
+    image: roundcube/roundcubemail:1.7.6-apache
     container_name: mailway-webmail
     restart: unless-stopped
     ports:
@@ -227,7 +227,7 @@ services:
   # OPCIONAL (perfil `proxy`): Traefik propio con Let's Encrypt en 80/443.
   # --------------------------------------------------------------------------
   mailway-proxy:
-    image: traefik:v3.7.17
+    image: traefik:v3.7.18
     container_name: mailway-proxy
     restart: unless-stopped
     profiles: ['proxy']
