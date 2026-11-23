@@ -123,7 +123,7 @@ el instalador solo lo añade con Bulwark activo.
 
 | | `mailway-bulwark` | `mailway-bulwark-gw` |
 |---|---|---|
-| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.2@sha256:395232a8b62c371619c3692f63c42ee26bd0258faa5d60d4c9132948c8418729` | `nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94` (la misma que la pasarela del motor) |
+| Imagen | `ghcr.io/bulwarkmail/webmail:1.17.2@sha256:395232a8b62c371619c3692f63c42ee26bd0258faa5d60d4c9132948c8418729` | `nginx:1.30.7-alpine@sha256:caf4e1e032a20f9c3c5e28fc7f25ffd768ad8677b4975c54193075997b3a97e3` (la misma que la pasarela del motor) |
 | Redes | `mailway-internal` (el motor, desde la subred exenta) y la de Traefik (la pasarela y el panel) | la de Traefik |
 | Puertos publicados | ninguno | ninguno |
 | Sistema de ficheros | solo lectura; tmpfs en `/tmp` y `/app/.next/cache` | solo lectura (usuario 101); tmpfs en `/tmp` |
