@@ -144,6 +144,14 @@ updates:
       # parches de seguridad.
       - dependency-name: python
         update-types: ['version-update:semver-minor']
+      # Las pasarelas solo siguen la rama estable de nginx (menor par: 1.30,
+      # 1.32…). Dependabot propone siempre la versión más alta, que es la
+      # mainline (menor impar), y con ella no llegaban los parches de la
+      # estable: la 1.30.6 y la 1.30.7, con arreglos de seguridad, no llegaron
+      # nunca. Sin las menores, los parches de la estable llegan solos en
+      # «parches-compose»; la estable siguiente (1.32) se sube a mano.
+      - dependency-name: nginx
+        update-types: ['version-update:semver-minor']
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
 
