@@ -1145,6 +1145,10 @@ print(json.dumps({
         assert 'stalwart:v0.15' in self.motor_sano(), 'el motor ya no es la 0.15'
         self.sin_mantenimiento()
         self.env.write_bytes(antes)
+        # La carpeta de trabajo lleva la hora al segundo (migracion-motor-AAAAMMDD-HHMMSS) y esta orden
+        # termina en menos de un segundo: sin esperar, la siguiente migración puede empezar en el mismo
+        # segundo, encontrarse la carpeta ya creada y parar antes de llegar a la vuelta atrás.
+        time.sleep(1)
         registrar('OK: con algo que la comprobación final exige y no depende del motor (la identidad pendiente en '
                   'el panel), la migración no empieza y no cambia nada.')
 
